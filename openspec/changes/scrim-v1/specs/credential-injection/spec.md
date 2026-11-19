@@ -224,3 +224,79 @@ no secret values.
 - **WHEN** an agent pod runs `git push` over SSH and scrim runs as a central deployment
 - **THEN** the edge forwarder provides `SSH_AUTH_SOCK` in the pod and signatures are made by the
   central instance
+
+### Requirement: Environment overrides before file tricks
+
+A tool profile SHALL point the tool at its generated placeholder config through the tool's own
+override variable when one exists (for example `AWS_SHARED_CREDENTIALS_FILE`, `KUBECONFIG`,
+`DOCKER_CONFIG`, `GH_CONFIG_DIR`, `NPM_CONFIG_USERCONFIG`, `PGPASSFILE`, `TF_CLI_CONFIG_FILE`,
+`CLOUDSDK_CONFIG`, `AZURE_CONFIG_DIR`), and SHALL use a filesystem view only for tools without one.
+
+#### Scenario: Tool with an override variable
+
+- **WHEN** the docker profile is enabled
+- **THEN** `DOCKER_CONFIG` points at a generated directory whose auth entries are placeholders
+
+### Requirement: Session filesystem view for fixed paths
+
+On Linux, `scrim run` SHALL be able to start the agent in an unprivileged mount namespace where
+configured credential paths (for example `~/.aws/credentials`, `~/.kube/config`, `~/.netrc`,
+`~/.ssh/id_*`, `~/.config/gh/hosts.yml`) show generated placeholder versions or are hidden, while the
+rest of the home directory stays as it is. The real files SHALL not be readable from the session.
+
+#### Scenario: Tool that ignores environment overrides
+
+- **WHEN** a tool reads `~/.aws/credentials` directly from the home directory in the password
+  database
+- **THEN** inside the session it reads the placeholder version and its requests are injected
+
+#### Scenario: Real file hidden
+
+- **WHEN** the agent runs `cat ~/.ssh/id_ed25519` inside the session
+- **THEN** the file is absent or empty and the agent is pointed at `SSH_AUTH_SOCK`
+
+### Requirement: Filesystem view fallback without namespaces
+
+Where mount namespaces are unavailable (macOS, restricted containers), scrim SHALL fall back to a
+session home directory that mirrors the real one except configured credential paths, and SHALL
+report in status which tools may still read the real files because they bypass `HOME`.
+
+#### Scenario: macOS session
+
+- **WHEN** `scrim run` starts an agent on macOS
+- **THEN** `HOME` points at the session directory and `scrim status` lists the fallback and its gaps
+
+### Requirement: Credential helpers
+
+The system SHALL provide credential helpers for tools that support them (git credential helper,
+docker credential helper, AWS `credential_process`, kubectl exec plugin) returning placeholders by
+default, or short-lived scoped credentials only where policy allows it and with the grant recorded.
+
+#### Scenario: git asks its credential helper
+
+- **WHEN** git pushes over HTTPS and calls the scrim credential helper
+- **THEN** the helper returns a placeholder and the push succeeds through the tool proxy
+
+### Requirement: Tools that print their own credentials
+
+Commands that print stored credentials (for example `aws configure get`, `gh auth token`,
+`kubectl config view --raw`, docker credential helpers called directly) SHALL only ever print
+placeholders inside a session, and any real value they emit SHALL be redacted from tool output.
+
+#### Scenario: Agent asks gh for its token
+
+- **WHEN** the agent runs `gh auth token`
+- **THEN** the output is a placeholder
+
+### Requirement: Secrets in project files
+
+The system SHALL scan the session's working directory for secret values in files such as `.env*`,
+`*.tfvars` and application config, register what it finds as known values for redaction, watch those
+files for changes, and offer to move each value into a configured store and replace it in the file
+with a reference. Nothing is moved or rewritten without confirmation.
+
+#### Scenario: Unregistered secret in .env
+
+- **WHEN** a project's `.env` contains an API key that no store holds
+- **THEN** scrim redacts it from LLM traffic from the start of the session
+- **AND** `scrim doctor` lists it with an offer to move it into a store
