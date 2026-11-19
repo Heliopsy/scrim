@@ -144,3 +144,83 @@ time limits, and returns results redacted.
 
 - **WHEN** an agent submits a data-modifying statement to the database tool
 - **THEN** the statement is refused and not executed
+
+### Requirement: Placeholder credentials for command-line tools
+
+`scrim run` and the Kubernetes injection SHALL provision, per configured tool profile, the
+environment variables and generated config files a CLI reads its credentials from (for example
+`GH_TOKEN`, an AWS config, a kubeconfig, `.npmrc`, `.netrc`, a container registry auth file). They
+SHALL contain placeholders only, and SHALL be removed when the session ends.
+
+#### Scenario: gh with a placeholder token
+
+- **WHEN** an agent started with `scrim run` runs `gh pr list`
+- **THEN** `GH_TOKEN` holds a placeholder, the request to `api.github.com` carries the real token
+- **AND** no file or environment variable in the agent's session contains the real token
+
+#### Scenario: Generated kubeconfig
+
+- **WHEN** the `kubectl` profile is enabled for a cluster credential
+- **THEN** `KUBECONFIG` points at a generated file whose token is a placeholder and whose server
+  traffic is injected by scrim
+
+### Requirement: Built-in tool profiles
+
+The system SHALL ship tool profiles for at least git, gh, glab, aws, gcloud, az, kubectl, helm,
+terraform and OpenTofu, docker and podman registries, npm, pnpm, pip and twine, cargo, hcloud,
+doctl, psql, mysql and ssh, each declaring where the tool reads credentials, which hosts it talks
+to and which injection or proxy mode it needs. Profiles SHALL be overridable and extendable in
+configuration.
+
+#### Scenario: Custom profile
+
+- **WHEN** configuration adds a profile for an in-house CLI reading `ACME_TOKEN` and calling
+  `api.acme.internal`
+- **THEN** that CLI works through scrim like a built-in profile
+
+### Requirement: Re-signing for signed request protocols
+
+For protocols where the client signs requests with the secret (AWS SigV4 first), the tool proxy
+SHALL discard the client's signature made with the placeholder and re-sign the request with the real
+credential toward bound endpoints only. A request that cannot be re-signed SHALL be refused.
+
+#### Scenario: aws CLI with placeholder keys
+
+- **WHEN** the agent runs `aws s3 ls` with placeholder access keys
+- **THEN** scrim re-signs the request with the real keys and S3 accepts it
+- **AND** a request signed for an unbound account or region is refused
+
+### Requirement: Format-preserving placeholders
+
+A credential MAY be configured to use a placeholder that keeps the real secret's prefix, length and
+alphabet, for clients that validate a token's shape before sending it. Format-preserving
+placeholders SHALL still be unique, deterministic and recognised by the redactor and the guard.
+
+#### Scenario: Client that checks the token prefix
+
+- **WHEN** a CLI rejects tokens that do not start with `ghp_`
+- **THEN** the format-preserving placeholder starts with `ghp_` and the CLI sends it
+
+### Requirement: Client certificates toward upstreams
+
+When an upstream authenticates clients with certificates (for example a Kubernetes API server or a
+database requiring mTLS), scrim SHALL present the client certificate from the store on the upstream
+connection. The private key SHALL never be written to the agent's filesystem.
+
+#### Scenario: kubectl with certificate authentication
+
+- **WHEN** a cluster credential is a client certificate and key stored in a store
+- **THEN** kubectl reaches the API server through scrim, which presents the certificate upstream
+
+### Requirement: Edge forwarder for local sockets
+
+Where scrim runs centrally, an edge component in the agent's pod or host SHALL expose the local
+endpoints tools expect (the ssh-agent socket, database ports on localhost, the exec broker) and
+forward them to the central instance over an authenticated, encrypted channel. The edge SHALL hold
+no secret values.
+
+#### Scenario: ssh in a pod with central scrim
+
+- **WHEN** an agent pod runs `git push` over SSH and scrim runs as a central deployment
+- **THEN** the edge forwarder provides `SSH_AUTH_SOCK` in the pod and signatures are made by the
+  central instance

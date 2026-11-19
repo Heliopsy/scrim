@@ -82,6 +82,14 @@ deployments and the remaining edge modes (groups 14-16).
 - [ ] 10.3 Response capture rules; verify: a token returned by a fake API is stored and the agent sees a placeholder
 - [ ] 10.4 Exec broker as a separate identity with allowlisted commands; verify: an allowed command runs with the secret, a transform command is blocked
 
+## 10a. Command-line tools
+
+- [ ] 10a.1 Tool profiles with generated placeholder env and config files, removed at session end; verify: gh, git over HTTPS, kubectl, helm, npm and docker login work through `scrim run` with no real value in the session
+- [ ] 10a.2 AWS SigV4 re-signing toward bound endpoints; verify: `aws s3 ls` and `aws sts get-caller-identity` succeed against LocalStack with placeholder keys, unbound region refused
+- [ ] 10a.3 Format-preserving placeholders; verify: a client that checks the token prefix sends the placeholder and the guard still catches it
+- [ ] 10a.4 Upstream client certificates; verify: kubectl with certificate auth in kind
+- [ ] 10a.5 Profiles for terraform and OpenTofu, gcloud, az, pip and twine, cargo, hcloud, doctl; verify: one end-to-end command per profile against a fake or test endpoint
+
 ## 11. Vaultwarden and more providers
 
 - [ ] 11.1 Vaultwarden adapter with client-side decryption and unlock key by reference; verify: contract suite against Vaultwarden in podman
@@ -103,6 +111,7 @@ deployments and the remaining edge modes (groups 14-16).
 - [ ] 12.2 Kubernetes service account identity; verify: TokenReview-based identity in kind
 - [ ] 12.3 Helm chart (Deployment, Service, PDB, HPA, NetworkPolicy) and Kyverno injection policy; verify: agent pod in kind reaches providers only through scrim
 - [ ] 12.4 OpenBao and Infisical Kubernetes auth; verify: no static store credentials in the kind test
+- [ ] 12.5 Edge forwarder for ssh-agent, localhost database ports and the exec broker in agent pods; verify: `git push` over SSH and `psql` from an agent pod with a central scrim in kind
 
 ## 13. Local service and persistent interception (M2 exit)
 
