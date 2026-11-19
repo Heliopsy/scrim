@@ -18,8 +18,11 @@ create and capture secrets under human approval without ever reading a value.
 - New: credential injection at the network edge. A credential is bound to the hosts it belongs to,
   stays a placeholder inside the agent's commands, and is swapped in only on outbound connections to
   those hosts, through an HTTPS tool proxy, an exec broker, an ssh-agent and database auth proxies.
-- New: store adapters for Vaultwarden, Infisical and OpenBao behind one reference scheme
-  (`vw://`, `inf://`, `bao://`), with read, watch and write, and a plugin interface for more.
+- New: store adapters behind one reference scheme, with read, list, watch and write and a declared
+  capability matrix: Vaultwarden, Infisical and OpenBao (the reference stores every release is
+  tested against), HashiCorp Vault, AWS Secrets Manager and SSM Parameter Store, Google Secret
+  Manager, Azure Key Vault, 1Password, Bitwarden Secrets Manager, Doppler, Kubernetes Secrets and
+  local sources, plus a plugin interface for more.
 - New: agent tools over MCP and the CLI to list secret names, request access, generate secrets,
   capture command output into a store, and ask a human to enter a value. No tool returns a value.
 - New: a policy engine (allow, deny, ask) over agent, secret, provider, destination and tool, with
@@ -47,8 +50,9 @@ create and capture secrets under human approval without ever reading a value.
   byte-stability for prompt caching and signed content.
 - `credential-injection`: host-bound credentials, the HTTPS tool proxy and its CA, response capture,
   the exec broker, the ssh-agent and database auth proxies.
-- `secret-stores`: the store adapter contract, reference scheme, Vaultwarden, Infisical and OpenBao
-  adapters, watching for changes, write-only behaviour toward agents, and store plugins.
+- `secret-stores`: the store adapter contract, reference scheme, the built-in adapters and their
+  capability matrix, watching for changes, write-only behaviour toward agents, the conformance
+  suite and store plugins.
 - `agent-tools`: the MCP server and agent-facing CLI commands for listing, requesting, generating,
   capturing and human entry of secrets.
 - `policy-approvals`: rules, decisions, approval flow, notifiers, just-in-time grants and the audit

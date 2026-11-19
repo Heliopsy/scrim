@@ -8,7 +8,8 @@ OpenBao and plugins) behind one reference scheme, while agents never read a valu
 ### Requirement: One reference scheme across stores
 
 The system SHALL address every secret with a reference of the form `<scheme>://<store-path>[#<field>]`,
-where the scheme names a configured store instance (`vw://`, `inf://`, `bao://` or a plugin scheme)
+where the scheme names a configured store instance (for example `vw://`, `inf://`, `bao://`, `vault://`,
+`aws-sm://`, `aws-ssm://`, `gcp-sm://`, `azure-kv://`, `op://` or a plugin scheme)
 and the optional field selector picks one field of a multi-field secret. A reference that does not
 parse, or names an unconfigured store, SHALL be rejected with an error that contains no value.
 
@@ -217,6 +218,71 @@ fail the operation closed.
 - **WHEN** a break-glass path requires a control-group approval
 - **THEN** the operation waits, the approver is notified, and the value is used only after
   authorisation
+
+### Requirement: Built-in store adapters
+
+The system SHALL ship adapters for Vaultwarden, Infisical, OpenBao, HashiCorp Vault, AWS Secrets
+Manager, AWS SSM Parameter Store, Google Secret Manager, Azure Key Vault, 1Password, Bitwarden Secrets
+Manager, Doppler, Kubernetes Secrets, and the local sources env, file, SOPS-encrypted file and OS
+keyring. Several instances of one adapter SHALL be configurable side by side under different names.
+
+#### Scenario: Two Vault clusters and AWS at once
+
+- **WHEN** configuration defines `vault-eu://`, `vault-us://` and `aws-sm://` store instances
+- **THEN** references to each resolve against their own store with their own credentials
+
+### Requirement: Adapters declare their capabilities
+
+Every adapter SHALL declare which operations it supports (read, list, watch, write, generate, dynamic
+credentials). An operation the target store does not support SHALL be refused with an error naming
+the store and the operation, before any partial write, and `scrim doctor` SHALL show the capability
+matrix of every configured store.
+
+#### Scenario: Write to a read-only source
+
+- **WHEN** a rule targets `env://` for `secret_gen`
+- **THEN** the call is refused with an error saying the env source is read-only
+- **AND** nothing is generated or stored
+
+### Requirement: HashiCorp Vault adapter
+
+The Vault adapter SHALL support KV versions 1 and 2, namespaces, and the token, AppRole, Kubernetes,
+JWT/OIDC and cloud IAM auth methods. Dynamic secrets SHALL be leased, renewed while in use, revoked
+when the grant ends, and redacted from the moment they are issued.
+
+#### Scenario: Dynamic database credential
+
+- **WHEN** an agent is granted a credential from a Vault database secrets engine for 30 minutes
+- **THEN** scrim obtains a lease, injects the credential toward its bound host and redacts it
+- **AND** revokes the lease when the grant expires
+
+### Requirement: Cloud secret managers use workload identity
+
+The AWS, Google and Azure adapters SHALL authenticate with the platform's ambient identity
+(instance or task roles, IRSA or EKS Pod Identity, GKE Workload Identity, Azure Workload Identity)
+without static keys, and SHALL accept explicit credentials only by reference. Version and stage
+selectors SHALL be supported in references.
+
+#### Scenario: AWS Secrets Manager from an EKS pod
+
+- **WHEN** scrim runs in EKS with a pod identity allowed to read `agents/*`
+- **THEN** `aws-sm://agents/github#token` resolves without any access key in configuration
+
+#### Scenario: Pinned version
+
+- **WHEN** a reference names `aws-sm://agents/github?stage=AWSPREVIOUS`
+- **THEN** the previous version is used and the current one is still redacted
+
+### Requirement: Adapter conformance suite
+
+Every adapter, built-in or plugin, SHALL pass one shared conformance suite covering read, list,
+watch, write-only behaviour toward agents, outage handling and error messages without values. The
+suite SHALL run in CI against each store or a compatible emulator.
+
+#### Scenario: New adapter is added
+
+- **WHEN** an adapter is contributed
+- **THEN** it is accepted only with a passing conformance run recorded in CI
 
 ### Requirement: Store plugins
 

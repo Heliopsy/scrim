@@ -39,14 +39,14 @@ deployments and the remaining edge modes (groups 14-16).
 
 ## 5. State, audit and observability
 
-- [ ] 5.1 Memory and SQLite state backends behind one interface, migrations; verify: the same contract suite passes on both
+- [ ] 5.1 Memory, SQLite and PostgreSQL state backends behind one interface, migrations; verify: the same contract suite passes on all three, PostgreSQL in podman
 - [ ] 5.2 Audit log (metadata only) written with the state change it records; verify: a failure between the two writes leaves neither
 - [ ] 5.3 Structured logs, metrics, traces and health endpoints with a secret-free type for values; verify: a test that seeds known values and greps every log, metric and trace output for them
 - [ ] 5.4 `scrim status` and `scrim doctor`; verify: reports active protections, interception mode, degraded stores and weakened settings in fixture setups
 
 ## 6. OpenBao and Infisical adapters
 
-- [ ] 6.1 Store adapter contract and reference scheme parser; verify: contract test suite usable by any adapter
+- [ ] 6.1 Store adapter contract, capability declaration, reference scheme parser and the shared conformance suite; verify: the suite runs against a fake adapter and fails on a deliberately broken one
 - [ ] 6.2 OpenBao adapter (AppRole, KV v2 read, list, watch, write without read); verify: contract suite against OpenBao dev mode in podman
 - [ ] 6.3 Infisical adapter (Universal Auth, read, list, watch, write); verify: contract suite against a local Infisical in podman
 - [ ] 6.4 Store outage behaviour (last known set, fail closed for injection, degraded status); verify: tests that stop the store mid-run
@@ -89,9 +89,17 @@ deployments and the remaining edge modes (groups 14-16).
 - [ ] 11.3 Gemini codec; verify: recorded fixtures
 - [ ] 11.4 Bedrock, Vertex, Foundry and Claude Platform on AWS with re-signing after redaction; verify: Claude Code end-to-end against faithful fake upstreams
 
+## 11a. More stores
+
+- [ ] 11a.1 HashiCorp Vault adapter (KV v1/v2, namespaces, token, AppRole, Kubernetes, JWT, dynamic leases); verify: conformance suite against Vault dev mode in podman, lease revoked when the grant ends
+- [ ] 11a.2 AWS Secrets Manager and SSM Parameter Store adapters with ambient identity and version/stage selectors; verify: conformance suite against LocalStack in podman
+- [ ] 11a.3 Google Secret Manager and Azure Key Vault adapters with workload identity; verify: conformance suite against the services or compatible fakes
+- [ ] 11a.4 1Password, Bitwarden Secrets Manager and Doppler adapters; verify: conformance suite against each service's test account or recorded fixtures
+- [ ] 11a.5 Kubernetes Secrets adapter and local sources (env, file, SOPS file, OS keyring) with read-only capabilities declared where applicable; verify: conformance suite in kind and locally, writes to read-only sources refused
+
 ## 12. Shared state and Kubernetes
 
-- [ ] 12.1 PostgreSQL state backend and Postgres-notify events; verify: contract suite and two replicas agree on grants and approvals
+- [ ] 12.1 Postgres-notify events for multiple replicas; verify: two replicas sharing one PostgreSQL agree on grants and approvals
 - [ ] 12.2 Kubernetes service account identity; verify: TokenReview-based identity in kind
 - [ ] 12.3 Helm chart (Deployment, Service, PDB, HPA, NetworkPolicy) and Kyverno injection policy; verify: agent pod in kind reaches providers only through scrim
 - [ ] 12.4 OpenBao and Infisical Kubernetes auth; verify: no static store credentials in the kind test
