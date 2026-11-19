@@ -307,3 +307,80 @@ returned by any API, tool, log, metric, trace or audit entry.
 - **WHEN** an agent with filesystem access prints a scrim configuration that references credentials
 - **THEN** the credentials are referenced by source, not inline, or are redacted in the provider
   request
+
+### Requirement: Optional secret catalog
+
+The system SHALL support an optional catalog that maps logical secret names (for example `github`) to
+a store reference, its bound hosts, its injection locations, its tool profiles and any user-declared
+placeholder. Without a catalog, store references work directly; the catalog only adds names,
+bindings and placeholders on top.
+
+#### Scenario: Logical name used everywhere
+
+- **WHEN** the catalog maps `github` to `bao://kv/agents/github#token` bound to `api.github.com`
+- **THEN** rules, tool profiles, MCP tools and placeholders can all say `github` instead of the reference
+
+#### Scenario: No catalog
+
+- **WHEN** no catalog is configured and a file contains `{{scrim:bao://kv/agents/github#token}}`
+- **THEN** the reference placeholder resolves without any mapping
+- **AND** injection still requires a host binding from configuration or store metadata
+
+### Requirement: Per-environment mapping
+
+A catalog entry SHALL be able to resolve to different store references by environment, agent,
+namespace or profile, so the same placeholder in the same file points at a development secret in one
+session and a production secret in another. The selection SHALL be visible in `scrim catalog show`.
+
+#### Scenario: Same placeholder, two environments
+
+- **WHEN** `SCRIM_DB_PASSWORD` maps to `bao://kv/dev/db#password` for profile `dev` and to
+  `aws-sm://prod/db#password` for profile `prod`
+- **THEN** a session started with `--profile dev` injects the development password and never the
+  production one
+
+### Requirement: Bulk mapping by prefix
+
+A catalog entry SHALL be able to map every secret under a store prefix at once, deriving each
+placeholder name from a template (for example `inf://acme/prod/*` to `SCRIM_ACME_{NAME}`), with
+shared host bindings. Name collisions SHALL fail validation.
+
+#### Scenario: Prefix mapping
+
+- **WHEN** `inf://acme/prod/*` holds `API_KEY` and `WEBHOOK_SECRET` and is mapped with the template
+  `SCRIM_ACME_{NAME}`
+- **THEN** `SCRIM_ACME_API_KEY` and `SCRIM_ACME_WEBHOOK_SECRET` both resolve
+
+### Requirement: Mapping from store metadata
+
+Where a store supports metadata on secrets (tags, labels, custom metadata), the system SHALL read
+configured keys such as `scrim.hosts`, `scrim.placeholder` and `scrim.profiles` and treat them as
+catalog entries, so bindings can live next to the secret. Catalog file entries SHALL take precedence,
+and conflicts SHALL be reported.
+
+#### Scenario: Binding stored with the secret
+
+- **WHEN** an OpenBao secret has custom metadata `scrim.hosts=api.github.com`
+- **THEN** it is bound to `api.github.com` without a catalog file entry
+
+### Requirement: Catalog sources
+
+The catalog SHALL be loadable from the configuration file, separate catalog files, environment
+variables and, in Kubernetes, from cluster resources, following the configuration precedence rules,
+and SHALL be reloaded without restart. A catalog SHALL never contain secret values.
+
+#### Scenario: Value in a catalog file
+
+- **WHEN** a catalog entry contains something that looks like a literal secret instead of a reference
+- **THEN** validation fails and the catalog is not loaded
+
+### Requirement: Catalog suggestions
+
+`scrim catalog suggest` SHALL propose catalog entries from the project scan, configured tool profiles
+and store contents (names only), for the user to accept or edit. Suggestions SHALL never be applied
+automatically.
+
+#### Scenario: Suggest from a project
+
+- **WHEN** the user runs `scrim catalog suggest` in a project whose `.env` references three APIs
+- **THEN** three draft entries with placeholder names, candidate references and hosts are printed
