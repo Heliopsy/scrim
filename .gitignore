@@ -1,0 +1,24 @@
+# Build output
+/bin/
+/dist/
+/target/
+
+# Local state and captures, which can hold redacted traffic
+*.db
+*.db-shm
+*.db-wal
+/capture/
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Agent worktrees
+/.worktrees/
+
+# Never commit environment files
+.env
+.env.*
+!.env.example

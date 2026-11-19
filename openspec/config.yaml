@@ -1,0 +1,35 @@
+schema: spec-driven
+
+context: |
+  scrim keeps secrets away from LLM providers while AI agents keep working. It is a redacting
+  proxy between agents (Claude Code, Codex, any Anthropic or OpenAI API client) and model
+  providers, a credential injector for the agent's outbound traffic, a broker over existing secret
+  stores (Vaultwarden, Infisical, OpenBao, plugins), an MCP server and CLI that let agents request,
+  create and capture secrets without ever reading them, and a policy engine with human approvals and
+  just-in-time grants.
+  One binary, one configuration format, on a laptop, VM, container or Kubernetes cluster.
+  Interception modes: wrapper, base URL, forward proxy, transparent (nftables, eBPF), Kubernetes
+  injection, agent hooks.
+  State: SQLite locally, memory for throwaway runs, PostgreSQL for shared and multi-replica
+  deployments; optional Valkey or NATS for events and rate limits at large scale.
+  Implementation language of the data plane (Go, Rust, or Go control plane with Rust data plane) is
+  decided by a benchmark before product code; requirements must not depend on that choice.
+  Licence: AGPL-3.0 with a CLA. Sister project and conventions: heliopsy/tix.
+
+rules:
+  specs:
+    - Requirements use SHALL language (RFC 2119)
+    - Every requirement must have at least one Scenario
+    - Scenarios describe observable behaviour, not implementation details
+    - Any requirement touching secret values states what happens on failure (fail closed)
+  design:
+    - No API, MCP tool, CLI output, log, metric, trace or audit entry ever contains a secret value
+    - Redaction failure refuses the request; there is no unredacted fallback
+    - Every outbound provider request passes the redactor and an independent guard
+    - Credentials are injected only toward hosts they are bound to, never restored into commands
+    - Placeholders are deterministic HMACs so caching and replicas need no shared lookup state
+    - Every setting is settable by config file, environment variable (SCRIM_*) and, where sensible, flag
+    - Hot-path latency budget is a release gate
+  tasks:
+    - Tasks map 1:1 to files or discrete behaviours, not broad phases
+    - Mark tasks complete as soon as the code ships, not when the PR merges
