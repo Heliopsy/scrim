@@ -300,3 +300,56 @@ with a reference. Nothing is moved or rewritten without confirmation.
 - **WHEN** a project's `.env` contains an API key that no store holds
 - **THEN** scrim redacts it from LLM traffic from the start of the session
 - **AND** `scrim doctor` lists it with an offer to move it into a store
+
+### Requirement: User-declared placeholders
+
+Users SHALL be able to declare their own placeholder strings (for example `SCRIM_GITHUB_TOKEN` or
+`{{scrim:bao://kv/agents/github#token}}`) and map each to a secret reference and its bound hosts, so
+hand-written config files can carry readable placeholders. Declared placeholders SHALL be substituted
+on the wire exactly like generated ones and SHALL be unique across the configuration.
+
+#### Scenario: Placeholder written into a config file
+
+- **WHEN** `config/app.yaml` contains `api_key: SCRIM_ACME_KEY` and a tool sends it to the bound host
+- **THEN** the request leaves scrim with the real key in place of `SCRIM_ACME_KEY`
+- **AND** the tool and the agent behave as if the real key were configured
+
+#### Scenario: Duplicate declaration
+
+- **WHEN** two secrets declare the same placeholder string
+- **THEN** configuration validation fails and names both
+
+### Requirement: Substitution in any declared part of the request
+
+For a credential whose configuration allows it, the tool proxy SHALL substitute its placeholder
+anywhere in the request (URL, headers, cookies, form, JSON or multipart body), decompressing and
+recompressing bodies, recomputing lengths and content digests, and re-signing where the protocol
+requires. A body it cannot rewrite safely SHALL be refused, never sent with the placeholder replaced
+partially.
+
+#### Scenario: Gzip-compressed JSON body
+
+- **WHEN** a tool uploads a gzip-compressed JSON document containing a placeholder to its bound host
+- **THEN** the upstream receives a valid gzip body with the real value and a correct length
+
+#### Scenario: Unsupported body encoding
+
+- **WHEN** the placeholder sits inside a body encoding scrim cannot rewrite
+- **THEN** the request is refused with an error naming the encoding
+
+### Requirement: Tool proxy responses are redacted
+
+Every response returned through the tool proxy SHALL be scanned for known values in headers and
+bodies, including streamed and compressed bodies, and each value SHALL be replaced with its
+placeholder before the agent receives it, so an API that echoes a credential back shows the agent
+the same placeholder it sent. A response that cannot be scanned SHALL be withheld.
+
+#### Scenario: API echoes the credential
+
+- **WHEN** an API's error message repeats the Authorization header it received
+- **THEN** the agent sees the placeholder in the error, not the real token
+
+#### Scenario: Created resource returns its secret
+
+- **WHEN** a tool creates a webhook whose response includes the signing secret already held in a store
+- **THEN** the agent receives the placeholder for that secret
