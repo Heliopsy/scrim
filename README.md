@@ -152,7 +152,7 @@ scrim brokers the stores you run and keeps no secrets of its own. Agents never t
 directly, so write-only access, approvals and grants behave the same on every store.
 
 | Store | Kind | read | list | watch | write |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | OpenBao, and Vault-compatible KV v2 | `openbao` | yes | yes | yes | yes |
 | Infisical | `infisical` | yes | yes | yes | yes |
 | Vaultwarden, and Bitwarden-compatible servers | `vaultwarden` | yes | yes | yes | yes |
@@ -295,7 +295,7 @@ suite against your setup, see [docs/leak-assurance.md](docs/leak-assurance.md).
 ## Interception modes
 
 | Mode | How the agent reaches scrim | Status |
-|---|---|---|
+| --- | --- | --- |
 | Wrapper | `scrim run -- <agent>` sets everything for one process | v0.1.0 |
 | Base URL | the agent's provider base URL points at scrim | v0.1.0 |
 | Forward proxy | `HTTPS_PROXY` with TLS interception, provider and tool traffic on one listener | v0.1.0 |
@@ -377,7 +377,7 @@ same redactor and stream restorer in Go and Rust, on one pinned core and behind 
 prototype measured:
 
 | Measurement | 10 secrets | 1,000 secrets | 10,000 secrets |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Redact throughput, one core | 3,300 to 4,450 MB/s | 250 to 415 MB/s | 87 to 102 MB/s |
 | Added p99 latency, streamed responses, 10 connections | | 11 ms | 12 ms |
 | Stream restore per chunk | | 5.4 to 5.7 µs | |
@@ -404,7 +404,7 @@ Each project as its own documentation described it in November 2026. "Not docume
 documentation does not describe the feature, which is not proof that it is missing.
 
 | Project | Redacts requests to the model | Injects credentials at a proxy | Where secrets come from |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | scrim | yes, with an independent guard | yes, toward bound hosts | your stores (OpenBao, Infisical, Vaultwarden, env, file), brokered |
 | [OneCLI](https://github.com/onecli/onecli) | not documented | yes, HTTPS proxy | its own encrypted vault |
 | [Infisical Agent Vault](https://infisical.com/docs/documentation/platform/agent-vault/overview) | not documented | yes, forward proxy with time-limited sessions | Infisical |
