@@ -15,6 +15,7 @@ to start. The behaviour contract, with every requirement and scenario, is the Op
 | Page | Covers |
 | --- | --- |
 | [install.md](install.md) | Release archives, signature and provenance checks, container images, reproducible builds |
+| [running.md](running.md) | `scrim proxy`: the daemon, its listeners and sockets, snapshots, capture mode, shutdown, a systemd unit |
 | [configuration.md](configuration.md) | Config files, `SCRIM_*` environment variables, flags, precedence, profiles, reload and every setting |
 
 ## Secrets

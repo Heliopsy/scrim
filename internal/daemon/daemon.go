@@ -39,6 +39,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/heliopsy/scrim/internal/agentapi"
@@ -75,6 +76,9 @@ type Options struct {
 	// CARun, when set, runs alongside the daemon and calls its argument
 	// after every CA change (rotation), so a new snapshot is pushed.
 	CARun func(ctx context.Context, changed func())
+	// DataPlaneEnv is appended to the data plane's environment. For tests
+	// that run a fake data plane.
+	DataPlaneEnv []string
 }
 
 // Addrs are where the daemon serves. Empty fields are disabled.
@@ -129,8 +133,10 @@ type Daemon struct {
 	infoPath string
 	trust    func() string
 
-	mu    sync.Mutex
-	addrs Addrs
+	mu        sync.Mutex
+	addrs     Addrs
+	dpReady   atomic.Bool
+	dpProblem string
 
 	cancel  context.CancelFunc
 	servers []*http.Server
@@ -255,6 +261,8 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	if err != nil {
 		return nil, err
 	}
+	a.Health.Ready("dataplane listeners", d.listenersHealth)
+	d.sup.Options.ExtraEnv = append(d.sup.Options.ExtraEnv, o.DataPlaneEnv...)
 	d.sup.OnAsk = pp.Gate.Answer
 	sink := &eventSink{state: a.State, inst: a.Instruments, log: d.log}
 	d.sup.OnEvents = sink.record
@@ -499,7 +507,8 @@ func (d *Daemon) setDataPlaneAddrs(st *pb.StatusResponse) {
 	}
 }
 
-// watchReady refreshes the bound addresses whenever the data plane becomes
+// watchReady follows the data plane's own readiness (a snapshot applied and
+// every listener bound), refreshes the bound addresses whenever it becomes
 // ready (after every restart) and keeps the info file current.
 func (d *Daemon) watchReady(ctx context.Context) {
 	was := false
@@ -511,14 +520,19 @@ func (d *Daemon) watchReady(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		now := d.sup.Ready()
-		if now && !was {
+		now := false
+		var st *pb.StatusResponse
+		if d.sup.Ready() {
 			sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			st, err := d.sup.Status(sctx)
+			var err error
+			st, err = d.sup.Status(sctx)
 			cancel()
-			if err == nil {
-				d.setDataPlaneAddrs(st)
-			}
+			now = err == nil && st.GetReady()
+			d.setListenerProblem(st, err)
+		}
+		d.dpReady.Store(now)
+		if now && !was {
+			d.setDataPlaneAddrs(st)
 			d.log.Info("data plane ready", "base_url", d.Addrs().BaseURL)
 			// A change made while the data plane was starting is pushed now.
 			d.pusher.Trigger()
@@ -528,6 +542,41 @@ func (d *Daemon) watchReady(ctx context.Context) {
 		}
 		was = now
 	}
+}
+
+// setListenerProblem records why the data plane is not ready, for health.
+func (d *Daemon) setListenerProblem(st *pb.StatusResponse, err error) {
+	var problem string
+	switch {
+	case err != nil:
+		problem = err.Error()
+	case !st.GetReady():
+		var unbound []string
+		for _, l := range st.GetListeners() {
+			if !l.GetBound() {
+				unbound = append(unbound, l.GetName()+": "+l.GetError())
+			}
+		}
+		problem = "data plane not ready"
+		if len(unbound) > 0 {
+			problem += "; unbound listeners: " + strings.Join(unbound, "; ")
+		}
+	}
+	d.mu.Lock()
+	d.dpProblem = problem
+	d.mu.Unlock()
+}
+
+func (d *Daemon) listenersHealth(context.Context) error {
+	if d.dpReady.Load() {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.dpProblem != "" {
+		return errors.New(d.dpProblem)
+	}
+	return errors.New("data plane listeners are not bound yet")
 }
 
 // sweepSessions revokes sessions whose `scrim run` died without ending
@@ -565,7 +614,7 @@ func (d *Daemon) Addrs() Addrs {
 // Ready reports whether the data plane holds a snapshot and every readiness
 // check passes.
 func (d *Daemon) Ready(ctx context.Context) bool {
-	return d.sup.Ready() && d.app.Health.Run(ctx, true).Status == "ok"
+	return d.sup.Ready() && d.dpReady.Load() && d.app.Health.Run(ctx, true).Status == "ok"
 }
 
 // Info describes the daemon.
@@ -574,7 +623,7 @@ func (d *Daemon) Info() Info {
 	defer cancel()
 	rep := d.app.Health.Run(ctx, true)
 	in := Info{PID: os.Getpid(), Version: version.Version, StartedAt: d.started, Addrs: d.Addrs(), Capture: d.capture,
-		Ready: d.sup.Ready() && rep.Status == "ok"}
+		Ready: d.sup.Ready() && d.dpReady.Load() && rep.Status == "ok"}
 	for k, v := range rep.Checks {
 		if v != "ok" {
 			if in.Problems == nil {

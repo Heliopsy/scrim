@@ -38,7 +38,7 @@ func TestStatusJSONShowsWeakenedAndState(t *testing.T) {
 	if len(r.Weakened) != 1 || r.Weakened[0].Key != "state.sqlite.allow-network-filesystem" {
 		t.Fatalf("weakened = %+v", r.Weakened)
 	}
-	if r.State.Backend != "sqlite" || !r.State.Healthy || r.State.SchemaVersion != 1 || r.Config == nil {
+	if r.State.Backend != "sqlite" || !r.State.Healthy || r.State.SchemaVersion != 2 || r.Config == nil {
 		t.Fatalf("state = %+v config = %+v", r.State, r.Config)
 	}
 	// The data plane is not reported by this process, so it is degraded,

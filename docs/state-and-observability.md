@@ -12,7 +12,13 @@ of it is a secret value: rows hold identities, references, decisions and times. 
 | `sqlite` | one scrim on one machine | `state.sqlite.path`, default `$XDG_STATE_HOME/scrim/state.db` |
 | `postgres` | shared and multi-replica deployments | `state.postgres.dsn`, a reference such as `env:SCRIM_PG_DSN` |
 
-The binary default is `memory` until profiles set a per-profile default (configuration tasks).
+Defaults per profile: `local` (the default profile) uses `sqlite`; `ci` and `k8s` use `memory` (set
+`postgres` for shared state in Kubernetes). The SQLite path follows the environment scrim was
+started with, so a service or a test with its own `XDG_STATE_HOME` never touches the user's file.
+
+While `scrim proxy` holds the SQLite file, commands that open state themselves (`scrim catalog`,
+`scrim api serve`) cannot open it; `scrim status` reports it as in use, and operator commands go
+through the admin API instead.
 
 ### SQLite
 
