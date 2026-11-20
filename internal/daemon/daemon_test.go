@@ -369,9 +369,9 @@ func TestCaptureFlagReachesSnapshot(t *testing.T) {
 	if err := d.WaitReady(ctx); err != nil {
 		t.Fatal(err)
 	}
-	c := h.snapshot(t).GetCapture()
-	if c.GetDir() != h.opts.Capture || c.GetRetentionSeconds() != uint64((7*24*time.Hour).Seconds()) {
-		t.Fatalf("capture = %v", c)
+	env := strings.Join(d.Supervisor().Options.ExtraEnv, "\n")
+	if !strings.Contains(env, "SCRIM_DP_CAPTURE_DIR="+h.opts.Capture+"\n") || !strings.Contains(env, "SCRIM_DP_CAPTURE_RETENTION_SECS=604800") {
+		t.Fatalf("data plane environment = %q", env)
 	}
 	if fi, err := os.Stat(h.opts.Capture); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Fatalf("capture dir: %v %v", fi, err)

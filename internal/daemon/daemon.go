@@ -121,6 +121,35 @@ type Info struct {
 	// that agents must reach directly, never through the forward proxy, so
 	// traffic does not loop.
 	Bypass []string `json:"bypass,omitempty"`
+	// DataPlane is what the data plane last reported, absent until it
+	// answered once.
+	DataPlane *DataPlaneInfo `json:"data_plane,omitempty"`
+	// Runtime is what the daemon protects right now.
+	Runtime Runtime `json:"runtime"`
+}
+
+// DataPlaneInfo summarises the data plane's status. Counts and references,
+// never values.
+type DataPlaneInfo struct {
+	Version         string   `json:"version,omitempty"`
+	Snapshot        uint64   `json:"snapshot"`
+	Values          uint32   `json:"values"`
+	MemoryLocked    bool     `json:"memory_locked"`
+	PolicyEngine    string   `json:"policy_engine,omitempty"`
+	Matcher         string   `json:"matcher,omitempty"`
+	Patterns        uint32   `json:"patterns,omitempty"`
+	ShortValues     uint32   `json:"short_values,omitempty"`
+	UnprotectedRefs []string `json:"unprotected_refs,omitempty"`
+}
+
+func dataPlaneInfo(st *pb.StatusResponse) *DataPlaneInfo {
+	if st == nil {
+		return nil
+	}
+	r := st.GetRedaction()
+	return &DataPlaneInfo{Version: st.GetDataPlaneVersion(), Snapshot: st.GetAppliedSnapshotVersion(), Values: st.GetValueCount(),
+		MemoryLocked: st.GetMemoryLocked(), PolicyEngine: st.GetPolicyEngine(), Matcher: r.GetEngine(),
+		Patterns: r.GetPatterns(), ShortValues: r.GetShortValues(), UnprotectedRefs: r.GetUnprotectedRefs()}
 }
 
 // Daemon is a running control plane.
@@ -142,6 +171,7 @@ type Daemon struct {
 	addrs     Addrs
 	dpReady   atomic.Bool
 	dpProblem string
+	dpStatus  *pb.StatusResponse
 
 	cancel  context.CancelFunc
 	servers []*http.Server
@@ -270,6 +300,12 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		return nil, err
 	}
 	a.Health.Ready("dataplane listeners", d.listenersHealth)
+	if d.capture != "" {
+		// Capture mode is a data plane process setting: it is fixed for the
+		// data plane's life, so the setting needs a restart.
+		d.sup.Options.ExtraEnv = append(d.sup.Options.ExtraEnv, "SCRIM_DP_CAPTURE_DIR="+d.capture,
+			fmt.Sprintf("SCRIM_DP_CAPTURE_RETENTION_SECS=%d", int64(CaptureRetention.Get(cfg).Seconds())))
+	}
 	d.sup.Options.ExtraEnv = append(d.sup.Options.ExtraEnv, o.DataPlaneEnv...)
 	d.sup.OnAsk = pp.Gate.Answer
 	sink := &eventSink{state: a.State, inst: a.Instruments, log: d.log}
@@ -572,6 +608,9 @@ func (d *Daemon) setListenerProblem(st *pb.StatusResponse, err error) {
 	}
 	d.mu.Lock()
 	d.dpProblem = problem
+	if st != nil {
+		d.dpStatus = st
+	}
 	d.mu.Unlock()
 }
 
@@ -635,6 +674,10 @@ func (d *Daemon) Info() Info {
 	rep := d.app.Health.Run(ctx, true)
 	in := Info{PID: os.Getpid(), Version: version.Version, StartedAt: d.started, Addrs: d.Addrs(), Capture: d.capture,
 		Ready: d.sup.Ready() && d.dpReady.Load() && rep.Status == "ok", Bypass: bypass(d.app.Config.Current())}
+	d.mu.Lock()
+	in.DataPlane = dataPlaneInfo(d.dpStatus)
+	d.mu.Unlock()
+	in.Runtime = d.runtimeInfo(ctx, in.Ready)
 	for k, v := range rep.Checks {
 		if v != "ok" {
 			if in.Problems == nil {

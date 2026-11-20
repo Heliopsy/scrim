@@ -3,11 +3,14 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -42,8 +45,9 @@ func TestEndToEndRealDataPlane(t *testing.T) {
 	token := seed(t, "sk-e2e-")
 	h := newHarness(t, token)
 	h.opts.DataPlaneEnv = nil
+	h.opts.Capture = filepath.Join(h.dir, "capture")
 	h.opts.Config.Environ = append(h.opts.Config.Environ, "SCRIM_DATAPLANE_PATH="+bin,
-		"SCRIM_PROXY_UPSTREAM_ANTHROPIC="+up.URL, "SCRIM_PROXY_FORWARD_LISTEN=")
+		"SCRIM_PROXY_UPSTREAM_ANTHROPIC="+up.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -72,6 +76,19 @@ func TestEndToEndRealDataPlane(t *testing.T) {
 			t.Fatalf("daemon not ready: %+v\n%s", d.Info().Problems, h.logs.String())
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+
+	rt := d.Info().Runtime
+	if len(rt.Interception) < 2 || !strings.HasPrefix(rt.Interception[1], "forward-proxy http://127.0.0.1:") {
+		t.Fatalf("interception = %v", rt.Interception)
+	}
+	if dp := d.Info().DataPlane; dp == nil || dp.Values == 0 || dp.PolicyEngine == "" {
+		t.Fatalf("data plane info = %+v", dp)
+	}
+	// The tool proxy signs with the CA the control plane holds.
+	pem, err := d.Supervisor().TrustBundle(ctx)
+	if err != nil || pem != d.TrustBundlePEM() {
+		t.Fatalf("data plane trust bundle differs from the control plane CA (%v)", err)
 	}
 
 	body := `{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"deploy with key ` + token + ` please"}]}`
@@ -104,5 +121,23 @@ func TestEndToEndRealDataPlane(t *testing.T) {
 	}
 	if strings.Contains(h.logs.String(), token) {
 		t.Fatal("the secret reached the log")
+	}
+
+	// Capture mode recorded what left, with the placeholder and without the
+	// secret or the agent's own key.
+	var captured []byte
+	eventually(t, "capture files", func() bool {
+		captured = nil
+		_ = filepath.WalkDir(h.opts.Capture, func(p string, e fs.DirEntry, err error) error {
+			if err == nil && !e.IsDir() {
+				b, _ := os.ReadFile(p) //nolint:gosec // test capture directory
+				captured = append(captured, b...)
+			}
+			return nil
+		})
+		return bytes.Contains(captured, []byte(ex[0].Placeholders[0]))
+	})
+	if bytes.Contains(captured, []byte(token)) || bytes.Contains(captured, []byte("agent-own-key")) {
+		t.Fatal("a capture file holds the secret or the agent's key")
 	}
 }

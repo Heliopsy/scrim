@@ -37,7 +37,8 @@ var (
 	// ForwardListen is the forward proxy (CONNECT with TLS interception).
 	ForwardListen = config.Register(config.Spec[string]{
 		Key:             "proxy.forward-listen",
-		Description:     "TCP address of the forward proxy for agents with HTTPS_PROXY set: provider hosts go to the LLM proxy, every other host to the tool proxy. Empty disables it.",
+		Default:         "127.0.0.1:9791",
+		Description:     "TCP address of the forward proxy for agents with HTTPS_PROXY set (scrim run sets it): provider hosts go to the LLM proxy, every other host to the tool proxy with credential injection. Empty disables it; keep it on loopback.",
 		Flag:            true,
 		RestartRequired: true,
 		Validate:        optionalHostPort,
@@ -91,15 +92,17 @@ var (
 	})
 	// CaptureDir turns on capture mode.
 	CaptureDir = config.Register(config.Spec[string]{
-		Key:         "proxy.capture.dir",
-		Description: "Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture DIR` sets it.",
-		Flag:        true,
+		Key:             "proxy.capture.dir",
+		Description:     "Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture DIR` sets it.",
+		Flag:            true,
+		RestartRequired: true,
 	})
 	// CaptureRetention bounds how long captures are kept.
 	CaptureRetention = config.Register(config.Spec[time.Duration]{
-		Key:         "proxy.capture.retention",
-		Default:     7 * 24 * time.Hour,
-		Description: "Captured files older than this are deleted.",
+		Key:             "proxy.capture.retention",
+		Default:         7 * 24 * time.Hour,
+		Description:     "Captured files older than this are deleted.",
+		RestartRequired: true,
 		Validate: func(d time.Duration) error {
 			if d < time.Minute {
 				return errors.New("must be at least 1m")

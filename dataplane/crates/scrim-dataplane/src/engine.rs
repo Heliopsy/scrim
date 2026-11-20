@@ -21,7 +21,9 @@ use arc_swap::ArcSwapOption;
 use scrim_llm::intercept::LlmIntercept;
 use scrim_llm::{ProxyConfig, config::TlsConfig};
 use scrim_proto::v1;
-use scrim_toolproxy::{CompiledSnapshot, ToolProxy, UpstreamSettings};
+use scrim_toolproxy::{
+    CaRing, CertificateAuthority, CompiledSnapshot, ToolProxy, UpstreamSettings,
+};
 
 use crate::asks::{Answer, Broker};
 use crate::events::Bus;
@@ -133,6 +135,7 @@ impl Shared {
                 extra_ca_file: settings.extra_ca_file.clone(),
                 ..TlsConfig::default()
             },
+            capture: settings.capture.clone(),
             ..ProxyConfig::default()
         };
         let llm = Arc::new(
@@ -178,8 +181,9 @@ impl Shared {
 
     /// Validates, builds and publishes `snap`. Returns the version now in force and the number
     /// of values. On error the snapshot in force stays. Must run inside a tokio runtime.
-    pub async fn apply(self: &Arc<Self>, snap: v1::Snapshot) -> Result<(u64, u32), Rejected> {
+    pub async fn apply(self: &Arc<Self>, mut snap: v1::Snapshot) -> Result<(u64, u32), Rejected> {
         let _serial = self.apply.lock().await;
+        let ca = std::mem::take(&mut snap.tool_proxy_ca);
         let in_force = self.applied_version();
         let this = Arc::clone(self);
         // Building the dictionary and compiling the tool proxy's credentials is CPU work of up
@@ -194,6 +198,8 @@ impl Shared {
                 .tool_proxy
                 .compile(tool_proxy)
                 .map_err(|e| Rejected::Invalid(format!("tool proxy: {e}")))?;
+            // Last before the swap: everything else in the snapshot is valid.
+            install_ca(this.tool_proxy.ca(), &ca)?;
             Ok::<_, Rejected>(Bundle {
                 version: applied.version,
                 applied,
@@ -220,6 +226,43 @@ impl Shared {
         self.captures.detach();
         self.snapshot.store(None);
     }
+}
+
+/// Makes the tool proxy's CA ring match the generations the control plane sent: exactly one
+/// current, at most one previous (still trusted through a cross certificate). No entries keeps
+/// the ring as it is. Errors never contain key material.
+fn install_ca(ring: &CaRing, entries: &[v1::CaCertificate]) -> Result<(), Rejected> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let mut current = entries.iter().filter(|c| c.current);
+    let (Some(cur), None) = (current.next(), current.next()) else {
+        return Err(Rejected::Invalid(
+            "tool_proxy_ca needs exactly one current certificate".into(),
+        ));
+    };
+    let mut previous = entries.iter().filter(|c| !c.current);
+    let prev = previous.next();
+    if previous.next().is_some() {
+        return Err(Rejected::Invalid(
+            "tool_proxy_ca holds more than one previous certificate".into(),
+        ));
+    }
+    if ring.current_cert_pem() == cur.cert_pem
+        && ring.previous_cert_pem().as_deref() == prev.map(|p| p.cert_pem.as_str())
+    {
+        return Ok(());
+    }
+    let parse = |c: &v1::CaCertificate| {
+        let key = std::str::from_utf8(&c.key_pem)
+            .map_err(|_| Rejected::Invalid("tool_proxy_ca key is not PEM".into()))?;
+        CertificateAuthority::from_pem(&c.cert_pem, key)
+            .map_err(|e| Rejected::Invalid(format!("tool_proxy_ca: {e}")))
+    };
+    let current = parse(cur)?;
+    let previous = prev.map(parse).transpose()?;
+    ring.install(current, previous)
+        .map_err(|e| Rejected::Invalid(format!("tool_proxy_ca: {e}")))
 }
 
 /// A handle the traffic path uses. Cheap to clone.

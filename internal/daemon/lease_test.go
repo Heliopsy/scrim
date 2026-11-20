@@ -99,4 +99,18 @@ func TestSessionTokenRedacted(t *testing.T) {
 	if strings.Contains(h.logs.String(), tok) {
 		t.Fatal("the session token reached the log")
 	}
+	rt := d.Info().Runtime
+	modes := strings.Join(rt.Interception, "; ")
+	if rt.Sessions != 1 || !strings.Contains(modes, "wrapper (1 scrim run session(s))") || !strings.Contains(modes, "base-url http://127.0.0.1:") ||
+		!strings.Contains(modes, "forward-proxy http://127.0.0.1:") {
+		t.Fatalf("runtime = %+v", rt)
+	}
+	for _, p := range rt.Protections {
+		if p.Name == "redaction" && !p.Active || p.Name == "direct egress blocked" && p.Active {
+			t.Fatalf("protections = %+v", rt.Protections)
+		}
+	}
+	if st := (Info{}).StatusDataPlane(); st.Running || st.Healthy {
+		t.Fatalf("empty info claims a running data plane: %+v", st)
+	}
 }

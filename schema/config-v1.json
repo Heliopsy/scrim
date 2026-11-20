@@ -598,7 +598,7 @@
               "type": "string",
               "x-scrim-env": "SCRIM_PROXY_CAPTURE_DIR",
               "x-scrim-flag": "--proxy-capture-dir",
-              "x-scrim-restart-required": false,
+              "x-scrim-restart-required": true,
               "x-scrim-weakening": false
             },
             "retention": {
@@ -607,7 +607,7 @@
               "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
               "type": "string",
               "x-scrim-env": "SCRIM_PROXY_CAPTURE_RETENTION",
-              "x-scrim-restart-required": false,
+              "x-scrim-restart-required": true,
               "x-scrim-weakening": false
             }
           },
@@ -640,8 +640,8 @@
           "type": "object"
         },
         "forward-listen": {
-          "default": "",
-          "description": "TCP address of the forward proxy for agents with HTTPS_PROXY set: provider hosts go to the LLM proxy, every other host to the tool proxy. Empty disables it.",
+          "default": "127.0.0.1:9791",
+          "description": "TCP address of the forward proxy for agents with HTTPS_PROXY set (scrim run sets it): provider hosts go to the LLM proxy, every other host to the tool proxy with credential injection. Empty disables it; keep it on loopback.",
           "type": "string",
           "x-scrim-env": "SCRIM_PROXY_FORWARD_LISTEN",
           "x-scrim-flag": "--proxy-forward-listen",
@@ -742,6 +742,39 @@
           "x-scrim-collection": true,
           "x-scrim-env": "SCRIM_REDACTION_PLACEHOLDER_KEYS",
           "x-scrim-restart-required": false
+        }
+      },
+      "type": "object"
+    },
+    "run": {
+      "additionalProperties": false,
+      "properties": {
+        "allow-unredacted-start": {
+          "default": false,
+          "description": "Start the agent anyway when scrim cannot start, its data plane is not ready or no session can be minted. The agent then reaches providers directly and unredacted; scrim run prints a warning.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_RUN_ALLOW_UNREDACTED_START",
+          "x-scrim-flag": "--run-allow-unredacted-start",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true
+        },
+        "mcp": {
+          "default": true,
+          "description": "Register scrim mcp with the agent for this session (Claude Code --mcp-config, Codex -c mcp_servers.scrim). Nothing is written to the agent's own configuration.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_RUN_MCP",
+          "x-scrim-flag": "--run-mcp",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "placeholder-env": {
+          "default": true,
+          "description": "Export each declared catalog placeholder that resolves for the session as an environment variable of the same name holding the placeholder, for example SCRIM_ACME_KEY=SCRIM_ACME_KEY.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_RUN_PLACEHOLDER_ENV",
+          "x-scrim-flag": "--run-placeholder-env",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
         }
       },
       "type": "object"

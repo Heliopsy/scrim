@@ -60,6 +60,13 @@ func (e *Env) Config() (*config.Config, error) {
 	return e.cfg, e.cfgErr
 }
 
+// resetConfig drops the cached configuration, so the next Config call
+// sees flags set after it was first read.
+func (e *Env) resetConfig() {
+	e.cfgOnce = sync.Once{}
+	e.cfg, e.cfgErr = nil, nil
+}
+
 // ConfigOptions says where this invocation reads configuration from, for
 // [config.Build] and [config.NewManager].
 func (e *Env) ConfigOptions() config.Options {

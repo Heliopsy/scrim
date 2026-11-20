@@ -83,7 +83,6 @@ proxy:
   listen: 127.0.0.1:9790
   socket: /run/scrim/llm.sock
   chain: {url: "http://127.0.0.1:9000", on-unavailable: direct}
-  capture: {dir: /var/lib/scrim/capture, retention: 1h}
 redaction:
   min-value-length: 12
 `)
@@ -134,15 +133,12 @@ redaction:
 	if s.GetRedaction().GetMinValueLength() != 12 || s.GetPolicy().GetVersion() != 3 {
 		t.Fatalf("redaction %v policy %v", s.GetRedaction(), s.GetPolicy())
 	}
-	if s.GetCapture().GetDir() != "/var/lib/scrim/capture" || s.GetCapture().GetRetentionSeconds() != 3600 {
-		t.Fatalf("capture = %v", s.GetCapture())
-	}
 	r := s.GetRoutes()[0]
 	if r.GetName() != "anthropic" || r.GetUpstream() != "https://api.anthropic.com" || r.GetPathPrefix() != "/anthropic" ||
 		r.GetChain().GetUrl() != "http://127.0.0.1:9000" || !r.GetChain().GetDirectOnUnavailable() {
 		t.Fatalf("route = %v", r)
 	}
-	if l := s.GetListeners(); len(l) != 2 || l[0].GetKind() != pb.ListenerKind_LISTENER_KIND_BASE_URL || l[1].GetKind() != pb.ListenerKind_LISTENER_KIND_UNIX {
+	if l := s.GetListeners(); len(l) != 3 || l[2].GetKind() != pb.ListenerKind_LISTENER_KIND_FORWARD_PROXY || l[0].GetKind() != pb.ListenerKind_LISTENER_KIND_BASE_URL || l[1].GetKind() != pb.ListenerKind_LISTENER_KIND_UNIX {
 		t.Fatalf("listeners = %v", l)
 	}
 	if ca := s.GetToolProxyCa(); len(ca) != 1 || string(ca[0].GetKeyPem()) != caKey || !ca[0].GetCurrent() {

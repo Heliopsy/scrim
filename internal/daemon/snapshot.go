@@ -142,9 +142,6 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 		CaptureRules: captureRulesPB(cfg),
 		Policy:       &pb.Policy{DefaultEffect: pb.Effect_EFFECT_DENY},
 	}
-	if dir := CaptureDir.Get(cfg); dir != "" {
-		snap.Capture = &pb.CaptureSettings{Dir: dir, RetentionSeconds: uint64(CaptureRetention.Get(cfg).Seconds())}
-	}
 	if b.Policy != nil {
 		if p := b.Policy(); p != nil {
 			snap.Policy = p

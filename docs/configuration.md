@@ -255,11 +255,11 @@ is out of date.
 | [`policy.deny-all-refresh`](#policydeny-all-refresh) | duration | `1s` | hot |
 | [`policy.rules-file`](#policyrules-file) | string | `""` | hot |
 | [`profile`](#profile) | string | `local` | hot |
-| [`proxy.capture.dir`](#proxycapturedir) | string | `""` | hot |
-| [`proxy.capture.retention`](#proxycaptureretention) | duration | `168h0m0s` | hot |
+| [`proxy.capture.dir`](#proxycapturedir) | string | `""` | restart required |
+| [`proxy.capture.retention`](#proxycaptureretention) | duration | `168h0m0s` | restart required |
 | [`proxy.chain.on-unavailable`](#proxychainon-unavailable) | string | `fail` | hot |
 | [`proxy.chain.url`](#proxychainurl) | string | `""` | hot |
-| [`proxy.forward-listen`](#proxyforward-listen) | string | `""` | restart required |
+| [`proxy.forward-listen`](#proxyforward-listen) | string | `127.0.0.1:9791` | restart required |
 | [`proxy.listen`](#proxylisten) | string | `127.0.0.1:9790` | restart required |
 | [`proxy.socket`](#proxysocket) | string | `""` | restart required |
 | [`proxy.upstream.anthropic`](#proxyupstreamanthropic) | string | `https://api.anthropic.com` | hot |
@@ -267,6 +267,9 @@ is out of date.
 | [`proxy.upstream.openai`](#proxyupstreamopenai) | string | `https://api.openai.com` | hot |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
+| [`run.allow-unredacted-start`](#runallow-unredacted-start) | bool | `false` | hot |
+| [`run.mcp`](#runmcp) | bool | `true` | hot |
+| [`run.placeholder-env`](#runplaceholder-env) | bool | `true` | hot |
 | [`session.max-ttl`](#sessionmax-ttl) | duration | `168h0m0s` | restart required |
 | [`session.ttl`](#sessionttl) | duration | `12h0m0s` | restart required |
 | [`state.backend`](#statebackend) | string | `memory` | restart required |
@@ -899,7 +902,7 @@ Capture mode: write every provider request exactly as it left, and the response 
 | Default | `""` |
 | Environment | `SCRIM_PROXY_CAPTURE_DIR` |
 | Flag | `--proxy-capture-dir` |
-| Reload | hot |
+| Reload | restart required |
 
 #### `proxy.capture.retention`
 
@@ -911,7 +914,7 @@ Captured files older than this are deleted.
 | Default | `168h0m0s` |
 | Environment | `SCRIM_PROXY_CAPTURE_RETENTION` |
 | Flag | none |
-| Reload | hot |
+| Reload | restart required |
 
 #### `proxy.chain.on-unavailable`
 
@@ -940,12 +943,12 @@ Base URL of a chained upstream (for example a context compression proxy) that re
 
 #### `proxy.forward-listen`
 
-TCP address of the forward proxy for agents with HTTPS_PROXY set: provider hosts go to the LLM proxy, every other host to the tool proxy. Empty disables it.
+TCP address of the forward proxy for agents with HTTPS_PROXY set (scrim run sets it): provider hosts go to the LLM proxy, every other host to the tool proxy with credential injection. Empty disables it; keep it on loopback.
 
 | | |
 |---|---|
 | Type | string |
-| Default | `""` |
+| Default | `127.0.0.1:9791` |
 | Environment | `SCRIM_PROXY_FORWARD_LISTEN` |
 | Flag | `--proxy-forward-listen` |
 | Reload | restart required |
@@ -1035,6 +1038,45 @@ Directory of the generated placeholder key, used when redaction.placeholder-keys
 | Environment | `SCRIM_REDACTION_PLACEHOLDER_KEY_DIR` |
 | Flag | none |
 | Reload | restart required |
+
+### run
+
+#### `run.allow-unredacted-start`
+
+Start the agent anyway when scrim cannot start, its data plane is not ready or no session can be minted. The agent then reaches providers directly and unredacted; scrim run prints a warning.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_RUN_ALLOW_UNREDACTED_START` |
+| Flag | `--run-allow-unredacted-start` |
+| Reload | hot |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `run.mcp`
+
+Register scrim mcp with the agent for this session (Claude Code --mcp-config, Codex -c mcp_servers.scrim). Nothing is written to the agent's own configuration.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `true` |
+| Environment | `SCRIM_RUN_MCP` |
+| Flag | `--run-mcp` |
+| Reload | hot |
+
+#### `run.placeholder-env`
+
+Export each declared catalog placeholder that resolves for the session as an environment variable of the same name holding the placeholder, for example SCRIM_ACME_KEY=SCRIM_ACME_KEY.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `true` |
+| Environment | `SCRIM_RUN_PLACEHOLDER_ENV` |
+| Flag | `--run-placeholder-env` |
+| Reload | hot |
 
 ### session
 
