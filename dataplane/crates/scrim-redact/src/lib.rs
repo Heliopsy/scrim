@@ -95,6 +95,10 @@
 mod detect;
 mod error;
 mod guard;
+#[cfg(any(test, feature = "oracle"))]
+mod guard_oracle;
+#[cfg(test)]
+mod guard_tests;
 mod matcher;
 mod placeholder;
 mod redactor;

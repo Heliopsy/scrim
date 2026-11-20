@@ -34,6 +34,18 @@ pub fn snapshot(
     engine: EngineChoice,
     class: ValueClass,
 ) -> Option<Snapshot> {
+    snapshot_threads(vals, min_len, engine, class, 1)
+}
+
+/// Like [`snapshot`], with the guard splitting every body of 16 bytes or more over `threads`
+/// workers.
+pub fn snapshot_threads(
+    vals: &[Vec<u8>],
+    min_len: usize,
+    engine: EngineChoice,
+    class: ValueClass,
+    threads: usize,
+) -> Option<Snapshot> {
     let kr = Arc::new(Keyring::new(PlaceholderKey::new(1, &[7; 32]).ok()?));
     let entries = vals
         .iter()
@@ -57,6 +69,8 @@ pub fn snapshot(
             ..Default::default()
         },
         guard_max_repairs: 10_000,
+        parallel_threads: threads,
+        parallel_min_bytes: 16,
         ..Config::default()
     };
     Snapshot::build(entries, kr, &cfg).ok()

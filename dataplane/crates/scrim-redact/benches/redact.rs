@@ -61,6 +61,14 @@ fn body(size: (&str, usize), set: &[String], hits: bool, n: usize) -> Vec<u8> {
     }
 }
 
+/// `SCRIM_REDACT_THREADS` overrides `Config::parallel_threads` (1: single core).
+fn parallel_threads() -> usize {
+    std::env::var("SCRIM_REDACT_THREADS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(Config::default().parallel_threads)
+}
+
 fn snapshot(set: &[String], engine: EngineChoice, class: ValueClass) -> Snapshot {
     let kr = Arc::new(Keyring::new(PlaceholderKey::new(1, &[0x5a; 32]).unwrap()));
     let entries = set
@@ -80,6 +88,7 @@ fn snapshot(set: &[String], engine: EngineChoice, class: ValueClass) -> Snapshot
         kr,
         &Config {
             engine,
+            parallel_threads: parallel_threads(),
             ..Config::default()
         },
     )
@@ -161,7 +170,9 @@ fn percentiles(mut v: Vec<Duration>) -> (Duration, Duration, Duration) {
     (at(0.5), at(0.99), *v.last().unwrap())
 }
 
-/// The latency budget: redact + guard on 1 MB bodies, p99 over many requests.
+/// The latency budget: redact + guard per request, p50/p99 over many requests, and the two
+/// halves on their own. 1 MB bodies by default; `SCRIM_REDACT_LATENCY_SIZES=100k,1m,4m` for the
+/// full matrix. The guard is timed on the redactor's output, as `protect` runs it.
 fn latency(_c: &mut Criterion) {
     let runs: usize = std::env::var("SCRIM_REDACT_LATENCY_RUNS")
         .ok()
@@ -170,33 +181,61 @@ fn latency(_c: &mut Criterion) {
     if runs == 0 {
         return;
     }
-    eprintln!("\nlatency: redact+guard per 1 MB request, {runs} runs each (p50 / p99 / max)");
+    let sizes: Vec<(&str, usize)> = match std::env::var("SCRIM_REDACT_LATENCY_SIZES") {
+        Ok(v) => SIZES
+            .iter()
+            .copied()
+            .filter(|(n, _)| v.split(',').any(|x| x == *n))
+            .collect(),
+        Err(_) => vec![SIZES[1]],
+    };
+    eprintln!(
+        "\nlatency: {runs} runs each, p50 / p99 (redact, guard on redacted bytes, redact = Redactor::redact on one thread, guard = Guard::check, protect = both as protect runs them), parallel threads {}",
+        parallel_threads()
+    );
     for n in SETS {
         let set = secrets(n);
         let snap = snapshot(&set, EngineChoice::Auto, ValueClass::Credential);
-        for hits in [true, false] {
-            let b = body(SIZES[1], &set, hits, n);
-            let mut ws = Workspace::new();
-            let mut out = Vec::new();
-            for _ in 0..10 {
-                snap.protect(&b, &mut ws).unwrap();
+        for &size in &sizes {
+            for hits in [true, false] {
+                let b = body(size, &set, hits, n);
+                let mut ws = Workspace::new();
+                let mut out = Vec::new();
+                let mut gs = GuardScratch::new();
+                for _ in 0..10 {
+                    snap.protect(&b, &mut ws).unwrap();
+                }
+                snap.redactor().redact(&b, &mut out).unwrap();
+                let red = out.clone();
+                let (mut t, mut tr, mut tg) = (
+                    Vec::with_capacity(runs),
+                    Vec::with_capacity(runs),
+                    Vec::with_capacity(runs),
+                );
+                for _ in 0..runs {
+                    let s = Instant::now();
+                    black_box(snap.protect(black_box(&b), &mut ws).unwrap().bytes.len());
+                    t.push(s.elapsed());
+                    let s = Instant::now();
+                    black_box(snap.redactor().redact(black_box(&b), &mut out).unwrap());
+                    tr.push(s.elapsed());
+                    let s = Instant::now();
+                    black_box(matches!(
+                        snap.guard().check(black_box(&red), &mut gs),
+                        Verdict::Clean
+                    ));
+                    tg.push(s.elapsed());
+                }
+                let (p50, p99, _) = percentiles(t);
+                let (r50, r99, _) = percentiles(tr);
+                let (g50, g99, _) = percentiles(tg);
+                eprintln!(
+                    "  set={n:>5} size={:<4} {:<5} engine={:?}: redact {r50:>9.2?} / {r99:>9.2?}   guard {g50:>9.2?} / {g99:>9.2?}   protect {p50:>9.2?} / {p99:>9.2?}",
+                    size.0,
+                    if hits { "hits" } else { "clean" },
+                    snap.report().engine
+                );
             }
-            let (mut t, mut tr) = (Vec::with_capacity(runs), Vec::with_capacity(runs));
-            for _ in 0..runs {
-                let s = Instant::now();
-                black_box(snap.protect(black_box(&b), &mut ws).unwrap().bytes.len());
-                t.push(s.elapsed());
-                let s = Instant::now();
-                black_box(snap.redactor().redact(black_box(&b), &mut out).unwrap());
-                tr.push(s.elapsed());
-            }
-            let (p50, p99, max) = percentiles(t);
-            let (r50, r99, _) = percentiles(tr);
-            eprintln!(
-                "  set={n:>5} {:<5} engine={:?}: protect {p50:>9.2?} / {p99:>9.2?} / {max:>9.2?}   redact only {r50:>9.2?} / {r99:>9.2?}",
-                if hits { "hits" } else { "clean" },
-                snap.report().engine
-            );
         }
     }
 }

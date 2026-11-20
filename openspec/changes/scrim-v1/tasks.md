@@ -16,7 +16,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 2. Redaction core
 
-- [ ] 2.0 Hash-window prefilter matcher for large sets with Aho-Corasick for small sets (design D13); verify: identical output to the reference matcher on every fixture and at least 500 MB/s single core at 10,000 secrets
+- [x] 2.0 Hash-window prefilter matcher for large sets with Aho-Corasick for small sets (design D13); verify: identical output to the reference matcher on every fixture and at least 500 MB/s single core at 10,000 secrets
 
 - [x] 2.1 Value dictionary with encoded variants (raw, JSON-escaped, base64 std/url at three alignments, hex, URL-encoded) and minimum-length rule; verify: table tests per variant and per edge length
 - [x] 2.2 Multi-pattern matcher over raw request bytes with atomic rebuild and swap; verify: concurrent requests during rebuild never block and never miss a value present before and after the swap

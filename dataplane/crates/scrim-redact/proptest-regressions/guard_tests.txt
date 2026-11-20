@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a9a57aa31b3d30fb74253e3ebe4007f69584fa0e5607f86295653ce4d1f4def7 # shrinks to (values, body) = ([[79, 101, 129, 157, 13, 108, 44, 157]], [79, 101, 129, 157, 13, 108, 44, 157, 65, 65, 65, 84, 50, 87, 66, 110, 81, 49, 115, 76, 74, 48])
+cc ce7645f9742fecf1b5c59b314b583e8eea752852f0d1180160b6f89bb83df06f # shrinks to (values, body) = ([[65, 65, 65, 65, 65, 65, 65, 92]], [65, 65, 65, 65, 65, 65, 65, 92, 92])
+cc 1838e002ee4abc568e400236b98531ef3b2457eda9f858b869fbc9cc83bf82d4 # shrinks to (values, body) = ([[65, 65, 65, 65, 72, 49, 103, 25]], [81, 85, 70, 66, 81, 85, 70, 66, 81, 85, 103, 13, 10, 120, 90, 120, 107])
+cc d564f1ea1f3a38f0e98108e8163bc8518337a405cc62a426744e485fac27d859 # shrinks to (values, body) = ([[6, 124, 0, 17, 83, 173, 157, 145]], [71, 102, 65, 65, 82, 85, 54, 50, 100, 107, 85, 69, 65, 65, 65, 65, 65, 65, 65, 65, 65, 6, 124, 0, 17, 83, 173, 157, 145, 65, 65, 65])
+cc 9aaa943ff083a00fc148ff7f19700b4eb29c0aee0d0494074448df6f0f781b61 # shrinks to (values, body) = ([[65, 65, 65, 65, 65, 65, 65, 0]], [65, 65, 65, 65, 65, 65, 65, 92, 92, 92, 92, 117, 48, 48, 48, 48])

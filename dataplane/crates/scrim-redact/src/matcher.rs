@@ -5,19 +5,21 @@
 //! first wins, among those the longest, and scanning resumes at its end.
 //!
 //! * [`AcEngine`]: Aho-Corasick (`aho-corasick` crate). Its SIMD prefilter makes it the fastest
-//!   choice for small sets, but only up to 64 patterns per automaton, so sets of up to
+//!   choice for small sets, but only up to 64 patterns per automaton. Sets of up to
+//!   [`PACKED_MAX`] patterns use the packed Teddy searcher directly; larger ones up to
 //!   [`AC_PART`]` * `[`AC_MAX_PARTS`] patterns are split and merged. With one automaton it is the
 //!   reference implementation in tests.
 //! * [`HashWindowEngine`]: every pattern of at least [`WINDOW`] bytes is indexed by its first
-//!   eight bytes. Each eight-byte window of the input is hashed and tested against a blocked
-//!   Bloom filter (one cache line word per window, two bits), so the per-byte cost does not grow
-//!   with the set. A filter hit is looked up exactly in a prefix table that points into the
+//!   eight bytes. A gram filter over the five-byte grams at offsets 0 to 3 of every pattern is
+//!   probed at every fourth input position; each gram hit tests the eight-byte windows it can
+//!   belong to against a blocked Bloom filter (one word per window, two bits), so the per-byte
+//!   cost does not grow with the set. A filter hit is looked up exactly in a prefix table that points into the
 //!   lexicographically sorted patterns sharing that prefix; the longest pattern that is a prefix
 //!   of the input there is found by binary search for the predecessor plus a walk up precomputed
 //!   "longest proper prefix" links. Patterns shorter than [`WINDOW`] (short values) go to a small
 //!   Aho-Corasick tier, and the two tiers are merged with the same leftmost-longest rule.
 
-use aho_corasick::{AhoCorasick, Input, MatchKind};
+use aho_corasick::{AhoCorasick, Input, MatchKind, Span, packed};
 use zeroize::Zeroizing;
 
 use crate::error::BuildError;
@@ -123,15 +125,36 @@ pub(crate) const AC_PART: usize = 64;
 /// Most parts a split engine uses; larger sets get one automaton.
 pub(crate) const AC_MAX_PARTS: usize = 4;
 
-/// Aho-Corasick engine: one automaton over the whole set, or up to [`AC_MAX_PARTS`] automata of
+/// Most patterns searched with one packed (Teddy) searcher instead of split automata. The
+/// `aho-corasick` crate's packed searcher takes up to 128 patterns; its automata only use Teddy
+/// up to 64, a heuristic limit that the packed builder lets us lift. Measured on the benchmark's
+/// 10-secret set (73 patterns, see the crate README): one Teddy pass beats two split automata.
+pub(crate) const PACKED_MAX: usize = 128;
+
+/// Aho-Corasick engine: one packed (Teddy) searcher for up to [`PACKED_MAX`] patterns where the
+/// CPU supports it, else one automaton over the whole set, or up to [`AC_MAX_PARTS`] automata of
 /// [`AC_PART`] patterns whose leftmost-longest matches are merged.
 pub(crate) struct AcEngine {
+    packed: Option<packed::Searcher>,
     parts: Vec<(AhoCorasick, Vec<u32>)>,
 }
 
 impl AcEngine {
     pub(crate) fn build(set: &PatternSet) -> Result<Self, BuildError> {
         let ids: Vec<u32> = (0..set.len() as u32).collect();
+        if set.len() <= PACKED_MAX {
+            let mut b = packed::Config::new()
+                .match_kind(packed::MatchKind::LeftmostLongest)
+                .heuristic_pattern_limits(false)
+                .builder();
+            b.extend(ids.iter().map(|&i| set.get(i)));
+            if let Some(p) = b.build() {
+                return Ok(Self {
+                    packed: Some(p),
+                    parts: Vec::new(),
+                });
+            }
+        }
         let chunk = if set.len() <= AC_PART * AC_MAX_PARTS {
             AC_PART
         } else {
@@ -141,7 +164,10 @@ impl AcEngine {
             .chunks(chunk)
             .map(|c| Ok((build_ac(c.iter().map(|&i| set.get(i)))?, c.to_vec())))
             .collect::<Result<Vec<_>, BuildError>>()?;
-        Ok(Self { parts })
+        Ok(Self {
+            packed: None,
+            parts,
+        })
     }
 }
 
@@ -149,6 +175,16 @@ impl Engine for AcEngine {
     fn next(&self, _set: &PatternSet, hay: &[u8], cur: &mut Cursor) -> Option<Match> {
         if cur.pos >= hay.len() {
             return None;
+        }
+        if let Some(p) = &self.packed {
+            // Pattern ids are the set's indices: the builder got them in order.
+            let m = p.find_in(hay, Span::from(cur.pos..hay.len()))?;
+            cur.pos = m.end();
+            return Some(Match {
+                start: m.start(),
+                end: m.end(),
+                pattern: m.pattern().as_u32(),
+            });
         }
         let find = |ac: &AhoCorasick, ids: &[u32], from: usize| {
             ac.find(Input::new(hay).span(from..hay.len()))
@@ -190,6 +226,10 @@ impl Engine for AcEngine {
 
 /// Hash-window engine (design D13).
 pub(crate) struct HashWindowEngine {
+    /// Filter over the five-byte grams at offsets 0 to 3 of every long pattern: probed at every
+    /// fourth input position only, it says where a window check can succeed.
+    gram_bloom: Vec<u64>,
+    gram_shift: u32,
     bloom: Vec<u64>,
     word_shift: u32,
     table: PrefixTable,
@@ -206,6 +246,23 @@ const K1: u64 = 0x9E37_79B9_7F4A_7C15;
 #[inline]
 fn mix(x: u64) -> u64 {
     x.wrapping_mul(K1)
+}
+
+/// Probe stride and gram length of the hash-window engine's gram filter: a pattern of
+/// [`WINDOW`] bytes holds a gram at each of the offsets `0..GRAM_STRIDE`.
+const GRAM_STRIDE: usize = 4;
+const GRAM_LEN: usize = WINDOW - GRAM_STRIDE + 1;
+
+/// The five bytes of `b` at `p`, little-endian.
+#[inline]
+fn load_gram(b: &[u8], p: usize) -> u64 {
+    if let Some(&[a, b, c, d, e, ..]) = b.get(p..p + 8) {
+        u64::from_le_bytes([a, b, c, d, e, 0, 0, 0])
+    } else {
+        let mut w = [0u8; 8];
+        w[..GRAM_LEN].copy_from_slice(&b[p..p + GRAM_LEN]);
+        u64::from_le_bytes(w)
+    }
 }
 
 #[inline]
@@ -263,6 +320,24 @@ impl HashWindowEngine {
             bloom[(h >> word_shift) as usize] |= bloom_mask(h);
         }
 
+        // Gram filter: ~16 bits per distinct gram, at least 64 words.
+        let mut grams: Vec<u64> = long
+            .iter()
+            .flat_map(|&p| {
+                let b = set.get(p);
+                (0..GRAM_STRIDE).map(move |o| load_gram(b, o))
+            })
+            .collect();
+        grams.sort_unstable();
+        grams.dedup();
+        let gwords = (grams.len() / 4).next_power_of_two().max(64);
+        let gram_shift = 64 - gwords.trailing_zeros();
+        let mut gram_bloom = vec![0u64; gwords];
+        for &g in &grams {
+            let h = mix(g);
+            gram_bloom[(h >> gram_shift) as usize] |= bloom_mask(h);
+        }
+
         let table = PrefixTable::build(&ranges);
         let short = if short.is_empty() {
             None
@@ -271,6 +346,8 @@ impl HashWindowEngine {
             Some((ac, short))
         };
         Ok(Self {
+            gram_bloom,
+            gram_shift,
             bloom,
             word_shift,
             table,
@@ -319,30 +396,71 @@ impl HashWindowEngine {
         if from > stop {
             return None;
         }
-        let region = &hay[from..stop + WINDOW];
-        for (j, w) in region.windows(WINDOW).enumerate() {
-            let x = u64::from_le_bytes(w.try_into().unwrap_or([0; 8]));
+        // A long pattern starting at `i` holds, at offset `(4 - i % 4) % 4`, a gram that starts
+        // at a multiple of four. So grams are probed at those positions only, and each filter hit
+        // checks the (up to) four windows it can belong to, in order. Probes go in order and
+        // each start belongs to exactly one probe, so the first window that verifies is the
+        // leftmost match.
+        let mut q = from.next_multiple_of(GRAM_STRIDE);
+        let q_last = stop.next_multiple_of(GRAM_STRIDE);
+        while q <= q_last && q + GRAM_LEN <= hay.len() {
+            let g = load_gram(hay, q);
+            let h = mix(g);
+            let m = bloom_mask(h);
+            if self.gram_bloom[(h >> self.gram_shift) as usize] & m == m
+                && let Some(found) = self.windows_at(set, hay, q, from, stop)
+            {
+                return Some(found);
+            }
+            q += GRAM_STRIDE;
+        }
+        None
+    }
+
+    /// The leftmost match starting in `[max(from, q - 3), min(q, stop)]`.
+    #[inline(never)]
+    fn windows_at(
+        &self,
+        set: &PatternSet,
+        hay: &[u8],
+        q: usize,
+        from: usize,
+        stop: usize,
+    ) -> Option<Match> {
+        for i in q.saturating_sub(GRAM_STRIDE - 1).max(from)..=q.min(stop) {
+            let x = load8(&hay[i..]);
             let h = mix(x);
             let m = bloom_mask(h);
-            if self.bloom[(h >> self.word_shift) as usize] & m == m {
-                let i = from + j;
-                if let Some(p) = self.verify(set, x, &hay[i..]) {
-                    return Some(Match {
-                        start: i,
-                        end: i + set.get(p).len(),
-                        pattern: p,
-                    });
-                }
+            if self.bloom[(h >> self.word_shift) as usize] & m == m
+                && let Some(p) = self.verify(set, x, &hay[i..])
+            {
+                return Some(Match {
+                    start: i,
+                    end: i + set.get(p).len(),
+                    pattern: p,
+                });
             }
         }
         None
     }
 }
 
+/// The two filter bits of `h`. Looked up rather than shifted: a variable shift is three
+/// micro-ops on x86-64 without BMI2, and this runs once per input byte.
 #[inline]
 fn bloom_mask(h: u64) -> u64 {
-    (1u64 << ((h >> 20) & 63)) | (1u64 << ((h >> 26) & 63))
+    BIT[((h >> 20) & 63) as usize] | BIT[((h >> 26) & 63) as usize]
 }
+
+static BIT: [u64; 64] = {
+    let mut t = [0u64; 64];
+    let mut i = 0;
+    while i < 64 {
+        t[i] = 1 << i;
+        i += 1;
+    }
+    t
+};
 
 impl Engine for HashWindowEngine {
     fn next(&self, set: &PatternSet, hay: &[u8], cur: &mut Cursor) -> Option<Match> {
@@ -530,6 +648,49 @@ mod tests {
     fn overlap_resumes_after_end() {
         let pats: &[&[u8]] = &[b"aaaaaaaa"];
         assert_eq!(both(pats, &[b'a'; 20]), vec![(0, 8, 0), (8, 16, 0)]);
+    }
+
+    /// The three Aho-Corasick forms (packed, split, one automaton) and the hash-window engine
+    /// agree on sets around the packed and split limits.
+    #[test]
+    fn ac_forms_agree_around_limits() {
+        let mut x = 0x1234_5678u64;
+        let mut rnd = |n: usize| {
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (x >> 33) as usize % n
+        };
+        for count in [60usize, 64, 65, 100, 128, 129, 200, 256, 257] {
+            let pats: Vec<Vec<u8>> = (0..count)
+                .map(|_| (0..4 + rnd(10)).map(|_| b"abc"[rnd(3)]).collect())
+                .collect();
+            let refs: Vec<&[u8]> = pats.iter().map(Vec::as_slice).collect();
+            let s = set(&refs);
+            let hay: Vec<u8> = (0..4000).map(|_| b"abcd"[rnd(4)]).collect();
+            let ac = AcEngine::build(&s).unwrap();
+            let want = all(&HashWindowEngine::build(&s).unwrap(), &s, &hay);
+            assert_eq!(all(&ac, &s, &hay), want, "{count} patterns");
+            let ids: Vec<u32> = (0..count as u32).collect();
+            let split = AcEngine {
+                packed: None,
+                parts: ids
+                    .chunks(AC_PART)
+                    .map(|c| (build_ac(c.iter().map(|&i| s.get(i))).unwrap(), c.to_vec()))
+                    .collect(),
+            };
+            if count <= AC_PART * AC_MAX_PARTS {
+                assert_eq!(all(&split, &s, &hay), want, "split, {count} patterns");
+            }
+            let one = AcEngine {
+                packed: None,
+                parts: vec![(
+                    build_ac(refs.iter().copied()).unwrap(),
+                    (0..count as u32).collect(),
+                )],
+            };
+            assert_eq!(all(&one, &s, &hay), want, "one automaton, {count} patterns");
+        }
     }
 
     #[test]
