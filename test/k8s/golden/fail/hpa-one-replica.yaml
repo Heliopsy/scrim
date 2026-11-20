@@ -1,0 +1,4 @@
+# expect: autoscaling.minReplicas is 1: an HPA needs at least 2
+postgres: {enabled: true}
+secrets: {existing: {postgres: scrim-pg}}
+central: {autoscaling: {enabled: true, minReplicas: 1}}

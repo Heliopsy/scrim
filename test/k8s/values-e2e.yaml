@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Chart values of test/k8s/e2e.sh. The script adds the images and the
+# namespaces with --set. No secret is in here, and none exists for scrim: the
+# central scrim and every sidecar log in to OpenBao with their own projected
+# service account token (Kubernetes auth), and agent pods identify themselves
+# with theirs (identity.kubernetes, on by default).
+
+image:
+  pullPolicy: Never
+
+config:
+  stores:
+    bao:
+      kind: openbao
+      address: http://openbao.scrim-e2e.svc.cluster.local:8200
+      auth:
+        method: kubernetes
+        kubernetes:
+          role: scrim
+          token-file: /var/run/secrets/scrim/store-token
+      redact: ["bao://secret/e2e/*"]
+      watch:
+        interval: 2s
+  catalog:
+    entries:
+      tool:
+        ref: bao://secret/e2e/tool#token
+        hosts: [toolhost.scrim-e2e.svc.cluster.local]
+        placeholder: SCRIM_TOOL_TOKEN
+        inject: ["header:Authorization"]
+  proxy:
+    upstream:
+      anthropic: http://fakeprovider.scrim-e2e.svc.cluster.local:18089
+      openai: http://fakeprovider.scrim-e2e.svc.cluster.local:18089
+
+# No policy rules: the built-in inject-bound rule injects for identified agents,
+# and an agent process started without scrim-exec is unknown and gets nothing.
+
+storeAuth:
+  serviceAccountToken:
+    enabled: true
+    audience: openbao
+
+upstreamCA:
+  configMap: e2e-upstream-ca
+  key: ca.crt
+
+kyverno:
+  enabled: true
+
+networkPolicy:
+  enabled: true
+  # The fake provider, the tool host and OpenBao stand in for the internet and the
+  # stores; they all live in scrim-e2e.
+  scrimEgress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: scrim-e2e
+  sidecarEgress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: scrim-e2e
+
+sidecar:
+  enabled: true
+  egressGuard:
+    enabled: true
+    pullPolicy: Never

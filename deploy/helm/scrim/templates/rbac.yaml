@@ -1,0 +1,43 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- $k := .Values.identity.kubernetes }}
+{{- if and $k.enabled $k.tokenReviewRBAC (or .Values.central.enabled .Values.sidecar.enabled) }}
+{{- $name := printf "%s-%s-tokenreview" (include "scrim.fullname" .) (include "scrim.namespace" $) }}
+---
+# TokenReview only, to verify the projected tokens agent pods present. Narrower than
+# system:auth-delegator, which also allows SubjectAccessReviews.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "scrim.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "scrim.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+  {{- if .Values.central.enabled }}
+  - kind: ServiceAccount
+    name: {{ include "scrim.serviceAccountName" . }}
+    namespace: {{ (include "scrim.namespace" $) }}
+  {{- end }}
+  {{- if .Values.sidecar.enabled }}
+  {{- range .Values.agents.namespaces }}
+  # The in-pod scrim runs as the agent pod's service account.
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: system:serviceaccounts:{{ . }}
+  {{- end }}
+  {{- end }}
+{{- end }}

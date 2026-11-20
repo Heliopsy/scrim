@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: helm test pods and NOTES (tests/tests.yaml, NOTES.txt)
+templates:
+  - tests/tests.yaml
+  - NOTES.txt
+release:
+  name: rel
+  namespace: ns
+tests:
+  - it: two test pods by default, hardened and restricted
+    template: tests/tests.yaml
+    asserts:
+      - hasDocuments: {count: 2}
+      - isKind: {of: Pod}
+      - equal: {path: 'metadata.annotations["helm.sh/hook"]', value: test}
+      - equal: {path: 'metadata.labels["scrim.dev/helm-test"]', value: "true"}
+      - equal: {path: spec.automountServiceAccountToken, value: false}
+      - equal: {path: spec.securityContext.runAsUser, value: 100}
+      - equal: {path: 'spec.containers[0].securityContext.allowPrivilegeEscalation', value: false}
+      - matchRegex: {path: 'spec.containers[0].args[0]', pattern: 'rel-scrim\.ns\.svc\.cluster\.local:979[01]'}
+  - it: a readiness test with metrics on
+    template: tests/tests.yaml
+    set:
+      metrics.enabled: true
+    asserts:
+      - hasDocuments: {count: 3}
+      - matchRegex: {path: 'spec.containers[0].args[0]', pattern: '/readyz'}
+        documentIndex: 2
+  - it: none when tests or central are off
+    template: tests/tests.yaml
+    set:
+      tests.enabled: false
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: NOTES name the Service and the launcher
+    template: NOTES.txt
+    asserts:
+      - matchRegexRaw: {pattern: 'http://rel-scrim\.ns\.svc\.cluster\.local:9790/anthropic'}
+      - matchRegexRaw: {pattern: 'scrim-exec'}
+      - matchRegexRaw: {pattern: 'helm test rel -n ns'}

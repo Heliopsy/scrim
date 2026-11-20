@@ -4,7 +4,9 @@ package daemon
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"slices"
@@ -239,6 +241,47 @@ func (b *SnapshotBuilder) values(cat *catalog.Catalog) []*pb.ValueEntry {
 			out = append(out, e)
 		})
 	}
+	return uniqueNames(out)
+}
+
+// uniqueNames drops repeated values and gives every credential entry a name no
+// other entry uses, because the data plane refuses a snapshot in which two
+// credentials share a name (the catalog name, else the reference) or a
+// placeholder. Both happen without it: a store's own credentials repeat (a
+// static OpenBao token is both the configured and the current token, each
+// "store:<name>", with one placeholder), and a rotated value is retained under
+// its entry's name next to the current one.
+//
+// An entry with the same slug and value as an earlier one would get the same
+// placeholder, so it adds nothing and is dropped (its copy wiped). Of the
+// rest, the first keeps its name, so a bound current value is never renamed;
+// later ones get "~2", "~3", which no catalog name or reference contains.
+func uniqueNames(entries []*pb.ValueEntry) []*pb.ValueEntry {
+	out := entries[:0]
+	bySlug := map[string][]*pb.ValueEntry{}
+	seen := map[string]int{}
+	for _, e := range entries {
+		if slices.ContainsFunc(bySlug[e.GetSlug()], func(o *pb.ValueEntry) bool {
+			return subtle.ConstantTimeCompare(o.GetValue(), e.GetValue()) == 1
+		}) {
+			clear(e.Value)
+			continue
+		}
+		bySlug[e.GetSlug()] = append(bySlug[e.GetSlug()], e)
+		out = append(out, e)
+		if e.GetClass() == pb.ValueClass_VALUE_CLASS_DISPLAY {
+			continue
+		}
+		n := e.GetName()
+		if n == "" {
+			n = e.GetRef()
+		}
+		seen[n]++
+		if c := seen[n]; c > 1 {
+			e.Name = fmt.Sprintf("%s~%d", n, c)
+		}
+	}
+	clear(entries[len(out):])
 	return out
 }
 

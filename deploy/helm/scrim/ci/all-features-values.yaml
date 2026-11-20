@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Every toggle and extension hook at once (verify.sh renders it, kubeconform
+# checks it, assert-all-features.py checks what it must contain). Not
+# installable as is: the Secrets and stores it names do not exist.
+commonLabels: {team: platform}
+commonAnnotations: {owner: platform}
+global:
+  imageRegistry: registry.example.com
+  imagePullSecrets: [mirror-pull]
+  podLabels: {mesh: "off"}
+  podAnnotations: {example.com/scrape: "false"}
+  extraEnv: [{name: TZ, value: UTC}]
+  extraVolumes: [{name: shared, emptyDir: {}}]
+  extraVolumeMounts: [{name: shared, mountPath: /shared}]
+  priorityClassName: scrim-critical
+  dnsConfig: {options: [{name: ndots, value: "2"}]}
+  ha: {enabled: true, replicas: 3}
+  replication: {mode: reflector, allowedNamespaces: [agents]}
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+config:
+  stores:
+    bao:
+      kind: openbao
+      address: https://bao.example.com:8200
+      auth:
+        method: kubernetes
+        kubernetes: {role: scrim, token-file: /var/run/secrets/scrim/store-token}
+      redact: ["bao://kv/agents/*"]
+  identity:
+    store-login:
+      bao: "kubernetes role:{namespace}-{service_account}"
+policyRules:
+  rules:
+    - name: no-post
+      decision: deny
+      when: op == "inject" && dest.method == "POST"
+secretMounts:
+  - {name: extra, secretName: scrim-extra}
+upstreamCA: {configMap: corp-roots}
+secrets:
+  existing:
+    postgres: scrim-pg
+    admin: scrim-admin
+  externalSecrets:
+    enabled: true
+    secretStoreRef: {name: vault, kind: ClusterSecretStore}
+    data:
+      metrics: {token: scrim/metrics-token}
+postgres: {enabled: true}
+identity:
+  kubernetes:
+    agents: {reviewer: "sa:agents/reviewer"}
+storeAuth:
+  serviceAccountToken: {enabled: true, audience: openbao}
+central:
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 8
+    connections: {enabled: true}
+  pdb: {minAvailable: 2, maxUnavailable: null}
+  extraArgs: [--log-level=debug]
+  extraEnv: [{name: TZ, value: Europe/Sofia}]
+  extraEnvFrom: [{configMapRef: {name: scrim-env}}]
+  extraVolumes: [{name: notes, configMap: {name: '{{ include "chart.extraConfigMapName" (list . "notes") }}'}}]
+  extraVolumeMounts: [{name: notes, mountPath: /etc/notes, readOnly: true}]
+  extraContainers:
+    - name: logs
+      image: registry.example.com/logs:1
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: [ALL]}}
+      resources: {requests: {cpu: 5m, memory: 8Mi}, limits: {memory: 32Mi}}
+  extraInitContainers:
+    - name: wait
+      image: registry.example.com/wait:1
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: [ALL]}}
+      resources: {requests: {cpu: 5m, memory: 8Mi}, limits: {memory: 32Mi}}
+  lifecycle: {preStop: {sleep: {seconds: 5}}}
+  hostAliases: [{ip: 10.0.0.10, hostnames: [bao.example.com]}]
+  runtimeClassName: gvisor
+  networkPolicy:
+    extraFrom: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ci}}}]
+    extraEgress: [{to: [{ipBlock: {cidr: 10.0.0.10/32}}], ports: [{port: 8200, protocol: TCP}]}]
+  serviceAccount:
+    annotations: {eks.amazonaws.com/role-arn: arn:aws:iam::0:role/scrim}
+admin:
+  tcp: {enabled: true}
+metrics:
+  enabled: true
+serviceMonitor:
+  enabled: true
+  labels: {release: kube-prometheus-stack}
+podMonitor:
+  enabled: false
+prometheusRule:
+  enabled: true
+grafanaDashboard:
+  enabled: true
+agents:
+  namespaces: [agents, ci]
+  noProxy: [internal.example.com]
+kyverno:
+  enabled: true
+networkPolicy:
+  enabled: true
+  adminFrom: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ops}}}]
+objectMetadata:
+  Service/ci-scrim: {annotations: {example.com/expose: "false"}}
+extraConfigMaps:
+  notes:
+    data: {README: "release {{ .Release.Name }}"}
+extraObjects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata: {name: '{{ .Release.Name }}-extra'}
+    data: {hello: world}

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# global.ha on PostgreSQL (assert-ha.py).
+global:
+  ha: {enabled: true}
+postgres: {enabled: true}
+secrets:
+  existing: {postgres: scrim-pg}

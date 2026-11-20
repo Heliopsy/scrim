@@ -1,0 +1,30 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- /*
+extraConfigMaps: key -> {data, binaryData, labels, annotations, immutable,
+name, existingConfigMap, replication}. Rendered as "<fullname>-<key>" (or
+name); an entry with existingConfigMap renders nothing and only gives
+chart.extraConfigMapName its name. data values are tpl-rendered. A pod that
+mounts one gets a checksum/extra-objects annotation and rolls when it changes.
+*/ -}}
+{{- range $key, $c := .Values.extraConfigMaps }}
+{{- if and $c (not $c.existingConfigMap) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  {{- include "chart.objectMeta" (dict "root" $ "kind" "ConfigMap" "name" (include "chart.extraConfigMapName" (list $ $key)) "labels" $c.labels "annotations" $c.annotations "replication" $c.replication) | nindent 2 }}
+{{- if $c.immutable }}
+immutable: true
+{{- end }}
+{{- with $c.data }}
+data:
+  {{- range $k, $val := . }}
+  {{ $k }}: {{ tpl (toString $val) $ | quote }}
+  {{- end }}
+{{- end }}
+{{- with $c.binaryData }}
+binaryData:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- end }}

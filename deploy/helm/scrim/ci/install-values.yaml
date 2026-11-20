@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# What ct installs on a bare kind cluster (kind-test.sh): central scrim with no
+# store, identity on, metrics with the generated token, and the helm tests.
+metrics: {enabled: true}
+central:
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 512Mi}

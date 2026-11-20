@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Test servers of the Kubernetes end-to-end test: the fake model provider and
+# the tool host. Built by test/k8s/e2e.sh from binaries it compiles; never
+# published.
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
+COPY --chmod=0755 scrim-fakeprovider toolhost /usr/local/bin/
+USER 65532:65532

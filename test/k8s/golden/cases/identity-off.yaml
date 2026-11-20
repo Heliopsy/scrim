@@ -1,0 +1,10 @@
+# Kubernetes identity off: no agent token, no launcher, no TokenReview RBAC; agents are unknown.
+identity:
+  kubernetes:
+    enabled: false
+agents:
+  namespaces: [agents]
+kyverno:
+  enabled: true
+networkPolicy:
+  enabled: true

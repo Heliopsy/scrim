@@ -32,3 +32,11 @@ updates:
       interval: weekly
     commit-message:
       prefix: build
+  # Third-party images of the Helm chart's defaults (the helm test image),
+  # listed as FROM lines; verify.sh keeps values.yaml in step.
+  - package-ecosystem: docker
+    directory: /deploy/helm/scrim/ci
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build

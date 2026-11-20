@@ -1,0 +1,36 @@
+{{ include "scrim.fullname" . }} is installed in namespace {{ include "scrim.namespace" . }}.
+{{- if .Values.central.enabled }}
+
+Central scrim (label agent pods {{ .Values.agents.label }}=central):
+  LLM base URL   http://{{ include "scrim.serviceHost" . }}:{{ .Values.central.service.llmPort }}/anthropic and /openai/v1
+  Forward proxy  http://{{ include "scrim.serviceHost" . }}:{{ .Values.central.service.forwardPort }}
+{{- end }}
+{{- if .Values.sidecar.enabled }}
+
+Sidecar mode: label agent pods {{ .Values.agents.label }}=sidecar.
+{{- end }}
+{{- if .Values.agents.namespaces }}
+
+Agent namespaces: {{ join ", " .Values.agents.namespaces }}
+{{- else }}
+
+No agents.namespaces: no agent namespace has the CA, the environment or the NetworkPolicies yet.
+{{- end }}
+{{- if .Values.identity.kubernetes.enabled }}
+
+Agents are identified by their service account: run the agent through
+{{ .Values.agents.trustPath }}/scrim-exec, or it is an unknown caller and gets no credential injected.
+{{- end }}
+{{- if not .Values.kyverno.enabled }}
+
+kyverno.enabled is off: reference the {{ include "scrim.fullname" . }}-agent-env ConfigMap and mount
+the {{ .Values.ca.configMapName }} ConfigMap in agent pods yourself (docs/kubernetes.md).
+{{- end }}
+{{- if not .Values.config.stores }}
+
+config.stores is empty: nothing is redacted until a store with redact targets is configured.
+{{- end }}
+{{- if .Values.tests.enabled }}
+
+Check it: helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+{{- end }}

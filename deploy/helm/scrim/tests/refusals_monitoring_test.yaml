@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: refusals in monitoring.yaml
+templates:
+- monitoring.yaml
+release:
+  name: rel
+  namespace: ns
+tests:
+- it: refuses monitors without metrics
+  set:
+    serviceMonitor.enabled: true
+  asserts:
+  - failedTemplate:
+      errorPattern: serviceMonitor and podMonitor need metrics.enabled=true

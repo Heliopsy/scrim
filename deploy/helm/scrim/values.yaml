@@ -1,0 +1,707 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Values of the scrim chart. values.schema.json (closed: an unknown key fails
+# `helm lint` and `helm install`) and docs/helm-values.md are generated from
+# this file and its "# --" comments (ci/gen-schema.py, helm-docs); every value
+# needs one, on itself or on a block below the top level. ci/verify.sh checks
+# both are current.
+
+# -- Overrides the chart name in resource names.
+nameOverride: ""
+# -- Overrides the full resource name prefix (default: release name, plus "-scrim" unless it already contains it).
+fullnameOverride: ""
+# -- Namespace for every object in the release namespace (default: the release namespace). Agent namespace objects go to agents.namespaces.
+namespaceOverride: ""
+# -- Labels added to every object, next to global.commonLabels (global wins on the same key).
+commonLabels: {}
+# -- Annotations added to every object the chart renders (merged over global.commonAnnotations).
+commonAnnotations: {}
+
+# -- Settings every pod the chart renders inherits (central scrim, helm test pods): registry mirror, pull secrets, security defaults, scheduling, extension hooks. A component's own value wins. The in-pod scrim of sidecar mode is injected by Kyverno and takes only sidecar.* values.
+# @default -- See the keys below.
+global:
+  # -- Registry that replaces the registry of every image (a mirror). Empty keeps each image's own.
+  imageRegistry: ""
+  # -- Pull secrets added to every pod. Names (strings) or {name: x}.
+  imagePullSecrets: []
+  # -- Kubernetes cluster DNS domain, used in the Service addresses agents get.
+  clusterDomain: cluster.local
+  # -- Labels added to every object.
+  commonLabels: {}
+  # -- Annotations added to every object.
+  commonAnnotations: {}
+  # -- Default priorityClassName for every pod (a component's own wins).
+  priorityClassName: ""
+  # -- Default nodeSelector for every pod (a component's own wins).
+  nodeSelector: {}
+  # -- Default tolerations for every pod (a component's own wins).
+  tolerations: []
+  # -- Default affinity for every pod (a component's own wins; tpl).
+  affinity: {}
+  # -- Default topologySpreadConstraints for every pod (a component's own wins; tpl).
+  topologySpreadConstraints: []
+  # -- Default lifecycle hooks (postStart, preStop) of every main container (a component's own wins; tpl).
+  lifecycle: {}
+  # -- Default dnsPolicy of every pod ("" leaves it to Kubernetes, ClusterFirst; a component's own wins).
+  dnsPolicy: ""
+  # -- Default dnsConfig of every pod (nameservers, searches, options; a component's own wins; tpl).
+  dnsConfig: {}
+  # -- Default hostAliases of every pod (extra /etc/hosts entries; a component's own wins; tpl).
+  hostAliases: []
+  # -- Default runtimeClassName of every pod (a component's own wins).
+  runtimeClassName: ""
+  # -- Default shareProcessNamespace of every pod (null renders nothing; a component's own wins).
+  shareProcessNamespace: null
+  # -- Default enableServiceLinks of every pod (null renders nothing; a component's own wins). central sets false.
+  enableServiceLinks: null
+  # -- High availability preset (templates/_ha.tpl) for central scrim.
+  # @default -- See the keys below.
+  ha:
+    # -- Run central scrim with ha.replicas, a PDB (minAvailable 1), preferred pod anti-affinity on kubernetes.io/hostname and, with zoneSpread, a zone topology spread. A higher replicaCount and central's own pdb, affinity and topologySpreadConstraints win. More than one replica needs postgres.enabled.
+    enabled: false
+    # -- Replicas of central scrim under ha.enabled (at least 2).
+    replicas: 2
+    # -- Spread replicas across topology.kubernetes.io/zone (maxSkew 1, ScheduleAnyway).
+    zoneSpread: true
+    # -- Components ha.enabled leaves alone (proxy).
+    exclude: []
+  # -- Labels added to every pod, under each component's podLabels (the component wins on the same key; tpl).
+  podLabels: {}
+  # -- Annotations added to every pod, under each component's podAnnotations (the component wins on the same key; tpl).
+  podAnnotations: {}
+  # -- Volumes added to every pod the chart renders (tpl). A component's extraVolumes entry of the same name wins.
+  extraVolumes: []
+  # -- volumeMounts added to every main container (tpl). A mountPath the container already has wins.
+  extraVolumeMounts: []
+  # -- Env vars added to every main container (EnvVar list, tpl). A name the container already sets wins. Never put secret values here; use valueFrom.secretKeyRef.
+  extraEnv: []
+  # -- envFrom sources added to every main container (tpl).
+  extraEnvFrom: []
+  # -- Labels on every Secret the chart renders (tpl).
+  secretLabels: {}
+  # -- Annotations on every Secret the chart renders.
+  secretAnnotations: {}
+  # -- Labels on every ConfigMap the chart renders (tpl).
+  configMapLabels: {}
+  # -- Annotations on every ConfigMap the chart renders.
+  configMapAnnotations: {}
+  # Copies of Secrets and ConfigMaps in other namespaces, by annotations for
+  # emberstack Reflector or mittwald kubernetes-replicator. Applies to every
+  # Secret and ConfigMap rendered through the shared helpers (slots,
+  # extraConfigMaps) unless one object (objectMetadata."<Kind>/<name>".replication)
+  # says otherwise.
+  replication:
+    # -- none, reflector (reflector.v1.k8s.emberstack.com/*) or replicator (replicator.v1.mittwald.de/*).
+    mode: none
+    # -- Namespaces (regex allowed) that may copy the object. Empty allows every namespace.
+    allowedNamespaces: []
+    # -- Namespaces the object is pushed into (reflection-auto-namespaces / replicate-to).
+    autoNamespaces: []
+    # -- replicator only: "<namespace>/<name>" the object is filled from (replicate-from). Use it per object.
+    replicateFrom: ""
+  # -- Extra selector labels on central scrim, its pods, Service and NetworkPolicy peers. SELECTORS ARE IMMUTABLE: set this on a fresh install only. Keys must not repeat commonLabels.
+  extraSelectorLabels: {}
+  # -- revisionHistoryLimit of every Deployment.
+  revisionHistoryLimit: 5
+  # -- Pod securityContext every pod starts from; a component's podSecurityContext is merged over it.
+  # @default -- See the keys below.
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  # -- Container securityContext every container starts from; a component's securityContext is merged over it.
+  # @default -- See the keys below.
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    capabilities:
+      drop: [ALL]
+
+# -- scrim image (control plane with the data plane embedded), for central scrim and sidecars.
+# @default -- See the keys below.
+image:
+  # -- Image registry.
+  registry: ghcr.io
+  # -- Image repository.
+  repository: heliopsy/scrim
+  # -- Image tag. Empty with useAppVersion takes Chart.appVersion, which the release sets to the scrim version.
+  tag: ""
+  # -- Use Chart.appVersion as the tag when tag is empty.
+  useAppVersion: true
+  # -- Image digest (sha256:...); pins the image, the tag stays readable.
+  digest: ""
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+
+# -- scrim configuration, the same file format as a `scrim` config file (apiVersion and kind are added). Secret-valued settings take references (env:, file:, cred:, a store reference), never literals; the chart refuses known credential fields that hold a literal. Settings the chart owns (listeners, sockets, state, events, identity, metrics, CA, placeholder keys) are set in a second file that wins. Every store needs `redact` targets that match at least one secret: a target that loads nothing stops start-up (redaction.allow-empty-targets weakens that).
+config: {}
+# -- Name of an existing ConfigMap holding the scrim configuration under `config.yaml`, used instead of `config`.
+existingConfigMap: ""
+
+# -- Policy rules file (YAML object with `default` and `rules`, see docs/policy.md). Empty means no rules file: built-in defaults apply.
+policyRules: {}
+
+# -- Secrets mounted read-only into scrim at /run/secrets/scrim/<name>/<key>, for `file:` references in `config`. Each item: {name, secretName, items (optional, as in a Secret volume)}.
+secretMounts: []
+
+# -- Log level and format of central scrim and sidecars.
+# @default -- See the keys below.
+log:
+  # -- Log level: debug, info, warn or error.
+  level: info
+  # -- Log format: json or text.
+  format: json
+
+# -- Upstream TLS trust for the data plane (LLM proxy and tool proxy), as dataplane.upstream-ca-file.
+# @default -- See the keys below.
+upstreamCA:
+  # -- ConfigMap in the release namespace with a PEM bundle of extra roots for upstream TLS
+  # (private tool hosts, corporate TLS inspection). System and Mozilla roots stay trusted.
+  configMap: ""
+  # -- Key of the bundle in that ConfigMap.
+  key: ca.crt
+
+# -- Interception CA: the tool proxy signs leaves for bound hosts with it; agents trust its certificate. The key never leaves scrim's pods.
+# @default -- See the keys below.
+ca:
+  # -- Generate a CA with Helm on first install and keep it (Secret with helm.sh/resource-policy: keep,
+  # reused on upgrade through lookup). Ed25519, PKCS#8. Ignored when existingSecret is set.
+  create: true
+  # -- Validity of a generated CA in days.
+  validityDays: 730
+  # -- Existing kubernetes.io/tls Secret with the CA: `tls.crt` and a PKCS#8 `tls.key`
+  # (cert-manager: privateKey.encoding PKCS8). scrim never rotates it.
+  existingSecret: ""
+  # -- PEM certificate of existingSecret, published to agents. Empty reads it from the Secret
+  # with lookup at install time (not available to `helm template`).
+  certificate: ""
+  # -- Extra PEM certificates appended to the agents' ca-bundle.pem (for cluster services agents
+  # reach outside the proxy).
+  extraTrustedCerts: ""
+  # -- Name of the ConfigMap with the public CA (scrim-ca.pem, ca-bundle.pem) in the release
+  # namespace and every agent namespace.
+  configMapName: scrim-ca
+
+# -- Placeholder keys: placeholders are an HMAC of the value, so every replica and sidecar must share them.
+# @default -- See the keys below.
+placeholderKeys:
+  # -- Generate a 64-byte key on first install and keep it (reused on upgrade through lookup).
+  # Ignored when existingSecret is set.
+  create: true
+  # -- Existing Secret holding the keys.
+  existingSecret: ""
+  # -- Keys of existingSecret: list of {name, version, key} (key = data key in the Secret). The
+  # highest version is current.
+  keys:
+    - name: k1
+      version: 1
+      key: k1
+
+# -- Secret slots (templates/_helpers.tpl, "Secrets"): each credential the chart mounts is a slot whose Secret is a Secret you manage (existing), an ExternalSecret the chart renders (externalSecrets.data), or a Secret the chart generates (only the metrics token). Slots: admin (key token, for admin.tcp), metrics (key token, generated), postgres (key dsn). There is no way to put a credential value into values.
+# @default -- See the keys below.
+secrets:
+  # -- Existing Secrets by slot (slot -> Secret name, tpl). Nothing is rendered for those slots.
+  existing: {}
+  # -- Key names by slot (slot -> logical key -> key in the Secret), for an existing Secret with other key names.
+  keys: {}
+  externalSecrets:
+    # -- Render an ExternalSecret (external-secrets.io) for every slot listed in data.
+    enabled: false
+    # -- ExternalSecret apiVersion.
+    apiVersion: external-secrets.io/v1
+    # -- refreshInterval.
+    refreshInterval: 1h
+    # -- SecretStore or ClusterSecretStore the ExternalSecrets read from.
+    # @default -- See the keys below.
+    secretStoreRef:
+      name: ""
+      kind: ClusterSecretStore
+    # -- Remote references by slot and key (slot -> key -> remote key string, or a remoteRef object).
+    data: {}
+
+# -- Shared state and events. Several replicas (the HPA, global.ha) need PostgreSQL: it renders state.backend postgres and events.backend postgres together. The DSN is the Secret slot postgres (key dsn).
+# @default -- See the keys below.
+postgres:
+  # -- Use PostgreSQL for state (approvals, grants, sessions) and for events between replicas (LISTEN/NOTIFY). Off: in-memory state in one replica; a restart loses approvals and grants.
+  enabled: false
+  # -- Connection pool size per replica.
+  maxConns: 16
+
+# -- Kubernetes identity (identity.kubernetes.*): agent pods present a projected service account token for `audience`, which scrim verifies with TokenReview. Per-agent store login (identity.store-login) goes in `config.identity`.
+# @default -- See the keys below.
+identity:
+  kubernetes:
+    # -- Identify agent pods by their projected token. Renders the TokenReview RBAC, mounts
+    # scrim's own API token and gives agent pods the token, SCRIM_K8S_TOKEN_FILE and the
+    # scrim-exec launcher. Off: every agent pod is an unknown caller, which the built-in rules do
+    # not inject credentials for.
+    enabled: true
+    # -- Audience of the projected agent token (identity.kubernetes.audience); tokens with
+    # another audience, such as the pod's default API token, are refused.
+    audience: scrim
+    # -- Lifetime of the projected agent token in seconds. The kubelet rotates the file, but
+    # scrim-exec reads it when the agent starts: an agent process that runs longer than this
+    # loses its identity (injection is refused) until it is restarted.
+    expirationSeconds: 3600
+    # -- Where the token is mounted in agent containers.
+    tokenPath: /var/run/secrets/scrim/token
+    # -- Create a ClusterRole that may only create TokenReviews and bind it to scrim's service
+    # account (central) and to the service accounts of agents.namespaces (sidecar).
+    tokenReviewRBAC: true
+    # -- Agents by service account (identity.kubernetes.agents): agent name to selectors
+    # `sa:NAMESPACE/NAME` (globs allowed), `scope:`, `label:K=V`.
+    agents: {}
+    # -- What a service account no rule maps becomes: derive (NAMESPACE/NAME) or unknown.
+    unmapped: derive
+
+# -- Store authentication with scrim's own service account (OpenBao Kubernetes auth, Infisical kubernetes-auth), so no static store credential exists. Configure the store in `config.stores` with `auth.method: kubernetes` (OpenBao) or `kubernetes-auth` (Infisical) and `auth.kubernetes.token-file` set to `path`.
+# @default -- See the keys below.
+storeAuth:
+  # -- Mount a projected service account token for store login (central scrim and sidecars).
+  serviceAccountToken:
+    enabled: false
+    # -- Audience the store expects (OpenBao: the role's audience, often "vault").
+    audience: vault
+    # -- Lifetime in seconds. scrim reads the file again at every login.
+    expirationSeconds: 3600
+    # -- Mount path; reference it as `auth.kubernetes.token-file` in the store configuration.
+    path: /var/run/secrets/scrim/store-token
+
+# -- Central mode: a Deployment of `scrim proxy` serving agent pods over a Service, built with chart.std.component (templates/_component.tpl).
+# @default -- See the keys below.
+central:
+  # -- Deploy the central scrim.
+  enabled: true
+  # -- Replicas when autoscaling is off. More than one needs postgres.enabled.
+  replicaCount: 1
+  # -- Deployment strategy.
+  # @default -- See the keys below.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  # -- Resources of the scrim container.
+  # @default -- See the keys below.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  # -- nodeSelector (empty: global.nodeSelector).
+  nodeSelector: {}
+  # -- tolerations (empty: global.tolerations).
+  tolerations: []
+  # -- affinity (empty: global.affinity; tpl).
+  affinity: {}
+  # -- topologySpreadConstraints (empty: global.topologySpreadConstraints; tpl).
+  topologySpreadConstraints: []
+  # -- priorityClassName (empty: global.priorityClassName).
+  priorityClassName: ""
+  # -- Grace period; scrim finishes in-flight requests for up to 15s on SIGTERM.
+  terminationGracePeriodSeconds: 30
+  # -- lifecycle hooks (postStart, preStop) of the scrim container (empty: global.lifecycle; tpl).
+  lifecycle: {}
+  # -- dnsPolicy (empty: global.dnsPolicy).
+  dnsPolicy: ""
+  # -- dnsConfig (empty: global.dnsConfig; tpl).
+  dnsConfig: {}
+  # -- hostAliases (empty: global.hostAliases; tpl).
+  hostAliases: []
+  # -- runtimeClassName (empty: global.runtimeClassName).
+  runtimeClassName: ""
+  # -- shareProcessNamespace (null: global.shareProcessNamespace).
+  shareProcessNamespace: null
+  # -- enableServiceLinks. false keeps other Services' addresses out of scrim's environment.
+  enableServiceLinks: false
+  # -- Pull secrets of central scrim, added to global.imagePullSecrets.
+  imagePullSecrets: []
+  # -- Pod annotations, merged over global.podAnnotations (tpl).
+  podAnnotations: {}
+  # -- Pod labels, merged over global.podLabels (tpl). Chart labels are never overridden.
+  podLabels: {}
+  # -- Annotations of the Deployment.
+  annotations: {}
+  # -- Labels of the Deployment. Chart labels are never overridden.
+  labels: {}
+  # -- Pod securityContext, merged over global.podSecurityContext.
+  # @default -- See the keys below.
+  podSecurityContext:
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+  # -- Container securityContext, merged over global.containerSecurityContext.
+  securityContext: {}
+  serviceAccount:
+    # -- Create a ServiceAccount "<fullname>-proxy".
+    create: true
+    # -- Name (empty: "<fullname>-proxy", or "default" when create is false).
+    name: ""
+    # -- Mount the API token even without identity.kubernetes (identity mounts it anyway, for TokenReview).
+    automount: false
+    # -- ServiceAccount annotations (for cloud workload identity toward stores).
+    annotations: {}
+    # -- ServiceAccount labels.
+    labels: {}
+  service:
+    # -- Service type. Keep ClusterIP: the listeners serve plain HTTP and the forward proxy.
+    type: ClusterIP
+    # -- Service annotations.
+    annotations: {}
+    # -- Service labels.
+    labels: {}
+    # -- LLM base URL port (agents use http://<service>:<port>/anthropic and /openai/v1).
+    llmPort: 9790
+    # -- Forward proxy port (HTTPS_PROXY).
+    forwardPort: 9791
+  # -- Startup probe ({enabled, ...probe spec}) on /livez.
+  # @default -- See the keys below.
+  startupProbe:
+    enabled: true
+    httpGet:
+      path: /livez
+      port: health
+    periodSeconds: 2
+    failureThreshold: 30
+  # -- Liveness probe ({enabled, ...probe spec}) on /livez.
+  # @default -- See the keys below.
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /livez
+      port: health
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  # -- Readiness probe ({enabled, ...probe spec}) on /readyz (the data plane holds a snapshot and every listener is bound).
+  # @default -- See the keys below.
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /readyz
+      port: health
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 2
+  pdb:
+    # -- Render a PodDisruptionBudget.
+    enabled: true
+    # -- minAvailable (integer or percentage; default 1 when maxUnavailable is unset).
+    minAvailable: null
+    # -- maxUnavailable (integer or percentage; wins over minAvailable: set it to null to use minAvailable).
+    maxUnavailable: 1
+    # -- PDB labels.
+    labels: {}
+    # -- PDB annotations.
+    annotations: {}
+  autoscaling:
+    # -- Render a HorizontalPodAutoscaler (needs postgres.enabled; replicaCount is then left out of the Deployment).
+    enabled: false
+    # -- Minimum replicas; below 2 fails the render.
+    minReplicas: 2
+    # -- Maximum replicas.
+    maxReplicas: 10
+    # -- Target average CPU utilisation in percent (null: no CPU metric).
+    targetCPUUtilizationPercentage: 70
+    # -- Target average memory utilisation in percent (null: no memory metric).
+    targetMemoryUtilizationPercentage: null
+    # Scale on open data plane connections per replica (a Pods metric served by a metrics
+    # adapter such as prometheus-adapter from scrim's scrim_dataplane_connections_active gauge,
+    # summed over its listener label). Needs metrics.enabled.
+    connections:
+      # -- Add the connections metric.
+      enabled: false
+      # -- Metric name as the adapter exposes it.
+      metricName: scrim_dataplane_connections_active
+      # -- Target average open connections per replica.
+      targetAverageValue: "50"
+    # -- HPA scaling behavior.
+    behavior: {}
+    # -- HPA labels.
+    labels: {}
+    # -- HPA annotations.
+    annotations: {}
+  # -- Extra arguments of the scrim container, after `proxy` (tpl).
+  extraArgs: []
+  # -- Extra env vars of the scrim container (EnvVar list, tpl). Use valueFrom.secretKeyRef with `env:` references; never put secret values here.
+  extraEnv: []
+  # -- Extra envFrom sources of the scrim container (tpl).
+  extraEnvFrom: []
+  # -- Extra volumes of the pod (tpl).
+  extraVolumes: []
+  # -- Extra volumeMounts of the scrim container (tpl).
+  extraVolumeMounts: []
+  # -- Extra containers of the pod (tpl). They share the pod's network: anything they hold is next to scrim's values.
+  extraContainers: []
+  # -- Init containers (tpl).
+  extraInitContainers: []
+  networkPolicy:
+    # -- Peers admitted on every port the chart's own ingress rules open (NetworkPolicy peers, tpl).
+    extraFrom: []
+    # -- Extra ingress rules (tpl).
+    extraIngress: []
+    # -- Extra egress rules (tpl), after networkPolicy.scrimEgress.
+    extraEgress: []
+    # -- Labels of the NetworkPolicy.
+    labels: {}
+    # -- Annotations of the NetworkPolicy.
+    annotations: {}
+  # -- Labels on central's Secrets (tpl).
+  secretLabels: {}
+  # -- Annotations on central's Secrets.
+  secretAnnotations: {}
+  # -- Labels on central's ConfigMaps (tpl).
+  configMapLabels: {}
+  # -- Annotations on central's ConfigMaps.
+  configMapAnnotations: {}
+  # -- Replication of the Secret slots and ConfigMaps (global.replication keys), merged over global.replication.
+  replication: {}
+
+# -- Admin API over TCP, for operators outside the pod (`scrim approve` with `--admin-url`). Off: run `scrim approve` with kubectl exec in the scrim pod, against the Unix socket.
+# @default -- See the keys below.
+admin:
+  tcp:
+    # -- Serve the admin API on a TCP port of the Service.
+    enabled: false
+    # -- Port.
+    port: 9793
+    # The bearer token (at least 16 bytes) is the Secret slot admin, key token:
+    # secrets.existing.admin or secrets.externalSecrets.data.admin.
+
+# -- Metrics and health. The health endpoints (/livez, /readyz) are always served on the health port for the probes; `enabled` exposes /metrics on the Service and to Prometheus.
+# @default -- See the keys below.
+metrics:
+  # -- Expose metrics (Service port, monitors, NetworkPolicy scrape rule) and turn on scrim's metrics.enabled setting.
+  enabled: false
+  # -- Port of the metrics and health listener (metrics.listen on the pod IP).
+  port: 9792
+  # -- Metrics path (metrics.path).
+  path: /metrics
+  # -- Serve metrics without a token (metrics.allow-unauthenticated-remote, a weakening scrim logs at start-up): anyone who reaches the port reads them. Pair it with networkPolicy. Off, scrapers present the bearer token of the Secret slot metrics (key token, generated unless secrets.existing.metrics or secrets.externalSecrets.data.metrics supply it).
+  allowUnauthenticatedRemote: false
+
+# -- prometheus-operator ServiceMonitor for central scrim (needs metrics.enabled).
+# @default -- See the keys below.
+serviceMonitor:
+  # -- Create a Prometheus Operator ServiceMonitor for central scrim (needs metrics.enabled).
+  enabled: false
+  # -- Extra labels (for the Prometheus serviceMonitorSelector).
+  labels: {}
+  # -- Scrape interval.
+  interval: 30s
+  # -- Scrape timeout.
+  scrapeTimeout: 10s
+
+# -- prometheus-operator PodMonitor per agent namespace for sidecars (needs metrics.enabled and sidecar.enabled).
+# @default -- See the keys below.
+podMonitor:
+  # -- Create a PodMonitor per agent namespace for sidecars (needs metrics.enabled and sidecar.enabled).
+  enabled: false
+  # -- Extra labels.
+  labels: {}
+  # -- Scrape interval.
+  interval: 30s
+
+# -- prometheus-operator PrometheusRule with the scrim alert rules.
+# @default -- See the keys below.
+prometheusRule:
+  # -- Create a PrometheusRule from the chart's monitoring/scrim.rules.yaml (a copy of
+  # deploy/monitoring/rules/scrim.rules.yaml) plus `groups`.
+  enabled: false
+  # -- Extra labels.
+  labels: {}
+  # -- Extra rule groups.
+  groups: []
+
+# -- Grafana dashboard ConfigMap for the Grafana sidecar.
+# @default -- See the keys below.
+grafanaDashboard:
+  # -- Create a ConfigMap with the dashboard JSON, labelled for the Grafana sidecar.
+  enabled: false
+  # -- Labels; the Grafana sidecar picks up grafana_dashboard: "1" by default.
+  labels:
+    grafana_dashboard: "1"
+  # -- Annotations (for example grafana_folder).
+  annotations: {}
+  # -- Dashboard JSON; empty uses the chart's monitoring/scrim-dashboard.json (a copy of
+  # deploy/monitoring/grafana/scrim-dashboard.json).
+  json: ""
+
+# -- Agent pods: which pods use scrim, and how.
+# @default -- See the keys below.
+agents:
+  # -- Label that marks agent pods. Value `central` uses the central Service, `sidecar` adds an
+  # in-pod scrim.
+  label: scrim.dev/inject
+  # -- Namespaces agent pods run in. The chart creates the public CA ConfigMap, the agent env
+  # ConfigMaps, NetworkPolicies and sidecar resources there before any pod starts.
+  namespaces: []
+  # -- Extra NO_PROXY entries for agents (hosts reached without scrim; they also need a
+  # NetworkPolicy egress rule).
+  noProxy: []
+  # -- Extra environment variables for agent containers.
+  extraEnv: []
+  # -- Mount path of the CA files in agent containers.
+  trustPath: /etc/scrim/trust
+
+# -- Kyverno admission policy that configures labelled pods.
+# @default -- See the keys below.
+kyverno:
+  # -- Install the ClusterPolicy (needs Kyverno 1.13 or later).
+  enabled: false
+  # -- Refuse labelled pods when Kyverno cannot process them.
+  failurePolicy: Fail
+
+# -- NetworkPolicies of central scrim and of agent pods.
+# @default -- See the keys below.
+networkPolicy:
+  # -- Create NetworkPolicies (needs a CNI that enforces them).
+  enabled: false
+  # -- Pod and namespace selectors of the cluster DNS.
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  # -- Egress rules of central scrim besides DNS (providers, stores, tool hosts, PostgreSQL).
+  # The default allows HTTPS anywhere.
+  scrimEgress:
+    - ports:
+        - port: 443
+          protocol: TCP
+  # -- Egress to the Kubernetes API server, for TokenReview (identity.kubernetes) from central
+  # scrim and sidecar pods. Policies see the API server's endpoint port, often 6443, not the
+  # Service port. Narrow it with `to` (the API server's addresses) where you can.
+  apiServerEgress:
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+  # -- Egress rules of sidecar agent pods besides DNS (what the in-pod scrim must reach).
+  sidecarEgress:
+    - ports:
+        - port: 443
+          protocol: TCP
+  # -- Where Prometheus scrapes from (used when metrics.enabled).
+  prometheus:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: monitoring
+    podSelector: {}
+  # -- Peers allowed to the admin TCP port (NetworkPolicy `from` entries).
+  adminFrom: []
+  # -- Labels on every NetworkPolicy the chart renders (tpl).
+  labels: {}
+  # -- Annotations on every NetworkPolicy the chart renders.
+  annotations: {}
+
+# -- Sidecar mode: an in-pod `scrim proxy` on loopback for pods labelled `sidecar`.
+# @default -- See the keys below.
+sidecar:
+  # -- Render the per-namespace sidecar resources and the sidecar injection rule.
+  enabled: false
+  # -- Resources of the sidecar.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      memory: 384Mi
+  # -- Container security context of the sidecar (it runs as UID 65532; the egress guard
+  # lets only that UID out).
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
+  # -- Secrets (that must exist in every agent namespace) mounted into the sidecar, as secretMounts.
+  secretMounts: []
+  # -- Name of the CA Secret in agent namespaces. Created by the chart when ca.create is on;
+  # otherwise provide it in each namespace.
+  caSecretName: scrim-sidecar-ca
+  # -- Name of the placeholder key Secret in agent namespaces (same rule as caSecretName).
+  keysSecretName: scrim-sidecar-keys
+  # Egress guard: an init container that installs nftables rules in the pod's network namespace
+  # so only the sidecar's UID reaches the network. A NetworkPolicy applies to the whole pod and
+  # cannot tell the agent from the sidecar.
+  egressGuard:
+    # -- Install the guard. Without it the agent can reach whatever the pod's NetworkPolicy allows.
+    enabled: true
+    # -- Image with the `nft` binary and a shell, required when enabled.
+    image: ""
+    # -- Pull policy.
+    pullPolicy: IfNotPresent
+
+# -- helm test pods (templates/tests): they reach the central scrim's LLM and forward proxy listeners (and /readyz with metrics on) through its Service.
+# @default -- See the keys below.
+tests:
+  # -- Render helm test pods.
+  enabled: true
+  # -- Attempts, 5 seconds apart, before a test fails.
+  retries: 12
+  # -- Resources of the test pods.
+  # @default -- See the keys below.
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      memory: 64Mi
+  # -- Test image (curl).
+  # @default -- See the keys below.
+  image:
+    registry: docker.io
+    repository: curlimages/curl
+    tag: "8.10.1"
+    useAppVersion: false
+    digest: sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
+    pullPolicy: IfNotPresent
+  # -- Extra labels of the test pods, merged over global.podLabels (tpl).
+  podLabels: {}
+  # -- Extra annotations of the test pods, merged over global.podAnnotations (tpl).
+  podAnnotations: {}
+  # -- Pull secrets of the test pods, added to global.imagePullSecrets.
+  imagePullSecrets: []
+  # -- nodeSelector (empty: global.nodeSelector).
+  nodeSelector: {}
+  # -- tolerations (empty: global.tolerations).
+  tolerations: []
+  # -- affinity (empty: global.affinity; tpl).
+  affinity: {}
+  # -- priorityClassName (empty: global.priorityClassName).
+  priorityClassName: ""
+  # -- lifecycle hooks (postStart, preStop) of the test container (empty: global.lifecycle; tpl).
+  lifecycle: {}
+  # -- dnsPolicy (empty: global.dnsPolicy).
+  dnsPolicy: ""
+  # -- dnsConfig (empty: global.dnsConfig; tpl).
+  dnsConfig: {}
+  # -- hostAliases (empty: global.hostAliases; tpl).
+  hostAliases: []
+  # -- runtimeClassName (empty: global.runtimeClassName).
+  runtimeClassName: ""
+  # -- shareProcessNamespace (null: global.shareProcessNamespace).
+  shareProcessNamespace: null
+  # -- enableServiceLinks (null: global.enableServiceLinks).
+  enableServiceLinks: null
+  # -- Test pod securityContext, merged over global.podSecurityContext (default user 100:101, the curl image's).
+  podSecurityContext: {}
+  # -- Test container securityContext, merged over global.containerSecurityContext.
+  securityContext: {}
+
+# -- Metadata of single objects, by "<Kind>/<name>" where name is the object name with or without the "<fullname>-" prefix (e.g. "ConfigMap/config", or "Service/<fullname>" for the objects named after the release): {labels, annotations, replication}. Wins over every other source; replication only applies to Secrets and ConfigMaps rendered through the shared helpers.
+objectMetadata: {}
+# -- ConfigMaps the chart renders as "<fullname>-<key>": key -> {data (tpl), binaryData, labels, annotations, immutable, name, existingConfigMap, replication}. Reference them from central.extraVolumes or extraEnvFrom with include "chart.extraConfigMapName" (list $ "<key>").
+extraConfigMaps: {}
+# -- Arbitrary extra manifests: a list of objects or strings, each rendered through tpl. Credentials do not belong here either; an ExternalSecret does.
+extraObjects: []

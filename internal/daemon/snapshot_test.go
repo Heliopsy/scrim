@@ -364,6 +364,58 @@ func TestAskTimeoutMillis(t *testing.T) {
 	}
 }
 
+// TestSnapshotCredentialNamesUnique checks every credential entry gets its own
+// name and no value is sent twice under one slug: the data plane refuses a
+// snapshot with two credentials of one name or one placeholder, and a store's
+// own credentials (a static token counted twice, a role and a secret ID) or a
+// retained rotated value would otherwise collide. The bound current value
+// keeps its catalog name.
+func TestSnapshotCredentialNamesUnique(t *testing.T) {
+	cur, old, cred, cred2 := seed(t, "cur-"), seed(t, "old-"), seed(t, "cred-"), seed(t, "cred2-")
+	ref := stores.MustParseRef("bao://kv/agents/github#token")
+	src := &fakeValues{store: "bao", vals: []fakeValue{
+		{refresh.Source{Ref: ref}, secret.FromString(cur)},
+		{refresh.Source{Ref: ref, Retained: true}, secret.FromString(old)},
+		{refresh.Source{}, secret.FromString(cred)},
+		{refresh.Source{}, secret.FromString(cred)},
+		{refresh.Source{}, secret.FromString(cred2)},
+	}}
+	cfg := buildConfig(t, `catalog:
+  entries:
+    github:
+      ref: bao://kv/agents/github#token
+      hosts: [api.github.com]
+`)
+	cat, err := catalog.Load(context.Background(), cfg, nil, catalog.SelectionFrom(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &SnapshotBuilder{Config: func() *config.Config { return cfg }, Values: []ValueSource{src},
+		Catalog: func() *catalog.Catalog { return cat }, Listeners: ListenersFrom(cfg)}
+	b.SetKeys(testRing(t))
+	s, err := b.Build(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, v := range s.GetValues() {
+		n := v.GetName()
+		if n == "" {
+			n = v.GetRef()
+		}
+		if names[n] {
+			t.Fatalf("credential name %q is used twice", n)
+		}
+		names[n] = true
+		if string(v.GetValue()) == cur && (n != "github" || len(v.GetBoundHosts()) == 0) {
+			t.Fatalf("the bound current value is %q, bound to %v", n, v.GetBoundHosts())
+		}
+	}
+	if len(names) != 4 || !names["store:bao~2"] || len(s.GetValues()) != 4 {
+		t.Fatalf("names = %v, %d values (the repeated token is sent once)", names, len(s.GetValues()))
+	}
+}
+
 // TestSnapshotListsUnavailableCredentials: a catalog credential bound to a
 // host whose value no store holds yet goes to Snapshot.unavailable with its
 // binding and declared placeholder and no value, so the tool proxy refuses

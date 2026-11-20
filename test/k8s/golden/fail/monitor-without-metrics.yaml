@@ -1,0 +1,2 @@
+# expect: serviceMonitor and podMonitor need metrics.enabled=true
+serviceMonitor: {enabled: true}

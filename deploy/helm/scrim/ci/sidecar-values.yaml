@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Sidecar mode with Kyverno, NetworkPolicy, metrics and a PodMonitor: the
+# egress guard is the one documented exception of check-pods.py.
+central: {enabled: false}
+agents: {namespaces: [agents]}
+kyverno: {enabled: true}
+networkPolicy: {enabled: true}
+metrics: {enabled: true}
+secrets:
+  existing: {metrics: scrim-metrics}
+podMonitor: {enabled: true}
+sidecar:
+  enabled: true
+  egressGuard: {image: registry.example.com/nft:1}

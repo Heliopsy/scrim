@@ -1,0 +1,3 @@
+# expect: config.state is set by the chart
+config:
+  state: {backend: sqlite}

@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: agent namespaces (agents.yaml, ca.yaml)
+templates:
+  - agents.yaml
+  - ca.yaml
+release:
+  name: rel
+  namespace: ns
+set:
+  agents.namespaces: [agents]
+tests:
+  - it: writes the agent environment with the token file
+    template: agents.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim-agent-env}
+    asserts:
+      - equal: {path: metadata.namespace, value: agents}
+      - equal: {path: data.HTTPS_PROXY, value: "http://rel-scrim.ns.svc.cluster.local:9791"}
+      - equal: {path: data.ANTHROPIC_BASE_URL, value: "http://rel-scrim.ns.svc.cluster.local:9790/anthropic"}
+      - equal: {path: data.SCRIM_K8S_TOKEN_FILE, value: /var/run/secrets/scrim/token}
+  - it: leaves the token file out with identity off
+    template: agents.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim-agent-env}
+    set:
+      identity.kubernetes.enabled: false
+    asserts:
+      - notExists: {path: data.SCRIM_K8S_TOKEN_FILE}
+  - it: publishes the CA and the scrim-exec launcher to every agent namespace
+    template: ca.yaml
+    documentSelector: {path: metadata.namespace, value: agents}
+    asserts:
+      - isKind: {of: ConfigMap}
+      - exists: {path: 'data["scrim-ca.pem"]'}
+      - matchRegex: {path: 'data["scrim-exec"]', pattern: 'http://k8s:\$tok@'}
+      - matchRegex: {path: 'data["scrim-exec"]', pattern: 'x-scrim-session: \$tok'}
+  - it: sidecar mode copies its configuration, CA and keys into the agent namespace
+    template: agents.yaml
+    set:
+      sidecar: {enabled: true, egressGuard: {image: nft:1}}
+    asserts:
+      - containsDocument: {kind: ConfigMap, apiVersion: v1, name: rel-scrim-sidecar-config, namespace: agents, any: true}
+      - containsDocument: {kind: Secret, apiVersion: v1, name: scrim-sidecar-ca, namespace: agents, any: true}
+      - containsDocument: {kind: Secret, apiVersion: v1, name: scrim-sidecar-keys, namespace: agents, any: true}
+  - it: the sidecar's scrim verifies tokens with the pod's own API token
+    template: agents.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim-sidecar-config}
+    set:
+      sidecar: {enabled: true, egressGuard: {image: nft:1}}
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "token-file: /var/run/secrets/scrim/kube-api/token"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "listen: 127\\.0\\.0\\.1:9790"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "replicas: 1"}

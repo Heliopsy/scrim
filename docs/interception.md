@@ -12,7 +12,7 @@ of their own: they are an add-on that keeps methods 1 and 2 from being skipped.
 | 2 | [Forward proxy](#2-forward-proxy) (`HTTPS_PROXY` and CA) | v0.1.0 | full | yes, by ignoring the proxy variables |
 | 3 | [Transparent, machine-wide](#3-transparent-machine-wide) (nftables; eBPF variant) | planned, M2 (eBPF M3) | full | no, inside the covered users or cgroups |
 | 4 | [DNS override](#4-dns-override) | planned, M3 | full for connections by name | yes, by connecting to an IP address |
-| 5 | [Kubernetes transparent](#5-kubernetes-transparent) | planned, M2 | full | no, while NetworkPolicy is enforced |
+| 5 | [Kubernetes transparent](#5-kubernetes-transparent) | on `main` (Helm chart, Kyverno injection, NetworkPolicy) | full | no, while NetworkPolicy is enforced |
 | 6 | [Hooks only](#6-hooks-only) | planned, M3 | partial: tool output only | yes; model traffic never passes scrim |
 | 7 | [MCP only](#7-mcp-only) | v0.1.0 (`scrim mcp` is on `main`) | requests only: nothing is intercepted | not applicable |
 | + | [Managed agent settings](#managed-agent-settings-enforcement-add-on) | planned, M2 (manual setup works now) | add-on to 1 and 2 | not through the agent's own settings |
@@ -432,17 +432,19 @@ address were never covered.
 
 ## 5. Kubernetes transparent
 
-Planned for M2 (tasks.md 12.3). The Helm chart installs an admission policy (Kyverno in the plan)
-that configures pods carrying the scrim agent label when they are created: the base URL variables,
-the CA bundle mounted into the pod, the MCP configuration and a projected service account token with
-a scrim-specific audience, which scrim uses to identify the pod as `namespace/serviceaccount`. A
+The Helm chart in `deploy/helm/scrim` ([kubernetes.md](kubernetes.md)) deploys a central scrim and
+installs a Kyverno policy that configures pods labelled `scrim.dev/inject: central` (or `sidecar`)
+when they are created: the base URL and proxy variables, the CA mounted into the pod, and a
+projected service account token with a scrim audience, which scrim verifies with TokenReview to
+identify the pod as `namespace/serviceaccount` (the `scrim-exec` launcher sends it). A
 NetworkPolicy lets those pods reach only scrim and DNS, and lets scrim reach providers, stores and
-notifiers. Agent images do not change.
+tool hosts. Agent images do not change. MCP registration in the pod waits for the edge forwarder
+(tasks.md 12.5).
 
-For agents that ignore the injected variables, traffic can be redirected to scrim without them: an
+For agents that ignore the injected variables, traffic could be redirected to scrim without them: an
 init container that installs redirect rules in the pod's network namespace (it needs `NET_ADMIN`),
-a CNI plugin that does the same, or an egress gateway that all provider traffic leaves through. The
-specs require injection and NetworkPolicy only; which redirect scrim ships is not decided.
+a CNI plugin that does the same, or an egress gateway. scrim does not ship a redirect; such traffic
+is blocked by the NetworkPolicy (central mode) or the egress guard (sidecar mode) instead.
 
 ```mermaid
 flowchart LR
@@ -456,41 +458,17 @@ flowchart LR
 
 ### Setup
 
-The chart, its values and the label name are not published yet. The NetworkPolicy part is plain
-Kubernetes; a policy of this shape, with your own labels, is what the chart will create:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: agents-egress-scrim-only
-  namespace: agents
-spec:
-  podSelector:
-    matchLabels:
-      <your-agent-label>: "true"
-  policyTypes: [Egress]
-  egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: scrim
-      ports:
-        - protocol: TCP
-          port: 9790
-    - to:
-        - namespaceSelector: {}
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
+```sh
+helm --kube-context <ctx> install scrim deploy/helm/scrim -n scrim \
+  --set kyverno.enabled=true --set networkPolicy.enabled=true \
+  --set 'agents.namespaces={agents}' -f values.yaml
 ```
 
-A NetworkPolicy only works when the cluster's CNI enforces it.
+Then label agent pods `scrim.dev/inject: central`. Without Kyverno, reference the
+`<release>-scrim-agent-env` ConfigMap with `envFrom` and mount the `scrim-ca` ConfigMap. The chart
+creates the NetworkPolicies in each listed agent namespace before any pod starts. A NetworkPolicy
+only works when the cluster's CNI enforces it. Values, sidecar mode, identity and troubleshooting are
+in [kubernetes.md](kubernetes.md).
 
 ### What it protects against
 
@@ -505,15 +483,15 @@ forward proxy or the policy allows those hosts.
 
 ### TLS and CA
 
-The mounted CA bundle is needed for tool traffic through scrim's forward proxy and for any
-redirected TLS connection. The specs do not yet say whether pods reach the scrim Service over plain
-HTTP or TLS.
+Agent pods reach the base URL over plain HTTP inside the cluster; NetworkPolicy limits who can. The
+mounted `scrim-ca` ConfigMap holds the CA for tool traffic through scrim's forward proxy. Every scrim
+pod of an installation shares one CA, generated by the chart once or supplied as a Secret.
 
 ### Suits
 
 Agent workloads in Kubernetes, CI on Kubernetes runners. A central scrim Deployment serves many
-pods; a `scrim-dataplane` sidecar per pod is possible but puts the value dictionary in every pod, so
-the design prefers the central one.
+pods. Sidecar mode runs a full `scrim proxy` in each pod with an nftables egress guard; it puts the
+value dictionary and store credentials in every pod, so the central one is the default.
 
 ### Fails closed
 

@@ -1,0 +1,2 @@
+# expect: admin.tcp.enabled needs the token in the Secret slot admin
+admin: {tcp: {enabled: true}}

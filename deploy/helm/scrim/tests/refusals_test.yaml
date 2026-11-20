@@ -1,0 +1,142 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: values the chart refuses
+templates:
+  - validate.yaml
+release:
+  name: rel
+  namespace: ns
+tests:
+  - it: refuses a literal store credential
+    set:
+      config.stores.bao: {kind: openbao, address: https://bao.example.com, token: s.literal}
+    asserts:
+      - failedTemplate: {errorPattern: "config.stores.bao.token holds a literal"}
+  - it: refuses a literal admin token in config
+    set:
+      config.admin.token: literal-token
+    asserts:
+      - failedTemplate: {errorPattern: "config.admin.token holds a literal"}
+  - it: refuses a literal per-agent store credential
+    set:
+      config.identity.store-credentials: {bao/laptop: s.literal}
+    asserts:
+      - failedTemplate: {errorPattern: "config.identity.store-credentials.bao/laptop holds a literal"}
+  - it: refuses config.identity.kubernetes
+    set:
+      config.identity.kubernetes: {enabled: false}
+    asserts:
+      - failedTemplate: {errorPattern: "config.identity.kubernetes is set by the chart"}
+  - it: refuses config.state, config.events and config.deployment
+    set:
+      config.events: {backend: postgres}
+    asserts:
+      - failedTemplate: {errorPattern: "config.events is set by the chart"}
+  - it: refuses config.metrics
+    set:
+      config.metrics: {enabled: true}
+    asserts:
+      - failedTemplate: {errorPattern: "config.metrics is set by the chart"}
+  - it: refuses two replicas without postgres
+    set:
+      central.replicaCount: 2
+    asserts:
+      - failedTemplate: {errorPattern: "several replicas need shared state and events"}
+  - it: refuses the HPA without postgres
+    set:
+      central.autoscaling.enabled: true
+    asserts:
+      - failedTemplate: {errorPattern: "several replicas need shared state and events"}
+  - it: refuses global.ha without postgres
+    set:
+      global.ha.enabled: true
+    asserts:
+      - failedTemplate: {errorPattern: "several replicas need shared state and events"}
+  - it: accepts global.ha with postgres
+    set:
+      global.ha.enabled: true
+      postgres.enabled: true
+      secrets.existing.postgres: pg
+    asserts:
+      - notFailedTemplate: {}
+  - it: refuses postgres without a DSN source
+    set:
+      postgres.enabled: true
+    asserts:
+      - failedTemplate: {errorPattern: "postgres.enabled needs the DSN in the Secret slot postgres"}
+  - it: accepts the DSN from an ExternalSecret
+    set:
+      postgres.enabled: true
+      secrets.externalSecrets: {enabled: true, secretStoreRef: {name: vault}, data: {postgres: {dsn: scrim/dsn}}}
+    asserts:
+      - notFailedTemplate: {}
+  - it: refuses the admin TCP listener without a token source
+    set:
+      admin.tcp.enabled: true
+    asserts:
+      - failedTemplate: {errorPattern: "admin.tcp.enabled needs the token in the Secret slot admin"}
+  - it: refuses the connections metric without metrics
+    set:
+      postgres.enabled: true
+      secrets.existing.postgres: pg
+      central.autoscaling: {enabled: true, connections: {enabled: true}}
+    asserts:
+      - failedTemplate: {errorPattern: "central.autoscaling.connections needs metrics.enabled"}
+  - it: refuses sidecar metrics without a token Secret in every agent namespace
+    set:
+      metrics.enabled: true
+      sidecar: {enabled: true, egressGuard: {image: nft:1}}
+    asserts:
+      - failedTemplate: {errorPattern: "sidecar mode with metrics needs secrets.existing.metrics"}
+  - it: refuses sidecar mode without a guard image
+    set:
+      sidecar.enabled: true
+    asserts:
+      - failedTemplate: {errorPattern: "sidecar.egressGuard.image is required"}
+  - it: refuses sidecar mode without a CA
+    set:
+      sidecar: {enabled: true, egressGuard: {image: nft:1}}
+      ca.create: false
+    asserts:
+      - failedTemplate: {errorPattern: "sidecar mode needs a CA"}
+  - it: refuses a ServiceMonitor without central scrim
+    set:
+      metrics.enabled: true
+      central.enabled: false
+      serviceMonitor.enabled: true
+    asserts:
+      - failedTemplate: {errorPattern: "serviceMonitor.enabled scrapes central scrim"}
+  - it: refuses a PodMonitor without sidecars
+    set:
+      metrics.enabled: true
+      podMonitor.enabled: true
+    asserts:
+      - failedTemplate: {errorPattern: "podMonitor.enabled scrapes sidecars"}
+  - it: refuses ExternalSecrets without a store
+    set:
+      secrets.externalSecrets.enabled: true
+    asserts:
+      - failedTemplate: {errorPattern: "secrets.externalSecrets.enabled needs secrets.externalSecrets.secretStoreRef.name"}
+  - it: refuses an unknown Secret slot
+    set:
+      secrets.existing.redis: x
+    asserts:
+      - failedTemplate: {errorPattern: "secrets.existing.redis: no such slot"}
+  - it: refuses an extraConfigMaps key that is not a DNS label
+    set:
+      extraConfigMaps: {Bad_Key: {data: {a: b}}}
+    asserts:
+      - failedTemplate: {errorPattern: "must be a DNS label"}
+  - it: refuses an extraConfigMaps entry with both an existing ConfigMap and data
+    set:
+      extraConfigMaps: {notes: {existingConfigMap: x, data: {a: b}}}
+    asserts:
+      - failedTemplate: {errorPattern: "set either existingConfigMap or data/binaryData"}
+  - it: refuses extraSelectorLabels that repeat commonLabels
+    set:
+      commonLabels: {team: a}
+      global.extraSelectorLabels: {team: a}
+    asserts:
+      - failedTemplate: {errorPattern: "is also a commonLabels key"}
+  - it: renders nothing for valid defaults
+    asserts:
+      - hasDocuments: {count: 0}

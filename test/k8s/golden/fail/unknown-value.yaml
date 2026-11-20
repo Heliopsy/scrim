@@ -1,0 +1,2 @@
+# expect: additional properties 'centrall' not allowed
+centrall: {replicaCount: 2}

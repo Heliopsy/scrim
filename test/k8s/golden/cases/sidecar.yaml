@@ -1,0 +1,19 @@
+# Sidecar mode only, with Kyverno and NetworkPolicy.
+central:
+  enabled: false
+agents:
+  namespaces: [agents]
+kyverno:
+  enabled: true
+networkPolicy:
+  enabled: true
+sidecar:
+  enabled: true
+  secretMounts:
+    - {name: bao, secretName: bao-token}
+  egressGuard: {image: registry.example.com/nft:1}
+policyRules:
+  rules:
+    - name: inject-github
+      decision: allow
+      when: op == "inject" && dest.host == "api.github.com"

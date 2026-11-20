@@ -1,0 +1,3 @@
+# expect: podMonitor.enabled scrapes sidecars
+metrics: {enabled: true}
+podMonitor: {enabled: true}

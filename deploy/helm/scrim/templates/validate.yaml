@@ -1,0 +1,36 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- /* Combinations the schema cannot express. Renders nothing. */ -}}
+{{- include "scrim.checkConfig" . -}}
+{{- range $k, $c := .Values.extraConfigMaps -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $k) -}}
+{{- fail (printf "extraConfigMaps: key %q must be a DNS label (it becomes part of the ConfigMap name)" $k) -}}
+{{- end -}}
+{{- if and $c $c.existingConfigMap (or $c.data $c.binaryData) -}}
+{{- fail (printf "extraConfigMaps.%s: set either existingConfigMap or data/binaryData, not both" $k) -}}
+{{- end -}}
+{{- end -}}
+{{- range $k, $_ := .Values.global.extraSelectorLabels -}}
+{{- if or (hasKey (default dict $.Values.commonLabels) $k) (hasKey (default dict $.Values.global.commonLabels) $k) -}}
+{{- fail (printf "global.extraSelectorLabels.%s is also a commonLabels key: set it in one place" $k) -}}
+{{- end -}}
+{{- end -}}
+{{- /*
+The template refuses a ServiceMonitor and a PodMonitor together because both
+would scrape the same pods. Here they never do: the ServiceMonitor scrapes
+central scrim, the PodMonitor the sidecars. What is refused instead is a
+monitor with nothing to scrape.
+*/ -}}
+{{- if and .Values.serviceMonitor.enabled (not .Values.central.enabled) -}}
+{{- fail "serviceMonitor.enabled scrapes central scrim, which central.enabled=false does not deploy; use podMonitor for sidecars" -}}
+{{- end -}}
+{{- if and .Values.podMonitor.enabled (not .Values.sidecar.enabled) -}}
+{{- fail "podMonitor.enabled scrapes sidecars, which sidecar.enabled=false does not inject; use serviceMonitor for central scrim" -}}
+{{- end -}}
+{{- if and .Values.secrets.externalSecrets.enabled (not .Values.secrets.externalSecrets.secretStoreRef.name) -}}
+{{- fail "secrets.externalSecrets.enabled needs secrets.externalSecrets.secretStoreRef.name" -}}
+{{- end -}}
+{{- range $slot, $_ := .Values.secrets.existing -}}
+{{- if not (has $slot (list "admin" "metrics" "postgres")) -}}
+{{- fail (printf "secrets.existing.%s: no such slot (admin, metrics, postgres)" $slot) -}}
+{{- end -}}
+{{- end -}}

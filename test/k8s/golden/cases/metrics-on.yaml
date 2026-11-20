@@ -1,0 +1,34 @@
+# Metrics with every monitoring object, central and sidecar.
+metrics:
+  enabled: true
+secrets:
+  existing:
+    metrics: scrim-metrics
+serviceMonitor:
+  enabled: true
+  labels: {release: kube-prometheus-stack}
+podMonitor:
+  enabled: true
+prometheusRule:
+  enabled: true
+  groups:
+    - name: scrim-extra
+      rules:
+        - alert: ScrimDown
+          expr: absent(up{job="scrim"} == 1)
+          for: 5m
+grafanaDashboard:
+  enabled: true
+  json: '{"title": "scrim", "panels": []}'
+agents:
+  namespaces: [agents]
+networkPolicy:
+  enabled: true
+  prometheus:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: observability}
+    podSelector:
+      matchLabels: {app.kubernetes.io/name: prometheus}
+sidecar:
+  enabled: true
+  egressGuard: {image: registry.example.com/nft:1}

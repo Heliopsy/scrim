@@ -1,0 +1,4 @@
+# expect: config.identity.kubernetes is set by the chart
+config:
+  identity:
+    kubernetes: {enabled: false}

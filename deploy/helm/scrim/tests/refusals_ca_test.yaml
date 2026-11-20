@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: refusals in ca.yaml
+templates:
+- ca.yaml
+release:
+  name: rel
+  namespace: ns
+tests:
+- it: refuses no CA source
+  set:
+    ca.create: false
+  asserts:
+  - failedTemplate:
+      errorPattern: scrim needs one interception CA
+- it: refuses an existing CA it cannot read without its certificate
+  set:
+    ca.existingSecret: mine
+  asserts:
+  - failedTemplate:
+      errorPattern: set ca.certificate to the public PEM
