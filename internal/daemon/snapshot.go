@@ -261,6 +261,10 @@ func routes(cfg *config.Config) []*pb.Route {
 		// forward proxy.
 		{Name: "chatgpt", Provider: "openai", Upstream: UpstreamChatGPT.Get(cfg), PathPrefix: "/chatgpt",
 			Hosts: []string{"chatgpt.com"}, Chain: clone()},
+		// ab.chatgpt.com carries the same session's traffic. No path there
+		// is a Responses call, so every body is redacted as generic JSON.
+		{Name: "chatgpt-ab", Provider: "openai", Upstream: UpstreamChatGPTAB.Get(cfg), PathPrefix: "/chatgpt-ab",
+			Hosts: []string{"ab.chatgpt.com"}, Chain: clone()},
 	}
 }
 
@@ -269,7 +273,7 @@ func routes(cfg *config.Config) []*pb.Route {
 // not intercepted").
 func bypass(cfg *config.Config) []string {
 	var out []string
-	for _, raw := range []string{ChainURL.Get(cfg), UpstreamAnthropic.Get(cfg), UpstreamOpenAI.Get(cfg), UpstreamChatGPT.Get(cfg)} {
+	for _, raw := range []string{ChainURL.Get(cfg), UpstreamAnthropic.Get(cfg), UpstreamOpenAI.Get(cfg), UpstreamChatGPT.Get(cfg), UpstreamChatGPTAB.Get(cfg)} {
 		u, err := url.Parse(raw)
 		if err != nil || u.Host == "" {
 			continue

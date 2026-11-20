@@ -137,6 +137,18 @@ environment variables reach providers through scrim without a base URL change.
 - **THEN** scrim terminates TLS, handles the request in the tool proxy (credential injection and
   response redaction) and never passes the connection through uninspected
 
+### Requirement: ChatGPT hosts are provider hosts
+
+`chatgpt.com` and `ab.chatgpt.com` SHALL be provider hosts: a connection to either through the
+forward proxy, or any other host-routed mode, SHALL go through the LLM proxy, never the tool proxy.
+On `chatgpt.com`, `POST .../responses` SHALL use the OpenAI Responses codec. Every other path on
+both hosts SHALL be redacted as generic JSON, since its shape is not documented.
+
+#### Scenario: Codex signed in with ChatGPT
+
+- **WHEN** Codex with a ChatGPT login, through the forward proxy, sends `POST /backend-api/codex/responses` to `chatgpt.com` and a request to `ab.chatgpt.com`, both holding a known value
+- **THEN** both reach their upstream through the LLM proxy with placeholders only
+
 ### Requirement: One snapshot version per request
 
 The data plane SHALL build every part of a control-plane snapshot (dictionary, LLM routes, tool

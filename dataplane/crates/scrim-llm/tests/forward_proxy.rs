@@ -35,10 +35,29 @@ struct World {
 }
 
 async fn world(fx: &scrim_llm::testing::Fixture, response: Scripted) -> World {
+    world_with(fx, response, routes_to).await
+}
+
+/// The default routes (every provider host scrim claims), each sent to the fake provider.
+fn default_routes_to(url: &str) -> Vec<scrim_llm::RouteConfig> {
+    scrim_llm::config::default_routes()
+        .into_iter()
+        .map(|mut r| {
+            r.upstream = url.into();
+            r
+        })
+        .collect()
+}
+
+async fn world_with(
+    fx: &scrim_llm::testing::Fixture,
+    response: Scripted,
+    routes: impl FnOnce(&str) -> Vec<scrim_llm::RouteConfig>,
+) -> World {
     let upstream = FakeUpstream::start(response).await;
     // Provider hosts are claimed by host name; the route's upstream is the fake provider.
     let cfg = ProxyConfig {
-        routes: routes_to(&upstream.url()),
+        routes: routes(&upstream.url()),
         ..ProxyConfig::default()
     };
     let llm = Arc::new(
@@ -171,6 +190,44 @@ async fn provider_host_through_connect_is_redacted_and_restored() {
     assert_eq!(got[0].headers["x-api-key"], "agent-own-key");
     let v: serde_json::Value = serde_json::from_slice(&resp).unwrap();
     assert_eq!(v["content"][0]["text"], format!("pw {}", fx.value("s0")));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn chatgpt_hosts_through_connect_get_the_llm_pipeline() {
+    let fx = fixture();
+    let w = world_with(
+        &fx,
+        Scripted::json(200, r#"{"ok":true}"#),
+        default_routes_to,
+    )
+    .await;
+    // Codex signed in with ChatGPT: the Responses API on chatgpt.com.
+    let body = format!(
+        r#"{{"model":"gpt-5-codex","instructions":"x","input":[{{"type":"message","role":"user","content":[{{"type":"input_text","text":"pw {}"}}]}}],"stream":false}}"#,
+        fx.value("s0")
+    );
+    let (status, resp) = via_connect(&w, "chatgpt.com", "/backend-api/codex/responses", body).await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&resp));
+    // ab.chatgpt.com: no documented shape, redacted as generic JSON.
+    let body = format!(
+        r#"{{"events":[{{"name":"x","metadata":{{"note":"user {}"}}}}]}}"#,
+        fx.value("s2")
+    );
+    let (status, resp) = via_connect(&w, "ab.chatgpt.com", "/v1/rgstr", body).await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&resp));
+    let got = w.upstream.received();
+    assert_eq!(got.len(), 2, "both went to the LLM routes' upstream");
+    assert_eq!(got[0].uri, "/backend-api/codex/responses");
+    assert_eq!(got[1].uri, "/v1/rgstr");
+    for (r, s) in got.iter().zip(["s0", "s2"]) {
+        assert!(fx.leaks(&r.body).is_empty(), "{}", r.uri);
+        assert!(
+            String::from_utf8_lossy(&r.body).contains(&fx.placeholder(s)),
+            "{}",
+            r.uri
+        );
+        assert_eq!(r.headers["x-api-key"], "agent-own-key");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

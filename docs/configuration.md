@@ -264,6 +264,7 @@ is out of date.
 | [`proxy.socket`](#proxysocket) | string | `""` | restart required |
 | [`proxy.upstream.anthropic`](#proxyupstreamanthropic) | string | `https://api.anthropic.com` | hot |
 | [`proxy.upstream.chatgpt`](#proxyupstreamchatgpt) | string | `https://chatgpt.com` | hot |
+| [`proxy.upstream.chatgpt-ab`](#proxyupstreamchatgpt-ab) | string | `https://ab.chatgpt.com` | hot |
 | [`proxy.upstream.openai`](#proxyupstreamopenai) | string | `https://api.openai.com` | hot |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
@@ -1014,6 +1015,18 @@ Base URL requests to chatgpt.com (Codex signed in with ChatGPT, through the forw
 | Type | string |
 | Default | `https://chatgpt.com` |
 | Environment | `SCRIM_PROXY_UPSTREAM_CHATGPT` |
+| Flag | none |
+| Reload | hot |
+
+#### `proxy.upstream.chatgpt-ab`
+
+Base URL requests to ab.chatgpt.com (Codex signed in with ChatGPT, through the forward proxy) are forwarded to after redaction. Its API shape is not documented, so every request body is redacted as generic JSON.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `https://ab.chatgpt.com` |
+| Environment | `SCRIM_PROXY_UPSTREAM_CHATGPT_AB` |
 | Flag | none |
 | Reload | hot |
 

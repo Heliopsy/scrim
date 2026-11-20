@@ -193,9 +193,10 @@ toward their bound hosts and redacts responses.
   settings](#managed-agent-settings-enforcement-add-on) close this for the agent itself.
 - A client that pins certificates or ships its own trust store; see [CA trust per
   runtime](#ca-trust-per-runtime).
-- Claude Code on Bedrock, Vertex or Foundry, and Codex with a custom `model_provider` or a ChatGPT
-  login: those go to endpoints scrim does not serve. `scrim run` refuses the Claude Code cases and
-  cannot change the Codex ones; see [run.md](run.md#limitations).
+- Claude Code on Bedrock, Vertex or Foundry, and Codex with a custom `model_provider`: those go to
+  endpoints scrim does not serve. `scrim run` refuses the Claude Code cases and cannot change the
+  Codex one; see [run.md](run.md#limitations). Codex signed in with a ChatGPT account reaches
+  `chatgpt.com` and `ab.chatgpt.com`, which the forward proxy hands to the LLM proxy.
 
 ### TLS and CA
 
