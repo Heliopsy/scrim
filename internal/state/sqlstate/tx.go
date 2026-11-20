@@ -33,17 +33,33 @@ func (t *Tx) begin(op string, write bool) error {
 }
 
 func (t *Tx) exec(ctx context.Context, op, q string, args ...any) (sql.Result, error) {
-	res, err := t.tx.ExecContext(ctx, t.db.rebind(q), args...)
+	res, err := t.tx.ExecContext(ctx, t.db.rebind(q), t.scrub(args)...)
 	return res, t.db.mapErr(err, op)
 }
 
 func (t *Tx) query(ctx context.Context, op, q string, args ...any) (*sql.Rows, error) {
-	rows, err := t.tx.QueryContext(ctx, t.db.rebind(q), args...)
+	rows, err := t.tx.QueryContext(ctx, t.db.rebind(q), t.scrub(args)...)
 	return rows, t.db.mapErr(err, op)
 }
 
 func (t *Tx) row(ctx context.Context, q string, args ...any) *sql.Row {
-	return t.tx.QueryRowContext(ctx, t.db.rebind(q), args...)
+	return t.tx.QueryRowContext(ctx, t.db.rebind(q), t.scrub(args)...)
+}
+
+// scrub passes every string argument through the configured scrubber.
+func (t *Tx) scrub(args []any) []any {
+	sc := t.db.cfg.Scrubber
+	if sc == nil {
+		return args
+	}
+	out := make([]any, len(args))
+	for i, a := range args {
+		if s, ok := a.(string); ok {
+			a = sc.Scrub(s)
+		}
+		out[i] = a
+	}
+	return out
 }
 
 // exists reports whether table has a row with id, to tell ErrNotFound from
@@ -393,7 +409,7 @@ func (t *Tx) EndSession(ctx context.Context, id string, at time.Time) error {
 
 // --- audit
 
-const auditCols = `time, action, actor, agent_id, agent, ref, effect, rule, target, subject, request_id, reason, attrs`
+const auditCols = `time, action, actor, agent_id, agent, ref, effect, outcome, rule, target, subject, request_id, reason, attrs`
 
 // AppendAudit implements [state.Tx]. It writes in the caller's transaction,
 // so the entry commits or rolls back with the change it records.
@@ -410,9 +426,9 @@ func (t *Tx) AppendAudit(ctx context.Context, e *audit.Entry) error {
 		return err
 	}
 	effect, _ := e.Effect.MarshalText()
-	args := []any{ts(e.Time), e.Action, e.Actor, e.Agent.ID, agent, refString(e.Ref), string(effect), e.Rule,
+	args := []any{ts(e.Time), e.Action, e.Actor, e.Agent.ID, agent, refString(e.Ref), string(effect), e.Outcome, e.Rule,
 		e.Target, e.Subject, e.RequestID, e.Reason, attrs}
-	id, err := t.insertID(ctx, "append audit", `INSERT INTO audit_log (`+auditCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, args...)
+	id, err := t.insertID(ctx, "append audit", `INSERT INTO audit_log (`+auditCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, args...)
 	if err != nil {
 		return err
 	}
@@ -427,7 +443,7 @@ func scanAudit(s interface{ Scan(...any) error }) (audit.Entry, error) {
 		agentID, agent, ref, effect string
 		attrs                       string
 	)
-	if err := s.Scan(&e.ID, &at, &e.Action, &e.Actor, &agentID, &agent, &ref, &effect, &e.Rule, &e.Target,
+	if err := s.Scan(&e.ID, &at, &e.Action, &e.Actor, &agentID, &agent, &ref, &effect, &e.Outcome, &e.Rule, &e.Target,
 		&e.Subject, &e.RequestID, &e.Reason, &attrs); err != nil {
 		return e, err
 	}
@@ -454,11 +470,20 @@ func (t *Tx) QueryAudit(ctx context.Context, q state.AuditQuery) ([]audit.Entry,
 	if q.AfterID > 0 {
 		w.add("id > ?", q.AfterID)
 	}
+	if q.BeforeID > 0 {
+		w.add("id < ?", q.BeforeID)
+	}
 	if q.AgentID != "" {
 		w.add("agent_id = ?", q.AgentID)
 	}
 	if !q.Ref.IsZero() {
 		w.add("ref = ?", refString(q.Ref))
+	}
+	if q.Effect != "" {
+		w.add("effect = ?", q.Effect)
+	}
+	if q.Outcome != "" {
+		w.add("outcome = ?", q.Outcome)
 	}
 	if q.Action != "" {
 		w.add("action = ?", q.Action)
@@ -470,7 +495,7 @@ func (t *Tx) QueryAudit(ctx context.Context, q state.AuditQuery) ([]audit.Entry,
 		w.add("time < ?", ts(q.Until))
 	}
 	rows, err := t.query(ctx, "query audit",
-		`SELECT id, `+auditCols+` FROM audit_log`+w.sql()+` ORDER BY id`+limitSQL(q.Limit), w.args...)
+		`SELECT id, `+auditCols+` FROM audit_log`+w.sql()+` ORDER BY id`+desc(q.Newest)+limitSQL(q.Limit), w.args...)
 	if err != nil {
 		return nil, err
 	}
@@ -546,6 +571,13 @@ func (w *where) sql() string {
 		return ""
 	}
 	return " WHERE " + strings.Join(w.parts, " AND ")
+}
+
+func desc(newest bool) string {
+	if newest {
+		return " DESC"
+	}
+	return ""
 }
 
 func limitSQL(n int) string {

@@ -130,9 +130,11 @@ type Options struct {
 	MaxConns int
 	// ConnectTimeout bounds the start-up ping; zero means 15s.
 	ConnectTimeout time.Duration
-	// Faults and Observe are passed to sqlstate; see [sqlstate.Config].
-	Faults  sqlstate.Faults
-	Observe func(kind string, d time.Duration)
+	// Scrubber, Faults and Observe are passed to sqlstate; see
+	// [sqlstate.Config].
+	Scrubber interface{ Scrub(string) string }
+	Faults   sqlstate.Faults
+	Observe  func(kind string, d time.Duration)
 }
 
 // Store is the PostgreSQL state backend.
@@ -199,8 +201,9 @@ func Open(ctx context.Context, dsn secret.Value, o Options) (*Store, error) {
 			_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, eventsLockKey)
 			return err
 		},
-		Faults:  o.Faults,
-		Observe: o.Observe,
+		Scrubber: o.Scrubber,
+		Faults:   o.Faults,
+		Observe:  o.Observe,
 	})
 	return s, nil
 }

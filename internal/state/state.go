@@ -141,10 +141,21 @@ type AuditQuery struct {
 	AgentID string
 	Ref     stores.Ref
 	Action  string
+	// Effect matches the decision by name ("allow", "deny", "ask"); a
+	// string so that empty can mean any, since the zero Effect is Deny.
+	Effect string
+	// Outcome matches audit.Entry.Outcome.
+	Outcome string
 	Since   time.Time
 	Until   time.Time
-	AfterID int64
-	Limit   int
+	// AfterID keeps entries with a larger ID, BeforeID with a smaller one:
+	// the cursors for paging oldest first and newest first.
+	AfterID  int64
+	BeforeID int64
+	// Newest returns entries newest first, so Limit keeps the latest.
+	// The default is oldest first.
+	Newest bool
+	Limit  int
 }
 
 // Tx is one transaction. Methods return [ErrNotFound] and [ErrConflict]

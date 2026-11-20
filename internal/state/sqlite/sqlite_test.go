@@ -3,7 +3,10 @@
 package sqlite_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -18,6 +21,8 @@ import (
 
 	"github.com/heliopsy/scrim/internal/audit"
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/obs"
+	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/state/sqlite"
 	"github.com/heliopsy/scrim/internal/state/statetest"
@@ -287,4 +292,37 @@ func TestConcurrentWriters(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// TestNoValueInDatabaseFile seeds known values, writes rows that carry them
+// in every free-text field, then reads the database file and its WAL as raw
+// bytes: no value may appear, in any common encoding.
+func TestNoValueInDatabaseFile(t *testing.T) {
+	leaks := []string{"sk-ant-LEAKTEST-0f1e2d3c4b5a69788796a5b4", "ghp_LEAKTESTzyxwvutsrqponmlkjihgfedcba98"}
+	vals := make([]secret.Value, len(leaks))
+	for i, l := range leaks {
+		vals[i] = secret.FromString(l)
+	}
+	path := filepath.Join(t.TempDir(), "state.db")
+	s := open(t, path, sqlite.Options{Scrubber: obs.NewValueScrubber(vals...)})
+	statetest.LeakTraffic(t, s, leaks)
+
+	var dump []byte
+	for _, p := range []string{path, path + "-wal"} {
+		b, err := os.ReadFile(p) // #nosec G304 -- test file
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		dump = append(dump, b...)
+	}
+	if !bytes.Contains(dump, []byte(secret.Marker)) {
+		t.Fatal("no marker in the database: the scrubber was not exercised")
+	}
+	for _, l := range leaks {
+		for _, f := range []string{l, hex.EncodeToString([]byte(l)), base64.StdEncoding.EncodeToString([]byte(l))} {
+			if bytes.Contains(dump, []byte(f)) {
+				t.Errorf("database file holds a seeded value (%d bytes form)", len(f))
+			}
+		}
+	}
 }

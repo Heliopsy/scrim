@@ -214,7 +214,9 @@ func (h *scrubHandler) clone() *scrubHandler {
 	return &c
 }
 
-func (h *scrubHandler) Enabled(ctx context.Context, l slog.Level) bool { return h.inner.Enabled(ctx, l) }
+func (h *scrubHandler) Enabled(ctx context.Context, l slog.Level) bool {
+	return h.inner.Enabled(ctx, l)
+}
 
 func (h *scrubHandler) WithAttrs(as []slog.Attr) slog.Handler {
 	if len(as) == 0 {

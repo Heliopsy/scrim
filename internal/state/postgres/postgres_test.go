@@ -18,6 +18,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/audit"
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/obs"
 
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/state"
@@ -342,6 +343,52 @@ func TestResolveDSN(t *testing.T) {
 		_, err := postgres.ResolveDSN(bad)
 		if err == nil || strings.Contains(err.Error(), "u:p@h") {
 			t.Errorf("ResolveDSN(%q) = %v", bad, err)
+		}
+	}
+}
+
+// TestNoValueInDatabase seeds known values, writes rows that carry them in
+// every free-text field, then dumps every table as JSON: no value may
+// appear.
+func TestNoValueInDatabase(t *testing.T) {
+	leaks := []string{"sk-ant-LEAKTEST-0f1e2d3c4b5a69788796a5b4", "ghp_LEAKTESTzyxwvutsrqponmlkjihgfedcba98"}
+	vals := make([]secret.Value, len(leaks))
+	for i, l := range leaks {
+		vals[i] = secret.FromString(l)
+	}
+	dsn := freshDSN(t)
+	s, err := postgres.Open(t.Context(), secret.FromString(dsn), postgres.Options{Scrubber: obs.NewValueScrubber(vals...)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if err := s.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	statetest.LeakTraffic(t, s, leaks)
+
+	raw, _ := sql.Open("pgx", dsn)
+	defer func() { _ = raw.Close() }()
+	var dump strings.Builder
+	for _, table := range []string{"approvals", "grants", "sessions", "audit_log", "events", "schema_migrations"} {
+		rows, err := raw.Query(`SELECT row_to_json(x)::text FROM ` + table + ` x`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var line string
+			_ = rows.Scan(&line)
+			dump.WriteString(line + "\n")
+		}
+		_ = rows.Close()
+	}
+	out := dump.String()
+	if !strings.Contains(out, secret.Marker) {
+		t.Fatal("no marker in the dump: the scrubber was not exercised")
+	}
+	for i, l := range leaks {
+		if strings.Contains(out, l) {
+			t.Errorf("table dump holds seeded value %d", i)
 		}
 	}
 }

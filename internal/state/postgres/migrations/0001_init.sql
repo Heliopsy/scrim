@@ -58,6 +58,7 @@ CREATE TABLE audit_log (
   agent      TEXT NOT NULL,
   ref        TEXT NOT NULL DEFAULT '',
   effect     TEXT NOT NULL DEFAULT '',
+  outcome    TEXT NOT NULL DEFAULT '',
   rule       TEXT NOT NULL DEFAULT '',
   target     TEXT NOT NULL DEFAULT '',
   subject    TEXT NOT NULL DEFAULT '',
@@ -68,6 +69,7 @@ CREATE TABLE audit_log (
 CREATE INDEX audit_agent ON audit_log (agent_id, id);
 CREATE INDEX audit_ref ON audit_log (ref, id);
 CREATE INDEX audit_action ON audit_log (action, id);
+CREATE INDEX audit_outcome ON audit_log (outcome, id);
 CREATE INDEX audit_time ON audit_log (time);
 
 CREATE TABLE events (

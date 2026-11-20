@@ -90,9 +90,11 @@ type Options struct {
 	// AllowNetworkFS opens a database on a network filesystem instead of
 	// refusing it. Status reports it as a weakened setting.
 	AllowNetworkFS bool
-	// Faults and Observe are passed to sqlstate; see [sqlstate.Config].
-	Faults  sqlstate.Faults
-	Observe func(kind string, d time.Duration)
+	// Scrubber, Faults and Observe are passed to sqlstate; see
+	// [sqlstate.Config].
+	Scrubber interface{ Scrub(string) string }
+	Faults   sqlstate.Faults
+	Observe  func(kind string, d time.Duration)
 	// detectFS replaces filesystem detection in tests.
 	detectFS func(dir string) FSKind
 }
@@ -213,6 +215,7 @@ func Open(ctx context.Context, path string, o Options) (*Store, error) {
 		Reader:   s.reader,
 		Writer:   s.writer,
 		IsUnique: isUnique,
+		Scrubber: o.Scrubber,
 		Faults:   o.Faults,
 		Observe:  o.Observe,
 	})

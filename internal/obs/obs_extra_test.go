@@ -243,4 +243,3 @@ func dumpSpans(exp *tracetest.InMemoryExporter) string {
 	}
 	return b.String()
 }
-

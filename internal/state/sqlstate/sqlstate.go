@@ -47,6 +47,10 @@ type Config struct {
 	// outbox IDs become visible in commit order and a reader polling
 	// EventsAfter never skips an event committed late.
 	BeforeEmit func(ctx context.Context, tx *sql.Tx) error
+	// Scrubber, if set, filters every string argument before it reaches
+	// the database: the last line keeping a value that slipped into a
+	// reason, target or attribute out of the stored state.
+	Scrubber interface{ Scrub(string) string }
 	// Faults is the test hook; nil in production.
 	Faults Faults
 	// Observe, if set, is called after each transaction with its kind
