@@ -212,21 +212,160 @@ is out of date.
 
 | Key | Type | Default | Reload |
 |---|---|---|---|
+| [`api.permissions`](#apipermissions) | string | `0600` | restart required |
+| [`api.socket`](#apisocket) | string | `""` | restart required |
+| [`catalog.environment`](#catalogenvironment) | string | `""` | hot |
+| [`catalog.files`](#catalogfiles) | list | `[]` | hot |
+| [`catalog.metadata-from`](#catalogmetadata-from) | list | `[]` | hot |
+| [`catalog.metadata-prefix`](#catalogmetadata-prefix) | string | `scrim.` | hot |
+| [`catalog.profile`](#catalogprofile) | string | `""` | hot |
+| [`catalog.reload-interval`](#catalogreload-interval) | duration | `5s` | hot |
 | [`config.strict`](#configstrict) | bool | `true` | hot |
 | [`config.watch`](#configwatch) | bool | `true` | hot |
+| [`entry.listen`](#entrylisten) | string | `127.0.0.1:0` | restart required |
+| [`identity.peers`](#identitypeers) | map | `{}` | restart required |
 | [`log.format`](#logformat) | string | `text` | hot |
 | [`log.level`](#loglevel) | string | `info` | hot |
 | [`metrics.listen`](#metricslisten) | string | `""` | restart required |
 | [`policy.default`](#policydefault) | string | `deny` | hot |
 | [`profile`](#profile) | string | `local` | hot |
+| [`session.max-ttl`](#sessionmax-ttl) | duration | `168h0m0s` | restart required |
+| [`session.ttl`](#sessionttl) | duration | `12h0m0s` | restart required |
 | [`state.backend`](#statebackend) | string | `memory` | restart required |
 | [`state.postgres.connect-timeout`](#statepostgresconnect-timeout) | duration | `15s` | restart required |
 | [`state.postgres.dsn`](#statepostgresdsn) | secret-ref | empty | restart required |
 | [`state.postgres.max-conns`](#statepostgresmax-conns) | int | `16` | restart required |
 | [`state.sqlite.allow-network-filesystem`](#statesqliteallow-network-filesystem) | bool | `false` | restart required |
 | [`state.sqlite.path`](#statesqlitepath) | string | `""` | restart required |
+| [`tools.approval-timeout`](#toolsapproval-timeout) | duration | `15m0s` | restart required |
+| [`tools.grant-default-ttl`](#toolsgrant-default-ttl) | duration | `15m0s` | restart required |
+| [`tools.grant-max-ttl`](#toolsgrant-max-ttl) | duration | `8h0m0s` | restart required |
 | [`tracing.endpoint`](#tracingendpoint) | string | `""` | restart required |
 | [`tracing.sample-ratio`](#tracingsample-ratio) | float | `1` | restart required |
+| [`catalog.entries.<name>.*`](#catalogentriesname) | collection | empty | hot |
+| [`stores.<name>.*`](#storesname) | collection | empty | restart required |
+
+### `catalog.entries.<name>`
+
+Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools. References only, never values.
+
+| | |
+|---|---|
+| Type | collection of named instances (names: lower-case words with dashes) |
+| Environment | `SCRIM_CATALOG_ENTRIES` (JSON object of instances, replaces the collection); `SCRIM_CATALOG_ENTRIES_<NAME>_<FIELD>` for one field |
+| Reload | hot |
+
+### `stores.<name>`
+
+Secret store instances by name. The name is the instance's reference scheme (`bao://...` for an instance named bao); `kind` picks the adapter, `aliases` adds schemes, `redact` lists references and prefixes loaded into the redaction set, `refresh.*` tunes refresh and outage handling, and every other field is the adapter's own. See docs/stores.
+
+| | |
+|---|---|
+| Type | collection of named instances (names: lower-case words with dashes) |
+| Environment | `SCRIM_STORES` (JSON object of instances, replaces the collection); `SCRIM_STORES_<NAME>_<FIELD>` for one field |
+| Required fields | `kind` |
+| Secret fields | `token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password`, `unlock` (references; a literal is warned about) |
+| Reload | restart required |
+
+### api
+
+#### `api.permissions`
+
+Permission bits of the API socket, octal. Widen (for example 0660) only to let agents running as other local users connect; their identity still comes from peer credentials.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `0600` |
+| Environment | `SCRIM_API_PERMISSIONS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `api.socket`
+
+Unix socket of the local agent API. Empty uses $XDG_RUNTIME_DIR/scrim/api.sock.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_API_SOCKET` |
+| Flag | `--api-socket` |
+| Reload | restart required |
+
+### catalog
+
+#### `catalog.environment`
+
+Catalog environment that selects per-environment references.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_CATALOG_ENVIRONMENT` |
+| Flag | `--catalog-environment` |
+| Reload | hot |
+
+#### `catalog.files`
+
+Catalog files to load, in order. Each is a YAML document with `kind: Catalog` and an `entries` map. Reloaded when they change.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_CATALOG_FILES` |
+| Flag | none |
+| Reload | hot |
+
+#### `catalog.metadata-from`
+
+Store prefixes (for example bao://kv/agents) whose secrets' metadata labels are read as catalog entries.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_CATALOG_METADATA_FROM` |
+| Flag | none |
+| Reload | hot |
+
+#### `catalog.metadata-prefix`
+
+Prefix of the store metadata keys read as catalog bindings: <prefix>hosts, <prefix>placeholder, <prefix>profiles, <prefix>name, <prefix>class, <prefix>field.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `scrim.` |
+| Environment | `SCRIM_CATALOG_METADATA_PREFIX` |
+| Flag | none |
+| Reload | hot |
+
+#### `catalog.profile`
+
+Catalog profile (for example dev or prod) that selects per-profile references.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_CATALOG_PROFILE` |
+| Flag | `--catalog-profile` |
+| Reload | hot |
+
+#### `catalog.reload-interval`
+
+How often catalog files are checked for changes.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `5s` |
+| Environment | `SCRIM_CATALOG_RELOAD_INTERVAL` |
+| Flag | none |
+| Reload | hot |
 
 ### config
 
@@ -253,6 +392,34 @@ Reload the configuration when a config file or an included file changes. SIGHUP 
 | Environment | `SCRIM_CONFIG_WATCH` |
 | Flag | none |
 | Reload | hot |
+
+### entry
+
+#### `entry.listen`
+
+Loopback address of the page where a human enters a value for secret_ask_human. Port 0 picks a free port.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `127.0.0.1:0` |
+| Environment | `SCRIM_ENTRY_LISTEN` |
+| Flag | none |
+| Reload | restart required |
+
+### identity
+
+#### `identity.peers`
+
+Agents by local user or group: agent name to space-separated selectors uid:N, user:NAME, gid:N, group:NAME, scope:SCOPE, label:K=V. Empty maps the user scrim runs as to one agent named after it.
+
+| | |
+|---|---|
+| Type | map of strings (env: JSON object or `k=v,k2=v2`; one entry: variable plus `_ENTRY`) |
+| Default | `{}` |
+| Environment | `SCRIM_IDENTITY_PEERS` |
+| Flag | none |
+| Reload | restart required |
 
 ### log
 
@@ -326,6 +493,32 @@ Built-in preset of defaults for a deployment shape: `local` for a laptop or VM, 
 | Flag | `--profile` |
 | Reload | hot |
 | Values | `local`, `k8s`, `ci` |
+
+### session
+
+#### `session.max-ttl`
+
+Longest lifetime a session token can be minted with.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `168h0m0s` |
+| Environment | `SCRIM_SESSION_MAX_TTL` |
+| Flag | none |
+| Reload | restart required |
+
+#### `session.ttl`
+
+Default lifetime of a session token minted by scrim run. The token is revoked earlier when scrim run exits.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `12h0m0s` |
+| Environment | `SCRIM_SESSION_TTL` |
+| Flag | none |
+| Reload | restart required |
 
 ### state
 
@@ -401,6 +594,44 @@ SQLite state file. Empty means $XDG_STATE_HOME/scrim/state.db (~/.local/state/sc
 | Default | `""` |
 | Environment | `SCRIM_STATE_SQLITE_PATH` |
 | Flag | `--state-sqlite-path` |
+| Reload | restart required |
+
+### tools
+
+#### `tools.approval-timeout`
+
+How long a pending approval waits for a decision before it expires as denied.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `15m0s` |
+| Environment | `SCRIM_TOOLS_APPROVAL_TIMEOUT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `tools.grant-default-ttl`
+
+Duration of a grant when secret_request names none.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `15m0s` |
+| Environment | `SCRIM_TOOLS_GRANT_DEFAULT_TTL` |
+| Flag | none |
+| Reload | restart required |
+
+#### `tools.grant-max-ttl`
+
+Longest grant secret_request can produce. Longer requests are capped and the result says so.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `8h0m0s` |
+| Environment | `SCRIM_TOOLS_GRANT_MAX_TTL` |
+| Flag | none |
 | Reload | restart required |
 
 ### tracing
