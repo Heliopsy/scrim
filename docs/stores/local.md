@@ -8,10 +8,10 @@ write to either source.
 
 ## Capabilities
 
-| Kind   | read | list | watch | write | generate | dynamic |
-|--------|------|------|-------|-------|----------|---------|
-| `env`  | yes  | yes  | no    | no    | no       | no      |
-| `file` | yes  | yes  | yes   | no    | no       | no      |
+| Kind | read | list | watch | write | generate | dynamic |
+| --- | --- | --- | --- | --- | --- | --- |
+| `env` | yes | yes | no | no | no | no |
+| `file` | yes | yes | yes | no | no | no |
 
 A write or generate targeting either source is refused before anything happens, with an error such
 as `store env: write env://NEW_TOKEN: operation not supported by this store: env source is
@@ -41,11 +41,11 @@ stores:
       - SCRIM_SECRET_NPM_*
 ```
 
-| Key                       | Type         | Default | Meaning |
-|---------------------------|--------------|---------|---------|
-| `stores.<name>.kind`      | string       |         | `env` |
-| `stores.<name>.prefix`    | string       | `""`    | Only variables whose names start with this are visible. References still use the full name. |
-| `stores.<name>.allow`     | list of strings | empty | When set, only variables matching one of these exact names or glob patterns (`*`, `?`, `[a-z]`) are visible. As an environment variable, separate entries with commas. |
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `stores.<name>.kind` | string | | `env` |
+| `stores.<name>.prefix` | string | `""` | Only variables whose names start with this are visible. References still use the full name. |
+| `stores.<name>.allow` | list of strings | empty | When set, only variables matching one of these exact names or glob patterns (`*`, `?`, `[a-z]`) are visible. As an environment variable, separate entries with commas. |
 
 Set a `prefix` or an `allow` list. Without either, every variable in scrim's environment, including
 `PATH` and `HOME`, can be referenced. An invisible variable reads as not found, the same as an unset
@@ -72,14 +72,14 @@ stores:
       interval: 10s
 ```
 
-| Key                             | Type     | Default | Meaning |
-|---------------------------------|----------|---------|---------|
-| `stores.<name>.kind`            | string   |         | `file` |
-| `stores.<name>.root`            | path     | required | Absolute directory every reference resolves under. Opened at start-up; a missing root stops start-up. |
-| `stores.<name>.format`          | string   | `auto`  | `auto`, `raw`, `dotenv` or `json`. |
-| `stores.<name>.trim-newline`    | bool     | `true`  | Raw files only: remove one trailing `\n` or `\r\n`, as most editors and `echo` add one. |
-| `stores.<name>.max-size`        | size     | `1MiB`  | Larger files are refused. Accepts bytes or `KiB`, `MiB`, `GiB`, `KB`, `MB`, `GB`. |
-| `stores.<name>.watch.interval`  | duration | `10s`   | How often watched files are checked. Each poll is offset by up to 10% of random jitter. |
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `stores.<name>.kind` | string | | `file` |
+| `stores.<name>.root` | path | required | Absolute directory every reference resolves under. Opened at start-up; a missing root stops start-up. |
+| `stores.<name>.format` | string | `auto` | `auto`, `raw`, `dotenv` or `json`. |
+| `stores.<name>.trim-newline` | bool | `true` | Raw files only: remove one trailing `\n` or `\r\n`, as most editors and `echo` add one. |
+| `stores.<name>.max-size` | size | `1MiB` | Larger files are refused. Accepts bytes or `KiB`, `MiB`, `GiB`, `KB`, `MB`, `GB`. |
+| `stores.<name>.watch.interval` | duration | `10s` | How often watched files are checked. Each poll is offset by up to 10% of random jitter. |
 
 References: `mounted://<path under root>[#field]`, for example `mounted://github/token` or
 `mounted://app/.env#DATABASE_PASSWORD`. Paths are always relative to `root`. A reference with a

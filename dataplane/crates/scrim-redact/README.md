@@ -121,7 +121,7 @@ MiB/s (criterion median, 1 MB bodies, hits / clean); redact-bench numbers are fr
 `bench/redact-bench/results/summary.md` (MB/s, same conditions).
 
 | set | redact, auto engine | redact, one AC automaton | redact-bench ac-auto | protect (redact + guard) |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 10 | 1,429 / 1,481 (split AC) | n/a (split applies) | 3,259 / 3,863 | 208 / 207 |
 | 1,000 | 508 / 503 (hash-window) | 98 / 99 | 119 / 119 (ac-dfa 301 / 378) | 141 / 146 |
 | 10,000 | 471 / 458 (hash-window) | n/a | 97 / 97 | 105 / 101 |

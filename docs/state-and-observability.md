@@ -7,7 +7,7 @@ of it is a secret value: rows hold identities, references, decisions and times. 
 ## State backends
 
 | `state.backend` | Use | Where |
-|---|---|---|
+| --- | --- | --- |
 | `memory` | throwaway runs, tests | process memory; a restart loses everything and pending approvals end denied |
 | `sqlite` | one scrim on one machine | `state.sqlite.path`, default `$XDG_STATE_HOME/scrim/state.db` |
 | `postgres` | shared and multi-replica deployments | `state.postgres.dsn`, a reference such as `env:SCRIM_PG_DSN` |
@@ -82,13 +82,13 @@ value was loaded), and the finished line is scrubbed again.
 `metrics.listen` (empty disables) serves:
 
 | Path | Meaning |
-|---|---|
+| --- | --- |
 | `/healthz`, `/livez` | the process answers |
 | `/readyz` | scrim can redact safely; failing checks are named, 503 otherwise |
 | `/metrics` | Prometheus text format, scrubbed as a whole |
 
 | Metric | Labels |
-|---|---|
+| --- | --- |
 | `scrim_redaction_replacements_total` | provider, rule, agent |
 | `scrim_guard_repairs_total` | provider, rule, agent |
 | `scrim_guard_refusals_total` | provider, agent |

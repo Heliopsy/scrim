@@ -56,7 +56,7 @@ both in the `Leak suite` workflow and keeps the JSON reports as artifacts.
 Useful flags:
 
 | Flag | Meaning |
-|---|---|
+| --- | --- |
 | `--suite matrix,scenarios` | which parts to run (default both) |
 | `--api anthropic,openai-chat,openai-responses` | which provider APIs (default all) |
 | `--rows <prefix>` | only matrix rows whose ID starts with the prefix, for example `openai-chat/header/` |
@@ -90,7 +90,7 @@ forgets it, `-capture-dir` writes each exchange to a file and `-script` takes sc
 Each matrix row runs once per seed. The suite observes one of these outcomes:
 
 | Outcome | Observed |
-|---|---|
+| --- | --- |
 | `redacted` | the request was forwarded, the value is absent in every encoding the checker knows, and a placeholder is present |
 | `repaired` | the request was forwarded and the value is absent, but no placeholder is present (the value was removed another way, or the fragment was too short to count) |
 | `withheld` | the proxy refused the request and forwarded nothing |
@@ -100,7 +100,7 @@ Each matrix row runs once per seed. The suite observes one of these outcomes:
 Each row states which outcomes it accepts:
 
 | Expectation | Accepts | Used for |
-|---|---|---|
+| --- | --- | --- |
 | `redacted` | `redacted` | the plain value and the encodings the redactor itself matches: JSON escapes, base64 at every alignment, hex, URL encoding |
 | `guard` | `redacted`, `repaired`, `withheld` | transforms the redactor does not match and the independent guard or a refusal must catch: case changes, reversal, rot13, byte dumps, escape printing, spacing, truncation, SQL functions |
 | `withheld` | `withheld` | requests that must be refused |
@@ -148,60 +148,60 @@ transform's and its placement's expectation.
 
 <!-- matrix:begin -->
 | Transform | Representative command | Expected | Note |
-|---|---|---|---|
-| `raw` | `cat .env` | redacted |  |
+| --- | --- | --- | --- |
+| `raw` | `cat .env` | redacted | |
 | `json-html-escaped` | `client using Go encoding/json` | redacted | same JSON value, < > & as \u escapes |
 | `json-ascii-escaped` | `client using Python json.dumps` | redacted | same JSON value, non-ASCII as \u escapes |
-| `base64-std@0` | `base64 -w0 <<< "$TOKEN"` | redacted |  |
-| `base64-std@1` | `base64 -w0 of the value after one byte` | redacted |  |
-| `base64-std@2` | `base64 -w0 of the value after two bytes` | redacted |  |
-| `base64-std-nopad` | `base64 -w0 \| tr -d =` | redacted |  |
-| `base64-url@0` | `basenc --base64url` | redacted |  |
-| `base64-url@1` | `basenc --base64url, one byte offset` | redacted |  |
-| `base64-url@2` | `basenc --base64url, two byte offset` | redacted |  |
-| `hex-lower` | `xxd -p -c0` | redacted |  |
-| `url-encoded` | `python3 -c 'print(urllib.parse.quote_plus(v))'` | redacted |  |
-| `url-path-encoded` | `python3 -c 'print(urllib.parse.quote(v))'` | redacted |  |
-| `upper` | `tr a-z A-Z < .env` | guard |  |
-| `lower` | `tr A-Z a-z < .env` | guard |  |
-| `swapcase` | `python3 -c 'print(v.swapcase())'` | guard |  |
-| `sql-upper` | `SELECT UPPER(token) FROM creds` | guard |  |
-| `reversed` | `rev .env` | guard |  |
-| `rot13` | `tr 'A-Za-z' 'N-ZA-Mn-za-m' < .env` | guard |  |
-| `rot47` | `tr '!-~' 'P-~!-O' < .env` | guard |  |
-| `hex-upper` | `SELECT HEX(token) FROM creds` | guard |  |
-| `hex-wrapped` | `xxd -p .env` | guard |  |
-| `sql-hex-0x` | `SELECT CONCAT('0x', HEX(token))` | guard |  |
-| `sql-hex-literal` | `pg_dump with bytea hex literals` | guard |  |
-| `xxd-dump` | `xxd .env` | guard |  |
-| `hexdump-canonical` | `hexdump -C .env` | guard |  |
-| `od-hex-bytes` | `od -An -tx1 .env` | guard |  |
-| `od-chars` | `od -c .env` | guard |  |
-| `decimal-bytes` | `od -An -tu1 .env` | guard |  |
-| `python-byte-list` | `python3 -c 'print(list(v.encode()))'` | guard |  |
-| `c-hex-escapes` | `printf '%s' "$TOKEN" \| xxd -i \| ...` | guard |  |
-| `octal-escapes` | `printf '%s' "$TOKEN" \| od -b \| ...` | guard |  |
-| `unicode-escapes` | `node -e 'console.log(escapeAll(v))'` | guard |  |
+| `base64-std@0` | `base64 -w0 <<< "$TOKEN"` | redacted | |
+| `base64-std@1` | `base64 -w0 of the value after one byte` | redacted | |
+| `base64-std@2` | `base64 -w0 of the value after two bytes` | redacted | |
+| `base64-std-nopad` | `base64 -w0 \| tr -d =` | redacted | |
+| `base64-url@0` | `basenc --base64url` | redacted | |
+| `base64-url@1` | `basenc --base64url, one byte offset` | redacted | |
+| `base64-url@2` | `basenc --base64url, two byte offset` | redacted | |
+| `hex-lower` | `xxd -p -c0` | redacted | |
+| `url-encoded` | `python3 -c 'print(urllib.parse.quote_plus(v))'` | redacted | |
+| `url-path-encoded` | `python3 -c 'print(urllib.parse.quote(v))'` | redacted | |
+| `upper` | `tr a-z A-Z < .env` | guard | |
+| `lower` | `tr A-Z a-z < .env` | guard | |
+| `swapcase` | `python3 -c 'print(v.swapcase())'` | guard | |
+| `sql-upper` | `SELECT UPPER(token) FROM creds` | guard | |
+| `reversed` | `rev .env` | guard | |
+| `rot13` | `tr 'A-Za-z' 'N-ZA-Mn-za-m' < .env` | guard | |
+| `rot47` | `tr '!-~' 'P-~!-O' < .env` | guard | |
+| `hex-upper` | `SELECT HEX(token) FROM creds` | guard | |
+| `hex-wrapped` | `xxd -p .env` | guard | |
+| `sql-hex-0x` | `SELECT CONCAT('0x', HEX(token))` | guard | |
+| `sql-hex-literal` | `pg_dump with bytea hex literals` | guard | |
+| `xxd-dump` | `xxd .env` | guard | |
+| `hexdump-canonical` | `hexdump -C .env` | guard | |
+| `od-hex-bytes` | `od -An -tx1 .env` | guard | |
+| `od-chars` | `od -c .env` | guard | |
+| `decimal-bytes` | `od -An -tu1 .env` | guard | |
+| `python-byte-list` | `python3 -c 'print(list(v.encode()))'` | guard | |
+| `c-hex-escapes` | `printf '%s' "$TOKEN" \| xxd -i \| ...` | guard | |
+| `octal-escapes` | `printf '%s' "$TOKEN" \| od -b \| ...` | guard | |
+| `unicode-escapes` | `node -e 'console.log(escapeAll(v))'` | guard | |
 | `json-escape-all` | `client escaping every character as \uXXXX` | guard | same JSON value: the provider decodes it to the plain value |
-| `url-every-byte` | `printf '%s' "$TOKEN" \| od -An -tx1 \| tr ' ' %` | guard |  |
-| `url-every-byte-lower` | `curl --data-urlencode style, lower-case hex` | guard |  |
-| `url-double` | `url-encode twice` | guard |  |
-| `html-entities` | `python3 -c 'print("".join(f"&#{ord(c)};" for c in v))'` | guard |  |
-| `html-hex-entities` | `html entity encoder, hex form` | guard |  |
-| `base64-mime-wrapped` | `base64 .env (wraps at 76 columns)` | guard |  |
-| `base64-double` | `base64 -w0 .env \| base64 -w0` | guard |  |
-| `base32` | `base32 -w0 .env` | guard |  |
-| `base32hex` | `basenc --base32hex -w0` | guard |  |
-| `one-char-per-line` | `fold -w1 .env` | guard |  |
-| `spaced-letters` | `sed 's/./& /g' .env` | guard |  |
-| `comma-separated` | `python3 -c 'print(",".join(v))'` | guard |  |
-| `dash-separated` | `sed 's/./&-/g' .env` | guard |  |
-| `python-char-list` | `python3 -c 'print(list(v))'` | guard |  |
-| `zero-width-interleaved` | `sed 's/./&\u200b/g'` | guard |  |
+| `url-every-byte` | `printf '%s' "$TOKEN" \| od -An -tx1 \| tr ' ' %` | guard | |
+| `url-every-byte-lower` | `curl --data-urlencode style, lower-case hex` | guard | |
+| `url-double` | `url-encode twice` | guard | |
+| `html-entities` | `python3 -c 'print("".join(f"&#{ord(c)};" for c in v))'` | guard | |
+| `html-hex-entities` | `html entity encoder, hex form` | guard | |
+| `base64-mime-wrapped` | `base64 .env (wraps at 76 columns)` | guard | |
+| `base64-double` | `base64 -w0 .env \| base64 -w0` | guard | |
+| `base32` | `base32 -w0 .env` | guard | |
+| `base32hex` | `basenc --base32hex -w0` | guard | |
+| `one-char-per-line` | `fold -w1 .env` | guard | |
+| `spaced-letters` | `sed 's/./& /g' .env` | guard | |
+| `comma-separated` | `python3 -c 'print(",".join(v))'` | guard | |
+| `dash-separated` | `sed 's/./&-/g' .env` | guard | |
+| `python-char-list` | `python3 -c 'print(list(v))'` | guard | |
+| `zero-width-interleaved` | `sed 's/./&\u200b/g'` | guard | |
 | `truncated-prefix` | `head -c 75% of the value` | guard | values at or above the minimum length; shorter fragments are a documented limitation |
-| `truncated-suffix` | `tail -c 75% of the value` | guard |  |
-| `truncated-half` | `cut -c1-half` | guard |  |
-| `sql-substring` | `SELECT SUBSTRING(token, 9, 24) FROM creds` | guard |  |
+| `truncated-suffix` | `tail -c 75% of the value` | guard | |
+| `truncated-half` | `cut -c1-half` | guard | |
+| `sql-substring` | `SELECT SUBSTRING(token, 9, 24) FROM creds` | guard | |
 | `homoglyphs` | `substitute Cyrillic look-alike letters` | limitation | limitation: look-alike Unicode substitution is not matched |
 | `fullwidth` | `convert to fullwidth forms` | limitation | limitation: look-alike Unicode substitution is not matched |
 | `nato-spelling` | `spell the value in the NATO alphabet` | limitation | limitation: spelled-out values are not matched |
@@ -210,22 +210,22 @@ transform's and its placement's expectation.
 | `base85` | `python3 -c 'base64.b85encode(v)'` | limitation | limitation: base85 family encodings are not matched |
 
 | Placement | Where | Expected | Note |
-|---|---|---|---|
-| `tool-result` | tool result content as a string (primary placement) ([anthropic-messages openai-chat openai-responses]) | redacted |  |
-| `tool-result-streaming` | tool result in a streaming request ([anthropic-messages openai-chat openai-responses]) | redacted |  |
-| `tool-result-blocks` | tool result content as text blocks ([anthropic-messages openai-chat openai-responses]) | redacted |  |
-| `user-text` | user message text ([anthropic-messages openai-chat openai-responses]) | redacted |  |
-| `user-blocks` | user message content parts ([anthropic-messages openai-chat openai-responses]) | redacted |  |
-| `system-prompt` | system prompt, instructions or system/developer message ([anthropic-messages openai-chat openai-responses]) | redacted |  |
-| `tool-call-input` | a prior tool call's input in the history (a restored value sent back) ([anthropic-messages openai-chat openai-responses]) | redacted |  |
-| `assistant-text` | a prior assistant message in the history ([anthropic-messages openai-chat openai-responses]) | redacted |  |
-| `tool-definition` | a tool description (an MCP server describing itself) ([anthropic-messages openai-chat openai-responses]) | redacted |  |
-| `metadata` | request metadata (user id, metadata map) ([anthropic-messages openai-chat openai-responses]) | redacted |  |
-| `unknown-field` | an undocumented top-level field (like Claude Code's safeguards field) ([anthropic-messages openai-chat openai-responses]) | redacted |  |
-| `unknown-block-field` | an undocumented field inside a content block ([anthropic-messages openai-chat openai-responses]) | redacted |  |
-| `document-text` | a plain-text document or file input ([anthropic-messages openai-chat openai-responses]) | redacted |  |
-| `header` | a custom HTTP request header ([anthropic-messages openai-chat openai-responses]) | guard |  |
-| `query` | the request URL query string ([anthropic-messages openai-chat openai-responses]) | guard |  |
+| --- | --- | --- | --- |
+| `tool-result` | tool result content as a string (primary placement) ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `tool-result-streaming` | tool result in a streaming request ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `tool-result-blocks` | tool result content as text blocks ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `user-text` | user message text ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `user-blocks` | user message content parts ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `system-prompt` | system prompt, instructions or system/developer message ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `tool-call-input` | a prior tool call's input in the history (a restored value sent back) ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `assistant-text` | a prior assistant message in the history ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `tool-definition` | a tool description (an MCP server describing itself) ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `metadata` | request metadata (user id, metadata map) ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `unknown-field` | an undocumented top-level field (like Claude Code's safeguards field) ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `unknown-block-field` | an undocumented field inside a content block ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `document-text` | a plain-text document or file input ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `header` | a custom HTTP request header ([anthropic-messages openai-chat openai-responses]) | guard | |
+| `query` | the request URL query string ([anthropic-messages openai-chat openai-responses]) | guard | |
 | `image-metadata` | text in an image's PNG tEXt metadata ([anthropic-messages openai-chat openai-responses]) | limitation | limitation: images and other binary parts pass unscanned under the default binary policy |
 | `split-blocks` | the value split across two content blocks of one message ([anthropic-messages openai-chat openai-responses]) | limitation | limitation: a value split by the agent across separate fields is matched only by the guard's fragment rules, if at all |
 | `split-tool-results` | the value split across two tool results ([anthropic-messages openai-chat openai-responses]) | limitation | limitation: a value split by the agent across separate tool results is not reassembled |
@@ -238,7 +238,7 @@ These are outside what scrim protects. The matrix runs a row for each one it can
 `limitation`, so the report shows whether a given setup happens to contain it.
 
 | Limitation | Matrix rows | Mitigation |
-|---|---|---|
+| --- | --- | --- |
 | The agent's local transcripts, memory and history files hold real values: scrim protects the wire, not the agent's disk. | none | Keep agent state on an encrypted disk; restored values only reach tools the tool policy names. |
 | Images, PDFs and other binary parts pass unscanned under the default `pass` binary policy, including text in image metadata. | `image-metadata` | Set the binary policy to `block`; the status command reports the current policy. |
 | Look-alike Unicode substitution (Cyrillic or fullwidth letters) is not matched. | `homoglyphs`, `fullwidth` | none yet |
