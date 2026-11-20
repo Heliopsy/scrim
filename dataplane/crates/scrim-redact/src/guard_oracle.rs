@@ -10,6 +10,7 @@ use zeroize::Zeroizing;
 
 use crate::error::WithholdReason;
 use crate::guard::{GuardFinding, GuardInput, GuardView, Verdict};
+use crate::guard_tx::{Transforms, TxScratch, derived_forms};
 use crate::restore::Resolver;
 use crate::secret::EntryId;
 
@@ -54,6 +55,9 @@ pub(crate) struct OracleGuard {
     b64_masks: Vec<u8>,
     /// Some value's hex form has no digit, so hex runs without digits must be decoded too.
     hex_needs_digit_free: bool,
+    /// The same transform decoders as the guard (shared code: the oracle checks the rewrite of
+    /// the guard's own views, and both must feed the transforms the same view).
+    tx: Transforms,
 }
 
 impl std::fmt::Debug for OracleGuard {
@@ -84,6 +88,7 @@ pub(crate) struct OracleScratch {
     findings: Vec<GuardFinding>,
     repaired: Vec<u8>,
     recheck: Vec<RawHit>,
+    tx: TxScratch,
 }
 
 impl std::fmt::Debug for OracleScratch {
@@ -110,6 +115,7 @@ impl OracleScratch {
         self.run_chars.zeroize();
         self.decoded.zeroize();
         self.repaired.zeroize();
+        self.tx.wipe();
     }
 }
 
@@ -234,6 +240,12 @@ impl OracleGuard {
             };
             if inp.value.len() >= min_len.max(8) {
                 long.push(gv);
+                derived_forms(inp.value, |f| {
+                    long.push(GValue {
+                        value: f,
+                        owner: i as u32,
+                    });
+                });
             } else if inp.value.len() >= SHORT_KEY {
                 short.push(gv);
             }
@@ -313,6 +325,14 @@ impl OracleGuard {
         let hex_needs_digit_free = long
             .iter()
             .any(|v| v.value.iter().all(|&b| b >> 4 >= 10 && b & 15 >= 10));
+        let tx = Transforms::build(
+            inputs
+                .iter()
+                .enumerate()
+                .filter(|(_, inp)| inp.value.len() >= min_len.max(8))
+                .map(|(i, inp)| (inp.value, i as u32)),
+            min_len,
+        );
         let mut byte_width = vec![0u32; 256];
         let mut starts = PairSet::new();
         for (v, fold) in long
@@ -362,6 +382,7 @@ impl OracleGuard {
             backslash_values,
             b64_masks,
             hex_needs_digit_free,
+            tx,
         }
     }
 
@@ -515,6 +536,28 @@ impl OracleGuard {
                 s.url = url;
             }
             self.scan_runs(base, s, &mut vh, out, &to_raw);
+            let found = out.len();
+            self.tx.collect(
+                base,
+                &mut s.tx,
+                &|v, o| self.scan(v, false, o),
+                &mut |a, b, owner, view| {
+                    let (start, end) = to_raw(a, b);
+                    if view == GuardView::Fragment
+                        && out[..found]
+                            .iter()
+                            .any(|h| h.start <= start && end <= h.end)
+                    {
+                        return;
+                    }
+                    out.push(RawHit {
+                        start,
+                        end,
+                        owner,
+                        view,
+                    });
+                },
+            );
         }
         s.json1 = json1;
         s.view_hits = vh;
