@@ -8,7 +8,7 @@ use arc_swap::ArcSwapOption;
 use crate::detect::{DetectorConfig, Detectors};
 use crate::error::{BuildError, Error};
 use crate::guard::{Guard, GuardFinding, GuardInput, GuardScratch, Verdict};
-use crate::matcher::{Cursor, Engine, EngineChoice, EngineKind, PatternSet, build_engine};
+use crate::matcher::{Cursor, Engine, EngineChoice, EngineKind, Match, PatternSet, build_engine};
 use crate::placeholder::{Keyring, MAX_PLACEHOLDER_LEN, write_placeholder};
 use crate::restore::{Resolver, ResolverEntry};
 use crate::secret::{Entry, EntryId, EntryMeta, RefSlug, ValueClass};
@@ -45,6 +45,15 @@ pub struct Config {
     pub json_depth: usize,
     /// `redaction.detectors.*`.
     pub detectors: DetectorConfig,
+    /// `redaction.parallel.threads` (default 4, at most 8): most threads [`Snapshot::protect`]
+    /// uses on one large body, for matching and for the guard. Each takes a region of the body;
+    /// the output is byte for byte what one thread produces. 1 keeps all work on the calling
+    /// thread.
+    pub parallel_threads: usize,
+    /// `redaction.parallel.min_bytes` (default 512 KiB): bodies shorter than this are handled on
+    /// the calling thread only. Below it, starting threads costs more than it saves, and warm
+    /// buffers mean no allocation at all; a parallel pass starts scoped threads.
+    pub parallel_min_bytes: usize,
 }
 
 impl Default for Config {
@@ -58,6 +67,8 @@ impl Default for Config {
             guard_max_repairs: 64,
             json_depth: DEFAULT_JSON_DEPTH,
             detectors: DetectorConfig::default(),
+            parallel_threads: 4,
+            parallel_min_bytes: 512 << 10,
         }
     }
 }
@@ -138,6 +149,11 @@ pub struct Redactor {
     det_slugs: Vec<(&'static str, RefSlug)>,
     resolver: Arc<Resolver>,
     max_input: usize,
+    /// Longest compiled pattern.
+    max_pattern: usize,
+    /// Most threads matching one body uses, and the shortest body matched in parallel.
+    threads: usize,
+    parallel_min: usize,
 }
 
 impl std::fmt::Debug for Redactor {
@@ -167,15 +183,42 @@ impl Redactor {
         out: &mut Vec<u8>,
         on_hit: &mut dyn FnMut(Hit<'_>),
     ) -> Result<Stats, Error> {
+        self.redact_core(input, out, on_hit, None)
+    }
+
+    /// [`Redactor::redact`] for [`Snapshot::protect`]: on bodies of at least
+    /// `parallel_min_bytes`, the matches are found on several threads first (`ms` holds them).
+    fn redact_par(
+        &self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        ms: &mut MatchScratch,
+    ) -> Result<Stats, Error> {
+        self.redact_core(input, out, &mut |_| {}, Some(ms))
+    }
+
+    fn redact_core(
+        &self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        on_hit: &mut dyn FnMut(Hit<'_>),
+        ms: Option<&mut MatchScratch>,
+    ) -> Result<Stats, Error> {
         if input.len() > self.max_input {
             return Err(Error::InputTooLarge);
         }
         out.clear();
         out.reserve(input.len() + input.len() / 16 + MAX_PLACEHOLDER_LEN);
         let mut st = Stats::default();
-        let mut cur = Cursor::default();
+        let mut cur = match ms {
+            Some(ms) if self.workers(input.len()) > 1 => {
+                self.collect_matches(input, ms);
+                Stream::listed(&ms.list)
+            }
+            _ => Stream::engine(),
+        };
         let mut pos = 0;
-        while let Some(m) = self.engine.next(&self.set, input, &mut cur) {
+        while let Some(m) = cur.next(&*self.engine, &self.set, input) {
             if let Some((ps, pe)) = self.resolver.covering(input, m.start, m.end)
                 && ps >= pos
             {
@@ -294,6 +337,162 @@ impl Redactor {
     pub fn engine(&self) -> EngineKind {
         self.kind
     }
+
+    fn workers(&self, n: usize) -> usize {
+        if self.threads <= 1 || n < self.parallel_min {
+            1
+        } else {
+            let chunk = (self.parallel_min / self.threads).max(1);
+            self.threads.min(n / chunk).max(1)
+        }
+    }
+
+    /// All matches a single cursor run over `input` yields (no seeks), found region by region on
+    /// scoped threads and stitched into `ms.list`.
+    ///
+    /// Region `r` starts its own cursor at `q_r` and keeps the matches that start before
+    /// `q_{r+1}`, searching only up to `q_{r+1} + max_pattern`: every such match fits there,
+    /// so leftmost-longest among them is decided as on the whole input. Stitching keeps the
+    /// invariant that the list holds exactly the true matches starting before `q_r`. If the last
+    /// of them ends at or before `q_r`, the true next match is the first one at or after `q_r`,
+    /// so region `r`'s list continues it as is. If it ends inside region `r`, a cursor from that
+    /// end runs until it yields a match region `r` also found; from there the two agree.
+    fn collect_matches(&self, input: &[u8], ms: &mut MatchScratch) {
+        let n = input.len();
+        let k = self.workers(n);
+        let cut = |r: usize| r * n / k;
+        let hay_end = |r: usize| (cut(r + 1) + self.max_pattern).min(n);
+        if ms.parts.len() < k {
+            ms.parts.resize_with(k, Vec::new);
+        }
+        let region = |r: usize, list: &mut Vec<Match>| {
+            list.clear();
+            let hay = &input[..hay_end(r)];
+            let mut cur = Cursor::default();
+            cur.seek(cut(r));
+            while let Some(m) = self.engine.next(&self.set, hay, &mut cur) {
+                if m.start >= cut(r + 1) {
+                    break;
+                }
+                list.push(m);
+            }
+        };
+        std::thread::scope(|sc| {
+            let (first, rest) = ms.parts.split_at_mut(1);
+            for (i, list) in rest[..k - 1].iter_mut().enumerate() {
+                sc.spawn(move || region(i + 1, list));
+            }
+            region(0, &mut first[0]);
+        });
+
+        ms.list.clear();
+        for r in 0..k {
+            let part = &ms.parts[r];
+            let pos = ms.list.last().map_or(0, |m| m.end);
+            if pos <= cut(r) {
+                ms.list.extend_from_slice(part);
+                continue;
+            }
+            let hay = &input[..hay_end(r)];
+            let mut cur = Cursor::default();
+            cur.seek(pos);
+            while let Some(m) = self.engine.next(&self.set, hay, &mut cur) {
+                if m.start >= cut(r + 1) {
+                    break;
+                }
+                ms.list.push(m);
+                let at = part.partition_point(|x| x.start < m.start);
+                if part.get(at) == Some(&m) {
+                    ms.list.extend_from_slice(&part[at + 1..]);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Most threads one body uses.
+const MAX_THREADS: usize = 8;
+
+/// Buffers for matching in parallel. Part of [`Workspace`].
+#[derive(Default)]
+struct MatchScratch {
+    parts: Vec<Vec<Match>>,
+    list: Vec<Match>,
+}
+
+/// The match sequence [`Redactor::redact_core`] consumes: an engine cursor, or a precomputed
+/// list of what a cursor without seeks yields. After a seek past a listed match's start, the
+/// list is still right from its first match at or after the new position, unless the match
+/// before that one ends beyond the position; then the engine runs from the position until it
+/// yields a listed match again.
+struct Stream<'a> {
+    list: &'a [Match],
+    /// Next list index.
+    i: usize,
+    /// Search position: the end of the last match, or a seek target.
+    pos: usize,
+    /// `Some` while the engine runs, with its cursor.
+    engine: Option<Cursor>,
+}
+
+impl<'a> Stream<'a> {
+    /// The engine throughout.
+    fn engine() -> Self {
+        Self {
+            list: &[],
+            i: 0,
+            pos: 0,
+            engine: Some(Cursor::default()),
+        }
+    }
+
+    /// From a precomputed list.
+    fn listed(list: &'a [Match]) -> Self {
+        Self {
+            list,
+            i: 0,
+            pos: 0,
+            engine: None,
+        }
+    }
+
+    fn seek(&mut self, pos: usize) {
+        self.pos = self.pos.max(pos);
+    }
+
+    fn next(&mut self, engine: &dyn Engine, set: &PatternSet, hay: &[u8]) -> Option<Match> {
+        if self.engine.is_none() {
+            let mut last_end = None;
+            while let Some(m) = self.list.get(self.i)
+                && m.start < self.pos
+            {
+                last_end = Some(m.end);
+                self.i += 1;
+            }
+            if last_end.is_none_or(|e| e <= self.pos) {
+                let m = *self.list.get(self.i)?;
+                self.i += 1;
+                self.pos = m.end;
+                return Some(m);
+            }
+            self.engine = Some(Cursor::default());
+        }
+        let cur = self.engine.as_mut()?;
+        cur.seek(self.pos);
+        let m = engine.next(set, hay, cur)?;
+        self.pos = m.end;
+        if !self.list.is_empty() {
+            let at = self.i + self.list[self.i..].partition_point(|x| x.start < m.start);
+            if self.list.get(at) == Some(&m) {
+                self.i = at + 1;
+                self.engine = None;
+            } else {
+                self.i = at;
+            }
+        }
+        Some(m)
+    }
 }
 
 fn detector_slug(rule: &str) -> RefSlug {
@@ -324,6 +523,7 @@ impl std::fmt::Debug for Snapshot {
 pub struct Workspace {
     out: Vec<u8>,
     guard: GuardScratch,
+    matches: MatchScratch,
 }
 
 impl std::fmt::Debug for Workspace {
@@ -479,6 +679,7 @@ impl Snapshot {
             config.min_len,
             config.guard_max_repairs,
             config.json_depth,
+            (config.parallel_threads, config.parallel_min_bytes),
             resolver.clone(),
         );
         drop(guard_inputs);
@@ -498,7 +699,6 @@ impl Snapshot {
             .collect();
         let redactor = Redactor {
             entries: compiled,
-            set,
             engine,
             kind,
             detectors,
@@ -506,6 +706,13 @@ impl Snapshot {
             det_slugs,
             resolver: resolver.clone(),
             max_input: config.max_input,
+            max_pattern: (0..set.len() as u32)
+                .map(|i| set.get(i).len())
+                .max()
+                .unwrap_or(0),
+            threads: config.parallel_threads.clamp(1, MAX_THREADS),
+            parallel_min: config.parallel_min_bytes,
+            set,
         };
         Ok(Self {
             redactor,
@@ -540,7 +747,9 @@ impl Snapshot {
     /// `Ok` carries exactly the bytes to forward. `Err` means refuse the request; nothing may be
     /// forwarded, and there is no unredacted fallback.
     pub fn protect<'w>(&self, input: &[u8], ws: &'w mut Workspace) -> Result<Protected<'w>, Error> {
-        let stats = self.redactor.redact(input, &mut ws.out)?;
+        let stats = self
+            .redactor
+            .redact_par(input, &mut ws.out, &mut ws.matches)?;
         match self.guard.check(&ws.out, &mut ws.guard) {
             Verdict::Clean => Ok(Protected {
                 bytes: &ws.out,
@@ -590,5 +799,119 @@ impl SnapshotHandle {
     /// Whether a snapshot has been stored.
     pub fn is_ready(&self) -> bool {
         self.cur.load().is_some()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::pedantic)]
+mod tests {
+    use super::*;
+    use crate::placeholder::PlaceholderKey;
+    use crate::secret::SecretValue;
+    use proptest::prelude::*;
+
+    fn snap(values: &[Vec<u8>], kind: EngineKind, threads: usize, min: usize) -> Snapshot {
+        let kr = Arc::new(Keyring::new(PlaceholderKey::new(1, &[3; 32]).unwrap()));
+        let entries = values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                Entry::new(
+                    i as u64 + 1,
+                    RefSlug::new(&format!("v{i}")).unwrap(),
+                    ValueClass::Display,
+                    SecretValue::from_slice(v),
+                )
+            })
+            .collect();
+        let cfg = Config {
+            min_len: 4,
+            engine: EngineChoice::Fixed(kind),
+            parallel_threads: threads,
+            parallel_min_bytes: min,
+            detectors: DetectorConfig {
+                rules_enabled: false,
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+        Snapshot::build(entries, kr, &cfg).unwrap()
+    }
+
+    /// What one cursor yields over `hay`, seeking to `seeks[k]` after the `k`-th match when
+    /// given.
+    fn chain(r: &Redactor, hay: &[u8], seeks: &[usize]) -> Vec<Match> {
+        let mut cur = Cursor::default();
+        let mut v = Vec::new();
+        while let Some(m) = r.engine.next(&r.set, hay, &mut cur) {
+            if let Some(&s) = seeks.get(v.len()) {
+                cur.seek(s);
+            }
+            v.push(m);
+        }
+        v
+    }
+
+    fn values() -> impl Strategy<Value = Vec<Vec<u8>>> {
+        prop::collection::vec(
+            prop::collection::vec(prop::sample::select(b"ab".to_vec()), 4..14),
+            1..8,
+        )
+    }
+
+    fn hay() -> impl Strategy<Value = Vec<u8>> {
+        prop::collection::vec(prop::sample::select(b"aab".to_vec()), 0..400)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
+
+        /// Stitched region lists are exactly the single-cursor match list, with matches
+        /// overlapping region ends nearly everywhere (values over a two-letter alphabet).
+        #[test]
+        fn collected_matches_equal_one_cursor(vals in values(), hay in hay(), threads in 2usize..9) {
+            for kind in [EngineKind::AhoCorasick, EngineKind::HashWindow] {
+                let s = snap(&vals, kind, threads, 8);
+                let r = s.redactor();
+                let mut ms = MatchScratch::default();
+                r.collect_matches(&hay, &mut ms);
+                prop_assert_eq!(&ms.list, &chain(r, &hay, &[]));
+            }
+        }
+
+        /// A stream over the stitched list with seeks yields what a cursor with the same seeks
+        /// yields.
+        #[test]
+        fn stream_with_seeks_equals_cursor(
+            vals in values(),
+            hay in hay(),
+            jumps in prop::collection::vec(0usize..12, 0..40),
+        ) {
+            for kind in [EngineKind::AhoCorasick, EngineKind::HashWindow] {
+                let s = snap(&vals, kind, 4, 8);
+                let r = s.redactor();
+                let mut ms = MatchScratch::default();
+                r.collect_matches(&hay, &mut ms);
+                // Seek targets relative to each match's end, as the redactor's skip of a
+                // genuine placeholder does.
+                let mut want = Vec::new();
+                let mut cur = Cursor::default();
+                let mut stream = Stream::listed(&ms.list);
+                let mut got = Vec::new();
+                let mut k = 0;
+                while let Some(m) = r.engine.next(&r.set, &hay, &mut cur) {
+                    want.push(m);
+                    let g = stream.next(&*r.engine, &r.set, &hay);
+                    got.push(g);
+                    let j = jumps.get(k).copied().unwrap_or(0);
+                    k += 1;
+                    cur.seek(m.end + j);
+                    stream.seek(m.end + j);
+                }
+                prop_assert_eq!(stream.next(&*r.engine, &r.set, &hay), None);
+                let want: Vec<Option<Match>> = want.into_iter().map(Some).collect();
+                prop_assert_eq!(got, want);
+            }
+        }
     }
 }

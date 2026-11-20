@@ -1,5 +1,6 @@
-//! The guard never panics, a repair leaves nothing it can find, and a value JSON-escaped up to the
-//! configured depth in any mix of styles is found.
+//! The guard never panics, a repair leaves nothing it can find, a value JSON-escaped up to the
+//! configured depth in any mix of styles is found, and the guard reaches the same verdict as the
+//! pre-optimisation guard kept as an oracle, on one thread and split over several.
 #![no_main]
 
 mod common;
@@ -31,6 +32,12 @@ fuzz_target!(|data: &[u8]| {
             !matches!(s.guard().check(&embedded, &mut gs), Verdict::Clean),
             "nested form at depth {depth} missed"
         );
+        assert!(s.guard().agrees_with_oracle(&embedded));
+    }
+    assert!(s.guard().agrees_with_oracle(body));
+    if let Some(p) = common::snapshot_threads(&vals, 8, EngineChoice::Auto, ValueClass::Credential, 3)
+    {
+        assert!(p.guard().agrees_with_oracle(body));
     }
     let mut gs = GuardScratch::new();
     let repaired = match s.guard().check(body, &mut gs) {

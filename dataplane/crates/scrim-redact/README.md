@@ -71,18 +71,28 @@ on a body made only of nested tool turns, the third JSON view costs the guard ab
 never decoded or re-serialised. Two engines, byte-identical output, chosen by pattern count
 (`engine_threshold`, default 256):
 
-* Aho-Corasick. Its SIMD prefilter only applies up to 64 patterns, and throughput falls about
-  tenfold past that, so sets of up to 256 patterns are split into automata of 64 whose matches are
-  merged.
-* Hash-window (D13). Every pattern of eight bytes or more is keyed by its first eight bytes. Each
-  eight-byte window of the input is hashed and tested against a blocked Bloom filter (one word, two
-  bits). A hit is looked up in a prefix table pointing at the lexicographically sorted patterns
-  with that prefix; the longest pattern that is a prefix of the input is the predecessor found by
-  binary search, or one of its precomputed longest-proper-prefix ancestors. Patterns shorter than
+* Aho-Corasick. Its SIMD (Teddy) prefilter only applies up to 64 patterns, and throughput falls
+  about tenfold past that. Sets of up to 128 patterns use the crate's packed Teddy searcher
+  directly, with its heuristic 64-pattern limit lifted (one pass); larger sets of up to 256
+  patterns, or CPUs without SSSE3, are split into automata of 64 whose matches are merged.
+* Hash-window (D13). Every pattern of eight bytes or more is keyed by its first eight bytes. A
+  first filter holds the five-byte grams at offsets 0 to 3 of every such pattern and is probed at
+  every fourth input position only; a hit there checks the (up to four) eight-byte windows that
+  can start a pattern containing that gram, each hashed and tested against a blocked Bloom filter
+  (one word, two bits). A window hit is looked up in a prefix table pointing at the
+  lexicographically sorted patterns with that prefix; the longest pattern that is a prefix of the
+  input is the predecessor found by binary search, or one of its precomputed longest-proper-prefix
+  ancestors. Patterns shorter than
   eight bytes go to a small Aho-Corasick tier merged by the same rule.
 
 A genuine placeholder already in the input (one that resolves) is copied byte for byte, so an
 unchanged conversation prefix redacts to identical bytes and prompt caching keeps working.
+
+In `protect`, bodies of at least `parallel_min_bytes` (512 KiB) are matched on up to
+`parallel_threads` (4) scoped threads: each region runs its own cursor, the region lists are
+stitched (a cursor from the last match's end runs until it meets a match the next region also
+found), and seeks past genuine placeholders resync the same way. The output is byte for byte what
+one thread produces; `redact` and `redact_with` stay on the calling thread.
 
 **Placeholders (`placeholder.rs`).** `⟦scrim:<slug>:<vv><tag>⟧`, slug `[a-z0-9-]{1,48}`, `vv` the
 key version in two hex digits, `tag` the first 8 bytes of
@@ -93,15 +103,25 @@ time.
 
 **Guard (`guard.rs`).** Shares no matching code with the redactor and works the other way round:
 it decodes the bytes into views and searches the raw values there, ASCII case-insensitively. Views:
-raw, JSON-unescaped once, twice and up to `json_depth` times, percent-decoded, every base64 run (both alphabets, joined
-across line breaks) at all four alignments, every hex run (any case) at both alignments. Values are
-indexed by five-byte grams at offsets 0 to 3, so only every fourth position of a view is probed.
-Exact necessary conditions keep the cost down: 64-byte blocks without an eleven-character base64
-run are skipped, runs whose character classes cannot hold any value's encoding are not decoded,
-and the second JSON view and the URL view are only scanned near decoded units, within the longest
-value containing a byte those units produced. Findings are mapped back to the outgoing bytes and
-replaced with the value's placeholder; the repaired body is checked again. A value still present,
-or more findings than `guard_max_repairs`, withholds the request.
+raw, JSON-unescaped once, twice and up to `json_depth` times, percent-decoded, every base64 run
+(both alphabets, joined across line breaks) at all four alignments, every hex run (any case) at both alignments. Values are
+indexed by five-byte grams at offsets 0 to 3, so only every fourth position of a view is probed;
+a probe folds bit 5 of every byte and tests a blocked Bloom filter (one word, two bits, about 16
+bits per gram) before the exact, case-insensitive check. Exact necessary conditions keep the cost
+down: one pass builds bitmaps of base64 and hex characters, from which runs of eleven base64
+characters and sixteen hex digits are found by shift-and, so other text is never walked byte by
+byte; runs whose character classes cannot hold any value's encoding are not decoded; each run is
+decoded once into its bit stream and the other alignments are read from it at a bit offset; values
+containing a backslash (which only the raw bytes show) are found from the backslash positions the
+JSON pass records; and the second JSON view and the URL view are only scanned near decoded units,
+within the longest value containing a byte those units produced. Bodies of at least
+`parallel_min_bytes` (512 KiB) are split into up to `parallel_threads` (4) regions checked on scoped
+threads, with region ends where no base64 run can cross; the verdict is the same as on one
+thread. Findings are mapped back to the outgoing bytes and replaced with the value's placeholder;
+the repaired body is checked again. A value still present, or more findings than
+`guard_max_repairs`, withholds the request. The guard as it was before these optimisations is kept
+as a test oracle (`guard_oracle.rs`, feature `oracle`): property tests and the `guard` fuzz target
+check that both reach the same verdict, repaired bytes and findings.
 
 **Detectors (`detect.rs`).** Pattern rules for AWS access keys, GitHub (classic and fine-grained),
 Anthropic, OpenAI, GitLab, Slack, Stripe, Google API keys, npm tokens, JWTs and private key blocks

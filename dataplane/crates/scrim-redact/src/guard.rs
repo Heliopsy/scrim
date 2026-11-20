@@ -23,8 +23,19 @@
 //!
 //! Index: values of at least eight bytes are sampled with five-byte grams. Any occurrence of such
 //! a value contains, at one of its first four offsets, a gram that starts at a position divisible
-//! by four, so the guard only probes every fourth position of a view. Short values (four to seven
-//! bytes) are indexed by their first four bytes and probed at every position.
+//! by four, so the guard only probes every fourth position of a view. A probe folds bit 5 of each
+//! byte (so both cases of a letter meet) and tests a blocked Bloom filter of about sixteen bits per
+//! gram; a hit is verified in full, case-insensitively. Short values (four to seven bytes) are
+//! indexed by their first four bytes and probed at every position.
+//!
+//! Cost: one class bitmap pass (base64 characters, hex digits) finds the runs and spans worth
+//! decoding without touching other text byte by byte. Each base64 run is decoded once, into its
+//! bit stream; the other three alignments are the same stream read from bit 6, 12 and 18, so they
+//! are probed in place instead of decoded again. Values containing a backslash, which only the raw
+//! bytes can show, are found from the backslashes the JSON pass records rather than by one search
+//! per value. Bodies of at least [`Config::parallel_min_bytes`](crate::Config) bytes are split
+//! into regions checked on scoped threads; region ends are placed where no run can cross them,
+//! and the result is the same as on one thread.
 //!
 //! Every finding is mapped back to a byte range of the outgoing bytes and replaced with the
 //! value's placeholder. The repaired bytes are checked again; a value still present means the
@@ -40,6 +51,8 @@ use crate::restore::Resolver;
 use crate::secret::EntryId;
 
 const GRAM: usize = 5;
+/// Most workers one check uses.
+const MAX_THREADS: usize = 8;
 const STRIDE: usize = 4;
 const SHORT_KEY: usize = 4;
 /// Shortest base64 run worth decoding: an eight-byte value needs at least eleven characters.
@@ -64,6 +77,21 @@ pub enum GuardView {
     Base64,
     /// Inside a decoded hex run.
     Hex,
+}
+
+impl GuardView {
+    /// Fixed order of views, for deterministic tie-breaking.
+    pub(crate) fn rank(self) -> u8 {
+        match self {
+            Self::Raw => 0,
+            Self::Json => 1,
+            Self::JsonTwice => 2,
+            Self::JsonDeep => 3,
+            Self::Url => 4,
+            Self::Base64 => 5,
+            Self::Hex => 6,
+        }
+    }
 }
 
 /// One value found by the guard. Carries the entry id, never the value.
@@ -112,10 +140,7 @@ pub struct Guard {
     starts: PairSet,
     long: Vec<GValue>,
     short: Vec<GValue>,
-    gram_bits: Vec<u64>,
-    gram_shift: u32,
-    grams: HashMap<u64, (u32, u32)>,
-    gram_cands: Vec<(u32, u8)>,
+    grams: GramIndex,
     short_bits: Vec<u64>,
     short_keys: HashMap<u32, (u32, u32)>,
     short_cands: Vec<u32>,
@@ -125,13 +150,22 @@ pub struct Guard {
     /// Rounds of JSON unescaping, at least 2.
     json_depth: usize,
     resolver: Arc<Resolver>,
-    /// Indices (long first, then short) of values containing a backslash.
-    backslash_values: Vec<u32>,
-    /// Minimal character-class masks of every value's inner base64 forms; a run whose classes
-    /// contain none of them cannot carry any value.
-    b64_masks: Vec<u8>,
+    /// Values containing a backslash, bucketed by the byte after their first backslash, or for
+    /// values ending in it, 256 plus the byte before. `bs_index[k]..bs_index[k + 1]` indexes
+    /// `bs_cands`.
+    bs_index: Vec<u32>,
+    bs_cands: Vec<BsCand>,
+    /// Workers per check at most (1: never parallel), and the shortest view checked in parallel.
+    threads: usize,
+    parallel_min: usize,
+    /// Per class set of a run (`CLASS_MASK` bits): whether it contains the classes of some
+    /// value's inner base64 form. A run for which this is false cannot carry any value.
+    b64_mask_ok: [bool; 64],
     /// Some value's hex form has no digit, so hex runs without digits must be decoded too.
     hex_needs_digit_free: bool,
+    /// The guard as it was before the single-decode rewrite, built from the same inputs.
+    #[cfg(any(test, feature = "oracle"))]
+    oracle: crate::guard_oracle::OracleGuard,
 }
 
 impl std::fmt::Debug for Guard {
@@ -151,17 +185,48 @@ pub struct GuardScratch {
     /// Views after three and more rounds of JSON unescaping.
     deeper: Vec<View>,
     url: View,
+    /// One per worker; the first is used by the calling thread.
+    parts: Vec<Part>,
+    regions: Vec<Region>,
+    bs_all: Vec<(usize, usize, u32)>,
+    view_hits: Vec<(usize, usize, u32)>,
+    hits: Vec<RawHit>,
+    findings: Vec<GuardFinding>,
+    repaired: Vec<u8>,
+    recheck: Vec<RawHit>,
+}
+
+/// Buffers of one worker, which checks one region of the body.
+#[derive(Default)]
+struct Part {
     run_pos: Vec<u32>,
     run_chars: Vec<u8>,
     runs: Vec<RunRec>,
     hex_spans: Vec<(u32, u32)>,
-    segs: Vec<DecSeg>,
+    b64m: Vec<u64>,
+    hexm: Vec<u64>,
     decoded: Vec<u8>,
-    hits: Vec<RawHit>,
     view_hits: Vec<(usize, usize, u32)>,
-    findings: Vec<GuardFinding>,
-    repaired: Vec<u8>,
-    recheck: Vec<RawHit>,
+    /// Hits in raw coordinates.
+    hits: Vec<RawHit>,
+    /// Every occurrence of a value containing a backslash, before the non-overlap rule.
+    bs_hits: Vec<(usize, usize, u32)>,
+    /// This part's piece of the JSON view, while unescaping in parallel.
+    json: View,
+}
+
+/// What one worker checks. Ranges are half-open.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Region {
+    /// Start positions of occurrences in the scanned view; `.0` is a multiple of `STRIDE`.
+    scan: (usize, usize),
+    /// Bytes of the scanned view searched for base64 runs and hex spans. Both ends are at a byte
+    /// that is no base64 character and no line break (or at the ends), so no run crosses them.
+    runs: (usize, usize),
+    /// Indices into the JSON view's backslash list.
+    bs: (usize, usize),
+    /// Indices into the JSON view's unit list.
+    units: (usize, usize),
 }
 
 impl std::fmt::Debug for GuardScratch {
@@ -185,8 +250,11 @@ impl GuardScratch {
             v.bytes.zeroize();
         }
         self.url.bytes.zeroize();
-        self.run_chars.zeroize();
-        self.decoded.zeroize();
+        for p in &mut self.parts {
+            p.run_chars.zeroize();
+            p.decoded.zeroize();
+            p.json.bytes.zeroize();
+        }
         self.repaired.zeroize();
     }
 }
@@ -205,6 +273,8 @@ struct View {
     bytes: Vec<u8>,
     /// Decoded units, sorted by `view` position.
     units: Vec<Unit>,
+    /// Positions of every backslash in the parent, ascending (JSON views only).
+    backslashes: Vec<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -219,6 +289,7 @@ impl View {
     fn clear(&mut self) {
         self.bytes.clear();
         self.units.clear();
+        self.backslashes.clear();
     }
 
     fn map_start(&self, a: usize) -> usize {
@@ -255,31 +326,129 @@ impl View {
     }
 }
 
-const fn lower_table() -> [u8; 256] {
-    let mut t = [0u8; 256];
+/// A gram's index key: five bytes, little-endian, with bit 5 of every byte set. ASCII letters of
+/// either case get the same key. So do a few other byte pairs that differ only in bit 5, which
+/// costs a candidate now and then and nothing else: candidates are verified in full.
+#[inline]
+fn gram_key(x: u64) -> u64 {
+    (x | 0x20_2020_2020) & 0xFF_FFFF_FFFF
+}
+
+/// Eight bytes of `b` from `p`, little-endian, zero-filled past the end.
+#[inline]
+fn load_le(b: &[u8], p: usize) -> u64 {
+    if let Some(w) = b.get(p..).and_then(<[u8]>::first_chunk::<8>) {
+        u64::from_le_bytes(*w)
+    } else {
+        let mut w = [0u8; 8];
+        let rest = b.get(p..).unwrap_or(&[]);
+        w[..rest.len()].copy_from_slice(rest);
+        u64::from_le_bytes(w)
+    }
+}
+
+/// The gram index of the long values: a blocked Bloom filter (one word, two bits, about
+/// sixteen bits per key) in front of an open-addressing table of keys and candidates.
+struct GramIndex {
+    bloom: Vec<u64>,
+    /// `64 - log2(bloom.len())`.
+    bloom_shift: u32,
+    /// (key, candidates start, candidates end); `u64::MAX` marks an empty slot (keys have 40 bits).
+    slots: Vec<(u64, u32, u32)>,
+    /// `64 - log2(slots.len())`.
+    slot_shift: u32,
+    /// (long value index, offset of the gram in the value).
+    cands: Vec<(u32, u8)>,
+}
+
+static BIT: [u64; 64] = {
+    let mut t = [0u64; 64];
     let mut i = 0;
-    while i < 256 {
-        t[i] = (i as u8).to_ascii_lowercase();
+    while i < 64 {
+        t[i] = 1 << i;
         i += 1;
     }
     t
-}
-static LOWER: [u8; 256] = lower_table();
+};
 
-#[inline]
-fn gram_at(b: &[u8], p: usize) -> u64 {
-    let mut g = 0u64;
-    for k in 0..GRAM {
-        g |= u64::from(LOWER[usize::from(b[p + k])]) << (8 * k);
+impl GramIndex {
+    const EMPTY: u64 = u64::MAX;
+
+    fn build(mut pairs: Vec<(u64, u32, u8)>) -> Self {
+        pairs.sort_unstable();
+        pairs.dedup();
+        let mut keys = Vec::new();
+        let mut cands = Vec::with_capacity(pairs.len());
+        let mut i = 0;
+        while i < pairs.len() {
+            let k = pairs[i].0;
+            let lo = cands.len() as u32;
+            while i < pairs.len() && pairs[i].0 == k {
+                cands.push((pairs[i].1, pairs[i].2));
+                i += 1;
+            }
+            keys.push((k, lo, cands.len() as u32));
+        }
+        let words = (keys.len() / 4).next_power_of_two().max(64);
+        let bloom_shift = 64 - words.trailing_zeros();
+        let nslots = (keys.len() * 2).next_power_of_two().max(64);
+        let slot_shift = 64 - nslots.trailing_zeros();
+        let mut g = Self {
+            bloom: vec![0; words],
+            bloom_shift,
+            slots: vec![(Self::EMPTY, 0, 0); nslots],
+            slot_shift,
+            cands,
+        };
+        for &(k, lo, hi) in &keys {
+            let h = Self::hash(k);
+            g.bloom[(h >> g.bloom_shift) as usize] |= g.bits(h);
+            let mask = g.slots.len() - 1;
+            let mut at = (h >> g.slot_shift) as usize;
+            while g.slots[at].0 != Self::EMPTY {
+                at = (at + 1) & mask;
+            }
+            g.slots[at] = (k, lo, hi);
+        }
+        g
     }
-    g
-}
 
-#[inline]
-fn gram_hash(g: u64) -> u64 {
-    let mut h = g ^ (g >> 31);
-    h = h.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
-    h ^ (h >> 29)
+    #[inline]
+    fn hash(k: u64) -> u64 {
+        k.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+    }
+
+    /// The two filter bits of `h`, taken from just below the word index (`bloom_shift >= 44`).
+    /// Looked up in a table: variable shifts cost three micro-ops each on x86-64 without BMI2.
+    #[inline]
+    fn bits(&self, h: u64) -> u64 {
+        BIT[((h >> (self.bloom_shift - 6)) & 63) as usize]
+            | BIT[((h >> (self.bloom_shift - 12)) & 63) as usize]
+    }
+
+    /// Whether `k` may be a key. Never false for a key.
+    #[inline]
+    fn maybe(&self, k: u64) -> bool {
+        let h = Self::hash(k);
+        let m = self.bits(h);
+        self.bloom[(h >> self.bloom_shift) as usize] & m == m
+    }
+
+    /// The candidates of `k`.
+    fn get(&self, k: u64) -> &[(u32, u8)] {
+        let mask = self.slots.len() - 1;
+        let mut at = (Self::hash(k) >> self.slot_shift) as usize;
+        loop {
+            let (key, lo, hi) = self.slots[at];
+            if key == k {
+                return &self.cands[lo as usize..hi as usize];
+            }
+            if key == Self::EMPTY {
+                return &[];
+            }
+            at = (at + 1) & mask;
+        }
+    }
 }
 
 #[inline]
@@ -298,6 +467,7 @@ impl Guard {
         min_len: usize,
         max_repairs: usize,
         json_depth: usize,
+        (threads, parallel_min): (usize, usize),
         resolver: Arc<Resolver>,
     ) -> Self {
         let mut long = Vec::new();
@@ -321,30 +491,10 @@ impl Guard {
         let mut pairs: Vec<(u64, u32, u8)> = Vec::with_capacity(long.len() * STRIDE);
         for (vi, v) in long.iter().enumerate() {
             for off in 0..STRIDE {
-                pairs.push((gram_at(&v.value, off), vi as u32, off as u8));
+                pairs.push((gram_key(load_le(&v.value, off)), vi as u32, off as u8));
             }
         }
-        pairs.sort_unstable();
-        pairs.dedup();
-        let mut grams = HashMap::new();
-        let mut gram_cands = Vec::with_capacity(pairs.len());
-        let mut i = 0;
-        while i < pairs.len() {
-            let g = pairs[i].0;
-            let lo = gram_cands.len() as u32;
-            while i < pairs.len() && pairs[i].0 == g {
-                gram_cands.push((pairs[i].1, pairs[i].2));
-                i += 1;
-            }
-            grams.insert(g, (lo, gram_cands.len() as u32));
-        }
-        let bits = (grams.len() * 64).next_power_of_two().max(1 << 12);
-        let gram_shift = 64 - bits.trailing_zeros();
-        let mut gram_bits = vec![0u64; bits / 64];
-        for &g in grams.keys() {
-            let h = (gram_hash(g) >> gram_shift) as usize;
-            gram_bits[h >> 6] |= 1 << (h & 63);
-        }
+        let grams = GramIndex::build(pairs);
 
         // Exact four-byte index over short values.
         let mut sp: Vec<(u32, u32)> = short
@@ -369,13 +519,34 @@ impl Guard {
             short_bits[b >> 6] |= 1 << (b & 63);
         }
 
-        let backslash_values = long
-            .iter()
-            .chain(short.iter())
-            .enumerate()
-            .filter(|(_, v)| v.value.contains(&b'\\'))
-            .map(|(i, _)| i as u32)
-            .collect();
+        // Values containing a backslash, keyed by the byte after the first one.
+        let mut bs: Vec<(usize, BsCand)> = Vec::new();
+        for (i, v) in long.iter().chain(short.iter()).enumerate() {
+            if let Some(j) = memchr::memchr(b'\\', &v.value) {
+                // Values are at least four bytes long, so one of the neighbours exists.
+                let key = match v.value.get(j + 1) {
+                    Some(&c) => usize::from(c),
+                    None => 256 + usize::from(v.value[j - 1]),
+                };
+                let l = v.value.len();
+                let cand = BsCand {
+                    value: i as u32,
+                    first_bs: j as u32,
+                    len: l as u32,
+                    ends: [v.value[0], v.value[l - 1]],
+                };
+                bs.push((key, cand));
+            }
+        }
+        bs.sort_by_key(|&(key, _)| key);
+        let mut bs_index = vec![0u32; 513];
+        for &(key, ..) in &bs {
+            bs_index[key + 1] += 1;
+        }
+        for k in 1..bs_index.len() {
+            bs_index[k] += bs_index[k - 1];
+        }
+        let bs_cands = bs.iter().map(|&(_, c)| c).collect();
         let mut masks: Vec<u8> = long
             .iter()
             .flat_map(|v| (0..3).map(|k| b64_inner_mask(&v.value, k)))
@@ -421,14 +592,19 @@ impl Guard {
             }
         }
         Self {
+            #[cfg(any(test, feature = "oracle"))]
+            oracle: crate::guard_oracle::OracleGuard::build(
+                inputs,
+                min_len,
+                max_repairs,
+                json_depth,
+                resolver.clone(),
+            ),
             byte_width,
             starts,
             long,
             short,
-            gram_bits,
-            gram_shift,
             grams,
-            gram_cands,
             short_bits,
             short_keys,
             short_cands,
@@ -437,8 +613,11 @@ impl Guard {
             max_repairs,
             json_depth: json_depth.max(2),
             resolver,
-            backslash_values,
-            b64_masks,
+            bs_index,
+            bs_cands,
+            threads: threads.clamp(1, MAX_THREADS),
+            parallel_min,
+            b64_mask_ok: std::array::from_fn(|mask| b64_masks.iter().any(|&m| m & mask as u8 == m)),
             hex_needs_digit_free,
         }
     }
@@ -455,7 +634,9 @@ impl Guard {
             scratch.hits = hits;
             return Verdict::Clean;
         }
-        hits.sort_unstable_by_key(|h| (h.start, std::cmp::Reverse(h.end), h.owner));
+        // The view breaks ties, so the finding reported for a range does not depend on the
+        // order hits were collected in.
+        hits.sort_unstable_by_key(|h| (h.start, std::cmp::Reverse(h.end), h.owner, h.view.rank()));
         hits.dedup_by(|b, a| a.start == b.start && a.end == b.end && a.owner == b.owner);
         scratch.findings.clear();
         let mut repaired = std::mem::take(&mut scratch.repaired);
@@ -508,6 +689,17 @@ impl Guard {
         }
     }
 
+    /// Whether [`Guard::check`] and the guard as it was before the single-decode rewrite reach
+    /// the same verdict on `bytes`: same outcome, same repaired bytes, same findings. Only with
+    /// the `oracle` feature (tests and fuzzing).
+    #[cfg(any(test, feature = "oracle"))]
+    #[doc(hidden)]
+    pub fn agrees_with_oracle(&self, bytes: &[u8]) -> bool {
+        let mut a = GuardScratch::new();
+        let mut b = crate::guard_oracle::OracleScratch::new();
+        self.check(bytes, &mut a) == self.oracle.check(bytes, &mut b)
+    }
+
     fn entry_of(&self, owner: u32) -> EntryId {
         self.entry_ids[owner as usize]
     }
@@ -536,126 +728,284 @@ impl Guard {
         if self.long.is_empty() && self.short.is_empty() {
             return;
         }
-        let mut vh = std::mem::take(&mut s.view_hits);
-        let mut json1 = std::mem::take(&mut s.json1);
+        let GuardScratch {
+            json1,
+            json2,
+            deeper,
+            url,
+            parts,
+            regions,
+            bs_all,
+            view_hits: vh,
+            ..
+        } = s;
         let has_json1 = has_json_escape(bytes);
-
         if has_json1 {
-            // The unescaped view is what the provider reads. Scan it fully, and cover the raw-only
-            // occurrences precisely: values containing a backslash, and values starting inside
-            // an escape sequence (`\token` reads as TAB + `oken` once unescaped).
-            json_unescape(bytes, &mut json1);
-            vh.clear();
-            self.scan(&json1.bytes, true, &mut vh);
-            push_mapped(out, &vh, GuardView::Json, |a, b| json1.map(a, b));
-            vh.clear();
-            self.raw_only(bytes, &json1, &mut vh);
-            push_mapped(out, &vh, GuardView::Raw, |a, b| (a, b));
-
-            if self.json_escapes_matter(&json1.bytes) {
-                let mut json2 = std::mem::take(&mut s.json2);
-                json_unescape(&json1.bytes, &mut json2);
-                vh.clear();
-                self.scan_near_units(&json2, true, &mut vh);
-                push_mapped(out, &vh, GuardView::JsonTwice, |a, b| {
-                    let (a, b) = json2.map(a, b);
-                    json1.map(a, b)
-                });
-                if self.json_depth > 2 {
-                    let mut deeper = std::mem::take(&mut s.deeper);
-                    self.scan_deeper(&json1, &json2, &mut deeper, &mut vh, out);
-                    s.deeper = deeper;
-                }
-                s.json2 = json2;
-            }
+            // The unescaped view is what the provider reads. It is scanned fully, and the raw-only
+            // occurrences are covered precisely: values containing a backslash, and values
+            // starting inside an escape sequence (`\token` reads as TAB + `oken` once unescaped).
+            self.unescape(bytes, json1, parts);
         } else {
-            vh.clear();
-            self.scan(bytes, true, &mut vh);
-            push_mapped(out, &vh, GuardView::Raw, |a, b| (a, b));
+            json1.clear();
+        }
+        // The encoding views are taken over the once-unescaped bytes.
+        let base: &[u8] = if has_json1 { &json1.bytes } else { bytes };
+        let json1: &View = json1;
+
+        self.split(base, json1, regions);
+        if parts.len() < regions.len() {
+            parts.resize_with(regions.len(), Part::default);
+        }
+        let work =
+            |part: &mut Part, r: Region| self.check_region(bytes, base, has_json1, json1, r, part);
+        if regions.len() == 1 {
+            work(&mut parts[0], regions[0]);
+            self.second_views(has_json1, base, json1, json2, deeper, url, vh, out);
+        } else {
+            std::thread::scope(|sc| {
+                let (first, rest) = parts.split_at_mut(1);
+                for (part, &r) in rest.iter_mut().zip(&regions[1..]) {
+                    sc.spawn(move || work(part, r));
+                }
+                work(&mut first[0], regions[0]);
+                self.second_views(has_json1, base, json1, json2, deeper, url, vh, out);
+            });
         }
 
-        if !self.long.is_empty() {
-            // Encoding views over the once-unescaped bytes.
-            let base: &[u8] = if has_json1 { &json1.bytes } else { bytes };
-            let to_raw = |a: usize, b: usize| if has_json1 { json1.map(a, b) } else { (a, b) };
-
-            if has_percent_escape(base) {
-                let mut url = std::mem::take(&mut s.url);
-                url_decode(base, &mut url);
-                vh.clear();
-                self.scan_near_units(&url, false, &mut vh);
-                push_mapped(out, &vh, GuardView::Url, |a, b| {
-                    let (a, b) = url.map(a, b);
-                    to_raw(a, b)
-                });
-                s.url = url;
+        // Backslash values: leftmost occurrences first, without overlap, per value.
+        bs_all.clear();
+        for part in &parts[..regions.len()] {
+            out.extend_from_slice(&part.hits);
+            bs_all.extend_from_slice(&part.bs_hits);
+        }
+        bs_all.sort_unstable_by_key(|&(a, _, o)| (o, a));
+        let mut last: Option<(u32, usize)> = None;
+        for &(a, b, o) in bs_all.iter() {
+            if let Some((lo, le)) = last
+                && lo == o
+                && a < le
+            {
+                continue;
             }
-            self.scan_runs(base, s, &mut vh, out, &to_raw);
+            last = Some((o, b));
+            out.push(RawHit {
+                start: a,
+                end: b,
+                owner: o,
+                view: GuardView::Raw,
+            });
         }
-        s.json1 = json1;
-        s.view_hits = vh;
     }
 
-    /// Base64 and hex runs of `base`: collected in one pass, decoded into one buffer (every
-    /// alignment of every run, back to back), scanned once.
-    fn scan_runs(
+    /// [`json_unescape`] of `src` into `out`, on several threads for a large body: the body is
+    /// cut where no backslash is within the eleven bytes before the cut, so no escape sequence
+    /// (at most twelve bytes) and none of its look-ahead crosses it, each piece is unescaped on
+    /// its own and the pieces are joined.
+    fn unescape(&self, src: &[u8], out: &mut View, parts: &mut Vec<Part>) {
+        let n = src.len();
+        let k = self.workers(n);
+        let mut cuts = [0usize; MAX_THREADS + 1];
+        let mut m = 1;
+        for r in 1..k {
+            let from = (r * n / k).max(cuts[m - 1] + 12);
+            let to = ((r + 1) * n / k).min(n);
+            let mut q = from;
+            while q < to {
+                match memchr::memrchr(b'\\', &src[q - 11..q]) {
+                    // The next candidate is just past that backslash's reach.
+                    Some(at) => q = q - 11 + at + 12,
+                    None => break,
+                }
+            }
+            if q < to {
+                cuts[m] = q;
+                m += 1;
+            }
+        }
+        cuts[m] = n;
+        if m == 1 {
+            json_unescape(src, out);
+            return;
+        }
+        if parts.len() < m {
+            parts.resize_with(m, Part::default);
+        }
+        std::thread::scope(|sc| {
+            let (first, rest) = parts.split_at_mut(1);
+            for (r, part) in rest[..m - 1].iter_mut().enumerate() {
+                let piece = &src[cuts[r + 1]..cuts[r + 2]];
+                sc.spawn(move || json_unescape(piece, &mut part.json));
+            }
+            json_unescape(&src[..cuts[1]], &mut first[0].json);
+        });
+        out.clear();
+        for (r, part) in parts[..m].iter().enumerate() {
+            let (view0, parent0) = (out.bytes.len() as u32, cuts[r] as u32);
+            let v = &part.json;
+            out.bytes.extend_from_slice(&v.bytes);
+            out.units.extend(v.units.iter().map(|u| Unit {
+                view: u.view + view0,
+                parent: u.parent + parent0,
+                ..*u
+            }));
+            out.backslashes
+                .extend(v.backslashes.iter().map(|&b| b + parent0));
+        }
+    }
+
+    /// The views derived from the JSON view near its units: JSON unescaped twice, and
+    /// percent-decoded. Both are small unless the body is full of escapes.
+    #[allow(clippy::too_many_arguments)]
+    fn second_views(
         &self,
+        has_json1: bool,
         base: &[u8],
-        s: &mut GuardScratch,
+        json1: &View,
+        json2: &mut View,
+        deeper: &mut Vec<View>,
+        url: &mut View,
         vh: &mut Vec<(usize, usize, u32)>,
         out: &mut Vec<RawHit>,
-        to_raw: &dyn Fn(usize, usize) -> (usize, usize),
     ) {
+        if has_json1 && self.json_escapes_matter(&json1.bytes) {
+            json_unescape(&json1.bytes, json2);
+            vh.clear();
+            self.scan_near_units(json2, true, vh);
+            push_mapped(out, vh, GuardView::JsonTwice, |a, b| {
+                let (a, b) = json2.map(a, b);
+                json1.map(a, b)
+            });
+            if self.json_depth > 2 {
+                self.scan_deeper(json1, json2, deeper, vh, out);
+            }
+        }
+        if !self.long.is_empty() && has_percent_escape(base) {
+            url_decode(base, url);
+            vh.clear();
+            self.scan_near_units(url, false, vh);
+            push_mapped(out, vh, GuardView::Url, |a, b| {
+                let (a, b) = url.map(a, b);
+                if has_json1 { json1.map(a, b) } else { (a, b) }
+            });
+        }
+    }
+
+    /// Workers for a view of `n` bytes: one below `parallel_min`, else up to `threads`, each
+    /// with at least `parallel_min / threads` bytes.
+    fn workers(&self, n: usize) -> usize {
+        if self.threads <= 1 || n < self.parallel_min {
+            1
+        } else {
+            let chunk = (self.parallel_min / self.threads).max(1);
+            self.threads.min(n / chunk).max(1)
+        }
+    }
+
+    /// Splits the work on `base` into regions, one per worker.
+    fn split(&self, base: &[u8], json1: &View, out: &mut Vec<Region>) {
+        out.clear();
+        let n = base.len();
+        let k = self.workers(n);
+        // Run boundaries: the first byte at or after each target that no run can cross.
+        let mut cuts = [0usize; MAX_THREADS + 1];
+        let mut m = 1;
+        for r in 1..k {
+            let from = (r * n / k).max(cuts[m - 1] + 1);
+            let to = ((r + 1) * n / k).min(n);
+            if let Some(q) = (from..to).find(|&q| {
+                let c = base[q];
+                is_b64_char(c) == 0 && c != b'\n' && c != b'\r'
+            }) {
+                cuts[m] = q;
+                m += 1;
+            }
+        }
+        cuts[m] = n;
+        let (nb, nu) = (json1.backslashes.len(), json1.units.len());
+        for r in 0..m {
+            let scan0 = cuts[r] / STRIDE * STRIDE;
+            let scan1 = if r + 1 == m {
+                n
+            } else {
+                cuts[r + 1] / STRIDE * STRIDE
+            };
+            out.push(Region {
+                scan: (scan0, scan1),
+                runs: (cuts[r], cuts[r + 1]),
+                bs: (r * nb / m, (r + 1) * nb / m),
+                units: (r * nu / m, (r + 1) * nu / m),
+            });
+        }
+    }
+
+    /// Everything one worker checks: occurrences starting in its part of the scanned view, the
+    /// raw-only occurrences at its share of escapes, and its base64 runs and hex spans.
+    fn check_region(
+        &self,
+        bytes: &[u8],
+        base: &[u8],
+        has_json1: bool,
+        json1: &View,
+        r: Region,
+        part: &mut Part,
+    ) {
+        part.hits.clear();
+        part.bs_hits.clear();
+        let to_raw = |a: usize, b: usize| if has_json1 { json1.map(a, b) } else { (a, b) };
+        let view = if has_json1 {
+            GuardView::Json
+        } else {
+            GuardView::Raw
+        };
+        part.view_hits.clear();
+        self.scan_range(base, r.scan.0, r.scan.1, true, &mut part.view_hits);
+        push_mapped(&mut part.hits, &part.view_hits, view, to_raw);
+        if has_json1 {
+            part.view_hits.clear();
+            self.raw_only(bytes, json1, r, &mut part.bs_hits, &mut part.view_hits);
+            push_mapped(&mut part.hits, &part.view_hits, GuardView::Raw, |a, b| {
+                (a, b)
+            });
+        }
+        if !self.long.is_empty() {
+            let (a, b) = r.runs;
+            let sub = &base[a..b];
+            self.find_runs(sub, part);
+            self.decode_runs(sub, part, &|x, y| to_raw(x + a, y + a));
+        }
+    }
+
+    /// Collects the base64 runs and hex spans of `base` worth decoding.
+    ///
+    /// A run is a maximal sequence of at least `MIN_B64_RUN` base64 characters, extended across
+    /// single line breaks that are followed by another base64 character. A hex span is a maximal
+    /// sequence of at least `MIN_HEX_RUN` hex digits. Both come from per-byte class bitmaps built
+    /// in one pass, so text without long runs costs a few instructions per 64 bytes.
+    fn find_runs(&self, base: &[u8], s: &mut Part) {
         s.runs.clear();
         s.run_pos.clear();
         s.run_chars.clear();
         s.hex_spans.clear();
         let n = base.len();
+        class_bitmaps(base, &mut s.b64m, &mut s.hexm);
+        let b64m = &s.b64m;
+        let is_b64 = |p: usize| b64m[p / 64] >> (p % 64) & 1 != 0;
+
+        // Base64 runs.
         let mut i = 0;
-        let mut finder = RunFinder::new();
-        while i < n {
-            // Skip 64-byte blocks in which no run of MIN_B64_RUN characters starts. Prose and
-            // most code have none, and skipping them avoids a branch per word.
-            match finder.next(base, i) {
-                Some(p) => i = p,
-                None => break,
-            }
+        let mut starts = RunStarts::new(b64m, MIN_B64_RUN);
+        while let Some(p) = starts.next_from(i) {
             // One run, allowing single line breaks between characters. Characters and positions
             // are copied only once a break makes them non-contiguous.
-            let start = i;
+            let start = p;
+            i = p;
             let mut mask = 0u8;
             let mut broken = false;
             let chars_off = s.run_chars.len();
             loop {
                 let seg = i;
-                let mut hex_len = 0usize;
-                let mut hex_max = 0usize;
-                while i < n {
-                    let c = CLASS[usize::from(base[i])];
-                    if c & CLASS_B64 == 0 {
-                        break;
-                    }
-                    mask |= c & CLASS_MASK;
-                    hex_len = (hex_len + 1) * usize::from(c >> 7);
-                    hex_max = hex_max.max(hex_len);
-                    i += 1;
-                }
-                if hex_max >= MIN_HEX_RUN {
-                    let mut k = seg;
-                    while k < i {
-                        let st = k;
-                        while k < i && CLASS[usize::from(base[k])] & CLASS_HEX != 0 {
-                            k += 1;
-                        }
-                        if k - st >= MIN_HEX_RUN
-                            && (self.hex_needs_digit_free
-                                || base[st..k].iter().any(u8::is_ascii_digit))
-                        {
-                            s.hex_spans.push((st as u32, k as u32));
-                        }
-                        k = k.max(st + 1);
-                    }
-                }
+                i = ones_end(b64m, i, n);
+                mask |= class_mask(&base[seg..i]);
                 if broken {
                     s.run_pos.extend(seg as u32..i as u32);
                     s.run_chars.extend_from_slice(&base[seg..i]);
@@ -665,7 +1015,7 @@ impl Guard {
                 } else {
                     usize::from(base[i..].starts_with(b"\n"))
                 };
-                if brk > 0 && i + brk < n && CLASS[usize::from(base[i + brk])] & CLASS_B64 != 0 {
+                if brk > 0 && i + brk < n && is_b64(i + brk) {
                     if !broken {
                         broken = true;
                         s.run_pos.extend(start as u32..i as u32);
@@ -681,7 +1031,7 @@ impl Guard {
             } else {
                 i - start
             };
-            if len >= MIN_B64_RUN && self.b64_masks.iter().any(|&m| m & mask == m) {
+            if len >= MIN_B64_RUN && self.b64_mask_ok[usize::from(mask & CLASS_MASK)] {
                 s.runs.push(RunRec {
                     start: start as u32,
                     len: len as u32,
@@ -691,87 +1041,133 @@ impl Guard {
                 s.run_pos.truncate(chars_off);
                 s.run_chars.truncate(chars_off);
             }
-            i = i.max(start + 1);
-        }
-        if s.runs.is_empty() && s.hex_spans.is_empty() {
-            return;
         }
 
-        // Decode everything into one buffer, remembering where each piece came from.
-        s.decoded.clear();
-        s.segs.clear();
-        for (ri, r) in s.runs.iter().enumerate() {
+        // Hex spans.
+        let hexm = &s.hexm;
+        let mut i = 0;
+        let mut starts = RunStarts::new(hexm, MIN_HEX_RUN);
+        while let Some(st) = starts.next_from(i) {
+            let en = ones_end(hexm, st, n);
+            if self.hex_needs_digit_free || base[st..en].iter().any(u8::is_ascii_digit) {
+                s.hex_spans.push((st as u32, en as u32));
+            }
+            i = en;
+        }
+    }
+
+    /// Decodes and scans what [`Guard::find_runs`] collected.
+    fn decode_runs(
+        &self,
+        base: &[u8],
+        s: &mut Part,
+        to_raw: &dyn Fn(usize, usize) -> (usize, usize),
+    ) {
+        let vh = &mut s.view_hits;
+        let out = &mut s.hits;
+
+        // Each run is decoded once, at character alignment 0, into a bit stream. Decoding at
+        // alignment `a` gives the same stream from bit 6a on, so the other alignments are read
+        // from it at a bit offset instead of being decoded again. Hex spans likewise: alignment 1
+        // is the nibble stream from bit 4.
+        for r in &s.runs {
             let chars: &[u8] = if r.copied == u32::MAX {
                 &base[r.start as usize..(r.start + r.len) as usize]
             } else {
                 &s.run_chars[r.copied as usize..(r.copied + r.len) as usize]
             };
+            s.decoded.clear();
+            decode_b64_bits(chars, &mut s.decoded);
+            let l = chars.len();
             for align in 0..4usize {
-                if chars.len() - align < MIN_B64_RUN {
+                if l - align < MIN_B64_RUN {
                     break;
                 }
-                let at = s.decoded.len();
-                decode_b64_into(&chars[align..], &mut s.decoded);
-                s.segs.push(DecSeg {
-                    at: at as u32,
-                    len: (s.decoded.len() - at) as u32,
-                    src: ri as u32,
-                    align: align as u8,
-                    hex: false,
-                });
-            }
-        }
-        for (hi, &(st, en)) in s.hex_spans.iter().enumerate() {
-            for align in 0..2usize {
-                let at = s.decoded.len();
-                for pair in base[st as usize + align..en as usize].chunks_exact(2) {
-                    s.decoded
-                        .push((HEXV[usize::from(pair[0])] << 4) | HEXV[usize::from(pair[1])]);
+                let bits = BitView {
+                    d: &s.decoded,
+                    at: 6 * align / 8,
+                    shift: (6 * align % 8) as u32,
+                    len: 6 * (l - align) / 8,
+                };
+                vh.clear();
+                self.scan_bits(&bits, vh);
+                for &(x, y, o) in vh.iter() {
+                    let at = |c: usize| {
+                        if r.copied == u32::MAX {
+                            r.start as usize + c
+                        } else {
+                            s.run_pos[r.copied as usize + c] as usize
+                        }
+                    };
+                    let c0 = align + (8 * x) / 6;
+                    let c1 = (align + (8 * y).div_ceil(6)).min(l);
+                    let (a, b) = to_raw(at(c0), at(c1 - 1) + 1);
+                    out.push(RawHit {
+                        start: a,
+                        end: b,
+                        owner: o,
+                        view: GuardView::Base64,
+                    });
                 }
-                s.segs.push(DecSeg {
-                    at: at as u32,
-                    len: (s.decoded.len() - at) as u32,
-                    src: hi as u32,
-                    align: align as u8,
-                    hex: true,
-                });
             }
         }
+        for &(st, en) in &s.hex_spans {
+            let (st, en) = (st as usize, en as usize);
+            s.decoded.clear();
+            decode_hex_bits(&base[st..en], &mut s.decoded);
+            for align in 0..2usize {
+                let bits = BitView {
+                    d: &s.decoded,
+                    at: 0,
+                    shift: 4 * align as u32,
+                    len: (en - st - align) / 2,
+                };
+                vh.clear();
+                self.scan_bits(&bits, vh);
+                for &(x, y, o) in vh.iter() {
+                    let (a, b) = to_raw(st + align + 2 * x, st + align + 2 * y);
+                    out.push(RawHit {
+                        start: a,
+                        end: b,
+                        owner: o,
+                        view: GuardView::Hex,
+                    });
+                }
+            }
+        }
+    }
 
-        vh.clear();
-        self.scan(&s.decoded, false, vh);
-        for &(x, y, o) in vh.iter() {
-            let k = s.segs.partition_point(|g| g.at as usize <= x);
-            let g = s.segs[k - 1];
-            let (gx, gy) = (x - g.at as usize, y - g.at as usize);
-            if gy > g.len as usize {
-                // Straddles two pieces: not a real occurrence.
+    /// Finds long values in a decoded bit stream view, like [`Guard::scan`] does in bytes.
+    fn scan_bits(&self, v: &BitView<'_>, out: &mut Vec<(usize, usize, u32)>) {
+        let mut j = 0;
+        while j + GRAM <= v.len {
+            let g = v.gram(j);
+            if self.grams.maybe(g) {
+                self.verify_bits(v, j, g, out);
+            }
+            j += STRIDE;
+        }
+    }
+
+    #[inline(never)]
+    fn verify_bits(&self, v: &BitView<'_>, j: usize, g: u64, out: &mut Vec<(usize, usize, u32)>) {
+        for &(vi, off) in self.grams.get(g) {
+            let off = usize::from(off);
+            if j < off {
                 continue;
             }
-            let align = usize::from(g.align);
-            let (a, b, view) = if g.hex {
-                let st = s.hex_spans[g.src as usize].0 as usize;
-                (st + align + 2 * gx, st + align + 2 * gy, GuardView::Hex)
-            } else {
-                let r = s.runs[g.src as usize];
-                let at = |c: usize| {
-                    if r.copied == u32::MAX {
-                        r.start as usize + c
-                    } else {
-                        s.run_pos[r.copied as usize + c] as usize
-                    }
-                };
-                let c0 = align + (8 * gx) / 6;
-                let c1 = (align + (8 * gy).div_ceil(6)).min(r.len as usize);
-                (at(c0), at(c1 - 1) + 1, GuardView::Base64)
-            };
-            let (a, b) = to_raw(a, b);
-            out.push(RawHit {
-                start: a,
-                end: b,
-                owner: o,
-                view,
-            });
+            let st = j - off;
+            let gv = &self.long[vi as usize];
+            let l = gv.value.len();
+            if st + l <= v.len
+                && gv
+                    .value
+                    .iter()
+                    .enumerate()
+                    .all(|(m, &c)| v.byte(st + m).eq_ignore_ascii_case(&c))
+            {
+                out.push((st, st + l, gv.owner));
+            }
         }
     }
 
@@ -813,14 +1209,47 @@ impl Guard {
     }
 
     /// Occurrences in the raw bytes that the unescaped view cannot show.
-    fn raw_only(&self, raw: &[u8], json1: &View, out: &mut Vec<(usize, usize, u32)>) {
-        for &vi in &self.backslash_values {
-            let gv = self.value(vi);
-            for at in memchr::memmem::find_iter(raw, &gv.value[..]) {
-                out.push((at, at + gv.value.len(), gv.owner));
+    /// `bs_out` gets every occurrence of a value containing a backslash, overlapping or not;
+    /// the caller applies the leftmost non-overlapping rule across regions.
+    fn raw_only(
+        &self,
+        raw: &[u8],
+        json1: &View,
+        r: Region,
+        bs_out: &mut Vec<(usize, usize, u32)>,
+        out: &mut Vec<(usize, usize, u32)>,
+    ) {
+        if !self.bs_cands.is_empty() {
+            // Every occurrence of a value with a backslash has the value's first backslash at a
+            // backslash of `raw`, so one pass over the backslashes finds them all.
+            let bucket =
+                |k: usize| &self.bs_cands[self.bs_index[k] as usize..self.bs_index[k + 1] as usize];
+            for &p in &json1.backslashes[r.bs.0..r.bs.1] {
+                let p = p as usize;
+                let next = raw.get(p + 1).map_or(&[][..], |&c| bucket(usize::from(c)));
+                let prev = match p.checked_sub(1) {
+                    Some(q) => bucket(256 + usize::from(raw[q])),
+                    None => &[],
+                };
+                for c in next.iter().chain(prev) {
+                    let (j, l) = (c.first_bs as usize, c.len as usize);
+                    if p < j || p - j + l > raw.len() {
+                        continue;
+                    }
+                    let st = p - j;
+                    // First and last byte are kept inline, so most candidates are rejected
+                    // without touching the value.
+                    if [raw[st], raw[st + l - 1]] != c.ends {
+                        continue;
+                    }
+                    let gv = self.value(c.value);
+                    if raw[st..st + l] == gv.value[..] {
+                        bs_out.push((st, st + l, gv.owner));
+                    }
+                }
             }
         }
-        for u in &json1.units {
+        for u in &json1.units[r.units.0..r.units.1] {
             for p in u.parent as usize + 1..(u.parent + u.plen) as usize {
                 if p + 1 < raw.len() && self.starts.contains(raw[p], raw[p + 1]) {
                     self.point(raw, p, out);
@@ -831,17 +1260,9 @@ impl Guard {
 
     /// Values starting exactly at `p`.
     fn point(&self, v: &[u8], p: usize, out: &mut Vec<(usize, usize, u32)>) {
-        let g = if p + GRAM <= v.len() {
-            lower_gram(v, p)
-        } else {
-            u64::MAX
-        };
-        let h = (gram_hash(g) >> self.gram_shift) as usize;
-        if g != u64::MAX
-            && self.gram_bits[h >> 6] & (1 << (h & 63)) != 0
-            && let Some(&(lo, hi)) = self.grams.get(&g)
-        {
-            for &(vi, off) in &self.gram_cands[lo as usize..hi as usize] {
+        if p + GRAM <= v.len() {
+            let g = gram_key(load_le(v, p));
+            for &(vi, off) in self.grams.get(g) {
                 let gv = &self.long[vi as usize];
                 let l = gv.value.len();
                 if off == 0 && p + l <= v.len() && v[p..p + l].eq_ignore_ascii_case(&gv.value) {
@@ -851,7 +1272,9 @@ impl Guard {
         }
         if !self.short.is_empty()
             && p + SHORT_KEY <= v.len()
-            && let Some(&(lo, hi)) = self.short_keys.get(&short_key(v, p))
+            && let k = short_key(v, p)
+            && self.short_bits[short_bit(k) >> 6] & (1 << (short_bit(k) & 63)) != 0
+            && let Some(&(lo, hi)) = self.short_keys.get(&k)
         {
             for &si in &self.short_cands[lo as usize..hi as usize] {
                 let gv = &self.short[si as usize];
@@ -959,34 +1382,46 @@ impl Guard {
 
     /// Finds known values in one view. `with_short` enables exact short-value matching.
     fn scan(&self, v: &[u8], with_short: bool, out: &mut Vec<(usize, usize, u32)>) {
+        self.scan_range(v, 0, v.len(), with_short, out);
+    }
+
+    /// Finds the occurrences in `v` that start in `[from, to)`; `from` is a multiple of
+    /// `STRIDE`, and so is `to` unless it is `v.len()`.
+    fn scan_range(
+        &self,
+        v: &[u8],
+        from: usize,
+        to: usize,
+        with_short: bool,
+        out: &mut Vec<(usize, usize, u32)>,
+    ) {
         if !self.long.is_empty() && v.len() >= 8 {
-            // Main loop over full eight-byte loads; the last few probes use the byte-wise gram.
-            let mut p = 0;
-            for w in v.chunks_exact(STRIDE).zip(v[STRIDE..].chunks(STRIDE)) {
-                let (a, b) = w;
-                if b.len() < STRIDE {
-                    break;
-                }
-                let x = u64::from_le_bytes([a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3]]);
-                let g = swar_lower(x) & 0xFF_FFFF_FFFF;
-                let h = (gram_hash(g) >> self.gram_shift) as usize;
-                if self.gram_bits[h >> 6] & (1 << (h & 63)) != 0 {
-                    self.verify_gram(v, p, g, out);
+            // An occurrence starting at `st` is seen by the probe in `st..st + STRIDE`, so the
+            // probes run up to `to` itself, and the hits are filtered by start.
+            let last = if to >= v.len() { usize::MAX } else { to };
+            let mut p = from;
+            // Main loop over full eight-byte loads; the last few probes load zero-filled.
+            while p <= last
+                && let Some(w) = v.get(p..).and_then(<[u8]>::first_chunk::<8>)
+            {
+                let g = gram_key(u64::from_le_bytes(*w));
+                if self.grams.maybe(g) {
+                    self.verify_gram(v, p, g, (from, to), out);
                 }
                 p += STRIDE;
             }
-            while p + GRAM <= v.len() {
-                let g = gram_at(v, p);
-                let h = (gram_hash(g) >> self.gram_shift) as usize;
-                if self.gram_bits[h >> 6] & (1 << (h & 63)) != 0 {
-                    self.verify_gram(v, p, g, out);
+            while p <= last && p + GRAM <= v.len() {
+                let g = gram_key(load_le(v, p));
+                if self.grams.maybe(g) {
+                    self.verify_gram(v, p, g, (from, to), out);
                 }
                 p += STRIDE;
             }
         }
         if with_short && !self.short.is_empty() && v.len() >= SHORT_KEY {
-            for (p, w) in v.windows(SHORT_KEY).enumerate() {
-                let k = u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
+            let end = to.min(v.len() - SHORT_KEY + 1);
+            for p in from..end {
+                let k = short_key(v, p);
                 let b = short_bit(k);
                 if self.short_bits[b >> 6] & (1 << (b & 63)) != 0 {
                     self.verify_short(v, p, k, out);
@@ -996,13 +1431,17 @@ impl Guard {
     }
 
     #[inline(never)]
-    fn verify_gram(&self, v: &[u8], p: usize, g: u64, out: &mut Vec<(usize, usize, u32)>) {
-        let Some(&(lo, hi)) = self.grams.get(&g) else {
-            return;
-        };
-        for &(vi, off) in &self.gram_cands[lo as usize..hi as usize] {
+    fn verify_gram(
+        &self,
+        v: &[u8],
+        p: usize,
+        g: u64,
+        (from, to): (usize, usize),
+        out: &mut Vec<(usize, usize, u32)>,
+    ) {
+        for &(vi, off) in self.grams.get(g) {
             let off = usize::from(off);
-            if p < off {
+            if p < off + from || p - off >= to {
                 continue;
             }
             let st = p - off;
@@ -1029,73 +1468,175 @@ impl Guard {
     }
 }
 
-/// Bit `k` set when `b[k]` is a base64 character (`b.len() <= 64`).
+// Non-short-circuit operators on purpose: branch-free, so the class tests vectorise.
+#[allow(clippy::needless_bitwise_bool)]
 #[inline]
-fn b64_bits(b: &[u8]) -> u64 {
-    let mut m = 0u64;
-    for (k, &c) in b.iter().enumerate() {
-        m |= u64::from((CLASS[usize::from(c)] >> 6) & 1) << k;
-    }
-    m
+fn is_b64_char(c: u8) -> u8 {
+    let letter = (c | 0x20).wrapping_sub(b'a') < 26;
+    let digit = c.wrapping_sub(b'0') < 10;
+    let sym = (c == b'+') | (c == b'/') | (c == b'-') | (c == b'_');
+    u8::from(letter | digit | sym)
 }
 
-/// Finds positions where at least `MIN_B64_RUN` base64 characters follow, 64-byte block by
-/// block, caching the current block so consecutive queries cost nothing.
-struct RunFinder {
-    /// Index of the cached block, `usize::MAX` before the first.
-    blk: usize,
-    /// Run starts in the cached block.
+#[inline]
+fn is_hex_char(c: u8) -> u8 {
+    u8::from(((c | 0x20).wrapping_sub(b'a') < 6) | (c.wrapping_sub(b'0') < 10))
+}
+
+/// Eight 0/1 bytes to eight bits, byte `k` to bit `k`.
+#[inline]
+fn pack8(b: &[u8]) -> u64 {
+    let x = match b {
+        &[a, b, c, d, e, f, g, h] => u64::from_le_bytes([a, b, c, d, e, f, g, h]),
+        _ => 0,
+    };
+    x.wrapping_mul(0x0102_0408_1020_4080) >> 56
+}
+
+/// Per-byte bitmaps of `b`: base64 characters (either alphabet) and hex digits, bit `k % 64` of
+/// word `k / 64` for byte `k`, plus one zero word. Written so the compiler vectorises the class
+/// tests; the table lookup it replaces cost several times more per byte.
+fn class_bitmaps(b: &[u8], b64: &mut Vec<u64>, hex: &mut Vec<u64>) {
+    b64.clear();
+    hex.clear();
+    let mut block = |blk: &[u8; 64]| {
+        let mut cb = [0u8; 64];
+        let mut ch = [0u8; 64];
+        for k in 0..64 {
+            cb[k] = is_b64_char(blk[k]);
+            ch[k] = is_hex_char(blk[k]);
+        }
+        let (mut mb, mut mh) = (0u64, 0u64);
+        for q in 0..8 {
+            mb |= pack8(&cb[8 * q..8 * q + 8]) << (8 * q);
+            mh |= pack8(&ch[8 * q..8 * q + 8]) << (8 * q);
+        }
+        b64.push(mb);
+        hex.push(mh);
+    };
+    let mut blocks = b.chunks_exact(64);
+    for blk in &mut blocks {
+        if let Ok(blk) = <&[u8; 64]>::try_from(blk) {
+            block(blk);
+        }
+    }
+    let rest = blocks.remainder();
+    if !rest.is_empty() {
+        let mut last = [0u8; 64];
+        last[..rest.len()].copy_from_slice(rest);
+        block(&last);
+    }
+    b64.push(0);
+    hex.push(0);
+}
+
+/// End of the run of set bits starting at `p`: the first clear bit at or after `p`, at most
+/// `n`. The bitmap must end with a zero word.
+#[inline]
+fn ones_end(m: &[u64], p: usize, n: usize) -> usize {
+    let mut at = p;
+    while at < n {
+        let sh = at % 64;
+        // Bits shifted in at the top are clear, so `t` stops at the end of the word.
+        let t = (!(m[at / 64] >> sh)).trailing_zeros() as usize;
+        at += t;
+        if t < 64 - sh {
+            break;
+        }
+    }
+    at.min(n)
+}
+
+/// Character classes (`CLASS_MASK` bits) present in `b`: a table lookup per byte for short
+/// slices, comparisons the compiler vectorises for long ones.
+#[allow(clippy::needless_bitwise_bool)]
+#[inline]
+fn class_mask(b: &[u8]) -> u8 {
+    if b.len() < 48 {
+        return b
+            .iter()
+            .fold(0u8, |m, &c| m | (CLASS[usize::from(c)] & CLASS_MASK));
+    }
+    b.iter().fold(0u8, |m, &c| {
+        let sym = (c == b'+') | (c == b'/') | (c == b'-') | (c == b'_');
+        m | u8::from(c.wrapping_sub(b'A') < 13)
+            | (u8::from(c.wrapping_sub(b'N') < 13) << 1)
+            | (u8::from(c.wrapping_sub(b'a') < 13) << 2)
+            | (u8::from(c.wrapping_sub(b'n') < 13) << 3)
+            | (u8::from(c.wrapping_sub(b'0') < 10) << 4)
+            | (u8::from(sym) << 5)
+    })
+}
+
+/// Starts of maximal runs of at least `min` set bits in a bitmap, found word by word.
+struct RunStarts<'a> {
+    m: &'a [u64],
+    min: usize,
+    /// Word the cached starts belong to, `usize::MAX` before the first.
+    w: usize,
     starts: u64,
-    /// Character bits of the block after it.
-    next_bits: u64,
 }
 
-impl RunFinder {
-    fn new() -> Self {
+impl<'a> RunStarts<'a> {
+    fn new(m: &'a [u64], min: usize) -> Self {
         Self {
-            blk: usize::MAX,
+            m,
+            min,
+            w: usize::MAX,
             starts: 0,
-            next_bits: 0,
         }
     }
 
-    fn block(&mut self, b: &[u8], blk: usize) {
-        let n = b.len();
-        let lo = blk * 64;
-        let cur = if self.blk != usize::MAX && blk == self.blk + 1 {
-            self.next_bits
-        } else {
-            b64_bits(&b[lo..n.min(lo + 64)])
-        };
-        let mid = n.min(lo + 64);
-        let next = b64_bits(&b[mid..n.min(mid + 64)]);
-        let m = u128::from(cur) | (u128::from(next) << 64);
-        let mut r = m;
-        for k in 1..MIN_B64_RUN {
-            r &= m >> k;
+    fn word(&mut self, w: usize) {
+        let cur = self.m[w];
+        let next = self.m.get(w + 1).copied().unwrap_or(0);
+        let prev = if w == 0 { 0 } else { self.m[w - 1] };
+        let x = u128::from(cur) | (u128::from(next) << 64);
+        // Positions where `min` set bits follow: shift-and by doubling.
+        let mut r = x;
+        let mut have = 1;
+        while have * 2 <= self.min {
+            r &= r >> have;
+            have *= 2;
         }
-        self.blk = blk;
-        self.starts = r as u64;
-        self.next_bits = next;
+        if have < self.min {
+            r &= r >> (self.min - have);
+        }
+        // Only maximal starts: the bit before is clear.
+        let before = (cur << 1) | (prev >> 63);
+        self.w = w;
+        self.starts = (r as u64) & !before;
     }
 
-    /// First run start at or after `from`.
-    fn next(&mut self, b: &[u8], from: usize) -> Option<usize> {
-        let mut blk = from / 64;
+    /// First maximal run start at or after `from`.
+    fn next_from(&mut self, from: usize) -> Option<usize> {
+        let mut w = from / 64;
         let mut off = from % 64;
-        while blk * 64 < b.len() {
-            if self.blk != blk {
-                self.block(b, blk);
+        while w + 1 < self.m.len() {
+            if self.w != w {
+                self.word(w);
             }
-            let m = self.starts & (u64::MAX << off);
-            if m != 0 {
-                return Some(blk * 64 + m.trailing_zeros() as usize);
+            let s = self.starts & (u64::MAX << off);
+            if s != 0 {
+                return Some(w * 64 + s.trailing_zeros() as usize);
             }
-            blk += 1;
+            w += 1;
             off = 0;
         }
         None
     }
+}
+
+/// A value containing a backslash, as indexed for the raw-only pass.
+#[derive(Clone, Copy)]
+struct BsCand {
+    /// Value index, long values first, then short.
+    value: u32,
+    /// Offset of the value's first backslash.
+    first_bs: u32,
+    len: u32,
+    /// First and last byte.
+    ends: [u8; 2],
 }
 
 /// A set of byte pairs, 8 KiB.
@@ -1127,18 +1668,44 @@ struct RunRec {
     copied: u32,
 }
 
-/// A piece of the decoded buffer: which run or hex span at which alignment.
-#[derive(Clone, Copy)]
-struct DecSeg {
-    at: u32,
-    len: u32,
-    src: u32,
-    align: u8,
-    hex: bool,
+/// A view of a decoded bit stream: `len` bytes starting `shift` bits into `d[at]`. `d` carries
+/// at least eight bytes after the last one a view reads.
+struct BitView<'a> {
+    d: &'a [u8],
+    at: usize,
+    shift: u32,
+    len: usize,
 }
 
-/// Appends the bytes `chars` (base64, either alphabet) decode to.
-fn decode_b64_into(chars: &[u8], out: &mut Vec<u8>) {
+impl BitView<'_> {
+    /// Eight stream bytes from byte `i` of `d`, big-endian.
+    #[inline]
+    fn be8(&self, i: usize) -> u64 {
+        match self.d.get(i..i + 8) {
+            Some(&[a, b, c, d, e, f, g, h]) => u64::from_be_bytes([a, b, c, d, e, f, g, h]),
+            _ => 0,
+        }
+    }
+
+    /// The gram key at view byte `j`.
+    #[inline]
+    fn gram(&self, j: usize) -> u64 {
+        let x = self.be8(self.at + j) << self.shift;
+        gram_key(x.swap_bytes())
+    }
+
+    /// View byte `m`.
+    #[inline]
+    fn byte(&self, m: usize) -> u8 {
+        let i = self.at + m;
+        let hi = u16::from(self.d[i]) << 8 | u16::from(self.d[i + 1]);
+        (hi >> (8 - self.shift)) as u8
+    }
+}
+
+/// Appends the bit stream of `chars` (base64, either alphabet): three bytes per four characters,
+/// the last partial byte zero-filled, then eight zero bytes.
+fn decode_b64_bits(chars: &[u8], out: &mut Vec<u8>) {
     let mut quads = chars.chunks_exact(4);
     for q in &mut quads {
         let acc = (u32::from(B64[usize::from(q[0])]) << 18)
@@ -1152,9 +1719,23 @@ fn decode_b64_into(chars: &[u8], out: &mut Vec<u8>) {
     for (k, &c) in rest.iter().enumerate() {
         acc |= u32::from(B64[usize::from(c)]) << (18 - 6 * k);
     }
-    for k in 0..(rest.len() * 6) / 8 {
+    for k in 0..(rest.len() * 6).div_ceil(8) {
         out.push((acc >> (16 - 8 * k)) as u8);
     }
+    out.extend_from_slice(&[0; 8]);
+}
+
+/// Appends the nibble stream of `digits` (hex, any case), the last partial byte zero-filled,
+/// then eight zero bytes.
+fn decode_hex_bits(digits: &[u8], out: &mut Vec<u8>) {
+    let mut pairs = digits.chunks_exact(2);
+    for pair in &mut pairs {
+        out.push((HEXV[usize::from(pair[0])] << 4) | HEXV[usize::from(pair[1])]);
+    }
+    if let [c] = pairs.remainder() {
+        out.push(HEXV[usize::from(*c)] << 4);
+    }
+    out.extend_from_slice(&[0; 8]);
 }
 
 fn push_mapped(
@@ -1231,36 +1812,6 @@ fn b64_inner_mask(v: &[u8], k: usize) -> u8 {
     mask
 }
 
-#[inline]
-fn lower_gram(b: &[u8], p: usize) -> u64 {
-    if p + 8 <= b.len() {
-        let x = u64::from_le_bytes([
-            b[p],
-            b[p + 1],
-            b[p + 2],
-            b[p + 3],
-            b[p + 4],
-            b[p + 5],
-            b[p + 6],
-            b[p + 7],
-        ]);
-        swar_lower(x) & 0xFF_FFFF_FFFF
-    } else {
-        gram_at(b, p)
-    }
-}
-
-/// ASCII lower-casing of eight bytes at once.
-#[inline]
-fn swar_lower(x: u64) -> u64 {
-    const H: u64 = 0x8080_8080_8080_8080;
-    let a = x & !H;
-    let ge_a = a.wrapping_add(0x3F3F_3F3F_3F3F_3F3F);
-    let gt_z = a.wrapping_add(0x2525_2525_2525_2525);
-    let upper = ge_a & !gt_z & !x & H;
-    x | (upper >> 2)
-}
-
 fn has_json_escape(b: &[u8]) -> bool {
     memchr::memchr_iter(b'\\', b).any(|i| {
         i + 1 < b.len()
@@ -1324,6 +1875,7 @@ fn json_unescape(src: &[u8], v: &mut View) {
     while let Some(off) = memchr::memchr(b'\\', &src[i..]) {
         let at = i + off;
         v.bytes.extend_from_slice(&src[copied..at]);
+        v.backslashes.push(at as u32);
         let rest = &src[at + 1..];
         let view = v.bytes.len() as u32;
         let (plen, ok) = match rest.first() {
@@ -1356,6 +1908,12 @@ fn json_unescape(src: &[u8], v: &mut View) {
             _ => (0, false),
         };
         if ok {
+            // Backslashes the escape consumed: `\\` and the second half of a surrogate pair.
+            match plen {
+                2 if rest[0] == b'\\' => v.backslashes.push(at as u32 + 1),
+                12 => v.backslashes.push(at as u32 + 6),
+                _ => {}
+            }
             let vlen = v.bytes.len() as u32 - view;
             v.units.push(Unit {
                 view,
@@ -1457,7 +2015,7 @@ mod tests {
                 placeholder: b"[x]",
             },
         ];
-        let g = Guard::build(&inputs, 8, 64, 3, empty_resolver());
+        let g = Guard::build(&inputs, 8, 64, 3, (1, usize::MAX), empty_resolver());
         let mut s = GuardScratch::new();
         assert_eq!(
             g.check(b"a first-value-123 b", &mut s),
