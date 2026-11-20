@@ -51,6 +51,10 @@ type Raw struct {
 	Key    string
 	Value  any
 	Source Source
+	// Merge, for a map setting, merges Value into the value already in
+	// effect key by key instead of replacing it. File layers and per-entry
+	// environment variables merge; a whole-map variable or flag replaces.
+	Merge bool
 }
 
 // Layer supplies values from one source. Layers are applied in the order
@@ -71,6 +75,9 @@ type Entry struct {
 	Setting *Setting
 	Value   any
 	Source  Source
+	// Sources, for a map setting, records which source supplied each map
+	// key. It is nil for other kinds.
+	Sources map[string]Source
 }
 
 // Config is an immutable set of effective values for every setting of a
@@ -78,6 +85,7 @@ type Entry struct {
 type Config struct {
 	reg    *Registry
 	values map[string]Entry
+	meta
 }
 
 // Registry returns the registry the config was built from.
@@ -104,7 +112,7 @@ func (c *Config) Entries() []Entry {
 func (c *Config) Weakened() []Entry {
 	var out []Entry
 	for _, e := range c.Entries() {
-		if e.Setting.Weakening && e.Source.Kind != SourceDefault && fmt.Sprint(e.Value) != fmt.Sprint(e.Setting.Default) {
+		if e.Setting.Weakening && !equalValues(e.Value, e.Setting.Default) {
 			out = append(out, e)
 		}
 	}
@@ -116,7 +124,7 @@ func (c *Config) Weakened() []Entry {
 func Load(r *Registry, layers ...Layer) (*Config, error) {
 	c := &Config{reg: r, values: map[string]Entry{}}
 	for _, s := range r.Settings() {
-		c.values[s.Key] = Entry{Setting: s, Value: clone(s.Default), Source: Source{Kind: SourceDefault}}
+		c.values[s.Key] = newEntry(s, clone(s.Default), Source{Kind: SourceDefault}, nil)
 	}
 	var errs []error
 	for _, l := range layers {
@@ -128,19 +136,16 @@ func Load(r *Registry, layers ...Layer) (*Config, error) {
 		for _, raw := range raws {
 			s, ok := r.Lookup(raw.Key)
 			if !ok {
-				err := fmt.Errorf("%s: %w %q", raw.Source, ErrUnknownKey, raw.Key)
-				if near := r.Closest(raw.Key); near != "" {
-					err = fmt.Errorf("%w (did you mean %q?)", err, near)
-				}
-				errs = append(errs, err)
+				errs = append(errs, unknownKeyProblem(r, raw.Key, raw.Source))
 				continue
 			}
 			v, err := Parse(s, raw.Value)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("%s: %s: %w", raw.Source, s.Key, err))
+				errs = append(errs, &Problem{Key: s.Key, Source: raw.Source, Err: err})
 				continue
 			}
-			c.values[s.Key] = Entry{Setting: s, Value: v, Source: raw.Source}
+			prev := c.values[s.Key]
+			c.values[s.Key] = newEntry(s, v, raw.Source, mergeBase(prev, raw.Merge))
 		}
 	}
 	if len(errs) > 0 {
@@ -161,21 +166,57 @@ func MustLoadDefaults(r *Registry) *Config {
 
 // EnvLayer reads SCRIM_* variables from environ (as returned by os.Environ).
 // Variables that name no setting are ignored, since some SCRIM_ variables
-// are not settings (SCRIM_CONFIG, SCRIM_DP_FD).
+// are not settings (SCRIM_CONFIG, SCRIM_DP_FD, placeholders).
+//
+// A variable extending the name of a map setting sets one entry of it:
+// SCRIM_PROXY_UPSTREAM_ANTHROPIC sets the `anthropic` entry of
+// `proxy.upstream`, merged into the map from lower layers. The entry name is
+// the rest of the variable lower-cased with `_` as `-`; entries whose names
+// hold other characters are set through the whole-map variable, which
+// replaces the map. Whole-map variables apply before entry variables, and
+// entry variables in name order, so the result does not depend on the order
+// of environ.
 func EnvLayer(environ []string) Layer {
 	return LayerFunc(func(r *Registry) ([]Raw, error) {
-		var out []Raw
+		var whole, entries []Raw
 		for _, kv := range environ {
 			name, val, ok := strings.Cut(kv, "=")
 			if !ok || !strings.HasPrefix(name, "SCRIM_") {
 				continue
 			}
+			src := Source{Kind: SourceEnv, Name: name}
 			if s, ok := r.LookupEnv(name); ok {
-				out = append(out, Raw{Key: s.Key, Value: val, Source: Source{Kind: SourceEnv, Name: name}})
+				whole = append(whole, Raw{Key: s.Key, Value: val, Source: src})
+				continue
+			}
+			if s, entry := r.lookupMapEntryEnv(name); s != nil {
+				entries = append(entries, Raw{Key: s.Key, Value: map[string]any{entry: val}, Source: src, Merge: true})
 			}
 		}
-		return out, nil
+		sort.SliceStable(whole, func(i, j int) bool { return whole[i].Source.Name < whole[j].Source.Name })
+		sort.SliceStable(entries, func(i, j int) bool { return entries[i].Source.Name < entries[j].Source.Name })
+		return append(whole, entries...), nil
 	})
+}
+
+// lookupMapEntryEnv finds the map setting whose variable is the longest
+// prefix of name, and the entry name the rest of name gives.
+func (r *Registry) lookupMapEntryEnv(name string) (*Setting, string) {
+	var best *Setting
+	for _, s := range r.Settings() {
+		if s.Kind != KindMap {
+			continue
+		}
+		prefix := s.EnvVar() + "_"
+		if len(name) > len(prefix) && strings.HasPrefix(name, prefix) && (best == nil || len(prefix) > len(best.EnvVar())+1) {
+			best = s
+		}
+	}
+	if best == nil {
+		return nil, ""
+	}
+	rest := name[len(best.EnvVar())+1:]
+	return best, strings.ReplaceAll(strings.ToLower(rest), "_", "-")
 }
 
 // BindFlags adds a flag to fs for every setting declared with Flag. Values
@@ -232,6 +273,9 @@ func Parse(s *Setting, raw any) (any, error) {
 }
 
 func parse(kind Kind, raw any) (any, error) {
+	if v, ok := typedValue(kind, raw); ok {
+		return v, nil
+	}
 	if str, ok := raw.(string); ok {
 		return parseString(kind, str)
 	}
