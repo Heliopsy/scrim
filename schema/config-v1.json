@@ -193,6 +193,48 @@
         }
       },
       "type": "object"
+    },
+    "stores": {
+      "additionalProperties": {
+        "properties": {
+          "client-id": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          },
+          "client-secret": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          },
+          "password": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          },
+          "role-id": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          },
+          "secret-id": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          },
+          "token": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "description": "Secret store instances by name. The name is the instance's reference scheme (`bao://...` for an instance named bao); `kind` picks the adapter, `aliases` adds schemes, `redact` lists references and prefixes loaded into the redaction set, `refresh.*` tunes refresh and outage handling, and every other field is the adapter's own. See docs/stores.",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+      },
+      "type": "object",
+      "x-scrim-collection": true,
+      "x-scrim-env": "SCRIM_STORES",
+      "x-scrim-restart-required": true
     }
   },
   "required": [

@@ -22,6 +22,8 @@ import (
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/refresh"
+	"github.com/heliopsy/scrim/internal/stores/storeconfig"
 )
 
 // App is the running control plane's components.
@@ -33,8 +35,11 @@ type App struct {
 	Health   *obs.Health
 	State    state.Store
 	Stores   *stores.Set
-	Policy   policy.Engine
-	Notifier notify.Notifier
+	// Refreshers keep each store's values for redaction and injection;
+	// Start runs them.
+	Refreshers []*refresh.Refresher
+	Policy     policy.Engine
+	Notifier   notify.Notifier
 }
 
 // New builds the components from cfg. Log output goes to logw.
@@ -73,12 +78,34 @@ func New(ctx context.Context, cfg *config.Config, logw io.Writer) (*App, error) 
 	}
 	a.Health.Live("process", func(context.Context) error { return nil })
 	a.Health.Ready("state", a.State.Health)
+
+	opened, err := storeconfig.Open(ctx, cfg, stores.DefaultRegistry)
+	if err != nil {
+		_ = a.State.Close()
+		return nil, err
+	}
+	a.Stores, a.Refreshers = opened.Set, opened.Refreshers
+	for _, r := range a.Refreshers {
+		// Not ready until the store's first load: requests that depend on
+		// it are refused rather than forwarded with a partial redaction set.
+		a.Health.Ready("store "+r.Store(), r.Ready)
+	}
 	return a, nil
+}
+
+// Start runs every store refresher until ctx ends.
+func (a *App) Start(ctx context.Context) {
+	for _, r := range a.Refreshers {
+		go r.Run(ctx)
+	}
 }
 
 // Close releases everything New opened.
 func (a *App) Close() error {
 	var errs []error
+	for _, r := range a.Refreshers {
+		r.Close()
+	}
 	if a.Stores != nil {
 		errs = append(errs, a.Stores.Close())
 	}

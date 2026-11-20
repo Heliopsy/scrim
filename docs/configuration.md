@@ -220,6 +220,19 @@ is out of date.
 | [`policy.default`](#policydefault) | string | `deny` | hot |
 | [`profile`](#profile) | string | `local` | hot |
 | [`state.backend`](#statebackend) | string | `memory` | restart required |
+| [`stores.<name>.*`](#storesname) | collection | empty | restart required |
+
+### `stores.<name>`
+
+Secret store instances by name. The name is the instance's reference scheme (`bao://...` for an instance named bao); `kind` picks the adapter, `aliases` adds schemes, `redact` lists references and prefixes loaded into the redaction set, `refresh.*` tunes refresh and outage handling, and every other field is the adapter's own. See docs/stores.
+
+| | |
+|---|---|
+| Type | collection of named instances (names: lower-case words with dashes) |
+| Environment | `SCRIM_STORES` (JSON object of instances, replaces the collection); `SCRIM_STORES_<NAME>_<FIELD>` for one field |
+| Required fields | `kind` |
+| Secret fields | `token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password` (references; a literal is warned about) |
+| Reload | restart required |
 
 ### config
 
