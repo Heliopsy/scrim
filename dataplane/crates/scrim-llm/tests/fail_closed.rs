@@ -309,12 +309,13 @@ async fn large_bodies_offloaded_still_fail_closed() {
 #[tokio::test(flavor = "multi_thread")]
 async fn upstream_down_is_a_documented_error() {
     let fx = fixture();
-    let dead = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", dead.local_addr().unwrap());
-    drop(dead);
+    // Held until the end of the test so the port cannot be reused by a parallel test's listener.
+    let (_dead, addr) = refusing_addr();
+    let url = format!("http://{addr}");
     let up = FakeUpstream::start(Scripted::json(200, "{}")).await;
     let h = start(Some(&fx), up, |c| c.routes = routes_to(&url)).await;
     let r = send(&h, "/anthropic/v1/messages", H, body(&fx), false).await;
-    assert_eq!(r.status, 502);
+    assert_eq!(r.status, 502, "{}", r.text());
     assert_eq!(r.headers[scrim_llm::ERROR_HEADER], "upstream_unavailable");
+    assert!(fx.leaks(&r.body).is_empty(), "error bodies carry no values");
 }
