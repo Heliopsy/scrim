@@ -58,14 +58,23 @@ func (h *harness) startReal(t *testing.T, ctx context.Context, bin, up string) *
 	return d
 }
 
-// sendMessages posts one Anthropic Messages request with text as the user
-// turn and returns the status code.
+// sendMessages posts one Anthropic Messages request body and returns the
+// status code.
 func sendMessages(t *testing.T, ctx context.Context, d *Daemon, body string) int {
+	t.Helper()
+	return sendMessagesWith(t, ctx, d, body, nil)
+}
+
+// sendMessagesWith is [sendMessages] with extra request headers.
+func sendMessagesWith(t *testing.T, ctx context.Context, d *Daemon, body string, hdr map[string]string) int {
 	t.Helper()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, d.Addrs().BaseURL+"/anthropic/v1/messages", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", "agent-own-key")
 	req.Header.Set("anthropic-version", "2023-06-01")
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
