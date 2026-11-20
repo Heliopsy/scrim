@@ -245,7 +245,7 @@ in_agent() { local pod="$1"; shift; k -n agents exec "$pod" -c agent -- "$@"; }
 as_agent() { local pod="$1"; shift; k -n agents exec "$pod" -c agent -- /etc/scrim/trust/scrim-exec "$@"; }
 injected() {
   received | jq --arg h "toolhost.scrim-e2e.svc.cluster.local" --arg a "Bearer $tool_token" \
-    'map(select((.host | split(":")[0]) == $h and .authorization == $a)) | length'
+    '(. // []) | map(select((.host | split(":")[0]) == $h and .authorization == $a)) | length'
 }
 agent_tokens=()
 
@@ -314,7 +314,7 @@ for mode in central sidecar; do
     https://unbound.scrim-e2e.svc.cluster.local/api)"
   [ "$code" = 403 ] || fail "$mode: unbound host answered $code, want 403"
   got="$(received)"
-  if jq -e 'map(select(.host | startswith("unbound."))) | length > 0' <<<"$got" >/dev/null; then
+  if jq -e '(. // []) | map(select(.host | startswith("unbound."))) | length > 0' <<<"$got" >/dev/null; then
     fail "$mode: a request reached the unbound host"
   fi
   pass "$mode: refused toward an unbound host"
