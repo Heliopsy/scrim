@@ -210,3 +210,27 @@ proptest! {
         prop_assert_eq!(back, x);
     }
 }
+
+#[test]
+fn next_placeholder_and_meta() {
+    let s = mixed();
+    let p = ph(&s, b"db.internal.example");
+    let text = format!("ab {p} cd");
+    assert_eq!(
+        next_placeholder(text.as_bytes()),
+        Some(PlaceholderAt::Complete {
+            start: 3,
+            end: 3 + p.len()
+        })
+    );
+    assert_eq!(
+        next_placeholder(&text.as_bytes()[..10]),
+        Some(PlaceholderAt::Partial { start: 3 })
+    );
+    assert_eq!(next_placeholder(b"no placeholder \xe2\x9f\xa6x"), None);
+    assert_eq!(
+        s.resolver().meta(EntryId(2)).unwrap().slug.as_str(),
+        "api-token"
+    );
+    assert!(s.resolver().meta(EntryId(9)).is_none());
+}

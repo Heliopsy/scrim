@@ -15,12 +15,12 @@ Snapshot::build(Vec<Entry>, Arc<Keyring>, &Config) -> Result<Snapshot, BuildErro
   .protect(&[u8], &mut Workspace) -> Result<Protected, Error>   redact + guard, the outbound check
   .redactor() -> &Redactor    redact / redact_with / find_matches / max_match_len / engine
   .guard()    -> &Guard       check(&[u8], &mut GuardScratch) -> Verdict
-  .resolver() -> &Resolver    resolve / covering / substitute_into
+  .resolver() -> &Resolver    resolve / meta / covering / substitute_into
   .report()   -> &BuildReport values, duplicates, short, rejected ids, patterns, engine
 SnapshotHandle  new / store(Arc<Snapshot>) / load() -> Result<Arc<Snapshot>, Error::NotReady>
 BlockRestorer   new / push(&Resolver, &dyn RestorePolicy, &str, &mut String) / finish / held_len
 RestorePolicy   trait: allow(&EntryMeta) -> bool   (KeepAll, RestoreDisplay, any Fn(&EntryMeta) -> bool)
-restore_text, placeholder_for, find_placeholders, json_escape_into
+restore_text, placeholder_for, find_placeholders, next_placeholder, json_escape_into
 Entry, EntryMeta, EntryId, RefSlug, ValueClass, SecretValue, PlaceholderKey, Keyring
 Config, DetectorConfig, EntropyConfig, EngineChoice, EngineKind, builtin_rule_names
 Stats, Hit, Variant, Protected, GuardOutcome, GuardFinding, GuardView, Verdict, RestoreStats

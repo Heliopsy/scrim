@@ -100,6 +100,14 @@ impl Resolver {
         Self { map, entries }
     }
 
+    /// Metadata of the entry with `id`, if this snapshot holds it.
+    pub fn meta(&self, id: crate::secret::EntryId) -> Option<&EntryMeta> {
+        self.entries
+            .binary_search_by_key(&id, |e| e.meta.id)
+            .ok()
+            .map(|i| &self.entries[i].meta)
+    }
+
     pub(crate) fn entries(&self) -> &[ResolverEntry] {
         &self.entries
     }

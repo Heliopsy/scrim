@@ -272,6 +272,43 @@ pub fn find_placeholders(b: &[u8]) -> impl Iterator<Item = (usize, ParsedPlaceho
     })
 }
 
+/// Where the first placeholder in some bytes sits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaceholderAt {
+    /// A complete, well-formed placeholder at `start..end`.
+    Complete {
+        /// First byte.
+        start: usize,
+        /// One past the last byte.
+        end: usize,
+    },
+    /// `b[start..]` runs to the end and could still become a placeholder.
+    Partial {
+        /// First byte.
+        start: usize,
+    },
+}
+
+/// The first complete placeholder in `b`, or the trailing bytes that could still become one,
+/// whichever comes first. For streaming callers that keep their own holdback.
+pub fn next_placeholder(b: &[u8]) -> Option<PlaceholderAt> {
+    let mut i = 0;
+    while let Some(off) = memchr::memchr(LEAD, &b[i..]) {
+        let at = i + off;
+        match parse(&b[at..]) {
+            Parse::Complete(p) => {
+                return Some(PlaceholderAt::Complete {
+                    start: at,
+                    end: at + p.len,
+                });
+            }
+            Parse::Prefix => return Some(PlaceholderAt::Partial { start: at }),
+            Parse::Invalid => i = at + 1,
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
