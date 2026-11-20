@@ -62,10 +62,15 @@ type ManagerOptions struct {
 	Procs      ProcInfo
 	Now        func() time.Time
 	Rand       io.Reader
+	// OnMint, if set, receives a copy of every minted token, which it owns
+	// and must wipe. The daemon adds it to the redaction set, so a token
+	// an agent echoes never reaches a model provider.
+	OnMint func(s Session, token secret.Value)
 }
 
 // Manager mints, verifies and revokes session tokens.
 type Manager struct {
+	onMint     func(Session, secret.Value)
 	store      SessionStore
 	procs      ProcInfo
 	now        func() time.Time
@@ -77,7 +82,7 @@ type Manager struct {
 // NewManager returns a Manager over store.
 func NewManager(store SessionStore, o ManagerOptions) *Manager {
 	m := &Manager{store: store, procs: o.Procs, now: o.Now, rand: o.Rand,
-		defaultTTL: o.DefaultTTL, maxTTL: o.MaxTTL}
+		defaultTTL: o.DefaultTTL, maxTTL: o.MaxTTL, onMint: o.OnMint}
 	if m.procs == nil {
 		m.procs = OSProcs{}
 	}
@@ -155,6 +160,11 @@ func (m *Manager) Mint(ctx context.Context, minter Identity, req MintRequest) (M
 	if err := m.store.CreateSession(ctx, s); err != nil {
 		tok.Wipe()
 		return Minted{}, fmt.Errorf("identity: storing the session: %w", err)
+	}
+	if m.onMint != nil {
+		var cp secret.Value
+		_ = tok.Expose(func(b []byte) error { cp = secret.New(b); return nil })
+		m.onMint(s, cp)
 	}
 	return Minted{Token: tok, Session: s}, nil
 }

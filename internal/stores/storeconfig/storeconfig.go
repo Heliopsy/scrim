@@ -176,10 +176,25 @@ func (o *Opened) Close() error {
 	return o.Set.Close()
 }
 
+// Options are hooks [OpenWith] installs on every Refresher.
+type Options struct {
+	// OnChange is called with the store's name after every change to its
+	// value set, outside any lock. The data plane snapshot is rebuilt from
+	// it. It must not block.
+	OnChange func(store string)
+	// OnStatus is called after every refresh attempt, for metrics.
+	OnStatus func(refresh.Status)
+}
+
 // Open builds every configured store's adapter (without contacting it),
 // adds it to a Set under its name and aliases, and pairs it with a
 // Refresher. Nothing runs until the caller starts each Refresher.
 func Open(ctx context.Context, cfg *config.Config, reg *stores.Registry) (*Opened, error) {
+	return OpenWith(ctx, cfg, reg, Options{})
+}
+
+// OpenWith is [Open] with hooks on every Refresher.
+func OpenWith(ctx context.Context, cfg *config.Config, reg *stores.Registry, opts Options) (*Opened, error) {
 	o := &Opened{Set: stores.NewSet()}
 	var errs []error
 	for _, ci := range Collection.Get(cfg) {
@@ -198,6 +213,11 @@ func Open(ctx context.Context, cfg *config.Config, reg *stores.Registry) (*Opene
 			errs = append(errs, err)
 			continue
 		}
+		if opts.OnChange != nil {
+			name := a.Name()
+			rc.OnChange = func() { opts.OnChange(name) }
+		}
+		rc.OnStatus = opts.OnStatus
 		o.Refreshers = append(o.Refreshers, refresh.New(a, rc))
 	}
 	if err := errors.Join(errs...); err != nil {

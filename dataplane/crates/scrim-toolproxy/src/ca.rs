@@ -339,6 +339,50 @@ impl CaRing {
         Ok(())
     }
 
+    /// Replaces the generations with `current` and, when given, `previous`, kept trusted
+    /// through a cross certificate until the control plane drops it from the snapshot (or it
+    /// expires). The control plane holds the CA and sends both in every snapshot; this makes
+    /// the ring match them exactly. Cached leaves are dropped.
+    pub fn install(
+        &self,
+        current: CertificateAuthority,
+        previous: Option<CertificateAuthority>,
+    ) -> Result<(), CaError> {
+        let prev = match previous {
+            Some(ca) => {
+                let cross = ca.cross_sign(&current)?;
+                let until = ca.not_after;
+                Some(Previous {
+                    ca: Arc::new(ca),
+                    cross,
+                    until,
+                })
+            }
+            None => None,
+        };
+        let mut st = self
+            .state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        st.current = Arc::new(current);
+        st.previous = prev;
+        st.generation += 1;
+        drop(st);
+        self.clear_cache();
+        Ok(())
+    }
+
+    /// The previous CA certificate in PEM while an overlap lasts.
+    pub fn previous_cert_pem(&self) -> Option<String> {
+        self.expire_overlap();
+        self.state
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .previous
+            .as_ref()
+            .map(|p| p.ca.cert_pem().to_owned())
+    }
+
     /// Ends the overlap now: leaves no longer carry the cross certificate.
     pub fn end_overlap(&self) {
         let mut st = self
@@ -490,6 +534,31 @@ impl CaRing {
     clippy::pedantic
 )]
 mod tests {
+    #[test]
+    fn install_matches_the_control_plane() {
+        let a = CertificateAuthority::generate(&CaOptions::default()).unwrap();
+        let b = CertificateAuthority::generate(&CaOptions::default()).unwrap();
+        let (a_cert, a_key) = (a.cert_pem().to_owned(), a.key_pem());
+        let b_cert = b.cert_pem().to_owned();
+        let ring = CaRing::new(
+            CertificateAuthority::generate(&CaOptions::default()).unwrap(),
+            LeafSettings::default(),
+        );
+        ring.install(
+            b,
+            Some(CertificateAuthority::from_pem(&a_cert, &a_key).unwrap()),
+        )
+        .unwrap();
+        assert_eq!(ring.current_cert_pem(), b_cert);
+        assert_eq!(ring.previous_cert_pem().as_deref(), Some(a_cert.as_str()));
+        assert!(ring.trust_bundle_pem().contains(&a_cert));
+        assert_eq!(ring.leaf_for("api.example.com").unwrap().cert.len(), 2);
+        let b2 = CertificateAuthority::from_pem(&b_cert, &ring.current().key_pem()).unwrap();
+        ring.install(b2, None).unwrap();
+        assert_eq!(ring.previous_cert_pem(), None);
+        assert_eq!(ring.leaf_for("api.example.com").unwrap().cert.len(), 1);
+    }
+
     use super::*;
 
     #[test]

@@ -119,7 +119,7 @@ pub use restore::{
     restore_text,
 };
 pub use secret::{Entry, EntryId, EntryMeta, RefSlug, SecretValue, ValueClass};
-pub use variants::{B64Alphabet, Variant, json_escape_into};
+pub use variants::{B64Alphabet, DEFAULT_JSON_DEPTH, MAX_JSON_DEPTH, Variant, json_escape_into};
 
 #[cfg(test)]
 #[allow(

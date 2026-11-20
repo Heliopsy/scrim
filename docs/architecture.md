@@ -84,7 +84,7 @@ flowchart TB
     llm["scrim-llm<br>provider codecs, LLM proxy"]
     redact["scrim-redact<br>Redactor, Independent guard,<br>Restorer"]
     tp["scrim-toolproxy<br>Tool proxy, CA, injection,<br>response redaction"]
-    dppolicy["scrim-policy<br>decision table evaluator"]
+    dppolicy["scrim-policy<br>decision table, restore policy,<br>escaping"]
   end
 
   subgraph listen["Listeners"]
@@ -144,7 +144,7 @@ Status: on `main` the data plane binds tool-proxy and forward-proxy listeners on
 forward-proxy host goes to the tool proxy. Base URL listeners, routing provider hosts from the
 forward proxy to `scrim-llm`, and the `scrim-redact` engine inside `scrim-llm` are in progress on
 `feat/dataplane-wiring`. The snapshot builder, the admin and decision-link listeners and
-`scrim proxy` are in progress on `feat/daemon`; `scrim-policy` on `feat/rust-policy`. The local
+`scrim proxy` are in progress on `feat/daemon`. `scrim-policy` is on `main` and not yet wired into the data plane. The local
 agent API, entry page and metrics listener are on `main` (`scrim api serve`).
 
 ## Request path
@@ -204,8 +204,9 @@ stays a placeholder, which is safe and visible.
 
 Status: the LLM proxy, codecs, restorer and fail-closed handling are on `main` in `scrim-llm`, and
 the redactor and guard in `scrim-redact`. Wiring them together in the data plane and binding the
-base URL listener is in progress on `feat/dataplane-wiring`. Until `scrim-policy` lands, that branch
-restores display values into assistant text only and keeps every placeholder in tool arguments.
+base URL listener is in progress on `feat/dataplane-wiring`. The restore policy and escaping are in
+`scrim-policy` ([README](../dataplane/crates/scrim-policy/README.md)); until the data plane uses it,
+display values are restored into assistant text only and every placeholder in tool arguments is kept.
 
 ## Tool call with a credential
 
@@ -325,8 +326,8 @@ it is approved the grant it leaves behind lets the agent's retry through. Approv
 timeout, and break-glass denies everything except redaction.
 
 Status: the gate, approvals, signed links, notifiers, grants and break-glass are on `main`, as is
-the Go reference evaluator for the decision table. The Rust evaluator is in progress on
-`feat/rust-policy`; until it lands nothing in the data plane sends an ask. Connecting the
+the Go reference evaluator for the decision table. The Rust evaluator is in `scrim-policy` and
+passes every conformance vector; until the data plane calls it nothing there sends an ask. Connecting the
 supervisor's ask stream to the gate and serving decision links and the admin API are in progress on
 `feat/daemon`.
 
@@ -522,5 +523,5 @@ image are on `main`.
 | Redactor, guard, restorer, placeholders | `dataplane/crates/scrim-redact` | D2, D3, D4, D13 | |
 | Tool proxy, CA, injection | `dataplane/crates/scrim-toolproxy` | D5 | |
 | Generated boundary code (Rust) | `dataplane/crates/scrim-proto` | D12 | |
-| Data plane policy (in progress) | `dataplane/crates/scrim-policy` | D7 | |
+| Data plane policy, restore policy, escaping | `dataplane/crates/scrim-policy` | D5, D7 | [README](../dataplane/crates/scrim-policy/README.md) |
 | Leak suite | `internal/leak` | D4 | [leak-assurance.md](leak-assurance.md) |

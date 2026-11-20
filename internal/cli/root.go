@@ -60,6 +60,13 @@ func (e *Env) Config() (*config.Config, error) {
 	return e.cfg, e.cfgErr
 }
 
+// resetConfig drops the cached configuration, so the next Config call
+// sees flags set after it was first read.
+func (e *Env) resetConfig() {
+	e.cfgOnce = sync.Once{}
+	e.cfg, e.cfgErr = nil, nil
+}
+
 // ConfigOptions says where this invocation reads configuration from, for
 // [config.Build] and [config.NewManager].
 func (e *Env) ConfigOptions() config.Options {
@@ -165,17 +172,4 @@ func Run(ctx context.Context, e *Env, args []string) int {
 		_, _ = fmt.Fprintln(e.Stderr, "scrim:", perr)
 	}
 	return code
-}
-
-// stub returns a placeholder command that fails with ErrNotImplemented and
-// names the task that implements it.
-func stub(use, short, task string) *cobra.Command {
-	return &cobra.Command{
-		Use:                use,
-		Short:              short + " (not implemented yet)",
-		DisableFlagParsing: true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return fmt.Errorf("%s: %w (tasks.md %s)", cmd.CommandPath(), ErrNotImplemented, task)
-		},
-	}
 }

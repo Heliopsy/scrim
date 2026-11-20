@@ -15,6 +15,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/approval"
 	"github.com/heliopsy/scrim/internal/breakglass"
+	"github.com/heliopsy/scrim/internal/daemon"
 )
 
 // Operator commands for approvals, grants and break-glass. They talk to the
@@ -26,7 +27,14 @@ func adminClient(e *Env) (*approval.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return approval.NewClient(approval.AdminURL.Get(cfg))
+	c, err := approval.NewClient(approval.AdminURL.Get(cfg))
+	if err != nil {
+		return nil, err
+	}
+	if tok, ok := cfg.Secret(daemon.AdminToken); ok {
+		c = c.WithToken(tok)
+	}
+	return c, nil
 }
 
 // outWriter writes formatted output and keeps the first write error.

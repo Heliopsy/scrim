@@ -12,7 +12,7 @@ use crate::matcher::{Cursor, Engine, EngineChoice, EngineKind, PatternSet, build
 use crate::placeholder::{Keyring, MAX_PLACEHOLDER_LEN, write_placeholder};
 use crate::restore::{Resolver, ResolverEntry};
 use crate::secret::{Entry, EntryId, EntryMeta, RefSlug, ValueClass};
-use crate::variants::{Variant, variants};
+use crate::variants::{DEFAULT_JSON_DEPTH, MAX_JSON_DEPTH, Variant, variants};
 
 /// Redaction settings. Canonical configuration keys are given per field.
 #[derive(Clone, Debug, PartialEq)]
@@ -37,6 +37,12 @@ pub struct Config {
     /// `redaction.guard.max_repairs` (default 64): more guard interventions than this in one
     /// body withhold the request instead of repairing it.
     pub guard_max_repairs: usize,
+    /// `redaction.json_depth` (default 3, 2 to [`MAX_JSON_DEPTH`]): how many levels of JSON
+    /// text inside JSON strings are covered. The redactor compiles each value escaped up to this
+    /// many times and the guard unescapes the bytes as often. Two is a tool call's `arguments`
+    /// (JSON in a JSON string); three is JSON inside those, such as a tool result holding
+    /// `JSON.stringify` output that itself carries a JSON string.
+    pub json_depth: usize,
     /// `redaction.detectors.*`.
     pub detectors: DetectorConfig,
 }
@@ -50,6 +56,7 @@ impl Default for Config {
             engine_threshold: 256,
             max_input: 64 << 20,
             guard_max_repairs: 64,
+            json_depth: DEFAULT_JSON_DEPTH,
             detectors: DetectorConfig::default(),
         }
     }
@@ -381,6 +388,9 @@ impl Snapshot {
         if config.min_len < config.short_floor {
             return Err(BuildError::InvalidConfig("min_len below short_floor"));
         }
+        if !(2..=MAX_JSON_DEPTH).contains(&config.json_depth) {
+            return Err(BuildError::InvalidConfig("json_depth outside 2 to 4"));
+        }
         let mut entries = entries;
         entries.sort_by_key(|e| e.meta.id);
 
@@ -418,7 +428,7 @@ impl Snapshot {
             });
             let is_short = e.value.len() < config.min_len;
             short += usize::from(is_short);
-            for (variant, bytes) in variants(e.value.expose(), is_short) {
+            for (variant, bytes) in variants(e.value.expose(), is_short, config.json_depth) {
                 if pat_seen.contains(&bytes) {
                     zeroize::Zeroize::zeroize(&mut { bytes });
                     continue;
@@ -468,6 +478,7 @@ impl Snapshot {
             &guard_inputs,
             config.min_len,
             config.guard_max_repairs,
+            config.json_depth,
             resolver.clone(),
         );
         drop(guard_inputs);

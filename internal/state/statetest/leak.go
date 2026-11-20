@@ -15,9 +15,10 @@ import (
 
 // LeakTraffic writes every kind of state row through s, each with one of
 // leaks smuggled into every free-text field (reasons, targets, hosts,
-// paths, labels, attributes, decided-by), as a careless caller might. A
-// leak test then dumps the backend and checks no leak survived, which
-// holds only when the backend is built with a scrubber that knows them
+// paths, labels, attributes, decided-by, session names, scopes and end
+// reasons), as a careless caller might. A leak test then dumps the backend
+// and checks no leak survived, which holds only when the backend is built
+// with a scrubber that knows them
 // (specs/state-and-scaling "No secret value in any backend").
 func LeakTraffic(t *testing.T, s state.Store, leaks []string) {
 	t.Helper()
@@ -45,8 +46,12 @@ func LeakTraffic(t *testing.T, s state.Store, leaks []string) {
 			if err := tx.RevokeGrant(ctx, g.ID, "op "+v, t0); err != nil {
 				return state.Change{}, err
 			}
-			if err := tx.CreateSession(ctx, &state.Session{Agent: ag, TokenHash: fmt.Sprintf("sha256:%d", i),
-				CreatedAt: t0, Labels: map[string]string{"cwd": "/home/" + v}}); err != nil {
+			sess := &state.Session{Agent: ag, Name: "run " + v, TokenHash: fmt.Sprintf("sha256:%d", i),
+				Scopes: []string{v}, CreatedAt: t0, Labels: map[string]string{"cwd": "/home/" + v}}
+			if err := tx.CreateSession(ctx, sess); err != nil {
+				return state.Change{}, err
+			}
+			if err := tx.EndSession(ctx, sess.ID, t0, "killed by "+v); err != nil {
 				return state.Change{}, err
 			}
 			return state.Change{

@@ -74,6 +74,39 @@ evaluating rules.
 - **WHEN** the same night-time deny rule exists and an agent makes a `store.write`
 - **THEN** the data plane asks the control plane, which evaluates the time and decides
 
+#### Scenario: Conformance vectors
+
+- **WHEN** the data plane evaluates every vector in `internal/policy/testdata/conformance.json`
+- **THEN** each outcome, deciding rule and reason to ask equals the Go reference evaluator's
+
+### Requirement: Rules only restrict restore
+
+Restoring a placeholder into a response (`op` `restore`) SHALL be decided by the tool policy, and a
+deny or ask rule that matches, could match or errors on the restore SHALL keep the placeholder. Allow
+rules and the default decision SHALL NOT grant a restore the tool policy does not, and an ask SHALL
+keep the placeholder rather than hold the response.
+
+#### Scenario: Deny rule on restore
+
+- **WHEN** a rule denies `op == "restore"` for references under `bao://kv/prod/` and a read tool call carries a placeholder of such a value
+- **THEN** the tool receives the placeholder unresolved
+
+#### Scenario: Default deny
+
+- **WHEN** the policy default is deny and no rule matches a restore of a display value into a read tool
+- **THEN** the value is restored
+
+### Requirement: Restore request attributes
+
+A restore request SHALL carry the tool name, the value's reference, catalog name, store and class,
+and the agent identity where the listener knows it. A rule condition on a field the data plane does
+not have SHALL keep the placeholder.
+
+#### Scenario: Rule on an unknown agent
+
+- **WHEN** a rule denies unknown callers and the listener cannot establish the agent's identity for a restore
+- **THEN** the placeholder stays
+
 ### Requirement: Invalid rules fail closed
 
 The system SHALL validate rules when configuration loads. A configuration with an invalid rule SHALL
