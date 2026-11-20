@@ -277,11 +277,16 @@ fn guard_unescapes_nested_json_to_the_configured_depth() {
         for (snap, depth) in [(&s, DEFAULT_JSON_DEPTH), (&deep, 4)] {
             let mut gs = GuardScratch::new();
             match snap.guard().check(body.as_bytes(), &mut gs) {
-                Verdict::Repaired { bytes, findings } => {
+                Verdict::Repaired { bytes, findings } if styles.len() > depth => {
+                    // Past the depth only a fragment left verbatim by the inner escaping (at
+                    // least half the value, readable after fewer rounds) may be found.
                     assert!(
-                        styles.len() <= depth,
-                        "{styles:?} caught past depth {depth}"
+                        findings.iter().all(|f| f.view == GuardView::Fragment),
+                        "{styles:?} caught past depth {depth}: {findings:?}"
                     );
+                    assert!(deep_clean(bytes, &v), "{styles:?}");
+                }
+                Verdict::Repaired { bytes, findings } => {
                     assert!(findings.iter().any(|f| f.view == want), "{styles:?}");
                     // The repair maps back onto the escaped bytes: the body stays JSON at
                     // every level and no level holds the value.
