@@ -79,3 +79,15 @@ func TestSQLiteBackendWired(t *testing.T) {
 		t.Fatalf("config status = %+v", st)
 	}
 }
+
+func TestDataPlaneNeedsABinary(t *testing.T) {
+	var logs bytes.Buffer
+	a, err := app.New(context.Background(), isolated(t, "SCRIM_DATAPLANE_PATH=/nonexistent/scrim-dataplane"), &logs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+	if _, err := a.DataPlane(); err == nil {
+		t.Fatal("a missing data plane binary was accepted")
+	}
+}
