@@ -168,6 +168,10 @@ const SQL_DENIED: &[&str] = &[
     "lsmode",
     "shell",
     "system",
+    "eval",
+    "sha3_query",
+    "shell_add_schema",
+    "shell_module_schema",
 ];
 
 fn ident_allowed(lang: Lang, id: &str) -> bool {
@@ -600,6 +604,8 @@ mod tests {
             "select writefile('PH', 'x')",
             "ATTACH 'PH' AS x",
             "pragma x",
+            "select sha3_query('PH')",
+            "select eval('PH')",
             "vacuum into 'PH'",
             "select 'PH",
         ] {

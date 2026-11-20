@@ -326,14 +326,33 @@ pub(crate) fn analyze(spec: &ToolSpec, input: &str, commands: &dyn CommandSet) -
             }
         }
         ToolRole::Edit => {
-            let mut known: HashSet<&str> = HashSet::new();
+            // Edits in an array apply in order, and an earlier edit can create the text a later
+            // one replaces: a placeholder in edit i's replacement counts as already in the file
+            // only when the replaced text of an edit at or before i holds it.
+            let step = |s: &Str| {
+                s.path.iter().rev().find_map(|seg| match seg {
+                    Seg::Index(n) => Some(*n),
+                    Seg::Key(_) => None,
+                })
+            };
+            let mut known: Vec<(Option<usize>, &str)> = Vec::new();
             for (i, s) in strings.iter().enumerate() {
                 if !s.key && field_is(s, &spec.old_fields) {
                     for &(a, b, _) in &found[i] {
-                        known.insert(&s.decoded[a..b]);
+                        known.push((step(s), &s.decoded[a..b]));
                     }
                 }
             }
+            let is_known = |at: Option<usize>, ph: &str| {
+                known.iter().any(|&(k, t)| {
+                    t == ph
+                        && match (k, at) {
+                            (Some(k), Some(at)) => k <= at,
+                            (Some(_), None) => false,
+                            (None, _) => true,
+                        }
+                })
+            };
             for (i, s) in strings.iter().enumerate() {
                 if s.key {
                     verdicts[i].fill(Verdict::Keep(KeepReason::Context(Refusal::Position)));
@@ -345,7 +364,7 @@ pub(crate) fn analyze(spec: &ToolSpec, input: &str, commands: &dyn CommandSet) -
                     verdicts[i].fill(Verdict::Raw);
                 } else if field_is(s, &spec.new_fields) {
                     for (v, &(a, b, _)) in verdicts[i].iter_mut().zip(&found[i]) {
-                        *v = if known.contains(&s.decoded[a..b]) {
+                        *v = if is_known(step(s), &s.decoded[a..b]) {
                             Verdict::Raw
                         } else {
                             Verdict::Keep(KeepReason::NewInFile)
@@ -450,6 +469,16 @@ mod tests {
                 Verdict::Raw,
                 Verdict::Raw,
                 Verdict::Keep(KeepReason::NewInFile)
+            ]
+        );
+        // An earlier edit cannot create the text a later edit's old_string vouches for.
+        let input = serde_json::json!({"file_path": "f", "edits": [{"new_string": p, "old_string": "x"}, {"old_string": p, "new_string": p}]}).to_string();
+        assert_eq!(
+            verdicts(&s.tool("MultiEdit"), &input),
+            vec![
+                Verdict::Keep(KeepReason::NewInFile),
+                Verdict::Raw,
+                Verdict::Raw
             ]
         );
         let patch = format!(

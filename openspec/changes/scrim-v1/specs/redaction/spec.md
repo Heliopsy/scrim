@@ -228,6 +228,11 @@ replaces whole files and SHALL receive none.
 - **WHEN** an edit tool call replaces text containing a display value's placeholder with text that contains the same placeholder
 - **THEN** both the replaced and the replacement text receive the value
 
+#### Scenario: Earlier edit creating the replaced text
+
+- **WHEN** one call applies several edits and only an earlier edit's replacement introduces the placeholder that a later edit replaces
+- **THEN** the earlier replacement keeps the placeholder
+
 #### Scenario: Patch adding a value
 
 - **WHEN** a patch adds a line with a placeholder that no context or removed line of the same file holds

