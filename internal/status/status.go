@@ -42,6 +42,15 @@ type Store struct {
 	Values      int       `json:"values"`
 	Degraded    bool      `json:"degraded"`
 	Reason      string    `json:"reason,omitempty"`
+	// Targets is how many values each configured redact target holds. A
+	// target with 0 values protects nothing and marks the store degraded.
+	Targets []StoreTarget `json:"targets,omitempty"`
+}
+
+// StoreTarget is one redact target of a store and its value count.
+type StoreTarget struct {
+	Target string `json:"target"`
+	Values int    `json:"values"`
 }
 
 // State describes the state backend.
@@ -104,6 +113,21 @@ type Report struct {
 	// Config is the configuration manager's view: files, version, last
 	// reload and settings waiting for a restart.
 	Config *config.Status `json:"config,omitempty"`
+	// Service is the service `scrim install` set up, when there is one.
+	Service *Service `json:"service,omitempty"`
+}
+
+// Service describes an installed scrim service.
+type Service struct {
+	// Mode is user, system or quadlet; System is true for a system-wide one.
+	Mode   string `json:"mode"`
+	System bool   `json:"system"`
+	Unit   string `json:"unit"`
+	// Active is systemctl's ActiveState answer (active, inactive, failed,
+	// ...), or "unknown" when systemctl could not be asked.
+	Active string `json:"active"`
+	// Manifest is the install manifest that lists every change made.
+	Manifest string `json:"manifest"`
 }
 
 // OK reports whether nothing is degraded and nothing weakened.
@@ -162,6 +186,8 @@ type Sources struct {
 	// Config, when set, supplies the profile and, unless Weakening is
 	// set, the weakened settings.
 	Config ConfigSource
+	// Service is the installed service, if any.
+	Service *Service
 }
 
 // Collect gathers a report and derives the degraded list.
@@ -222,12 +248,16 @@ func Collect(ctx context.Context, src Sources) Report {
 	sort.Slice(r.Audit, func(i, j int) bool { return r.Audit[i].Name < r.Audit[j].Name })
 	sort.Slice(r.Weakened, func(i, j int) bool { return r.Weakened[i].Key < r.Weakened[j].Key })
 
+	r.Service = src.Service
 	r.Degraded = derive(r)
 	return r
 }
 
 func derive(r Report) []Component {
 	out := []Component{}
+	if r.Service != nil && r.Service.Active != "active" {
+		out = append(out, Component{Name: "service:" + r.Service.Unit, Reason: "installed but " + r.Service.Active})
+	}
 	if !r.DataPlane.Running || !r.DataPlane.Healthy {
 		out = append(out, Component{Name: "data-plane", Reason: orDefault(r.DataPlane.Detail, "not running or unhealthy")})
 	}

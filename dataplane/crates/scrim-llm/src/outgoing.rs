@@ -7,6 +7,8 @@
 //! outgoing bytes, verbatim spans included, so a known value inside an allowlisted field or a
 //! thinking block is still repaired or refused. Any error refuses the request.
 
+use std::time::{Duration, Instant};
+
 use bytes::Bytes;
 
 use crate::audit::RefusalReason;
@@ -25,10 +27,35 @@ pub struct Outgoing {
     pub guard_repaired: Vec<SecretRef>,
     /// Media types of unscannable parts forwarded under the `pass` policy.
     pub unscanned: Vec<String>,
+    /// Time the redactor and the guard took, when measured ([`prepare_timed`]).
+    pub stages: Stages,
+}
+
+/// Time spent in each check over the body. Zero when not measured.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Stages {
+    /// The redactor over every non-verbatim segment.
+    pub redaction: Duration,
+    /// The guard over the complete outgoing bytes.
+    pub guard: Duration,
 }
 
 /// Redacts and checks `body` for `api` with one snapshot.
 pub fn prepare(snap: &Snapshot, api: Api, body: &[u8]) -> Result<Outgoing, Refusal> {
+    prepare_timed(snap, api, body, false)
+}
+
+/// [`prepare`], also measuring the redactor and the guard into [`Outgoing::stages`] when
+/// `timed` (two clock reads per stage; none otherwise).
+pub fn prepare_timed(
+    snap: &Snapshot,
+    api: Api,
+    body: &[u8],
+    timed: bool,
+) -> Result<Outgoing, Refusal> {
+    let clock = || timed.then(Instant::now);
+    let since = |t: Option<Instant>| t.map_or(Duration::ZERO, |t| t.elapsed());
+    let started = clock();
     let plan = codec::plan(api, body)
         .map_err(|e| Refusal::new(RefusalReason::MalformedBody, e.to_string()))?;
     if !plan.binary.is_empty() && snap.binary == BinaryPolicy::Block {
@@ -60,11 +87,14 @@ pub fn prepare(snap: &Snapshot, api: Api, body: &[u8]) -> Result<Outgoing, Refus
         pos = e;
     }
     redact(&body[pos..], &mut out, &mut report)?;
+    let redaction = since(started);
 
+    let guard_started = clock();
     let verdict = snap
         .guard
         .check(&out)
         .map_err(|e| Refusal::new(RefusalReason::GuardFailed, e.message().to_string()))?;
+    let guard = since(guard_started);
     let (out, guard_repaired) = match verdict {
         GuardVerdict::Clean => (out, Vec::new()),
         GuardVerdict::Repaired { bytes, refs } => (bytes, refs),
@@ -81,6 +111,7 @@ pub fn prepare(snap: &Snapshot, api: Api, body: &[u8]) -> Result<Outgoing, Refus
         report,
         guard_repaired,
         unscanned: plan.binary,
+        stages: Stages { redaction, guard },
     })
 }
 

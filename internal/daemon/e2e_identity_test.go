@@ -142,8 +142,9 @@ rules:
 	if err := os.WriteFile(caFile, pki.caPEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h.opts.DataPlaneEnv = []string{"SCRIM_DP_EXTRA_CA_FILE=" + caFile}
+	h.opts.DataPlaneEnv = nil
 	h.opts.Config.Environ = append(h.opts.Config.Environ, "SCRIM_DATAPLANE_PATH="+bin,
+		"SCRIM_DATAPLANE_UPSTREAM_CA_FILE="+caFile,
 		"SCRIM_PROXY_UPSTREAM_ANTHROPIC="+up.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)

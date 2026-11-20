@@ -12,6 +12,7 @@ use scrim_proto::v1;
 use scrim_toolproxy::{AuditEvent, AuditSink};
 
 use crate::events::Bus;
+use crate::metrics::DataPlaneMetrics;
 
 /// The LLM proxy's audit sink: every event becomes one or more boundary events on the bus.
 #[derive(Clone, Debug)]
@@ -145,12 +146,16 @@ pub fn convert_llm(event: scrim_llm::AuditEvent) -> Vec<v1::Event> {
     }
 }
 
-/// The tool proxy's audit sink: every event goes onto the event bus.
+/// The tool proxy's audit sink: every event goes onto the event bus, and is counted when
+/// metrics are on.
 #[derive(Clone, Debug)]
-pub struct Sink(pub Arc<Bus>);
+pub struct Sink(pub Arc<Bus>, pub Option<Arc<DataPlaneMetrics>>);
 
 impl AuditSink for Sink {
     fn record(&self, event: AuditEvent) {
+        if let Some(m) = &self.1 {
+            m.tool_event(&event);
+        }
         self.0.emit(convert(event));
     }
 }

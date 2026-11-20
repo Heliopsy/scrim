@@ -369,6 +369,7 @@ impl ToolProxy {
             peer,
             session,
             verifier: verifier.flatten(),
+            kubernetes_token: ClientInfo::kubernetes_from(req.headers()),
         };
         if req.method() == Method::CONNECT {
             let Some(dest) = req

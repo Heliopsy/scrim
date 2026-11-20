@@ -10,6 +10,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net"
+	"os/user"
+	"strconv"
 	"sync"
 	"time"
 
@@ -67,6 +69,9 @@ type Options struct {
 	// OnMint, when set, receives a copy of every session token minted (see
 	// identity.ManagerOptions.OnMint).
 	OnMint func(identity.Session, secret.Value)
+	// OnKubeToken, when set, receives every Kubernetes service account
+	// token scrim verified (see identity.KubeResolver.OnVerified).
+	OnKubeToken func(tok []byte, expires time.Time)
 }
 
 // New builds the local API and entry page from the composition root and
@@ -133,16 +138,53 @@ func New(a *app.App, o Options) (*Runtime, error) {
 		_ = entryLn.Close()
 		return nil, err
 	}
-	sockLn, err := localapi.Listen(path, localapi.ListenOptions{Mode: fs.FileMode(mode)})
+	gid, err := lookupGroup(SocketGroup.Get(cfg))
 	if err != nil {
 		_ = entryLn.Close()
 		return nil, err
 	}
-	resolver := &identity.Resolver{Peers: peers, Sessions: mgr}
+	sockLn, err := localapi.Listen(path, localapi.ListenOptions{Mode: fs.FileMode(mode), Group: gid})
+	if err != nil {
+		_ = entryLn.Close()
+		return nil, err
+	}
+	kr, err := KubeResolver(cfg)
+	if err != nil {
+		_ = entryLn.Close()
+		_ = sockLn.Close()
+		return nil, err
+	}
+	if kr != nil {
+		kr.OnVerified = o.OnKubeToken
+	}
+	resolver := &identity.Resolver{Peers: peers, Sessions: mgr, Kubernetes: kr}
 	api := &localapi.Server{Resolver: *resolver, Sessions: mgr, Tools: svc,
 		Auditor: auditor, Logger: a.Log, ServerVersion: version.Version}
 	return &Runtime{Socket: path, EntryURL: links.Base(), Service: svc, Sessions: mgr, Resolver: resolver,
 		api: api, page: page, sock: sockLn, entry: entryLn}, nil
+}
+
+// SetEndpoints serves fn on GET /v1/endpoints, so `scrim run` under another
+// user can find the daemon's listeners. Call it before Serve.
+func (r *Runtime) SetEndpoints(fn func() localapi.Endpoints) { r.api.Endpoints = fn }
+
+// lookupGroup resolves api.group to a group ID; empty is 0 (unchanged).
+func lookupGroup(name string) (int, error) {
+	if name == "" {
+		return 0, nil
+	}
+	if id, err := strconv.Atoi(name); err == nil && id > 0 {
+		return id, nil
+	}
+	g, err := user.LookupGroup(name)
+	if err != nil {
+		return 0, fmt.Errorf("api.group: %w", err)
+	}
+	id, err := strconv.Atoi(g.Gid)
+	if err != nil {
+		return 0, fmt.Errorf("api.group %q: group ID %q: %w", name, g.Gid, err)
+	}
+	return id, nil
 }
 
 // Serve runs both listeners until ctx ends or one fails.

@@ -233,10 +233,8 @@ mod tests {
         let mut rx = b.attach().unwrap();
         let token = format!("scrim_st_abcdefghijklmn23_{}", "A".repeat(43));
         let (id, v) = scrim_toolproxy::parse_session_token(token.as_bytes()).unwrap();
-        let caller = v1::AskCaller {
-            session_id: id.clone(),
-            ..Default::default()
-        };
+        let mut caller = v1::AskCaller::default();
+        caller.session_id.clone_from(&id);
         let b2 = Arc::clone(&b);
         let c2 = caller.clone();
         let h = tokio::spawn(async move {

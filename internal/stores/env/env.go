@@ -110,8 +110,10 @@ func New(name string, cfg Config, opts ...Option) *Adapter {
 // Name implements stores.Adapter.
 func (a *Adapter) Name() string { return a.name }
 
-// Capabilities implements stores.Adapter: read and list.
-func (a *Adapter) Capabilities() stores.Capabilities { return stores.CapRead | stores.CapList }
+// Capabilities implements stores.Adapter: read, list and glob listing.
+func (a *Adapter) Capabilities() stores.Capabilities {
+	return stores.CapRead | stores.CapList | stores.CapGlob
+}
 
 func (a *Adapter) visible(name string) bool {
 	if name == "" || !strings.HasPrefix(name, a.cfg.Prefix) {
@@ -163,8 +165,10 @@ func (a *Adapter) Read(_ context.Context, ref stores.Ref) (stores.Secret, error)
 
 // List implements stores.Adapter. The prefix is matched by path segments
 // like every store (`env://APP` lists APP and APP/...); a prefix ending in
-// `*` matches names by plain string prefix instead, so `env://SCRIM_*` lists
-// every visible variable starting with SCRIM_.
+// `*` is a glob (stores.CapGlob) and matches names by plain string prefix
+// instead, so `env://SCRIM_*` lists every visible variable starting with
+// SCRIM_. Only a trailing `*` is special; the prefix and allow options still
+// decide what is visible.
 func (a *Adapter) List(_ context.Context, prefix stores.Ref) ([]stores.Metadata, error) {
 	match := func(name string) bool {
 		p := prefix.Path

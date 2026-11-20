@@ -7,12 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/daemon"
 	"github.com/heliopsy/scrim/internal/dataplane"
+	"github.com/heliopsy/scrim/internal/install"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/state/sqlite"
 	"github.com/heliopsy/scrim/internal/status"
@@ -98,15 +102,56 @@ func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) 
 	}
 	// A running daemon reports what it actually serves: interception modes
 	// from its bound listeners and open sessions, protections, providers
-	// and its data plane. Without one, the data plane is probed once.
+	// and its data plane, and its stores with the values each redact
+	// target holds. Without one, the data plane is probed once.
 	if info, err := daemon.Connect(ctx, cfg); err == nil {
 		src.Runtime = info.StatusRuntime()
 		src.DataPlane = staticDataPlane(info.StatusDataPlane())
+		src.Stores = staticStores(info.Stores)
 	}
-	st, closeFn := openStateForStatus(ctx, cfg)
+	src.Service = installedService(ctx, cfg)
+	stateCfg := cfg
+	if src.Service != nil && src.Service.System && installEUID() == 0 {
+		// Root asks about the system service: report its state, and never
+		// create a state database under /root.
+		o := e.ConfigOptions()
+		o.Environ = append(slices.Clone(o.Environ), "XDG_STATE_HOME="+filepath.Join(installRoot, "/var/lib"),
+			"HOME="+filepath.Join(installRoot, install.SystemStateDir))
+		if c, err := config.Build(o); err == nil {
+			stateCfg = c
+		}
+	}
+	st, closeFn := openStateForStatus(ctx, stateCfg)
 	src.State = st
 	src.Audit = status.DBAuditSink{State: st}
 	return src, closeFn, nil
+}
+
+// installedService reports the service `scrim install` set up: the system
+// install first, then this user's, with systemctl's view of the unit.
+func installedService(ctx context.Context, cfg *config.Config) *status.Service {
+	paths := []string{filepath.Join(installRoot, install.SystemManifest)}
+	if dir, err := cfg.StateDir(); err == nil {
+		paths = append(paths, filepath.Join(dir, install.ManifestName))
+	}
+	for _, p := range paths {
+		mf, found, err := install.ReadManifest(p)
+		if err != nil || !found {
+			continue
+		}
+		args := []string{"show", "--property=ActiveState", "--value", install.UnitName}
+		if !mf.System {
+			args = append([]string{"--user"}, args...)
+		}
+		active := "unknown"
+		if out, err := installRunner.Run(ctx, "systemctl", args...); err == nil {
+			if a := strings.TrimSpace(string(out)); a != "" {
+				active = a
+			}
+		}
+		return &status.Service{Mode: string(mf.Mode), System: mf.System, Unit: install.UnitName, Active: active, Manifest: p}
+	}
+	return nil
 }
 
 func openStateForStatus(ctx context.Context, cfg *config.Config) (status.StateOf, func()) {
@@ -129,6 +174,11 @@ func openStateForStatus(ctx context.Context, cfg *config.Config) (status.StateOf
 	}
 	return status.StateOf{Store: s}, func() { _ = s.Close() }
 }
+
+// staticStores is store health already collected by the daemon.
+type staticStores []status.Store
+
+func (s staticStores) StoreHealth(context.Context) []status.Store { return s }
 
 // staticDataPlane is a data plane status already collected.
 type staticDataPlane status.DataPlane

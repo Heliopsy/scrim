@@ -15,7 +15,7 @@
 
 use std::fmt;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapOption;
 use scrim_llm::intercept::LlmIntercept;
@@ -28,6 +28,7 @@ use scrim_toolproxy::{
 use crate::asks::{Answer, Broker};
 use crate::events::Bus;
 use crate::listeners::Listeners;
+use crate::metrics::DataPlaneMetrics;
 use crate::settings::Settings;
 use crate::snapshot::{self, Applied, Rejected};
 use crate::{audit, captures};
@@ -101,6 +102,8 @@ pub struct Shared {
     pub llm: Arc<scrim_llm::Proxy>,
     /// Bound listeners.
     pub listeners: Listeners,
+    /// Metrics, when the control plane asked for them (`SCRIM_DP_METRICS`).
+    pub metrics: Option<Arc<DataPlaneMetrics>>,
     /// Serialises applies, so versions are checked and published in order.
     apply: tokio::sync::Mutex<()>,
 }
@@ -130,6 +133,9 @@ impl Shared {
         let events = Arc::new(Bus::default());
         let captures = Arc::new(captures::Broker::default());
         let current: Current = Arc::new(ArcSwapOption::empty());
+        let metrics = settings
+            .metrics
+            .then(|| Arc::new(DataPlaneMetrics::default()));
         let llm_cfg = ProxyConfig {
             tls: TlsConfig {
                 extra_ca_file: settings.extra_ca_file.clone(),
@@ -138,16 +144,18 @@ impl Shared {
             capture: settings.capture.clone(),
             ..ProxyConfig::default()
         };
-        let llm = Arc::new(
-            scrim_llm::Proxy::new(
-                llm_cfg,
-                Arc::new(scrim_llm::SnapshotCell::from_source(Arc::new(LlmSource(
-                    Arc::clone(&current),
-                )))),
-                Arc::new(audit::LlmSink(Arc::clone(&events))),
-            )
-            .map_err(|e| SetupError(format!("LLM proxy: {e}")))?,
-        );
+        let mut llm = scrim_llm::Proxy::new(
+            llm_cfg,
+            Arc::new(scrim_llm::SnapshotCell::from_source(Arc::new(LlmSource(
+                Arc::clone(&current),
+            )))),
+            Arc::new(audit::LlmSink(Arc::clone(&events))),
+        )
+        .map_err(|e| SetupError(format!("LLM proxy: {e}")))?;
+        if let Some(m) = &metrics {
+            llm = llm.with_metrics(Arc::clone(&m.llm));
+        }
+        let llm = Arc::new(llm);
         let upstream = UpstreamSettings {
             extra_roots: settings
                 .extra_roots()
@@ -156,7 +164,7 @@ impl Shared {
         };
         let tool_proxy = ToolProxy::builder()
             .upstream(upstream)
-            .audit(Arc::new(audit::Sink(Arc::clone(&events))))
+            .audit(Arc::new(audit::Sink(Arc::clone(&events), metrics.clone())))
             .capture_sink(Arc::new(captures::Sink(Arc::clone(&captures))))
             .intercept(Arc::new(LlmIntercept::new(Arc::clone(&llm))))
             .snapshot_source(Arc::new(ToolSource(Arc::clone(&current))))
@@ -170,6 +178,7 @@ impl Shared {
             tool_proxy,
             llm,
             listeners: Listeners::default(),
+            metrics,
             apply: tokio::sync::Mutex::new(()),
         })
     }
@@ -189,8 +198,20 @@ impl Shared {
 
     /// Validates, builds and publishes `snap`. Returns the version now in force and the number
     /// of values. On error the snapshot in force stays. Must run inside a tokio runtime.
-    pub async fn apply(self: &Arc<Self>, mut snap: v1::Snapshot) -> Result<(u64, u32), Rejected> {
+    pub async fn apply(self: &Arc<Self>, snap: v1::Snapshot) -> Result<(u64, u32), Rejected> {
         let _serial = self.apply.lock().await;
+        let began = Instant::now();
+        let result = self.apply_locked(snap).await;
+        if let Some(m) = &self.metrics {
+            m.applied(began.elapsed(), result.as_ref().ok().copied());
+        }
+        result
+    }
+
+    async fn apply_locked(
+        self: &Arc<Self>,
+        mut snap: v1::Snapshot,
+    ) -> Result<(u64, u32), Rejected> {
         let ca = std::mem::take(&mut snap.tool_proxy_ca);
         let in_force = self.applied_version();
         let this = Arc::clone(self);

@@ -18,6 +18,7 @@ import (
 	"github.com/heliopsy/scrim/internal/notify/ntfy"
 	"github.com/heliopsy/scrim/internal/notify/terminal"
 	"github.com/heliopsy/scrim/internal/notify/webhook"
+	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/secret"
 )
@@ -86,6 +87,10 @@ func (a *App) initPolicy(ctx context.Context, cfg *config.Config) error {
 		p.Notifiers = append(p.Notifiers, n)
 	}
 
+	var metrics *obs.Metrics
+	if obs.MetricsEnabled.Get(cfg) {
+		metrics = a.Metrics
+	}
 	p.Approvals, err = approval.New(approval.Options{
 		State: a.State, Notifiers: p.Notifiers, Signer: signer, BreakGlass: bg,
 		PublicURL: approval.PublicURL.Get(cfg), Timeout: approval.Timeout.Get(cfg), PollInterval: approval.PollInterval.Get(cfg),
@@ -93,7 +98,7 @@ func (a *App) initPolicy(ctx context.Context, cfg *config.Config) error {
 			r, _ := live.Rule(rule)
 			return limits(r.Grant), r.Grant
 		},
-		Log: a.Log, Metrics: a.Metrics,
+		Log: a.Log, Metrics: metrics,
 	})
 	if err != nil {
 		return err
@@ -122,6 +127,7 @@ func (a *App) initPolicy(ctx context.Context, cfg *config.Config) error {
 		}
 		bg.SetConfigured(breakglass.DenyAll.Get(cur))
 	})
+	a.subscribeEvents(p)
 	a.Health.Ready("policy", func(context.Context) error {
 		if _, err := live.Health(); err != nil {
 			return fmt.Errorf("last policy reload rejected: %w", err)
@@ -131,12 +137,17 @@ func (a *App) initPolicy(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-// RunPolicy runs the approval sweeper and the break-glass refresh until ctx
-// ends. The control plane server calls it; one-shot CLI commands do not.
+// RunPolicy runs the events bus, the approval sweeper and the break-glass
+// refresh until ctx ends, after announcing this replica's configuration
+// digest. The control plane server calls it; one-shot CLI commands do not.
 func (a *App) RunPolicy(ctx context.Context) {
 	p := a.PolicyParts
 	if p == nil {
 		return
+	}
+	if a.Events != nil {
+		go a.Events.Run(ctx)
+		a.announceConfig(ctx, "start", 0)
 	}
 	go p.Approvals.Run(ctx, time.Second)
 	p.BreakGlass.Run(ctx, breakglass.RefreshInterval.Get(a.Config.Current()), func(err error) {

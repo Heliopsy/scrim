@@ -9,10 +9,12 @@
 //	bao://kv/agents/github#token
 //	bao://kv/agents/github?version=3#token
 //
-// The adapter authenticates with a token or an AppRole role and secret ID,
-// reads, lists and writes KV v2 secrets, and watches a prefix by polling its
-// version metadata (one LIST of detailed-metadata per folder per interval on
-// OpenBao, falling back to per-secret metadata reads on Vault). Paths listed
+// The adapter authenticates with a token, an AppRole role and secret ID, or
+// the pod's Kubernetes service account token, renewing login tokens before
+// they expire (see auth.go). It reads, lists and writes KV v2 secrets, and
+// watches a prefix by polling its version metadata (one LIST of
+// detailed-metadata per folder per interval on OpenBao, falling back to
+// per-secret metadata reads on Vault). Paths listed
 // in write-only-paths are written but never read back: scrim keeps only the
 // value it wrote, and a policy without read on those paths is enough.
 //
@@ -29,6 +31,7 @@ package openbao
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -61,6 +64,8 @@ type Adapter struct {
 	// (Vault), so List stops trying it.
 	detailed atomicBool
 	jitter   func(time.Duration) time.Duration
+	// agents caches Kubernetes passthrough logins (agent.go).
+	agents agentLogins
 }
 
 // New builds an adapter for inst without contacting the store.
@@ -95,6 +100,7 @@ func (a *Adapter) Credentials() []secret.Value { return a.c.credentials() }
 
 // Close implements stores.Adapter.
 func (a *Adapter) Close() error {
+	a.agents.close()
 	a.c.close()
 	return nil
 }
@@ -364,7 +370,9 @@ func (a *Adapter) listKeys(ctx context.Context, prefix stores.Ref, mount, folder
 			}
 			return lr.Data.Keys, lr.Data.KeyInfo, nil
 		}
-		if !errorsIsInvalid(err) {
+		// Vault has no detailed-metadata (invalid path), and a policy may
+		// grant only metadata/ (permission denied): list metadata/ from now on.
+		if !errorsIsInvalid(err) && !errors.Is(err, stores.ErrPermission) {
 			return nil, nil, err
 		}
 		a.detailed.Store(false)

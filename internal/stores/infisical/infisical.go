@@ -7,7 +7,8 @@
 //
 // where <project> is a project slug or ID. Infisical secrets hold one value,
 // exposed as the field "value". scrim authenticates with a Universal Auth
-// machine identity; Kubernetes Auth arrives with task 12.4.
+// machine identity, or in a cluster with a Kubernetes Auth identity and its
+// pod's service account token, read at every login.
 //
 // The adapter talks to the Infisical REST API with a small typed client
 // instead of the official Go SDK: the SDK hands secret values around as Go
@@ -443,8 +444,10 @@ func (a *Adapter) Health(ctx context.Context) error {
 	if err := a.c.status(ctx); err != nil {
 		return a.fail(stores.OpHealth, stores.Ref{}, err)
 	}
-	if _, err := a.c.accessToken(ctx); err != nil {
+	tok, err := a.c.accessToken(ctx)
+	if err != nil {
 		return a.fail(stores.OpHealth, stores.Ref{}, err)
 	}
+	tok.Wipe()
 	return nil
 }

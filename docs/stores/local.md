@@ -8,10 +8,10 @@ write to either source.
 
 ## Capabilities
 
-| Kind | read | list | watch | write | generate | dynamic |
-| --- | --- | --- | --- | --- | --- | --- |
-| `env` | yes | yes | no | no | no | no |
-| `file` | yes | yes | yes | no | no | no |
+| Kind | read | list | watch | write | generate | dynamic | glob |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `env` | yes | yes | no | no | no | no | yes |
+| `file` | yes | yes | yes | no | no | no | yes |
 
 A write or generate targeting either source is refused before anything happens, with an error such
 as `store env: write env://NEW_TOKEN: operation not supported by this store: env source is
@@ -57,6 +57,12 @@ References: `ci-env://SCRIM_SECRET_GITHUB_TOKEN`. An env secret has one field, `
 Listing matches path segments like every other store, so `ci-env://APP` lists `APP` and `APP/...`.
 End the prefix with `*` to match by plain name prefix instead: `ci-env://SCRIM_SECRET_*` lists every
 visible variable starting with `SCRIM_SECRET_`.
+
+Globs in `redact`: only a trailing `*` is special, and it matches any characters, so
+`ci-env://SCRIM_SECRET_*` loads `SCRIM_SECRET_GITHUB_TOKEN` and `SCRIM_SECRET_NPM_TOKEN`. `prefix`
+and `allow` still decide what is visible: with `prefix: SCRIM_SECRET_`, `ci-env://SCRIM_*` loads the
+same variables and never `SCRIM_OTHER`. A `*` elsewhere in a target is refused. A target that
+matches no variable stops start-up (see [empty redact targets](README.md#empty-redact-targets)).
 
 ### file
 
@@ -107,6 +113,11 @@ content.
 Listing walks the prefix directory recursively and returns regular files, including symlinks to
 files inside `root`. Field names are not listed, since that would mean reading every file. A
 listed secret's version is its modification time and size.
+
+A trailing `*` right after part of a name is a glob over paths under `root`: `mounted://app-*`
+covers `app-db` and `app-cache/token` but not `apple`, and `mounted://github/ci-*` covers the files
+in `github/` (and below) whose path starts with `github/ci-`. `mounted://github/*` stays the whole
+folder. Globs work in `redact`, listing and watch; a `*` elsewhere in a target is refused.
 
 Watch reports a file as changed when its size, modification time or content changes, and as deleted
 when it disappears. Content is compared through a keyed digest held only in memory, with a random

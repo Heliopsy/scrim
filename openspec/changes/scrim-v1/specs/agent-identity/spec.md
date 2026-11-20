@@ -54,6 +54,11 @@ configuration.
 - **WHEN** a user starts two agents with `scrim run`
 - **THEN** each gets its own session token and identity, and their grants are separate
 
+#### Scenario: Many session tokens in one snapshot
+
+- **WHEN** several session tokens are live at once, from concurrent or earlier `scrim run` sessions
+- **THEN** every token is in the redaction set and the data plane accepts the snapshot that carries them
+
 #### Scenario: Token used from outside the session's process tree
 
 - **WHEN** a process of the same user that did not descend from the `scrim run` that minted a token
@@ -115,8 +120,9 @@ with the `memory` backend a restart SHALL end every session.
 ### Requirement: Kubernetes service account identity
 
 The system SHALL identify in-cluster callers by projected service account tokens with a scrim-specific
-audience, verified through the cluster, and SHALL derive the identity from namespace, service account
-and pod. Tokens with another audience SHALL be refused.
+audience, verified through the cluster (TokenReview), and SHALL derive the identity from namespace,
+service account and pod: a configured agent name, else `<namespace>/<service account>`, kind `k8s`,
+with those as labels. Tokens with another audience SHALL be refused, and the caller SHALL be unknown.
 
 #### Scenario: Pod with a projected token
 
@@ -128,6 +134,60 @@ and pod. Tokens with another audience SHALL be refused.
 
 - **WHEN** a pod presents its default API token instead of the scrim-audience token
 - **THEN** the call is refused
+
+#### Scenario: Two service accounts, two outcomes
+
+- **WHEN** a rule denies injection for `agent.labels.service_account == "agent-b"` and pods running as
+  `agent-a` and `agent-b` send the same request through the forward proxy
+- **THEN** the request from `agent-a` is injected and the one from `agent-b` is refused, and each
+  decision's audit entry names the caller as `kubernetes` with its namespace and service account
+
+#### Scenario: Token never forwarded
+
+- **WHEN** a pod sends its token in `x-scrim-session` to the base URL and as proxy credentials to a tool API
+- **THEN** neither the provider nor the tool API receives the token, and it appears in no log or audit entry
+
+### Requirement: Where pods send their service account token
+
+Pods SHALL send the token as the password of the proxy user `k8s` on the forward proxy, as the value
+of `x-scrim-session` on a base-URL listener, or as a bearer token on the agent API. The data plane SHALL
+hand it to the control plane only inside the ask, SHALL NOT log or forward it, and the control plane
+SHALL wipe it once the ask is answered.
+
+#### Scenario: Proxy user k8s
+
+- **WHEN** a pod sets `HTTPS_PROXY=http://k8s:<token>@scrim:3128` and calls a bound tool API
+- **THEN** the ask carries the token, the decision names the pod's service account, and the tool API
+  receives no proxy credentials
+
+### Requirement: Verified Kubernetes tokens are redacted
+
+Every service account token the cluster accepts for scrim's audience SHALL enter the redaction set
+as soon as scrim verifies it, for redaction only (never injectable), and SHALL leave it when the
+token expires (a token without an expiry 24 hours after its last verification). The copy SHALL live
+in memory only and be wiped when it leaves. A token scrim never verified relies on the fallback JWT
+detector.
+
+#### Scenario: Agent reads its own token file
+
+- **WHEN** a pod's verified token appears in a tool result the agent sends to a provider
+- **THEN** the provider receives scrim's placeholder for it, never the token
+
+#### Scenario: Token expires
+
+- **WHEN** a verified token's expiry passes
+- **THEN** it is removed from the redaction set and its copy is wiped
+
+### Requirement: Verified Kubernetes tokens are cached briefly
+
+The system SHALL reuse a verified token's identity for at most `identity.kubernetes.cache-ttl` and never
+past the token's expiry, SHALL NOT cache refusals, and SHALL keep only a hash of the token as the cache
+key.
+
+#### Scenario: Pod deleted
+
+- **WHEN** a pod's service account is deleted after its token was verified
+- **THEN** the token is refused once the cache lifetime has passed
 
 ### Requirement: Optional mutual TLS identity
 
@@ -163,8 +223,8 @@ account, labels, SPIFFE ID), so each agent can be limited to its own secrets, de
 ### Requirement: Data-plane identity from the transport
 
 The data plane SHALL take a request's caller only from its transport: Unix socket peer credentials,
-`Proxy-Authorization: Basic <session id>:<token>` on the forward proxy, or the `x-scrim-session`
-header on a base-URL listener, neither of which SHALL be forwarded. A request with none of these
+`Proxy-Authorization: Basic` on the forward proxy, or the `x-scrim-session` header on a base-URL
+listener, each carrying a session or a service account token, neither of which SHALL be forwarded. A request with none of these
 SHALL be an unknown caller. A rule on the agent of a request that carries one SHALL be decided by
 the control plane, with what the transport said in the ask.
 
@@ -297,24 +357,53 @@ credentials SHALL be cached per agent session and dropped when it ends.
 ### Requirement: Kubernetes identity passed through
 
 In Kubernetes, scrim SHALL be able to use the agent pod's own service account identity toward stores
-that trust the cluster (for example Vault or OpenBao Kubernetes auth), so the store's role for that
-service account applies, instead of a scrim-issued token.
+that trust the cluster (OpenBao Kubernetes auth), so the store's role for that service account applies.
+After scrim's rules allow a use, scrim SHALL log in with the pod's token at the configured role and
+SHALL refuse the use when that identity may not read the secret.
 
 #### Scenario: Pod service account role
 
 - **WHEN** an agent pod runs as service account `agents/reviewer` and OpenBao has a role for it
 - **THEN** scrim's operations for that pod run under that role
 
+#### Scenario: Two pods, two OpenBao roles
+
+- **WHEN** OpenBao's role for `agents/agent-a` may read `kv/agents/a/*` only and the role for
+  `agents/agent-b` may read `kv/agents/b/*` only, and both pods ask scrim to inject the credential at
+  `bao://kv/agents/a/token`
+- **THEN** the injection for `agent-a` succeeds and the one for `agent-b` is refused with the store's
+  denial, although scrim's own rules allow both
+
+### Requirement: Uses of governed stores are decided by the control plane
+
+For a store with per-agent identity configured, every injection or restore of its secrets SHALL be
+sent to the control plane, whatever the rules say, so the agent's store identity is always checked.
+
+#### Scenario: Built-in injection rule
+
+- **WHEN** an identified agent injects a credential from a store with `identity.store-login` and the
+  only rule that applies is the built-in injection rule
+- **THEN** the data plane asks the control plane, which checks the agent's store identity
+
 ### Requirement: Static per-agent store credentials as fallback
 
 For stores without federated login, the system SHALL support a separate store credential per agent,
-held by scrim and referenced in configuration, and SHALL report in `scrim doctor` which stores fall
-back to shared identity because no per-agent credential exists.
+held by scrim and given by reference in `identity.store-credentials`, and SHALL report in `scrim doctor`,
+per store and agent, which identity applies: passthrough, static, shared (a store without per-agent
+identity) or none. An agent with no usable identity for a store that has per-agent identity SHALL be
+refused for it.
 
 #### Scenario: Vaultwarden per agent
 
 - **WHEN** each agent has its own Vaultwarden account or organisation member configured
 - **THEN** scrim decrypts and writes for that agent only with that agent's account
+
+#### Scenario: Doctor lists the identity sources
+
+- **WHEN** store `bao` has Kubernetes passthrough, store `vw` a static credential for agent `laptop`
+  only, and store `env` neither
+- **THEN** `scrim doctor` reports `bao` as passthrough for service accounts, `vw` as static for
+  `laptop` and refused for other agents, and `env` as using scrim's own identity
 
 ### Requirement: Redaction coverage is separate from use
 

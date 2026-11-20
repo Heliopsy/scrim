@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -72,6 +74,36 @@ func TestChildEnvironmentIsMinimal(t *testing.T) {
 	for _, kv := range p.cmd.Env {
 		if kv == "SCRIM_TEST_LEAK=must-not-reach-the-child" {
 			t.Fatal("parent environment leaked into the data plane")
+		}
+	}
+}
+
+func TestUpstreamCAFileReachesTheChild(t *testing.T) {
+	for _, file := range []string{"", "/etc/scrim/upstream-ca.pem"} {
+		o := fakeOpts()
+		o.UpstreamCAFile = file
+		exe, err := prepare(fakeBinary(t), runtime.GOOS != "linux")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := spawn(exe, o, nil)
+		exe.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, kv := range p.cmd.Env {
+			if strings.HasPrefix(kv, "SCRIM_DP_EXTRA_CA_FILE=") {
+				got = append(got, kv)
+			}
+		}
+		p.Stop(time.Second)
+		want := []string{}
+		if file != "" {
+			want = []string{"SCRIM_DP_EXTRA_CA_FILE=" + file}
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("UpstreamCAFile %q: child environment has %q, want %q", file, got, want)
 		}
 	}
 }

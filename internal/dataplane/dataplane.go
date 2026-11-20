@@ -48,6 +48,14 @@ var (
 		Description:     "Lock the data plane's memory so values are never swapped: auto locks when the memlock limit is unlimited and warns otherwise; require refuses to start without it.",
 		RestartRequired: true,
 	})
+	// UpstreamCAFile is passed to the data plane as SCRIM_DP_EXTRA_CA_FILE.
+	UpstreamCAFile = config.Register(config.Spec[string]{
+		Key: "dataplane.upstream-ca-file",
+		Description: "PEM bundle of extra root certificates the data plane trusts for upstream TLS, in the LLM proxy and the tool proxy " +
+			"(private API hosts, a corporate TLS-inspecting proxy). The system roots stay trusted. A file that is set but unreadable, " +
+			"or holds no certificate, stops the data plane from starting. Empty means the system roots only.",
+		RestartRequired: true,
+	})
 	// StartTimeout bounds launch plus handshake.
 	StartTimeout = config.Register(config.Spec[time.Duration]{
 		Key:         "dataplane.start-timeout",

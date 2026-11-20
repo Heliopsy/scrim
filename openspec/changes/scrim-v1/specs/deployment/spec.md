@@ -80,26 +80,103 @@ embedded in `scrim`, with the same signatures, SBOMs and provenance.
 
 ### Requirement: Local service installation
 
-`scrim install` SHALL set scrim up as a local service running as a dedicated user (systemd unit or
-Quadlet on Linux, launch agent on macOS), and SHALL show every change it will make before making it.
+`scrim install` SHALL set scrim up as a local service (systemd unit or Quadlet on Linux, launch
+agent on macOS), SHALL show every change before making it, SHALL list the changes without making
+them with `--dry-run`, and SHALL wait until the started service reports ready.
 
 #### Scenario: Install as a systemd service
 
-- **WHEN** a user runs `scrim install` on Linux with systemd
+- **WHEN** a user runs `scrim install --system` on Linux with systemd
 - **THEN** scrim runs as a service under its own user
 - **AND** the user was shown each file, unit and rule before it was created
 
+#### Scenario: Dry run
+
+- **WHEN** a user runs `scrim install --system --dry-run`
+- **THEN** every change is listed and the file system, accounts and units are unchanged
+
+### Requirement: Service install modes
+
+`scrim install` SHALL offer three modes: `--user`, a systemd user unit for the current user;
+`--system`, a hardened system unit running as the dedicated user `scrim` with its configuration in
+`/etc/scrim`, state in `/var/lib/scrim` and sockets in `/run/scrim`, the agent API socket given to
+the group `scrim-agents`; and `--quadlet`, the release image as a podman Quadlet container,
+rootless or with `--system` as the dedicated user.
+
+#### Scenario: Hardened system unit
+
+- **WHEN** the system unit is installed
+- **THEN** it runs without capabilities and with no new privileges, a read-only system
+  (`ProtectSystem=strict`), a private `/tmp`, `MemoryDenyWriteExecute`, `LockPersonality`, restricted
+  address families, the `@system-service` system call filter, unlimited memlock and no core dumps
+- **AND** the data plane still starts from memory
+
+#### Scenario: Agents of another user find the system service
+
+- **WHEN** a user in `scrim-agents` who is mapped in `identity.peers` runs `scrim run` with no scrim
+  configured and no daemon of their own
+- **THEN** the agent is served by the system service through `/run/scrim/api.sock`
+- **AND** no private daemon is started
+
+#### Scenario: User outside the agent group
+
+- **WHEN** a user who is not in `scrim-agents` runs `scrim run` against the system service
+- **THEN** the agent is not started
+
+### Requirement: Install upgrades in place
+
+Running `scrim install` again in the mode already installed SHALL keep the recorded changes,
+replace the files whose content changed and restart the service.
+
+#### Scenario: Upgrade in place
+
+- **WHEN** `scrim install` is run again in the same mode with a new binary
+- **THEN** the installed binary is replaced, the service is restarted and the manifest lists the
+  binary once
+
+### Requirement: Status reports the installed service
+
+`scrim status` SHALL report the service `scrim install` set up and its state.
+
+#### Scenario: Status reports the service
+
+- **WHEN** `scrim status` runs on a host with an installed service
+- **THEN** it reports the mode, the unit, its state and the manifest, and lists an inactive
+  service as degraded
+
 ### Requirement: Complete uninstall
 
-`scrim install` SHALL record every change it makes (units, users, CA trust entries, nftables or eBPF
-rules, managed agent settings, environment drop-ins), and `scrim uninstall` SHALL revert each of them
-and report anything it could not revert.
+`scrim install` SHALL record every change it makes (units, users, groups and memberships, files and
+directories it created, CA trust entries, nftables or eBPF rules, managed agent settings,
+environment drop-ins), and `scrim uninstall` SHALL revert each of them, newest first, and report
+anything it could not revert with the manual step.
+
+#### Scenario: Uninstall leaves no trace
+
+- **WHEN** scrim is installed in system or user mode, used by an agent, and uninstalled with `--purge`
+- **THEN** the file system outside runtime and log directories is identical to a snapshot taken before install
 
 #### Scenario: Uninstall reverts trust and rules
 
 - **WHEN** a user runs `scrim uninstall` after a transparent-mode install
 - **THEN** the CA is removed from every trust store it was added to and the interception rules are gone
 - **AND** any item that could not be reverted is listed with the manual step to do it
+
+### Requirement: Uninstall keeps what install did not create
+
+`scrim uninstall` SHALL NOT remove accounts or files that existed before install, SHALL leave in
+place and report a file install wrote that was changed since, and SHALL keep the state directory,
+a Quadlet volume and a pulled image unless `--purge` is given.
+
+#### Scenario: State kept without purge
+
+- **WHEN** `scrim uninstall` runs without `--purge`
+- **THEN** the state directory stays, is listed with the command to remove it, and stays in the manifest
+
+#### Scenario: Edited file
+
+- **WHEN** a file install wrote was edited before uninstall
+- **THEN** the file stays, is listed with the manual step, and the command exits non-zero
 
 ### Requirement: Helm chart
 

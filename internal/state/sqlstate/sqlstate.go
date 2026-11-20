@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/heliopsy/scrim/internal/state"
@@ -45,7 +46,8 @@ type Config struct {
 	// BeforeEmit runs inside an Update before the first outbox insert. The
 	// PostgreSQL backend takes a transaction-scoped advisory lock here so
 	// outbox IDs become visible in commit order and a reader polling
-	// EventsAfter never skips an event committed late.
+	// EventsAfter never skips an event committed late, and queues a NOTIFY
+	// that PostgreSQL delivers to listening replicas on commit.
 	BeforeEmit func(ctx context.Context, tx *sql.Tx) error
 	// Scrubber, if set, filters every string argument before it reaches
 	// the database: the last line keeping a value that slipped into a
@@ -62,6 +64,27 @@ type Config struct {
 // Migrate, SchemaVersion and Close.
 type DB struct {
 	cfg Config
+
+	hookMu sync.Mutex
+	hooks  []func()
+}
+
+var _ state.CommitHook = (*DB)(nil)
+
+// OnEventCommit implements [state.CommitHook].
+func (d *DB) OnEventCommit(fn func()) {
+	d.hookMu.Lock()
+	defer d.hookMu.Unlock()
+	d.hooks = append(d.hooks, fn)
+}
+
+func (d *DB) committed() {
+	d.hookMu.Lock()
+	hooks := append([]func(){}, d.hooks...)
+	d.hookMu.Unlock()
+	for _, h := range hooks {
+		h()
+	}
 }
 
 // New returns a DB for cfg.
@@ -114,13 +137,20 @@ func (d *DB) Update(ctx context.Context, fn func(state.Tx) error) error {
 		return d.mapErr(err, "begin write transaction")
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := fn(&Tx{db: d, tx: tx}); err != nil {
+	t := &Tx{db: d, tx: tx}
+	if err := fn(t); err != nil {
 		return err
 	}
 	if err := d.fault("commit"); err != nil {
 		return err
 	}
-	return d.mapErr(tx.Commit(), "commit")
+	if err := d.mapErr(tx.Commit(), "commit"); err != nil {
+		return err
+	}
+	if t.emitted {
+		d.committed()
+	}
+	return nil
 }
 
 func (d *DB) observe(kind string, start time.Time) {

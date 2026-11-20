@@ -32,7 +32,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 3.2 Streaming restorer with per-block holdback, split placeholders and byte-identical thinking and signature content; verify: property test restore(redact(x)) and recorded stream fixtures
 - [x] 3.3 Fail-closed error path; verify: injected redaction or guard errors return the documented error and nothing reaches the fake upstream
 - [x] 3.4 Capture mode; verify: captured requests are byte-identical to what the fake upstream received
-- [ ] 3.5 Upstream chaining through caveman with redaction first; verify: caveman's store holds placeholders only, and placeholders survive compression in an end-to-end run
+- [x] 3.5 Upstream chaining through caveman with redaction first; verify: caveman's store holds placeholders only, and placeholders survive compression in an end-to-end run
 - [x] 3.6 Latency budget gate; verify: CI fails when p99 per request or per chunk exceeds the configured budget on the reference fixtures
 - [x] 3.7 Request target and headers redacted and guarded like the body, only `authorization` and `x-api-key` passed through; verify: the leak gate's `header` and `query` rows are redacted for every transform the guard decodes, and an end-to-end request with secrets in a custom header and a percent-encoded query parameter reaches the fake provider with placeholders only
 - [x] 3.8 Placeholders in header values leave in percent form (`%E2%9F%A6...%E2%9F%A7`), which resolves, restores percent-encoded and is read by the guard; verify: a header redacted or guard-repaired holds only visible ASCII and a fake provider that rejects obs-text accepts it
@@ -52,6 +52,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 5.2 Audit log (metadata only) written with the state change it records; verify: a failure between the two writes leaves neither
 - [x] 5.3 Structured logs, metrics, traces and health endpoints with a secret-free type for values; verify: a test that seeds known values and greps every log, metric and trace output for them
 - [x] 5.4 `scrim status` and `scrim doctor`; verify: reports active protections, interception mode, degraded stores and weakened settings in fixture setups
+- [x] 5.5 Prometheus monitoring behind `metrics.enabled`: control-plane metrics, data plane metrics over the `Metrics` call, bearer token for non-loopback listeners; verify: daemon end-to-end test scrapes the expected series after traffic through the real data plane and greps the page for every seeded value and encoding
+- [x] 5.6 Monitoring assets (alert rules with promtool tests, Grafana dashboard, scrape config) and runbooks in `docs/monitoring.md`; verify: `scripts/monitoring-check.sh` in CI
 
 ## 6. OpenBao and Infisical adapters
 
@@ -62,6 +64,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 6.3b Per-environment and bulk prefix mapping with collision checks; verify: one placeholder resolves to different references per profile and colliding templates fail
 - [x] 6.3c Catalog from store metadata, catalog files, environment and hot reload, with `scrim catalog show` and `scrim catalog suggest`; verify: OpenBao custom metadata binds a host and suggestions are printed, never applied
 - [x] 6.4 Store outage behaviour (last known set, fail closed for injection, degraded status); verify: tests that stop the store mid-run
+- [x] 6.5 Redact target globs (`APP_*` on env and file) and per-target value counts; a target that loads nothing stops start-up unless `redaction.allow-empty-targets` is on, and status never reports redaction active with an empty target; verify: the README quickstart config redacts `SCRIM_SECRET_X` through the real data plane, an empty target stops the daemon naming it, and with the setting the store is degraded with the target at 0 values
 
 ## 7. Policy, approvals and grants
 
@@ -90,7 +93,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 ## 10. Credential injection
 
 - [x] 10.1 Host binding for credentials in configuration and policy; verify: a placeholder toward an unbound host is refused and audited
-- [ ] 10.2 HTTPS tool proxy with CA generation, rotation and trust installation; verify: injection works toward bound hosts for curl, git and a Node client
+- [x] 10.2 HTTPS tool proxy with CA generation, rotation and trust installation; verify: injection works toward bound hosts for curl, git and a Node client
+- [x] 10.1a Unresolved placeholders toward bound hosts refused with `credential_unavailable` (unknown generated or reference placeholders, and declared placeholders of catalog credentials whose value has not loaded, sent as `Snapshot.unavailable`); verify: scrim-toolproxy and the data plane end-to-end test refuse every form and nothing reaches the host, look-alike text passes
 - [x] 10.2a User-declared placeholders mapped to references and bound hosts; verify: a config file with `SCRIM_ACME_KEY` works against a fake API and duplicate declarations fail validation
 - [x] 10.2b Substitution in URL, headers, cookies, form, JSON and multipart bodies with decompression, length, digest and re-signing; verify: gzip, chunked and HTTP/2 fixtures reach the fake upstream valid and unsupported encodings are refused
 - [x] 10.2c Redaction of tool-proxy responses, including streamed and compressed bodies; verify: an echoing fake API and a create-resource fake return only placeholders to the agent
@@ -129,24 +133,26 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 12. Shared state and Kubernetes
 
-- [ ] 12.1 Postgres-notify events for multiple replicas; verify: two replicas sharing one PostgreSQL agree on grants and approvals
-- [ ] 12.2 Kubernetes service account identity; verify: TokenReview-based identity in kind
+- [x] 12.1 Postgres-notify events for multiple replicas; verify: two replicas sharing one PostgreSQL agree on grants and approvals
+- [x] 12.2 Kubernetes service account identity; verify: TokenReview-based identity in kind
+- [x] 12.2e Verified service account tokens in the redaction set until they expire, redaction only; verify: a pod's token in a tool result reaches the fake provider as `⟦scrim:scrim-kubernetes-credential:…⟧` through the real data plane, and the default JWT detector matches a projected token's shape
 - [ ] 12.2a scrim as identity provider: per-session signed tokens, discovery document, signing keys, rotation; verify: OpenBao JWT auth accepts scrim tokens and rejects expired or wrong-audience ones
 - [ ] 12.2b Per-agent store identity with token exchange (Vault and OpenBao JWT, AWS web identity, Google federation, Azure federated credentials, Infisical OIDC) and the intersection rule; verify: one agent is denied by store policy that another passes, and CloudTrail-style audit shows the agent's session name against LocalStack
-- [ ] 12.2c Kubernetes service account passthrough and static per-agent fallback reported in doctor; verify: two agent pods with different service accounts get different OpenBao policies in kind
+- [x] 12.2c Kubernetes service account passthrough and static per-agent fallback reported in doctor; verify: two agent pods with different service accounts get different OpenBao policies in kind
 - [ ] 12.2d Separate redaction identity and the stricter per-agent redaction option marked as weakening; verify: a value the agent cannot use is still redacted
 - [x] 12.3 Helm chart (Deployment, Service, PDB, HPA, NetworkPolicy) and Kyverno injection policy; verify: agent pod in kind reaches providers only through scrim
-- [ ] 12.4 OpenBao and Infisical Kubernetes auth; verify: no static store credentials in the kind test
+- [x] 12.4 OpenBao and Infisical Kubernetes auth; verify: no static store credentials in the kind test
 - [ ] 12.5 Edge forwarder for ssh-agent, localhost database ports and the exec broker in agent pods; verify: `git push` over SSH and `psql` from an agent pod with a central scrim in kind
 
 ## 13. Local service and persistent interception (M2 exit)
 
-- [ ] 13.1 systemd unit and Quadlet with a dedicated user, `scrim install` and `scrim uninstall`; verify: uninstall leaves no trace in a VM test
+- [x] 13.1 systemd unit and Quadlet with a dedicated user, `scrim install` and `scrim uninstall`; verify: uninstall leaves no trace in a VM test (`test/service/vm-test.sh`: system and user units in a systemd container; Quadlet in unit tests)
 - [x] 13.2 Forward proxy listener; verify: an agent with HTTPS_PROXY set is redacted
 - [x] 13.2a `chatgpt.com` and `ab.chatgpt.com` routed to the LLM proxy (Responses codec for `/responses`, generic JSON elsewhere); verify: CONNECT to either through the forward proxy reaches the fake provider with placeholders only
 - [ ] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
 - [ ] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
 - [ ] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
+  - progress: the system trust store (`update-ca-certificates`, `update-ca-trust`) is installed and reverted by `scrim install --system`, and a system-store client trusts scrim through the forward proxy in the VM test; Java truststore and transparent mode open
 
 ## 14. Large deployments
 

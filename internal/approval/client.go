@@ -18,6 +18,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/breakglass"
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -38,6 +39,24 @@ func DefaultAdminSocket() string {
 	return filepath.Join(dir, "scrim", "admin.sock")
 }
 
+// SystemAdminSocket is the admin socket of the system service that
+// `scrim install --system` sets up.
+func SystemAdminSocket() string { return filepath.Join(localapi.SystemRuntimeDir, "admin.sock") }
+
+// ClientAdminSocket is where a client looks when admin.url is empty: the
+// per-user default socket when it exists, otherwise the system service's
+// socket when that exists, otherwise the per-user default.
+func ClientAdminSocket() string {
+	def := DefaultAdminSocket()
+	if _, err := os.Stat(def); err == nil {
+		return def
+	}
+	if _, err := os.Stat(SystemAdminSocket()); err == nil {
+		return SystemAdminSocket()
+	}
+	return def
+}
+
 // Client calls the admin API.
 type Client struct {
 	base  string
@@ -56,7 +75,7 @@ func (c *Client) WithToken(token secret.Value) *Client {
 // NewClient returns a client for addr (see [AdminURL]).
 func NewClient(addr string) (*Client, error) {
 	if addr == "" {
-		addr = "unix:" + DefaultAdminSocket()
+		addr = "unix:" + ClientAdminSocket()
 	}
 	if path, ok := strings.CutPrefix(addr, "unix:"); ok {
 		d := net.Dialer{Timeout: 5 * time.Second}

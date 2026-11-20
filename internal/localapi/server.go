@@ -57,6 +57,10 @@ type Server struct {
 	// Zero takes 15 seconds; negative disables the sweep.
 	SweepEvery time.Duration
 	Now        func() time.Time
+	// Endpoints, when set, serves GET /v1/endpoints: where a daemon this
+	// caller did not start offers its listeners, for `scrim run` under
+	// another user than the daemon's (a system service).
+	Endpoints func() Endpoints
 }
 
 type ctxKey int
@@ -178,6 +182,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	v := "/" + Version
 	open("GET "+v+"/version", s.version)
+	open("GET "+v+"/endpoints", s.endpoints)
 	mux.HandleFunc("GET "+v+"/whoami", s.whoami)
 	authed("POST "+v+"/sessions", s.mint)
 	authed("DELETE "+v+"/sessions/self", s.revokeSelf)
@@ -267,6 +272,28 @@ type VersionInfo struct {
 
 func (s *Server) version(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, VersionInfo{API: Version, Server: s.ServerVersion})
+}
+
+// Endpoints is the answer of GET /v1/endpoints. None of it is secret: the
+// listener addresses, the loopback upstreams to bypass and the public CA
+// certificates clients must trust.
+type Endpoints struct {
+	Ready    bool              `json:"ready"`
+	Problems map[string]string `json:"problems,omitempty"`
+	// BaseURL is the LLM proxy's base URL, for example http://127.0.0.1:9790.
+	BaseURL string `json:"base_url,omitempty"`
+	// ForwardProxy is the forward proxy listener (host:port), or empty.
+	ForwardProxy string   `json:"forward_proxy,omitempty"`
+	Bypass       []string `json:"bypass,omitempty"`
+	CAPEM        string   `json:"ca_pem,omitempty"`
+}
+
+func (s *Server) endpoints(w http.ResponseWriter, _ *http.Request) {
+	if s.Endpoints == nil {
+		writeError(w, agenttools.Errorf(agenttools.CodeNotFound, "this API serves no daemon endpoints"))
+		return
+	}
+	writeJSON(w, http.StatusOK, s.Endpoints())
 }
 
 func (s *Server) whoami(w http.ResponseWriter, r *http.Request) {

@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
+	"github.com/heliopsy/scrim/internal/testing/pgtest"
 	"github.com/heliopsy/scrim/internal/testing/testhome"
 )
 
@@ -33,7 +34,9 @@ func TestMain(m *testing.M) {
 	if os.Getenv("SCRIM_FAKE_DP") == "1" {
 		os.Exit(fakeDataPlane())
 	}
-	os.Exit(testhome.Run(m))
+	code := testhome.Run(m)
+	pgtest.Stop()
+	os.Exit(code)
 }
 
 const (

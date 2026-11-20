@@ -47,7 +47,7 @@ var DenyAll = config.Register(config.Spec[bool]{
 var RefreshInterval = config.Register(config.Spec[time.Duration]{
 	Key:         "policy.deny-all-refresh",
 	Default:     time.Second,
-	Description: "How often each replica re-reads the deny-all state from the state backend; the bound on how long a change on one replica takes to reach the others.",
+	Description: "How often each replica re-reads the deny-all state from the state backend; the bound on how long a change on one replica takes to reach the others when no event announces it (events.backend).",
 	Validate: func(d time.Duration) error {
 		if d <= 0 || d > time.Minute {
 			return errors.New("must be between 0 and 1m")
@@ -82,6 +82,8 @@ type Switch struct {
 	engaged    atomic.Bool
 	now        func() time.Time
 
+	poke chan struct{}
+
 	mu       sync.Mutex
 	status   Status
 	onChange []func(active bool)
@@ -89,7 +91,7 @@ type Switch struct {
 
 // New loads the switch from st. configured is the policy.deny-all value.
 func New(ctx context.Context, st state.Store, configured bool) (*Switch, error) {
-	s := &Switch{st: st, now: time.Now}
+	s := &Switch{st: st, now: time.Now, poke: make(chan struct{}, 1)}
 	s.configured.Store(configured)
 	if err := s.Refresh(ctx); err != nil {
 		return nil, err
@@ -221,10 +223,21 @@ func (s *Switch) notify(before bool) {
 	}
 }
 
-// Run refreshes every interval until ctx ends, so changes made on another
-// replica take effect within interval. A refresh error keeps the last known
-// state; if that state was off, the error is the caller's to report as
-// degraded.
+// Poke makes Run refresh now instead of at its next tick: the events
+// backend calls it when another replica engages or releases deny-all. It
+// never blocks.
+func (s *Switch) Poke() {
+	select {
+	case s.poke <- struct{}{}:
+	default:
+	}
+}
+
+// Run refreshes every interval, and at once after each [Switch.Poke], until
+// ctx ends, so a change made on another replica takes effect within
+// interval even when no event announces it. A refresh error keeps the last
+// known state; if that state was off, the error is the caller's to report
+// as degraded.
 func (s *Switch) Run(ctx context.Context, interval time.Duration, onErr func(error)) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -233,9 +246,10 @@ func (s *Switch) Run(ctx context.Context, interval time.Duration, onErr func(err
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := s.Refresh(ctx); err != nil && onErr != nil {
-				onErr(err)
-			}
+		case <-s.poke:
+		}
+		if err := s.Refresh(ctx); err != nil && onErr != nil {
+			onErr(err)
 		}
 	}
 }

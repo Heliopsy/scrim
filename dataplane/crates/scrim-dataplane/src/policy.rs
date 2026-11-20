@@ -526,6 +526,7 @@ mod tests {
             session: Some("s1".into()),
             peer: None,
             verifier: None,
+            kubernetes_token: None,
         };
         sess.apply(&mut r);
         assert!(d.decide(&r, &sess, "t").await.asked);

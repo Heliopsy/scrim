@@ -18,6 +18,7 @@ scrim-toolproxy = { path = "../scrim-toolproxy" }
 scrim-llm = { path = "../scrim-llm", features = ["intercept", "redact"] }
 scrim-redact = { path = "../scrim-redact" }
 scrim-policy = { path = "../scrim-policy", features = ["llm"] }
+scrim-metrics = { path = "../scrim-metrics" }
 hmac = "0.12"
 sha2 = "0.10"
 http = "1"

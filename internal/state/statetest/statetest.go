@@ -12,6 +12,7 @@ package statetest
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,6 +40,8 @@ func Run(t *testing.T, f Factory) {
 		{"ApplyNeedsAudit", applyNeedsAudit},
 		{"AuditQuery", auditQuery},
 		{"EventsInOrder", eventsInOrder},
+		{"LastEventID", lastEventID},
+		{"EventCommitHook", eventCommitHook},
 		{"ViewIsReadOnly", viewIsReadOnly},
 	}
 	for _, c := range cases {
@@ -493,6 +496,77 @@ func eventsInOrder(t *testing.T, s state.Store) {
 		}
 		return nil
 	})
+}
+
+func lastEventID(t *testing.T, s state.Store) {
+	ctx := t.Context()
+	last := func() int64 {
+		t.Helper()
+		var id int64
+		if err := s.View(ctx, func(tx state.Tx) error {
+			var err error
+			id, err = tx.LastEventID(ctx)
+			return err
+		}); err != nil {
+			t.Fatalf("LastEventID: %v", err)
+		}
+		return id
+	}
+	if id := last(); id != 0 {
+		t.Fatalf("LastEventID on an empty outbox = %d", id)
+	}
+	var ids []int64
+	update(t, s, func(tx state.Tx) error {
+		for _, k := range []string{"a", "b"} {
+			e := &state.Event{Kind: k, Time: t0}
+			if err := tx.Emit(ctx, e); err != nil {
+				return err
+			}
+			ids = append(ids, e.ID)
+		}
+		return nil
+	})
+	if id := last(); id != ids[1] {
+		t.Fatalf("LastEventID = %d, want %d", id, ids[1])
+	}
+	// A rolled-back event does not move it.
+	_ = s.Update(ctx, func(tx state.Tx) error {
+		_ = tx.Emit(ctx, &state.Event{Kind: "c", Time: t0})
+		return errors.New("roll back")
+	})
+	if id := last(); id != ids[1] {
+		t.Fatalf("LastEventID after a rollback = %d, want %d", id, ids[1])
+	}
+}
+
+func eventCommitHook(t *testing.T, s state.Store) {
+	ctx := t.Context()
+	h, ok := s.(state.CommitHook)
+	if !ok {
+		t.Fatal("backend does not implement state.CommitHook")
+	}
+	var n atomic.Int32
+	h.OnEventCommit(func() { n.Add(1) })
+	// No event, a rolled-back event: no call.
+	update(t, s, func(tx state.Tx) error {
+		return tx.AppendAudit(ctx, &audit.Entry{Time: t0, Action: "x"})
+	})
+	_ = s.Update(ctx, func(tx state.Tx) error {
+		_ = tx.Emit(ctx, &state.Event{Kind: "a", Time: t0})
+		return errors.New("roll back")
+	})
+	if got := n.Load(); got != 0 {
+		t.Fatalf("hook ran %d times without a committed event", got)
+	}
+	update(t, s, func(tx state.Tx) error {
+		if err := tx.Emit(ctx, &state.Event{Kind: "a", Time: t0}); err != nil {
+			return err
+		}
+		return tx.Emit(ctx, &state.Event{Kind: "b", Time: t0})
+	})
+	if got := n.Load(); got != 1 {
+		t.Fatalf("hook ran %d times for one committed transaction", got)
+	}
 }
 
 func viewIsReadOnly(t *testing.T, s state.Store) {

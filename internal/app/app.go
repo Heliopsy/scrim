@@ -20,6 +20,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/dataplane"
+	"github.com/heliopsy/scrim/internal/events"
 	"github.com/heliopsy/scrim/internal/notify"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/policy"
@@ -51,8 +52,12 @@ type App struct {
 	// PolicyParts are the rule set, break-glass, grants, approvals and the
 	// gate behind Policy.
 	PolicyParts *Policy
+	// Events follows the state outbox and wakes the policy components when
+	// another replica changes something; RunPolicy runs it.
+	Events *events.Bus
 
-	stop context.CancelFunc
+	configs *configDigests
+	stop    context.CancelFunc
 	// SnapshotSource builds data plane snapshots; nil sends an empty one.
 	SnapshotSource dataplane.SnapshotFunc
 
@@ -119,7 +124,11 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 		return nil, err
 	}
 	cfg := a.Config.Current()
-	a.Instruments = obs.NewInstruments(a.Metrics, a.Scrubber)
+	if obs.MetricsEnabled.Get(cfg) {
+		a.Instruments = obs.NewInstruments(a.Metrics, a.Scrubber)
+	} else {
+		a.Instruments = obs.DisabledInstruments()
+	}
 	weak := []string{}
 	for _, w := range config.WeakenedSettings(cfg) {
 		weak = append(weak, w.Key)
@@ -135,6 +144,9 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 	}
 	a.Policy = policy.Static{Effect: effect}
 
+	if err := events.CheckReplicas(cfg); err != nil {
+		return nil, err
+	}
 	if a.State, err = state.Open(ctx, cfg); err != nil {
 		return nil, err
 	}
@@ -150,6 +162,10 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 		_ = a.State.Close()
 		return nil, fmt.Errorf("state: migrate: %w", err)
 	}
+	if err := a.initEvents(ctx, cfg); err != nil {
+		_ = a.State.Close()
+		return nil, err
+	}
 	if err := a.initPolicy(ctx, cfg); err != nil {
 		_ = a.State.Close()
 		return nil, fmt.Errorf("policy: %w", err)
@@ -161,6 +177,7 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 		OnChange: a.valuesChanged,
 		OnStatus: func(st refresh.Status) {
 			a.Instruments.StoreHealth(st.Store, st.Healthy, st.LastSuccess, st.Values, st.State == refresh.StateDegraded)
+			a.Instruments.StoreRefresh(st.Store, st.LastDuration, st.LastError != "")
 		},
 	})
 	if err != nil {

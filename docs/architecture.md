@@ -229,7 +229,7 @@ sequenceDiagram
   end
   X->>X: find every placeholder in URL, headers, cookies, body
   X->>X: check each one against its binding: host, method, path, location
-  alt credential not in memory or past the staleness limit
+  alt credential not in memory, past the staleness limit, or a placeholder nothing resolves
     X-->>A: 503 credential_unavailable
   end
   X->>X: substitute, encoded for where each value lands

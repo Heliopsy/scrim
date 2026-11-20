@@ -60,7 +60,7 @@ its guide.
 | ----- | --------- | --------- |
 | `stores.<name>.kind` | required | Adapter kind. |
 | `stores.<name>.aliases` | none | Extra schemes that address this instance. |
-| `stores.<name>.redact` | none | References loaded into the redaction set at start and kept fresh. A reference ending in `/*` loads every secret under that prefix; a `#field` limits a single secret to one field. References must use the instance name as their scheme. |
+| `stores.<name>.redact` | none | References loaded into the redaction set at start and kept fresh. A reference ending in `/*` loads every secret under that folder; one ending in `*` right after part of a name (`APP_*`, `dir/app-*`) is a glob that loads every secret whose path starts with the text before the `*` (env and file stores only); a `#field` limits a single secret to one field. A `*` anywhere else is refused. References must use the instance name as their scheme. |
 | `stores.<name>.refresh.interval` | `5m` | Full refresh period, spread by ±20% jitter. |
 | `stores.<name>.refresh.retention` | `24h` | How long a rotated, deleted or overwritten value stays in the redaction set. |
 | `stores.<name>.refresh.staleness` | `15m` | How long a value confirmed by the store may still be injected without a newer confirmation, and how long the store may be unreachable before it is reported unhealthy. |
@@ -76,6 +76,23 @@ a reference into another configured store. They are resolved at start; a referen
 resolved stops start-up, and no store is contacted with an empty credential. `scrim config show`
 masks them. A literal still works, but scrim logs a warning naming the field. scrim also adds the
 credentials it holds, and the session tokens a store issues at login, to the redaction set.
+
+### Empty redact targets
+
+Every redact target reports how many values it holds. A target that holds nothing after the first
+load (a misspelt name, a glob that matches no variable, a prefix or allow list that hides it) stops
+start-up with an error naming it:
+
+```text
+store local: redact target loaded no values: local://SCRIM_SECRET_NOTHING_* matched no secret; check the
+name and the store's prefix or allow list, or set redaction.allow-empty-targets to start anyway
+```
+
+`redaction.allow-empty-targets: true` is a weakening setting: scrim starts, warns at start-up,
+lists the setting under weakened protections, and reports the store as degraded with the empty
+target at 0 values. `scrim status` shows the count of every target, and never reports redaction as
+active while one is empty. An unreachable store is not an empty target: it stays not ready, as
+below.
 
 ## Freshness and outages
 

@@ -771,7 +771,7 @@ Capture mode writes every provider request exactly as it left scrim, and the res
 to a directory (mode 0700). Agent credentials in headers are masked.
 
 ```sh
-scrim proxy --capture ~/scrim-capture
+scrim proxy --capture="$HOME/scrim-capture"
 ```
 
 (Lands with the daemon, v0.1.0. The flag takes a directory; `proxy.capture.dir` is the setting and

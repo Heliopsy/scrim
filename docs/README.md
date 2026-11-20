@@ -18,6 +18,7 @@ to start. The behaviour contract, with every requirement and scenario, is the Op
 | [install.md](install.md) | Release archives, signature and provenance checks, container images, reproducible builds |
 | [running.md](running.md) | `scrim proxy`: the daemon, its listeners and sockets, snapshots, capture mode, shutdown, a systemd unit |
 | [kubernetes.md](kubernetes.md) | The Helm chart: central and sidecar modes, Kyverno injection, NetworkPolicy, CA and keys, identity, scaling, monitoring, troubleshooting |
+| [service.md](service.md) | `scrim install` and `scrim uninstall`: user unit, hardened system unit, Quadlet, upgrade, logs, the VM test |
 | [configuration.md](configuration.md) | Config files, `SCRIM_*` environment variables, flags, precedence, profiles, reload and every setting |
 
 ## Secrets
@@ -52,6 +53,7 @@ to start. The behaviour contract, with every requirement and scenario, is the Op
 | Page | Covers |
 | --- | --- |
 | [state-and-observability.md](state-and-observability.md) | State backends, the audit log, metrics, traces, health, `scrim status` and `scrim doctor` |
+| [monitoring.md](monitoring.md) | Prometheus metrics behind `metrics.enabled`, every metric, alert runbooks, the Grafana dashboard, scrape config and endpoint security |
 | [leak-assurance.md](leak-assurance.md) | The leak suite, the bypass matrix, running it yourself and known limitations |
 
 Security issues go through [SECURITY.md](../SECURITY.md), not public issues.

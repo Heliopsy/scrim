@@ -180,6 +180,7 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 		cat = b.Catalog()
 	}
 	snap.Values = b.values(cat)
+	snap.Unavailable = unavailable(cat, snap.Values)
 
 	if b.CA != nil {
 		gens := b.CA()
@@ -281,6 +282,52 @@ func uniqueNames(entries []*pb.ValueEntry) []*pb.ValueEntry {
 		}
 	}
 	clear(entries[len(out):])
+	return out
+}
+
+// unavailable lists the catalog credentials bound to hosts that have no
+// current value in values: a store still loading, a read that failed. The
+// tool proxy refuses their placeholders toward their hosts with
+// credential_unavailable instead of forwarding them as text
+// (specs/credential-injection "Unresolved placeholders are refused"). No
+// value is copied.
+func unavailable(cat *catalog.Catalog, values []*pb.ValueEntry) []*pb.ValueEntry {
+	if cat == nil {
+		return nil
+	}
+	have := map[string]bool{}
+	declared := map[string]bool{}
+	for _, v := range values {
+		have[v.GetRef()] = true
+		if r, err := stores.ParseRef(v.GetRef()); err == nil {
+			have[r.Secret().String()] = true
+		}
+		if v.GetName() != "" {
+			have["name:"+v.GetName()] = true
+		}
+		for _, p := range v.GetDeclaredPlaceholders() {
+			declared[p] = true
+		}
+	}
+	var out []*pb.ValueEntry
+	for _, e := range cat.Entries() {
+		bd := e.Binding
+		if !e.OK || e.Entry.Prefix != "" || bd.Ref.IsZero() || !bd.Injectable() || bd.Class == catalog.ClassDisplay {
+			continue
+		}
+		if have[bd.Ref.String()] || have[bd.Ref.Secret().String()] || have["name:"+bd.Name] {
+			continue
+		}
+		u := &pb.ValueEntry{
+			Ref: bd.Ref.String(), Name: bd.Name, Slug: SlugFor(bd, bd.Ref), Class: pb.ValueClass_VALUE_CLASS_CREDENTIAL,
+			Store: bd.Ref.Scheme, BoundHosts: slices.Clone(bd.Hosts), InjectLocations: slices.Clone(bd.Inject),
+		}
+		if bd.Placeholder != "" && !declared[bd.Placeholder] {
+			declared[bd.Placeholder] = true
+			u.DeclaredPlaceholders = []string{bd.Placeholder}
+		}
+		out = append(out, u)
+	}
 	return out
 }
 

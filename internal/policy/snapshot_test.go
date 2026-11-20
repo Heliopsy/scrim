@@ -461,3 +461,25 @@ func TestSpecDataPlaneScenarios(t *testing.T) {
 		t.Fatalf("control plane: night %+v day %+v", night, day)
 	}
 }
+
+func TestStoreIdentityRuleSendsUsesToTheControlPlane(t *testing.T) {
+	s := Snapshot{Format: SnapshotFormat, Default: Allow, Rules: []SnapshotRule{StoreIdentityRule([]string{"bao"})}}
+	for _, c := range []struct {
+		action Action
+		store  string
+		want   Outcome
+	}{
+		{ActionInject, "bao", OutcomeControlPlane},
+		{ActionRestore, "bao", OutcomeControlPlane},
+		{ActionInject, "env", OutcomeAllow},
+		{ActionForward, "bao", OutcomeAllow},
+	} {
+		// Anonymous callers too: the store check needs an identity.
+		if got := s.Evaluate(Request{Action: c.action, Store: c.store}); got.Outcome != c.want {
+			t.Errorf("%s %s: %+v", c.action, c.store, got)
+		}
+		if got := s.EvaluateUnknownAgent(Request{Action: c.action, Store: c.store}); got.Outcome != c.want {
+			t.Errorf("%s %s unknown agent: %+v", c.action, c.store, got)
+		}
+	}
+}

@@ -72,6 +72,78 @@ func TestLogTraceIDs(t *testing.T) {
 	}
 }
 
+func TestDisabledInstrumentsRecordNothing(t *testing.T) {
+	var nilIn *Instruments
+	for _, in := range []*Instruments{DisabledInstruments(), nilIn} {
+		if in.On() {
+			t.Fatal("disabled instruments report on")
+		}
+		in.Redaction("p", "r", "a", 1)
+		in.GuardRefusal("p", "a")
+		in.StoreHealth("s", true, time.Now(), 1, false)
+		in.StoreRefresh("s", time.Second, true)
+		in.AuditDropped("x", 1)
+		in.StateTransaction("b", "view", time.Millisecond)
+		in.Weakened([]string{"k"})
+	}
+}
+
+func TestRequireBearer(t *testing.T) {
+	tok := secret.New([]byte("0123456789abcdef-token"))
+	defer tok.Wipe()
+	mux := Mux(NewHealth(), NewMetrics(), MuxOptions{Path: "/m", Token: tok})
+	for _, c := range []struct {
+		path, auth string
+		want       int
+	}{
+		{"/m", "", http.StatusUnauthorized},
+		{"/m", "Bearer wrong", http.StatusUnauthorized},
+		{"/m", "Bearer 0123456789abcdef-token", http.StatusOK},
+		{"/healthz", "", http.StatusOK},
+		{"/metrics", "Bearer 0123456789abcdef-token", http.StatusNotFound},
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, c.path, nil)
+		if c.auth != "" {
+			req.Header.Set("Authorization", c.auth)
+		}
+		mux.ServeHTTP(rec, req)
+		if rec.Code != c.want {
+			t.Errorf("%s %q: status %d, want %d", c.path, c.auth, rec.Code, c.want)
+		}
+		if strings.Contains(rec.Body.String(), "0123456789abcdef") {
+			t.Errorf("%s: response echoes the token", c.path)
+		}
+	}
+}
+
+func TestCheckMetricsAuth(t *testing.T) {
+	short := secret.New([]byte("short"))
+	long := secret.New([]byte("0123456789abcdef"))
+	defer short.Wipe()
+	defer long.Wipe()
+	for _, c := range []struct {
+		addr  string
+		tok   secret.Value
+		allow bool
+		ok    bool
+	}{
+		{"127.0.0.1:9792", secret.Value{}, false, true},
+		{"[::1]:9792", secret.Value{}, false, true},
+		{"localhost:9792", secret.Value{}, false, true},
+		{"0.0.0.0:9792", secret.Value{}, false, false},
+		{":9792", secret.Value{}, false, false},
+		{"10.0.0.5:9792", long, false, true},
+		{"10.0.0.5:9792", secret.Value{}, true, true},
+		{"127.0.0.1:9792", short, false, false},
+	} {
+		err := CheckMetricsAuth(c.addr, c.tok, c.allow)
+		if (err == nil) != c.ok {
+			t.Errorf("%s allow=%v: err %v, want ok=%v", c.addr, c.allow, err, c.ok)
+		}
+	}
+}
+
 func scrape(t *testing.T, m *Metrics) string {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -87,15 +159,10 @@ func TestInstruments(t *testing.T) {
 	m := NewMetrics()
 	in := NewInstruments(m, nil)
 	in.GuardRefusal("anthropic", "claude-laptop")
-	in.AddedLatency("anthropic", StageRedaction, time.Millisecond)
-	in.AddedLatency("openai", StageGuard, time.Millisecond)
-	in.ChunkLatency("openai", StageResolution, time.Microsecond)
 	in.StoreHealth("bao", false, time.Unix(1700000000, 0), 12, true)
-	in.Approval("deploy", "ntfy", ApprovalTimedOut)
-	in.ApprovalWait("deploy", "ntfy", 2*time.Minute)
+	in.StoreRefresh("bao", 250*time.Millisecond, true)
 	in.AuditDropped("kafka", 3)
 	in.AuditDelivered("db", 1)
-	in.StateUp("sqlite", true)
 	in.StateTransaction("sqlite", "update", time.Millisecond)
 	in.Weakened([]string{"state.sqlite.allow-network-filesystem"})
 	in.Redaction("anthropic", "known", "a1", 2)
@@ -104,18 +171,15 @@ func TestInstruments(t *testing.T) {
 	body := scrape(t, m)
 	for _, want := range []string{
 		`scrim_guard_refusals_total{agent="claude-laptop",provider="anthropic"} 1`,
-		`scrim_proxy_added_latency_seconds_count{provider="anthropic",stage="redaction"} 1`,
-		`scrim_proxy_added_latency_seconds_count{provider="openai",stage="guard"} 1`,
-		`scrim_proxy_chunk_added_latency_seconds_count{provider="openai",stage="resolution"} 1`,
 		`scrim_store_up{store="bao"} 0`,
 		`scrim_store_degraded{store="bao"} 1`,
 		`scrim_store_values_loaded{store="bao"} 12`,
 		`scrim_store_last_refresh_timestamp_seconds{store="bao"} 1.7e+09`,
-		`scrim_approval_outcomes_total{notifier="ntfy",outcome="timed_out",rule="deploy"} 1`,
-		`scrim_approval_wait_seconds_count{notifier="ntfy",rule="deploy"} 1`,
+		`scrim_store_refresh_duration_seconds_count{store="bao"} 1`,
+		`scrim_store_refresh_errors_total{store="bao"} 1`,
+		`scrim_store_staleness_seconds{store="bao"} `,
 		`scrim_audit_dropped_total{sink="kafka"} 3`,
 		`scrim_audit_delivered_total{sink="db"} 1`,
-		`scrim_state_up{backend="sqlite"} 1`,
 		`scrim_state_transaction_seconds_count{backend="sqlite",kind="update"} 1`,
 		`scrim_config_weakened_settings{setting="state.sqlite.allow-network-filesystem"} 1`,
 		`scrim_redaction_replacements_total{agent="a1",provider="anthropic",rule="known"} 2`,
@@ -145,7 +209,7 @@ func TestMuxEndpoints(t *testing.T) {
 	h := NewHealth()
 	h.Live("process", func(context.Context) error { return nil })
 	h.Ready("store:bao", func(context.Context) error { return errors.New("never loaded") })
-	mux := Mux(h, NewMetrics())
+	mux := Mux(h, NewMetrics(), MuxOptions{})
 	for path, want := range map[string]int{"/healthz": 200, "/livez": 200, "/readyz": 503, "/metrics": 200, "/nope": 404} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
