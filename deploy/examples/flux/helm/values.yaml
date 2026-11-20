@@ -1,16 +1,31 @@
-# Central mode: one scrim Deployment serves the agent pods in `agents` through
-# its Service. Secrets come from OpenBao; the only credential in the cluster is
-# scrim's OpenBao token, a Secret mounted by reference (secretMounts), never a
-# value in these values.
+# Central mode, one replica: a scrim Deployment serves the agent pods in
+# `agents` through its Service. OpenBao is the store and scrim logs in to it
+# with its own service account (storeAuth), so no store credential exists in
+# the cluster. Kyverno configures pods labelled scrim.dev/inject: central, and
+# the NetworkPolicies keep them on scrim and DNS.
 #
-#   kubectl --context <ctx> -n scrim create secret generic scrim-openbao --from-file=token=./bao-token
-#   helm --kube-context <ctx> install scrim deploy/helm/scrim -n scrim -f values-central.yaml
+# The OpenBao role `scrim` binds the service account scrim-proxy in namespace
+# scrim with audience openbao (docs/stores/openbao.md, Kubernetes auth). Every
+# redact target must match at least one secret on the first load, or scrim
+# refuses to start.
+#
+#   helm --kube-context <ctx> install scrim oci://ghcr.io/heliopsy/charts/scrim \
+#     --version <version> -n scrim --create-namespace -f values-central.yaml
+#
+# For several replicas on PostgreSQL, metrics and alerts, start from the
+# chart's examples/production.yaml instead.
+storeAuth:
+  serviceAccountToken:
+    enabled: true
+    audience: openbao
 config:
   stores:
     bao:
       kind: openbao
       address: https://bao.example.com:8200
-      token: file:/run/secrets/scrim/bao/token
+      auth:
+        method: kubernetes
+        kubernetes: {role: scrim, token-file: /var/run/secrets/scrim/store-token}
       redact: ["bao://kv/agents/*"]
   catalog:
     entries:
@@ -19,20 +34,14 @@ config:
         hosts: [api.github.com]
         placeholder: SCRIM_GITHUB_TOKEN
         inject: ["header:Authorization"]
-
-secretMounts:
-  - name: bao
-    secretName: scrim-openbao
-
-# Agent pods reach scrim over TCP without a session, as unknown callers, until
-# Kubernetes identity lands; the built-in injection rule serves only known
-# agents. This rule injects the GitHub token toward its bound host for any
-# caller that can reach scrim, which the NetworkPolicy limits to labelled pods.
-policyRules:
-  rules:
-    - name: agents-github-read
-      decision: allow
-      when: op == "inject" && secret.name == "github" && dest.method in ["GET", "HEAD"]
-
 agents:
   namespaces: [agents]
+kyverno:
+  enabled: true
+networkPolicy:
+  enabled: true
+  scrimEgress:
+    # Providers and GitHub over HTTPS, OpenBao on its own port.
+    - ports:
+        - {port: 443, protocol: TCP}
+        - {port: 8200, protocol: TCP}

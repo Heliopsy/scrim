@@ -65,10 +65,11 @@ catalog:
 ```
 
 The env store reads secrets from scrim's own environment, so the example works without a secret
-store. List every variable to redact by name: a redact target ending in `/*` loads a folder of a
-store, and environment variables have no folders, so `local://SCRIM_SECRET_*` would load nothing.
-For daily use, point a store at OpenBao, Infisical or Vaultwarden ([stores](../stores/README.md))
-and redact a folder of it.
+store. The target names the variable; from 0.2.0 on, `local://SCRIM_SECRET_*` also works and
+redacts every variable with that prefix (0.1.0 read it as one variable named `SCRIM_SECRET_*`).
+A redact target that loads nothing stops `scrim proxy` at start-up with an error naming it, so
+export the variable before starting scrim. For daily use, point a store at OpenBao, Infisical or
+Vaultwarden ([stores](../stores/README.md)) and redact a folder of it.
 
 ```sh
 mkdir -p ~/.config/scrim

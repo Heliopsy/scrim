@@ -106,8 +106,8 @@ The Quadlet unit has no `[Install]` enablement step: the generator links it into
 podman-auto-update.timer`) pulls 0.1.x patch releases, restarts the unit and rolls back when the
 new container fails to start. Pin `0.1.0` or a digest to update only by editing the file.
 
-`scrim install --quadlet` writes and records an equivalent unit once the service-install release
-is out ([service.md](../service.md)).
+`scrim install --quadlet` (0.2.0 and later) writes and records an equivalent unit
+([service.md](../service.md)).
 
 ## podman kube play
 

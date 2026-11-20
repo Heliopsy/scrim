@@ -1,6 +1,10 @@
-# scrim from the chart in this repository, values from your fleet repository.
-# targetRevision is a release tag; Renovate or Argo CD Image Updater moves it.
-# The chart ships from the first release that contains deploy/helm/scrim.
+# scrim from the OCI chart each release publishes (ghcr.io/heliopsy/charts/scrim,
+# 0.2.0 and later), values from your fleet repository. targetRevision is the
+# chart version; Renovate moves it. repository-scrim-charts.yaml registers the
+# OCI repository with Argo CD.
+#
+# From git instead: repoURL https://github.com/Heliopsy/scrim, targetRevision
+# v0.2.0, path deploy/helm/scrim in place of chart.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -16,9 +20,9 @@ spec:
     server: https://kubernetes.default.svc
     namespace: scrim
   sources:
-    - repoURL: https://github.com/Heliopsy/scrim
-      targetRevision: v0.2.0
-      path: deploy/helm/scrim
+    - repoURL: ghcr.io/heliopsy/charts
+      chart: scrim
+      targetRevision: 0.2.0
       helm:
         releaseName: scrim
         valueFiles:

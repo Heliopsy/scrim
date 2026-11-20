@@ -5,6 +5,9 @@
 # scrim-keys (placeholder-k1). The CA certificate is public; paste its PEM
 # here so the chart can publish it to agents without reading the Secret:
 #   kubectl --context <ctx> -n scrim get secret scrim-ca -o jsonpath='{.data.tls\.crt}' | base64 -d
+# The same goes for the metrics token the chart generates with
+# metrics.enabled: name a Secret of yours in secrets.existing.metrics (key
+# token) when you turn metrics on.
 ca:
   create: false
   existingSecret: scrim-ca

@@ -39,6 +39,14 @@ proxy:
 metrics:
   listen: 0.0.0.0:9792
 
+# The k8s profile identifies agent pods by their service account tokens,
+# which needs scrim's own API token and a TokenReview binding. These
+# manifests have neither, so agent pods are unknown callers: redacted, never
+# injected for. The Helm chart wires identity.
+identity:
+  kubernetes:
+    enabled: false
+
 log:
   format: json
 

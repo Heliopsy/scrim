@@ -6,8 +6,8 @@ written up to date in a fleet repository, with one pull request per scrim releas
 | Where | Manager |
 | --- | --- |
 | `newTag` and `digest` in kustomize overlays | `kustomize`, with digests pinned |
-| `ref.tag` of Flux GitRepository and OCIRepository sources, HelmRelease chart versions | `flux` |
-| `targetRevision` of the Argo CD Applications | `argocd` |
+| `ref.tag` of Flux GitRepository and OCIRepository sources (the chart's OCIRepository once you pin it to a tag), HelmRelease chart versions | `flux` |
+| `targetRevision` of the Argo CD Applications, the OCI chart `ghcr.io/heliopsy/charts/scrim` included | `argocd` |
 | `VERSION=` in install scripts and cloud-init, `scrim_version` in Ansible defaults | a regex manager on GitHub releases |
 
 Patch releases for the dev overlay merge themselves; staging and prod wait for review, which is the

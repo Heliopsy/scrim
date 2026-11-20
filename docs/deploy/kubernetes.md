@@ -71,10 +71,17 @@ and mount the CA certificate (`kubectl --context "$CONTEXT" -n scrim get secret 
 jsonpath='{.data.tls\.crt}' | base64 -d` is public) with `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE`
 pointing at it. The Helm chart does that wiring for labelled pods.
 
-Agent pods reach scrim without a `scrim run` session, so they are unknown callers: their provider
-requests are redacted like everyone's, but the built-in injection rule serves only identified
-agents. To inject credentials for them, add a rules file with an explicit rule
-([helm.md](helm.md#credential-injection-for-agent-pods) has one) and set `policy.rules-file`.
+Agent pods reach scrim without a `scrim run` session and without a service account token scrim
+can check, so they are unknown callers: their provider requests are redacted like everyone's, and
+nothing is injected for them. The config sets `identity.kubernetes.enabled: false`, which the `k8s`
+profile turns on, because these manifests give scrim no API token and no TokenReview binding.
+Kubernetes identity (a projected token per agent pod, the `scrim-exec` launcher, the TokenReview
+binding) is wired by the [Helm chart](helm.md#central-mode); use it when agents need credentials
+injected.
+
+`SECRETS_DIR` must hold at least one file. scrim refuses to start while a redact target loads
+nothing, so an empty `scrim-agent-secrets` leaves the pod in CrashLoopBackOff with an error naming
+`files://agents/*`.
 
 ## Kustomize
 
@@ -92,12 +99,15 @@ inside YAML.
 
 | Overlay | Replicas | State | NetworkPolicy | Image |
 | --- | --- | --- | --- | --- |
-| `overlays/dev` | 1 | memory | no | `0.1.0`, rewritten by Flux image automation |
-| `overlays/staging` | 2 | PostgreSQL | yes | `0.1.0` |
-| `overlays/prod` | 3, spread over nodes, PDB `minAvailable: 2` | PostgreSQL | yes | `0.1.0` pinned by digest |
+| `overlays/dev` | 1 | memory | no | rewritten by Flux image automation |
+| `overlays/staging` | 2 | PostgreSQL | yes | the release |
+| `overlays/prod` | 3, spread over nodes, PDB `minAvailable: 2` | PostgreSQL | yes | the release, with a `digest:` line for the digest `cosign verify` printed |
 
 The components in `kustomize/components/` are `postgres` (adds `overlay-postgres.yaml` with
-`state.backend: postgres` and mounts the Secret `scrim-postgres`, key `dsn`) and `networkpolicy`.
+`state.backend: postgres` and `events.backend: postgres`, and mounts the Secret `scrim-postgres`,
+key `dsn`) and `networkpolicy`. The staging and prod overlays set `deployment.replicas` to their
+replica count, and scrim refuses to start with more than one replica unless state and events are
+both on PostgreSQL. Change the two numbers together.
 
 ```sh
 CONTEXT=my-cluster
@@ -139,6 +149,25 @@ pod calling `https://api.anthropic.com` directly times out. To look at what the 
 set `proxy.capture.dir: /var/lib/scrim/capture` in an overlay file for a test environment and copy
 the directory out with `kubectl cp`; capture mode writes your prompts to the pod's disk, so leave
 it off in production.
+
+## Metrics
+
+The base serves only `/livez` and `/readyz` on port 9792. To expose `/metrics` there, add an
+overlay file with `metrics.enabled: true` and a bearer token, which scrim requires on a listener
+outside loopback:
+
+```yaml
+apiVersion: scrim.dev/v1
+kind: Config
+metrics:
+  enabled: true
+  auth:
+    token: file:/run/secrets/scrim-keys/metrics-token
+```
+
+Add a `metrics-token` key (`openssl rand -hex 32`) to `scrim-keys`, and let Prometheus reach port
+9792 if the NetworkPolicy is on. Metric meanings, alerts and the dashboard are in
+[monitoring.md](../monitoring.md); the Helm chart wires all of this with `metrics.enabled`.
 
 ## Upgrade and roll back
 

@@ -6,13 +6,14 @@ Kubernetes at all. Sort them first:
 | Credential | What it is | Where it lives |
 | --- | --- | --- |
 | Agent secrets (GitHub token, npm token, database password) | the values scrim redacts and injects | in your secret store. scrim reads them with its own identity through a store reference (`bao://kv/agents/github#token`); they never become Kubernetes Secrets and never pass through Flux, Argo CD or External Secrets |
-| scrim's store login | how scrim authenticates to OpenBao, Infisical or Vaultwarden | a Kubernetes Secret mounted into scrim (`secretMounts`, a `file:` reference), or nothing at all with Kubernetes auth from scrim's service account once that ships |
+| scrim's store login | how scrim authenticates to OpenBao, Infisical or Vaultwarden | nothing at all with the Helm chart and Kubernetes auth: scrim logs in with its own service account (`storeAuth`, [kubernetes.md](../kubernetes.md#store-identity)). Otherwise a Kubernetes Secret mounted into scrim (`secretMounts`, a `file:` reference) |
 | `scrim-keys` | placeholder key, approvals signing key | a Kubernetes Secret, generated once, shared by every replica |
 | `scrim-ca` | the interception CA (`tls.crt`, PKCS#8 `tls.key`) | a Kubernetes Secret; the certificate is public, the key is not |
 | `scrim-postgres` | the PostgreSQL DSN with its password | a Kubernetes Secret |
 
-So a GitOps setup carries three or four Secrets for scrim itself, whatever the number of agent
-secrets. Agents never read a value back through scrim either: they get references and placeholders.
+So a GitOps setup carries two or three Secrets for scrim itself, one more with a static store
+login, whatever the number of agent secrets. Agents never read a value back through scrim either:
+they get references and placeholders.
 
 When a store cannot be reached from the cluster, or for a small setup, agent secrets can still
 come from a Kubernetes Secret through the file store (`files://agents/<key>`, as the raw manifests
@@ -113,6 +114,11 @@ state:
   postgres:
     dsn: file:/run/secrets/scrim-postgres/dsn
 ```
+
+With the Helm chart, the store login needs no reference at all (`auth.method: kubernetes` and
+`storeAuth`, as in [`values-central.yaml`](../../deploy/examples/kubernetes/helm/values-central.yaml)),
+and the DSN is the Secret slot `postgres`: `secrets.existing.postgres: scrim-postgres`, and the
+chart writes the `file:` reference itself.
 
 `env:NAME`, `file:/path`, `cred:NAME` (systemd credentials) and store references are accepted;
 the Helm chart refuses a literal in a store's credential fields, and `scrim config validate`

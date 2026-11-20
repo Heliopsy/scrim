@@ -5,8 +5,9 @@
 #
 # Checks every file under deploy/examples, the files docs/deploy shows:
 #
-#   - each scrim config file with `scrim config validate`, run in the release
-#     image with the mounts the example gives it (stub secrets, generated here);
+#   - each scrim config file with `scrim config validate`, run in the image of
+#     this tree (image.sh) with the mounts the example gives it (stub secrets,
+#     generated here);
 #   - copies that must not drift (cloud-init write_files, the Ansible role's
 #     unit and default config, the kube play ConfigMap, the kustomize base);
 #   - systemd units and Quadlet files with `systemd-analyze verify` and
@@ -19,8 +20,10 @@
 #   - shell scripts with shellcheck, JSON with python's parser.
 #
 # TOOLS_DIR (default .tools/deploy-examples) is where tools.sh installed the
-# pinned tools. Needs podman, python3, systemd-analyze and shellcheck on the
-# host. Every container it starts is removed when it exits.
+# pinned tools. SCRIM_EXAMPLES_IMAGE names a scrim image of this tree to use;
+# without it image.sh builds one and it is removed on exit. Needs podman,
+# python3, systemd-analyze and shellcheck on the host. Every container it
+# starts is removed when it exits.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -33,9 +36,15 @@ done <"$here/tools.env"
 tools=$(cd "${1:-$root/.tools/deploy-examples}" && pwd)
 export PATH="$tools/bin:$tools/venv/bin:$PATH"
 ex=$root/deploy/examples
-image=ghcr.io/heliopsy/scrim:$SCRIM_VERSION
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+built=""
+trap 'rm -rf "$work"; [ -z "$built" ] || podman rmi -f "$built" >/dev/null 2>&1 || true' EXIT
+if [ -n "${SCRIM_EXAMPLES_IMAGE:-}" ]; then
+  image=$SCRIM_EXAMPLES_IMAGE
+else
+  image=$("$here/image.sh")
+  built=$image
+fi
 
 failed=0
 step() { printf '\n== %s\n' "$*"; }
@@ -46,7 +55,7 @@ run() { "$@" || fail "$*"; }
 
 step "shellcheck"
 run shellcheck "$ex/workstation/install.sh" "$ex/podman/run.sh" \
-  "$ex/kubernetes/raw/create-secrets.sh" "$here/tools.sh" "$here/check.sh" "$here/smoke.sh"
+  "$ex/kubernetes/raw/create-secrets.sh" "$here/tools.sh" "$here/check.sh" "$here/smoke.sh" "$here/image.sh"
 
 step "JSON"
 while IFS= read -r f; do
@@ -105,6 +114,29 @@ same(base, yaml.safe_load(raw["data"]["config.yaml"]), "kustomize base config")
 same((ex / "flux/helm/values.yaml").read_text(),
      (ex / "kubernetes/helm/values-central.yaml").read_text(), "flux helm values")
 
+# Flux's chart source is the chart's own OCIRepository example.
+chart_src = yaml.safe_load((ex / "../helm/scrim/examples/flux/ocirepository.yaml").read_text())
+fleet_src = yaml.safe_load((ex / "flux/sources/scrim-chart.yaml").read_text())
+same({k: fleet_src[k] for k in ("apiVersion", "kind", "metadata", "spec")},
+     {k: chart_src[k] for k in ("apiVersion", "kind", "metadata", "spec")}, "flux chart OCIRepository")
+
+# Every scrim version marked for release-please is the current release, so
+# the release pull request moves them all at once.
+import json, re
+root = ex.parent.parent
+current = json.loads((root / ".release-please-manifest.json").read_text())["."]
+cfg = json.loads((root / "release-please-config.json").read_text())
+for f in cfg["packages"]["."].get("extra-files", []):
+    path = f["path"] if isinstance(f, dict) else f
+    if not path.startswith(("deploy/examples/", "scripts/deploy-examples/")):
+        continue
+    marked = [l for l in (root / path).read_text().splitlines() if "x-release-please-version" in l]
+    if not marked:
+        bad.append(f"{path} is a release-please extra file without a marked line")
+    for l in marked:
+        if re.findall(r"[0-9]+\.[0-9]+\.[0-9]+", l) != [current]:
+            bad.append(f"{path}: marked line is not version {current}: {l.strip()}")
+
 # Every SOPS example is encrypted: each data and stringData value is ENC[...].
 for f in sorted(p for p in (ex / "secrets/sops").glob("*.sops.yaml") if p.name != ".sops.yaml"):
     doc = yaml.safe_load(f.read_text())
@@ -151,7 +183,6 @@ validate() {
 cfgdir() { local d=$work/cfg-$1; mkdir -p "$d"; cp "$2" "$d/config.yaml"; chmod -R a+rX "$d"; echo "$d"; }
 
 step "scrim config validate ($image)"
-podman pull -q "$image" >/dev/null
 validate workstation "$(cfgdir ws "$ex/workstation/config.yaml")"
 d=$(cfgdir sysf "$ex/systemd/system/config.yaml")
 cp -r "$stubs" "$d/secrets"
@@ -314,20 +345,19 @@ while IFS= read -r k; do
 done < <(find "$ex/flux" "$ex/argocd" "$ex/secrets/external-secrets" -name kustomization.yaml 2>/dev/null | sort)
 
 step "Helm"
-chart=${SCRIM_CHART:-$root/deploy/helm/scrim}
-if [ -d "$chart" ]; then
-  for v in "$ex"/kubernetes/helm/values-*.yaml; do
-    echo "-- $(basename "$v")"
-    run helm lint --strict "$chart" -f "$v"
-    helm template scrim "$chart" --namespace scrim -f "$v" >"$work/helm.yaml" ||
-      { fail "helm template $v"; continue; }
-    run kc "$work/helm.yaml"
-    # The config the central Deployment reads: its ConfigMap files, in the
-    # order SCRIM_CONFIG gives, checked by the release image with stubs for the
-    # mounted Secrets.
-    hc=$work/helm-config-$(basename "$v" .yaml)
-    mkdir -p "$hc"
-    if order=$(python3 -I - "$work/helm.yaml" "$hc" <<'EOF'
+chart=$root/deploy/helm/scrim
+for v in "$ex"/kubernetes/helm/values-*.yaml "$chart/examples/production.yaml"; do
+  echo "-- $(basename "$v")"
+  run helm lint --strict "$chart" -f "$v"
+  helm template scrim "$chart" --namespace scrim -f "$v" >"$work/helm.yaml" ||
+    { fail "helm template $v"; continue; }
+  run kc "$work/helm.yaml"
+  # The config the central Deployment reads: its ConfigMap files, in the
+  # order SCRIM_CONFIG gives, checked by the image of this tree with stubs for
+  # the mounted Secrets.
+  hc=$work/helm-config-$(basename "$v" .yaml)
+  mkdir -p "$hc"
+  if order=$(python3 -I - "$work/helm.yaml" "$hc" <<'EOF'
 import sys, yaml, pathlib
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 dep = next((d for d in docs if d["kind"] == "Deployment"), None)
@@ -340,25 +370,22 @@ for d in docs:
             pathlib.Path(sys.argv[2], k).write_text(val)
 print(env["SCRIM_CONFIG"])
 EOF
-    ); then
-      mkdir -p "$hc-secrets/bao" "$hc-secrets/postgres" "$hc-secrets/admin"
-      cp "$stubs/agents/github-token" "$hc-secrets/bao/token"
-      cp "$stubs/pg/dsn" "$hc-secrets/postgres/dsn"
-      openssl rand -hex 16 >"$hc-secrets/admin/token"
-      chmod -R a+rX "$hc" "$hc-secrets"
-      echo "-- scrim config validate: $(basename "$v")"
-      podman run --rm --read-only --network=none --name "scrim-examples-validate-$$" \
-        --tmpfs /run/scrim:rw,mode=0700,U -e XDG_RUNTIME_DIR=/run/scrim -e SCRIM_CONFIG="$order" \
-        -v "$hc:/etc/scrim/config:ro,Z" -v "$stubs/ca:/etc/scrim/ca:ro,Z" \
-        -v "$stubs/keys:/etc/scrim/placeholder:ro,Z" -v "$hc-secrets:/run/secrets/scrim:ro,Z" \
-        "${CHART_SCRIM_IMAGE:-$image}" config validate >"$work/validate.out" 2>&1 ||
-        { cat "$work/validate.out" >&2; fail "scrim config validate: helm $(basename "$v")"; }
-    fi
-  done
-else
-  echo "deploy/helm/scrim is not in this tree; Helm values not checked" >&2
-  fail "Helm chart missing"
-fi
+  ); then
+    mkdir -p "$hc-secrets/bao" "$hc-secrets/postgres" "$hc-secrets/admin" "$hc-secrets/metrics"
+    cp "$stubs/agents/github-token" "$hc-secrets/bao/token"
+    cp "$stubs/pg/dsn" "$hc-secrets/postgres/dsn"
+    openssl rand -hex 16 >"$hc-secrets/admin/token"
+    openssl rand -hex 32 >"$hc-secrets/metrics/token"
+    chmod -R a+rX "$hc" "$hc-secrets"
+    echo "-- scrim config validate: $(basename "$v")"
+    podman run --rm --read-only --network=none --name "scrim-examples-validate-$$" \
+      --tmpfs /run/scrim:rw,mode=0700,U -e XDG_RUNTIME_DIR=/run/scrim -e SCRIM_CONFIG="$order" \
+      -v "$hc:/etc/scrim/config:ro,Z" -v "$stubs/ca:/etc/scrim/ca:ro,Z" \
+      -v "$stubs/keys:/etc/scrim/placeholder:ro,Z" -v "$hc-secrets:/run/secrets/scrim:ro,Z" \
+      "$image" config validate >"$work/validate.out" 2>&1 ||
+      { cat "$work/validate.out" >&2; fail "scrim config validate: helm $(basename "$v")"; }
+  fi
+done
 
 if [ "$failed" -ne 0 ]; then
   echo >&2

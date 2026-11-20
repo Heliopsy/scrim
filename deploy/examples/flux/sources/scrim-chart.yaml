@@ -1,17 +1,29 @@
-# The scrim Helm chart, from this repository's release tags. The release
-# pipeline publishes no OCI chart yet, so Flux reads deploy/helm/scrim from git.
-# The semver range picks the newest release tag below 1.0; the chart ships from
-# the first release that contains deploy/helm/scrim on.
+# The scrim Helm chart as each release publishes it:
+# oci://ghcr.io/heliopsy/charts/scrim, signed keyless by the release workflow.
+# Flux refuses an unsigned artifact or one signed by another workflow. The
+# spec is the chart's own deploy/helm/scrim/examples/flux/ocirepository.yaml;
+# `just deploy-examples-check` fails when they differ.
+#
+# To read the chart from git instead, use scrim-chart-git.yaml and the
+# commented chart.spec in helm/helmrelease.yaml.
 apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
+kind: OCIRepository
 metadata:
-  name: scrim
+  name: scrim-chart
   namespace: flux-system
 spec:
   interval: 1h
-  url: https://github.com/Heliopsy/scrim
+  url: oci://ghcr.io/heliopsy/charts/scrim
   ref:
-    semver: ">=0.2.0 <1.0.0"
-  ignore: |
-    /*
-    !/deploy/helm/scrim/
+    # Any 0.x release; the first with the chart is 0.2.0. For a pinned install
+    # use the exact tag and the digest from the GitHub release; the digest wins.
+    semver: ">=0.1.0 <1.0.0"
+  # Only the chart layer, as the tarball helm-controller expects.
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: ^https://token\.actions\.githubusercontent\.com$
+        subject: ^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(tags/v[0-9]+\.[0-9]+\.[0-9]+.*|heads/main)$

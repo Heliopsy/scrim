@@ -1,6 +1,8 @@
-# Shared state in PostgreSQL, which more than one replica needs. The DSN comes
-# from the Secret scrim-postgres (key dsn), created by External Secrets or
-# SOPS, never written here.
+# Shared state and events in PostgreSQL, which more than one replica needs. The
+# DSN comes from the Secret scrim-postgres (key dsn), created by External
+# Secrets or SOPS, never written here. The overlay sets deployment.replicas to
+# its replica count; scrim refuses to start with more than one replica on
+# anything but PostgreSQL.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 configMapGenerator:

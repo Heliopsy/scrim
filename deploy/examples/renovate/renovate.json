@@ -28,7 +28,7 @@
   "packageRules": [
     {
       "description": "One pull request per scrim release, across image, chart and binary",
-      "matchPackageNames": ["ghcr.io/heliopsy/scrim", "ghcr.io/heliopsy/scrim-dataplane", "Heliopsy/scrim", "https://github.com/Heliopsy/scrim"],
+      "matchPackageNames": ["ghcr.io/heliopsy/scrim", "ghcr.io/heliopsy/scrim-dataplane", "ghcr.io/heliopsy/charts/scrim", "scrim", "Heliopsy/scrim", "https://github.com/Heliopsy/scrim"],
       "groupName": "scrim"
     },
     {

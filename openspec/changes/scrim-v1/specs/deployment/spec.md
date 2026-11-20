@@ -446,16 +446,27 @@ without a token.
 
 The repository SHALL document every supported way to deploy scrim (workstation, systemd, cloud-init,
 Ansible, podman, Kubernetes manifests, Kustomize, Helm, Flux, Argo CD) with complete example files,
-and CI SHALL check each file: configs with `scrim config validate` in the release image, Kubernetes
-objects against pinned schemas, units with `systemd-analyze verify`, and the container examples by
-running them and sending a canary request.
+and CI SHALL check each file against the scrim image built from the same commit: configs with
+`scrim config validate`, Kubernetes objects against pinned schemas, units with `systemd-analyze
+verify`, and the container examples by running them and sending a canary request.
 
-#### Scenario: Example config drifts from the release
+#### Scenario: Example config drifts from the code
 
-- **WHEN** an example config uses a setting the pinned release does not know
+- **WHEN** an example config uses a setting the scrim of the same commit does not know
 - **THEN** the deployment example check fails and names the example and the setting
 
 #### Scenario: Container example leaks
 
 - **WHEN** a container example is run by the smoke check and sent a canary value
 - **THEN** the capture holds the placeholder and not the value, or the check fails
+
+### Requirement: Example versions follow the release
+
+Every scrim release version an example pins SHALL be the current release, and the release pull
+request SHALL move all of them to the version it releases.
+
+#### Scenario: Example version left behind
+
+- **WHEN** an example names a scrim version other than the current release on a line the release
+  pull request updates
+- **THEN** the deployment example check fails and names the file

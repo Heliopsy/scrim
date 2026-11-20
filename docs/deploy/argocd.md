@@ -5,8 +5,9 @@ scrim managed by [Argo CD](https://argo-cd.readthedocs.io) from a Git repository
 
 | File | What it is |
 | --- | --- |
-| [`appproject.yaml`](../../deploy/examples/argocd/appproject.yaml) | the AppProject `scrim`: the two repositories, the `scrim` and `agents` namespaces, and the cluster-scoped kinds scrim needs |
-| [`application-helm.yaml`](../../deploy/examples/argocd/application-helm.yaml) | scrim from the chart at a release tag, values from fleet (multiple sources) |
+| [`appproject.yaml`](../../deploy/examples/argocd/appproject.yaml) | the AppProject `scrim`: the chart and fleet repositories, the `scrim` and `agents` namespaces, and the cluster-scoped kinds scrim needs |
+| [`application-helm.yaml`](../../deploy/examples/argocd/application-helm.yaml) | scrim from the OCI chart at a release version, values from fleet (multiple sources) |
+| [`repository-scrim-charts.yaml`](../../deploy/examples/argocd/repository-scrim-charts.yaml) | registers `ghcr.io/heliopsy/charts` as an OCI Helm repository, no credential |
 | [`application-kustomize.yaml`](../../deploy/examples/argocd/application-kustomize.yaml) | scrim from a kustomize overlay in fleet |
 | [`applicationset.yaml`](../../deploy/examples/argocd/applicationset.yaml) | one Application per cluster labelled `scrim.dev/env`, rolled out dev, then staging, then prod |
 | [`root.yaml`](../../deploy/examples/argocd/root.yaml) | app of apps that installs Kyverno, the policy, the Secrets and scrim in sync-wave order |
@@ -28,7 +29,8 @@ scrim managed by [Argo CD](https://argo-cd.readthedocs.io) from a Git repository
 ```text
 fleet/
   argocd/       appproject.yaml, root.yaml, kyverno.yaml, policies.yaml,
-                external-secrets.yaml, application-helm.yaml   (deploy/examples/argocd)
+                external-secrets.yaml, application-helm.yaml,
+                repository-scrim-charts.yaml                   (deploy/examples/argocd)
   kyverno/      verify-scrim-images.yaml                       (deploy/examples/kyverno)
   secrets/external-secrets/                                    (deploy/examples/secrets/external-secrets)
   scrim/
@@ -61,18 +63,25 @@ The chart's injection ClusterPolicy (`kyverno.enabled`) needs the CRDs from wave
 ## Helm Application
 
 [`application-helm.yaml`](../../deploy/examples/argocd/application-helm.yaml) takes the chart from
-`deploy/helm/scrim` at a release tag of this repository (no chart repository is published yet) and
-the values from fleet through a `$values` reference, so values changes are reviewed in fleet and the
-chart version is one line. Argo CD renders charts with `helm template`, which has no `lookup`, so
-the chart's generated CA and placeholder key would be new at every sync.
+the OCI repository each release publishes to (`ghcr.io/heliopsy/charts`, chart `scrim`, 0.2.0 and
+later) and the values from fleet through a `$values` reference, so values changes are reviewed in
+fleet and the chart version is one line.
+[`repository-scrim-charts.yaml`](../../deploy/examples/argocd/repository-scrim-charts.yaml)
+registers the repository with `enableOCI`. Argo CD does not check the chart's cosign signature;
+check it when you move `targetRevision` ([kubernetes.md](../kubernetes.md#install)). The Kyverno
+policy of wave -2 checks every scrim image at admission.
+
+Argo CD renders charts with `helm template`, which has no `lookup`, so the CA and placeholder key
+the chart generates would be new at every sync.
 [`values-gitops.yaml`](../../deploy/examples/kubernetes/helm/values-gitops.yaml) takes both from
 the Secrets `scrim-ca` and `scrim-keys` that wave -1 creates, with the CA's public PEM pasted in.
+With `metrics.enabled`, also name a metrics token Secret in `secrets.existing.metrics`.
 
 ```yaml
 sources:
-  - repoURL: https://github.com/Heliopsy/scrim
-    targetRevision: v0.2.0
-    path: deploy/helm/scrim
+  - repoURL: ghcr.io/heliopsy/charts
+    chart: scrim
+    targetRevision: 0.2.0
     helm:
       valueFiles:
         - $values/scrim/helm/values.yaml
@@ -81,6 +90,10 @@ sources:
     targetRevision: main
     ref: values
 ```
+
+To take the chart from git instead, replace the first source's `chart` with `path:
+deploy/helm/scrim`, its `repoURL` with `https://github.com/Heliopsy/scrim` and `targetRevision`
+with a release tag such as `v0.2.0`.
 
 ## Kustomize Application and ApplicationSet
 
@@ -127,7 +140,8 @@ Then the canary request from [helm.md](helm.md#verify) or [kubernetes.md](kubern
 
 ## Upgrade, roll back, uninstall
 
-- Upgrade: change `targetRevision` (Helm) or the overlay's image tag (Kustomize) in fleet.
+- Upgrade: change `targetRevision` (the chart version) or the overlay's image tag (Kustomize) in
+  fleet.
 - Roll back: revert the commit; `argocd app rollback scrim <history id>` works too, but
   self-heal puts Git's version back unless you suspend automated sync first.
 - Uninstall: delete the Application (or remove it from `argocd/`). The

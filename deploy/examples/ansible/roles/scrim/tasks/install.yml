@@ -1,4 +1,16 @@
 ---
+# scrim refuses to start while a redact target loads nothing, so the default
+# files store needs at least one secret file.
+- name: Check that the files store has a secret to redact
+  ansible.builtin.assert:
+    that: >-
+      'files' not in (scrim_config.stores | default({}))
+      or (scrim_secret_files | length) > 0
+    fail_msg: >-
+      scrim_secret_files is empty: scrim would refuse to start with nothing
+      under files://agents/*. Add at least one secret (from Ansible Vault).
+    quiet: true
+
 - name: Map the machine architecture to a release architecture
   ansible.builtin.set_fact:
     scrim_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts['architecture']] }}"

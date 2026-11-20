@@ -101,10 +101,10 @@ The credential files stay root-only; systemd passes them to the service, which r
 
 Agents on the host reach the service on loopback: `http://127.0.0.1:9790/anthropic` and
 `/openai/v1` as base URLs, `http://127.0.0.1:9791` as `HTTPS_PROXY`. Redaction applies to every
-caller. Credential injection needs an identified agent, and with v0.1.0 `scrim run` started by
-another user does not use a system service. On a shared v0.1.0 host, give each agent user a user
-unit of their own; from the service-install release on, `scrim run` finds the system service
-through `/run/scrim/api.sock` for members of `scrim-agents`.
+caller. Credential injection needs an identified agent: `scrim run` finds the system service
+through `/run/scrim/api.sock` for members of `scrim-agents` (0.2.0 and later), and `identity.peers`
+names the agent behind each user. With 0.1.0, `scrim run` started by another user does not use a
+system service, so give each agent user a user unit of their own.
 
 ### User service
 
@@ -166,8 +166,8 @@ sudo userdel scrim
 
 [`user-data.yaml`](../../deploy/examples/cloud-init/user-data.yaml) writes the system unit, its
 sysusers and tmpfiles entries, the config and the install script, fetches cosign pinned by version
-and sha256, verifies and installs scrim 0.1.0 and starts the service. Pass it as the instance's
-user data:
+and sha256, verifies and installs scrim and enables the service. Pass it as the instance's user
+data:
 
 ```sh
 # OpenStack
@@ -179,14 +179,23 @@ aws ec2 run-instances --image-id ami-0123456789abcdef0 --instance-type t3.small 
 ```
 
 User data is readable from inside the instance through the metadata service, so it carries no
-secret. scrim starts with an empty `agents/` directory and redacts the files your provisioning
-writes there later (a configuration management run, a secret agent, `scp`).
+secret. Your provisioning writes the secrets to `/etc/scrim/secrets/agents/` afterwards (a
+configuration management run, a secret agent, `scp`) and then starts scrim:
+
+```sh
+sudo install -o scrim -g scrim -m 0600 github-token /etc/scrim/secrets/agents/github-token
+sudo systemctl start scrim
+```
+
+The service is enabled but not started by cloud-init, because scrim refuses to start while a
+redact target loads nothing: `files://agents/*` over an empty directory would stop it at once.
+Files added later are picked up within `refresh.interval`.
 
 Check it on the instance:
 
 ```sh
 cloud-init status --wait          # status: done
-systemctl is-active scrim         # active
+systemctl is-active scrim         # active, once the provisioning started it
 curl -s http://127.0.0.1:9792/readyz
 ```
 
@@ -199,6 +208,8 @@ The role in [`deploy/examples/ansible/roles/scrim`](../../deploy/examples/ansibl
 installs the same unit and config. It downloads cosign pinned by sha256, verifies the release
 signature and checksum, installs the binary, writes the secrets from `scrim_secret_files`, checks
 the config with `scrim config validate` before it replaces the old one, and waits for `/readyz`.
+It stops before changing anything when `scrim_secret_files` is empty and the config uses the files
+store, since scrim would refuse to start with nothing to redact.
 
 ```sh
 cd deploy/examples/ansible

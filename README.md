@@ -239,9 +239,8 @@ and how to build a release-identical binary.
 
 ### 2. Configure
 
-This `~/.config/scrim/config.yaml` redacts a GitHub token from scrim's environment and lets it be
-injected toward the GitHub API. Each variable to redact is listed by name: `local://SCRIM_SECRET_*`
-names one variable called `SCRIM_SECRET_*` and loads nothing.
+This `~/.config/scrim/config.yaml` redacts every variable in scrim's environment whose name starts
+with `SCRIM_SECRET_`, and lets one of them, a GitHub token, be injected toward the GitHub API:
 
 ```yaml
 apiVersion: scrim.dev/v1
@@ -252,7 +251,7 @@ stores:
     kind: env
     prefix: SCRIM_SECRET_
     redact:
-      - local://SCRIM_SECRET_GITHUB_TOKEN
+      - local://SCRIM_SECRET_*
 
 catalog:
   entries:

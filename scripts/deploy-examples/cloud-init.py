@@ -22,7 +22,7 @@ FILES = [
 
 HEAD = """\
 #cloud-config
-# cloud-init user-data: installs scrim from a signed release and starts it as a
+# cloud-init user-data: installs scrim from a signed release and enables it as a
 # system service. Checked with `cloud-init schema --config-file user-data.yaml`.
 #
 # The files under write_files are copies of deploy/examples/systemd/system/ and
@@ -30,7 +30,8 @@ HEAD = """\
 # scripts/deploy-examples/cloud-init.py; `just deploy-examples-check` fails when
 # they drift. No secret is in here: user-data is readable from the instance
 # metadata service, so secrets reach /etc/scrim/secrets/agents/ from your
-# provisioning afterwards.
+# provisioning afterwards, which then runs `systemctl start scrim`: scrim
+# refuses to start while its redact target files://agents/* matches nothing.
 
 package_update: true
 packages:
@@ -55,9 +56,10 @@ runcmd:
       curl -fsSL -o /usr/local/bin/cosign "https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-$arch"
       echo "$sum  /usr/local/bin/cosign" | sha256sum -c -
       chmod 0755 /usr/local/bin/cosign
-  - [env, VERSION=0.1.0, PREFIX=/usr/local, /usr/local/sbin/scrim-install]
+  - [env, VERSION=0.1.0, PREFIX=/usr/local, /usr/local/sbin/scrim-install] # x-release-please-version
   - [systemctl, daemon-reload]
-  - [systemctl, enable, --now, scrim.service]
+  # Enabled, not started: see the comment at the top.
+  - [systemctl, enable, scrim.service]
 """
 
 

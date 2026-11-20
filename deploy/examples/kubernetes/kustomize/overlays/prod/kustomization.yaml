@@ -1,5 +1,7 @@
 # prod: three replicas spread over nodes, PostgreSQL, NetworkPolicy, and the
-# image pinned by the digest `cosign verify` printed for the release.
+# image pinned by digest. Put the digest `cosign verify` printed for the
+# release in `digest:` (it wins over the tag); Renovate keeps tag and digest
+# current in your fleet repository.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -17,8 +19,8 @@ replicas:
     count: 3
 images:
   - name: ghcr.io/heliopsy/scrim
-    newTag: 0.1.0
-    digest: sha256:490a9ca52efeba6f9ed4c886f0dba55e33325603988c6570dd29477827cf683e
+    newTag: 0.1.0 # x-release-please-version
+    # digest: sha256:<the digest cosign verify printed>
 patches:
   - target:
       kind: PodDisruptionBudget

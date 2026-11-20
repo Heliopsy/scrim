@@ -22,7 +22,7 @@ spec:
     targetRevision: main
     path: argocd
     directory:
-      include: "{kyverno,policies,external-secrets,application-helm,appproject}.yaml"
+      include: "{kyverno,policies,external-secrets,application-helm,appproject,repository-scrim-charts}.yaml"
   syncPolicy:
     automated:
       prune: true

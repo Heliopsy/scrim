@@ -2,3 +2,6 @@ apiVersion: scrim.dev/v1
 kind: Config
 catalog:
   environment: staging
+# The replica count below; scrim checks the state and events backends for it.
+deployment:
+  replicas: 2

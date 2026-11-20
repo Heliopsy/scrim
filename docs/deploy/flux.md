@@ -5,7 +5,7 @@ below). Two paths, pick one per cluster:
 
 | Path | Source of the manifests | Use it when |
 | --- | --- | --- |
-| [HelmRelease](#helmrelease) | the chart in this repository's release tags | you want the chart's injection, NetworkPolicy and sidecar mode |
+| [HelmRelease](#helmrelease) | the signed OCI chart of each release | you want the chart's injection, Kubernetes identity, NetworkPolicy and sidecar mode |
 | [Kustomization](#kustomization-and-staged-rollout) | the kustomize overlays, copied into `fleet` | you want plain manifests you can read in a diff, staged dev, staging, prod |
 
 Both use the same pieces: a source for scrim, the Secrets from SOPS or External Secrets
@@ -45,16 +45,25 @@ Kustomizations' `sourceRef` to `name: fleet`.
 
 ## HelmRelease
 
-[`sources/scrim-chart.yaml`](../../deploy/examples/flux/sources/scrim-chart.yaml) is a
-GitRepository of this repository that follows release tags (`>=0.2.0 <1.0.0`) and fetches only
-`deploy/helm/scrim`. The release pipeline publishes no OCI chart yet; when it does, an
-OCIRepository with `verify` replaces it.
+[`sources/scrim-chart.yaml`](../../deploy/examples/flux/sources/scrim-chart.yaml) is an
+OCIRepository for the chart each release publishes, `oci://ghcr.io/heliopsy/charts/scrim` (0.2.0
+and later). Its `verify` block checks the keyless signature against the release workflow's
+identity, so the source stays not Ready, with an event, for a chart that workflow did not sign. It
+is the chart's own [`examples/flux/ocirepository.yaml`](../../deploy/helm/scrim/examples/flux/)
+placed in the fleet layout.
 
 [`helm/helmrelease.yaml`](../../deploy/examples/flux/helm/helmrelease.yaml) installs the chart
 from it, with the values in a ConfigMap generated from
 [`helm/values.yaml`](../../deploy/examples/flux/helm/values.yaml) (the central-mode values from
-[helm.md](helm.md)). Upgrades that fail roll back on their own (`remediation.strategy: rollback`),
-and drift detection puts back anything changed by hand.
+[helm.md](helm.md): OpenBao with scrim's service account, Kyverno, NetworkPolicy). Upgrades that
+fail roll back on their own (`remediation.strategy: rollback`), and drift detection puts back
+anything changed by hand. helm-controller renders with cluster access, so the CA and placeholder
+key the chart generates are read back on every upgrade.
+
+To read the chart from git instead, use
+[`sources/scrim-chart-git.yaml`](../../deploy/examples/flux/sources/scrim-chart-git.yaml), a
+GitRepository that follows release tags and fetches only `deploy/helm/scrim`, and the commented
+`chart.spec` in the HelmRelease in place of `chartRef`. That path has no signature check.
 
 [`clusters/scrim-helm.yaml`](../../deploy/examples/flux/clusters/scrim-helm.yaml) is the Flux
 Kustomization that applies `flux/helm/`, copied to `scrim-helm/` in fleet, after `scrim-secrets`
@@ -105,14 +114,15 @@ The deploy key bootstrap created must have write access for the automation to pu
 
 ## Image signature verification
 
-Releases are signed keyless with cosign by the release workflow
-(`https://github.com/Heliopsy/scrim/.github/workflows/release.yaml`). Two places check it:
+Releases, images and chart alike, are signed keyless with cosign by the release workflow
+(`https://github.com/Heliopsy/scrim/.github/workflows/release.yaml`). The chart's OCIRepository
+checks the chart ([HelmRelease](#helmrelease)); two places check the images:
 
 - [`kyverno/verify-scrim-images.yaml`](../../deploy/examples/kyverno/verify-scrim-images.yaml), a
   Kyverno ClusterPolicy, refuses any pod with a `ghcr.io/heliopsy/scrim` or `scrim-dataplane` image
   that this identity did not sign, and rewrites the tag to the verified digest. This is the
-  enforcement. The `scrim-policies` Kustomization applies it before scrim (add it to
-  `scrim-helm`'s `dependsOn` too), so the first scrim pod is checked.
+  enforcement. The `scrim-policies` Kustomization applies it before `scrim` and `scrim-helm`, so
+  the first scrim pod is checked.
 - [`sources/scrim-image.yaml`](../../deploy/examples/flux/sources/scrim-image.yaml), an
   OCIRepository with `verify.provider: cosign` and `matchOIDCIdentity` for the same identity,
   follows the same tag range and turns not Ready, with an event and an alert, when a release does
@@ -134,7 +144,7 @@ hand-pushed tag signs from `refs/tags/v...`. Both are this repository's release 
 ```sh
 CONTEXT=my-cluster
 timeout 30 flux --context "$CONTEXT" get sources git
-timeout 30 flux --context "$CONTEXT" get sources oci scrim-image   # READY True: the signature verified
+timeout 30 flux --context "$CONTEXT" get sources oci              # scrim-image, scrim-chart: READY True, the signatures verified
 timeout 30 flux --context "$CONTEXT" get kustomizations
 timeout 30 flux --context "$CONTEXT" get helmreleases -n scrim     # for the Helm path
 timeout 30 flux --context "$CONTEXT" get images all                # dev: the policy's latest tag
@@ -149,9 +159,9 @@ scrim`.
 ## Upgrade, roll back, uninstall
 
 - Upgrade: dev by image automation, staging and prod by pull request; the Helm path by the
-  GitRepository's semver range (a new release tag) or a changed range.
+  OCIRepository's semver range (a new release) or a changed range.
 - Roll back: revert the commit. For the Helm path, a failed upgrade rolls back by itself; to go
-  back on purpose, narrow the semver range (`ref.tag: v0.2.0`) and commit.
+  back on purpose, pin the chart (`ref.tag: "0.2.0"`) and commit.
 - Pause: `flux --context "$CONTEXT" suspend kustomization scrim` (and `resume`).
 - Uninstall: remove `clusters/<env>/scrim.yaml` from fleet and commit. `prune: true` deletes what
   the Kustomization applied, the namespace included.

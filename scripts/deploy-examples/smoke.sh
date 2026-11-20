@@ -16,6 +16,8 @@
 #   Deployment    deploy/examples/kubernetes/raw/ ConfigMap and Deployment,
 #                 through `podman kube play`
 #
+# Each runs the scrim image of this tree in place of the release tag the
+# example names: SCRIM_EXAMPLES_IMAGE, or one image.sh builds and removes.
 # Everything is named scrim-examples-* and removed on exit, volumes and
 # secrets included. Ports 9790 to 9792 on 127.0.0.1 must be free.
 set -euo pipefail
@@ -29,9 +31,9 @@ done <"$here/tools.env"
 tools=$(cd "${1:-$root/.tools/deploy-examples}" && pwd)
 export PATH="$tools/bin:$tools/venv/bin:$PATH"
 ex=$root/deploy/examples
-image=ghcr.io/heliopsy/scrim:$SCRIM_VERSION
 work=$(mktemp -d)
 canary=example-$(openssl rand -hex 12)
+built=""
 
 cleanup() {
   podman ps -aq --filter name=scrim-examples- | xargs -r podman rm -f -v >/dev/null 2>&1 || true
@@ -40,22 +42,33 @@ cleanup() {
   podman secret ls --format '{{.Name}}' | grep '^scrim-examples-' | xargs -r podman secret rm >/dev/null 2>&1 || true
   podman network ls --format '{{.Name}}' | grep '^scrim-examples-' | xargs -r podman network rm -f >/dev/null 2>&1 || true
   rm -rf "$work"
+  [ -z "$built" ] || podman rmi -f "$built" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+if [ -n "${SCRIM_EXAMPLES_IMAGE:-}" ]; then
+  image=$SCRIM_EXAMPLES_IMAGE
+else
+  image=$("$here/image.sh")
+  built=$image
+fi
+# The examples' own image line, pointed at that image.
+use_image="s#image: ghcr.io/heliopsy/scrim:.*#image: $image#"
 
+# wait_ready CONTAINER
 wait_ready() {
   for _ in $(seq 60); do
     curl -fsS http://127.0.0.1:9792/readyz >/dev/null 2>&1 && return 0
     sleep 1
   done
-  echo "scrim did not become ready" >&2
+  echo "scrim did not become ready; last log lines of $1:" >&2
+  podman logs --tail 20 "$1" >&2 || true
   return 1
 }
 
 # check CONTAINER: status, doctor, and the canary request through the base URL.
 check() {
   local c=$1 code
-  wait_ready
+  wait_ready "$c"
   podman exec "$c" scrim status >"$work/status.txt"
   grep -q 'redaction  *active' "$work/status.txt"
   grep -Eq 'snapshot [0-9]+, 1 values' "$work/status.txt"
@@ -78,8 +91,6 @@ capture() {
   grep -rq '⟦scrim:github:' "$work/capture"/*.request.body
   echo "capture: placeholder present, value absent"
 }
-
-podman pull -q "$image" >/dev/null
 
 echo "== podman run (run.sh, capture on)"
 printf '%s' "$canary" | podman secret create scrim-examples-gh - >/dev/null
@@ -112,7 +123,7 @@ sed -e 's/name: scrim-agent-secrets/name: scrim-examples-kube-secrets/' \
 sed -e 's/^  name: scrim$/  name: scrim-examples-kube/' \
   -e 's/secretName: scrim-agent-secrets/secretName: scrim-examples-kube-secrets/' \
   -e 's/claimName: scrim-state/claimName: scrim-examples-kube-state/' \
-  -e 's/name: scrim-config/name: scrim-examples-kube-config/' \
+  -e 's/name: scrim-config/name: scrim-examples-kube-config/' -e "$use_image" \
   "$ex/podman/kube/scrim.yaml" >"$work/kube.yaml"
 podman kube play "$work/kube.yaml" >/dev/null
 check scrim-examples-kube-scrim
@@ -122,7 +133,7 @@ echo "== compose"
 (
   cd "$ex/podman/compose"
   sed -e 's/^name: scrim$/name: scrim-examples-compose/' -e 's/container_name: scrim$/container_name: scrim-examples-compose/' \
-    compose.yaml >"$work/compose.yaml"
+    -e "$use_image" compose.yaml >"$work/compose.yaml"
   cp config.yaml "$work/config.yaml"
   cd "$work"
   SCRIM_SECRET_GITHUB_TOKEN=$canary podman-compose -f compose.yaml up -d >/dev/null 2>&1
@@ -168,7 +179,7 @@ podman kube play "$work/secrets.yaml" >/dev/null
   -e 's/secretName: scrim-agent-secrets/secretName: scrim-examples-agent/' \
   -e 's/secretName: scrim-keys/secretName: scrim-examples-keys/' \
   -e 's/secretName: scrim-ca/secretName: scrim-examples-ca/' \
-  -e 's/defaultMode: 0440/defaultMode: 0444/' \
+  -e 's/defaultMode: 0440/defaultMode: 0444/' -e "$use_image" \
   -e 's/^  name: scrim$/  name: scrim-examples-raw/' >"$work/raw.yaml"
 podman kube play --publish 127.0.0.1:9790:9790 --publish 127.0.0.1:9792:9792 "$work/raw.yaml" >/dev/null
 check scrim-examples-raw-pod-scrim
