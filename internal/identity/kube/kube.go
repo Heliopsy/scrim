@@ -354,7 +354,12 @@ func reviewBody(tok []byte, audience string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	b := make([]byte, 0, len(tok)+len(aud)+128)
+	if len(aud) > maxAudienceLen {
+		return nil, fmt.Errorf("kubernetes audience is longer than %d bytes", maxAudienceLen)
+	}
+	// Both lengths are bounded above, so the size cannot overflow; one
+	// allocation keeps the token in a single buffer the caller wipes.
+	b := make([]byte, 0, maxTokenLen+maxAudienceLen+128)
 	b = append(b, `{"apiVersion":"authentication.k8s.io/v1","kind":"TokenReview","spec":{"token":"`...)
 	b = append(b, tok...)
 	b = append(b, `","audiences":[`...)
@@ -365,6 +370,9 @@ func reviewBody(tok []byte, audience string) ([]byte, error) {
 
 // maxTokenLen bounds the token scrim sends to the TokenReview API.
 const maxTokenLen = 16 << 10
+
+// maxAudienceLen bounds the JSON-encoded audience in the same request.
+const maxAudienceLen = 1 << 10
 
 func isTokenByte(b byte) bool {
 	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '-' || b == '_' || b == '.'
