@@ -26,10 +26,12 @@ data:
     proxy:
       listen: 0.0.0.0:9790
       forward-listen: 0.0.0.0:9791
-      {{- if .Values.upstreamCA.configMap }}
+    {{- if .Values.upstreamCA.configMap }}
+    dataplane:
       upstream-ca-file: /etc/scrim/upstream-ca/{{ .Values.upstreamCA.key }}
-      {{- end }}
+    {{- end }}
     {{- include "scrim.metricsSettings" (dict "root" . "listen" (printf "0.0.0.0:%v" .Values.metrics.port)) | nindent 4 }}
+    {{- include "scrim.identitySettings" (dict "root" .) | nindent 4 }}
     admin:
       {{- if .Values.admin.tcp.enabled }}
       url: http://0.0.0.0:{{ .Values.admin.tcp.port }}
@@ -40,13 +42,24 @@ data:
     redaction:
       placeholder-keys:
         {{- include "scrim.placeholderKeysConfig" (dict "root" . "path" "/etc/scrim/placeholder") | trim | nindent 8 }}
+    {{- $c := .Values.central }}
+    deployment:
+      # Replicas sharing this state; more than one needs postgres for state and events.
+      replicas: {{ if $c.autoscaling.enabled }}{{ $c.autoscaling.maxReplicas }}{{ else }}{{ $c.replicaCount }}{{ end }}
+    {{- if .Values.postgres.enabled }}
     state:
-      backend: {{ .Values.state.backend }}
-      {{- if eq .Values.state.backend "postgres" }}
+      backend: postgres
       postgres:
-        dsn: file:/run/secrets/scrim/postgres/{{ .Values.state.postgres.dsnSecret.key }}
-        max-conns: {{ .Values.state.postgres.maxConns }}
-      {{- end }}
+        dsn: file:/run/secrets/scrim/postgres/{{ .Values.postgres.dsnSecret.key }}
+        max-conns: {{ .Values.postgres.maxConns }}
+    events:
+      backend: postgres
+    {{- else }}
+    state:
+      backend: memory
+    events:
+      backend: local
+    {{- end }}
   {{- with .Values.policyRules }}
   policy.yaml: |
     {{- toYaml . | nindent 4 }}

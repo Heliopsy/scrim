@@ -115,7 +115,7 @@ spec:
               mountPath: /run/scrim
             - name: tmp
               mountPath: /tmp
-            {{- if eq .Values.state.backend "postgres" }}
+            {{- if .Values.postgres.enabled }}
             - name: postgres
               mountPath: /run/secrets/scrim/postgres
               readOnly: true
@@ -182,14 +182,14 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
-        {{- if eq .Values.state.backend "postgres" }}
+        {{- if .Values.postgres.enabled }}
         - name: postgres
           secret:
-            secretName: {{ .Values.state.postgres.dsnSecret.name }}
+            secretName: {{ .Values.postgres.dsnSecret.name }}
             defaultMode: 0440
             items:
-              - key: {{ .Values.state.postgres.dsnSecret.key }}
-                path: {{ .Values.state.postgres.dsnSecret.key }}
+              - key: {{ .Values.postgres.dsnSecret.key }}
+                path: {{ .Values.postgres.dsnSecret.key }}
         {{- end }}
         {{- if .Values.admin.tcp.enabled }}
         - name: admin-token

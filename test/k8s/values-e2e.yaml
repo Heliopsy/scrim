@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Chart values of test/k8s/e2e.sh. The script adds the images and the
-# namespaces with --set. No secret is in here: the OpenBao token is a Secret
-# the script creates, mounted through secretMounts.
+# namespaces with --set. No secret is in here, and none exists for scrim: the
+# central scrim and every sidecar log in to OpenBao with their own projected
+# service account token (Kubernetes auth), and agent pods identify themselves
+# with theirs (identity.kubernetes, on by default).
 
 image:
   pullPolicy: Never
@@ -12,7 +14,11 @@ config:
     bao:
       kind: openbao
       address: http://openbao.scrim-e2e.svc.cluster.local:8200
-      token: file:/run/secrets/scrim/bao/token
+      auth:
+        method: kubernetes
+        kubernetes:
+          role: scrim
+          token-file: /var/run/secrets/scrim/store-token
       redact: ["bao://secret/e2e/*"]
       watch:
         interval: 2s
@@ -28,19 +34,13 @@ config:
       anthropic: http://fakeprovider.scrim-e2e.svc.cluster.local:18089
       openai: http://fakeprovider.scrim-e2e.svc.cluster.local:18089
 
-# Until TokenReview identity lands (tasks 12.2), every caller over TCP is unknown, and
-# the built-in injection rule only serves known agents. This rule allows injection
-# toward the bound tool host for any caller that reaches scrim, which the
-# NetworkPolicy limits to labelled agent pods.
-policyRules:
-  rules:
-    - name: e2e-inject-toolhost
-      decision: allow
-      when: op == "inject" && dest.host == "toolhost.scrim-e2e.svc.cluster.local"
+# No policy rules: the built-in inject-bound rule injects for identified agents,
+# and an agent process started without scrim-exec is unknown and gets nothing.
 
-secretMounts:
-  - name: bao
-    secretName: e2e-bao-token
+storeAuth:
+  serviceAccountToken:
+    enabled: true
+    audience: openbao
 
 upstreamCA:
   configMap: e2e-upstream-ca
@@ -66,9 +66,6 @@ networkPolicy:
 
 sidecar:
   enabled: true
-  secretMounts:
-    - name: bao
-      secretName: e2e-bao-token
   egressGuard:
     enabled: true
     pullPolicy: Never

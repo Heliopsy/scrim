@@ -159,21 +159,39 @@ refuses them so a values file never carries a secret.
 {{- fail "config.admin.token holds a literal; use admin.tcp.tokenSecret" -}}
 {{- end -}}
 {{- end -}}
-{{- with (index $cfg "state") -}}
-{{- if and (kindIs "map" .) (hasKey . "postgres") (kindIs "map" .postgres) (hasKey .postgres "dsn") -}}
-{{- fail "config.state.postgres.dsn is set by the chart; use state.postgres.dsnSecret" -}}
+{{- with (index $cfg "identity") -}}
+{{- if kindIs "map" . -}}
+{{- range $k, $v := (default dict (index . "store-credentials")) -}}
+{{- if and (kindIs "string" $v) (not (include "scrim.isRef" $v)) -}}
+{{- fail (printf "config.identity.store-credentials.%s holds a literal; use a reference (file:/run/secrets/scrim/<mount>/<key>, env:NAME or a store reference)" $k) -}}
 {{- end -}}
+{{- end -}}
+{{- if hasKey . "kubernetes" -}}
+{{- fail "config.identity.kubernetes is set by the chart; use the identity.kubernetes values" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range $section := list "state" "events" "deployment" -}}
+{{- if hasKey $cfg $section -}}
+{{- fail (printf "config.%s is set by the chart; use the postgres values (state.backend and events.backend postgres) and central.replicaCount" $section) -}}
+{{- end -}}
+{{- end -}}
+{{- if hasKey $cfg "metrics" -}}
+{{- fail "config.metrics is set by the chart; use the metrics values" -}}
 {{- end -}}
 {{- if or (gt (int .Values.central.replicaCount) 1) .Values.central.autoscaling.enabled -}}
-{{- if ne .Values.state.backend "postgres" -}}
-{{- fail "several replicas need shared state: set state.backend=postgres and state.postgres.dsnSecret" -}}
+{{- if not .Values.postgres.enabled -}}
+{{- fail "several replicas need shared state and events: set postgres.enabled=true and postgres.dsnSecret (state.backend and events.backend postgres)" -}}
 {{- end -}}
 {{- end -}}
-{{- if and (eq .Values.state.backend "postgres") (not .Values.state.postgres.dsnSecret.name) -}}
-{{- fail "state.backend=postgres needs state.postgres.dsnSecret.name" -}}
+{{- if and .Values.postgres.enabled (not .Values.postgres.dsnSecret.name) -}}
+{{- fail "postgres.enabled needs postgres.dsnSecret.name" -}}
 {{- end -}}
-{{- if not (has .Values.state.backend (list "memory" "postgres")) -}}
-{{- fail "state.backend must be memory or postgres (sqlite needs a volume per pod and refuses a second process)" -}}
+{{- if and .Values.metrics.enabled (not .Values.metrics.authSecret.name) (not .Values.metrics.allowUnauthenticatedRemote) -}}
+{{- fail "metrics.enabled listens on the pod IP and needs metrics.authSecret.name (scrim refuses a remote metrics listener without metrics.auth.token), or metrics.allowUnauthenticatedRemote=true with a NetworkPolicy" -}}
+{{- end -}}
+{{- if and .Values.central.autoscaling.enabled .Values.central.autoscaling.connections.enabled (not .Values.metrics.enabled) -}}
+{{- fail "central.autoscaling.connections needs metrics.enabled: the adapter reads scrim_dataplane_connections_active from scrim's metrics" -}}
 {{- end -}}
 {{- if and .Values.admin.tcp.enabled (not .Values.admin.tcp.tokenSecret.name) -}}
 {{- fail "admin.tcp.enabled needs admin.tcp.tokenSecret.name: scrim refuses a TCP admin listener without a token" -}}
@@ -205,18 +223,90 @@ policy:
 {{- end }}
 {{- end -}}
 
+{{/* metrics.*: the listener always serves /livez and /readyz for the probes. */}}
 {{- define "scrim.metricsSettings" -}}
+{{- $m := .root.Values.metrics -}}
 metrics:
   listen: {{ .listen }}
-{{- if .root.Values.metrics.enabled }}
-  enabled: true
-{{- if ne .root.Values.metrics.path "/metrics" }}
-  path: {{ .root.Values.metrics.path }}
+  enabled: {{ $m.enabled }}
+{{- if $m.enabled }}
+  path: {{ $m.path }}
+{{- if $m.authSecret.name }}
+  auth:
+    token: file:/run/secrets/scrim/metrics/{{ $m.authSecret.key }}
+{{- else if $m.allowUnauthenticatedRemote }}
+  allow-unauthenticated-remote: true
 {{- end }}
-{{- if .root.Values.metrics.authSecret.name }}
-  auth: file:/run/secrets/scrim/metrics/{{ .root.Values.metrics.authSecret.key }}
+{{- end }}
+{{- end -}}
+
+{{/* identity.kubernetes.*. .tokenFile and .caFile override scrim's own API credentials. */}}
+{{- define "scrim.identitySettings" -}}
+{{- $k := .root.Values.identity.kubernetes -}}
+identity:
+  kubernetes:
+    enabled: {{ $k.enabled }}
+{{- if $k.enabled }}
+    audience: {{ $k.audience }}
+    unmapped: {{ $k.unmapped }}
+{{- with .tokenFile }}
+    token-file: {{ . }}
+{{- end }}
+{{- with .caFile }}
+    ca-file: {{ . }}
+{{- end }}
+{{- with $k.agents }}
+    agents:
+      {{- toYaml . | nindent 6 }}
 {{- end }}
 {{- end }}
+{{- end -}}
+
+{{/* Where the sidecar's own API token and the API server CA are mounted (TokenReview). */}}
+{{- define "scrim.sidecarAPIPath" -}}/var/run/secrets/scrim/kube-api{{- end -}}
+
+{{/*
+scrim-exec: runs a command with the pod's identity (design D14). It reads the projected token
+when the command starts and sends it where scrim expects a caller's token: the password of the
+proxy user k8s in the proxy variables, and x-scrim-session in ANTHROPIC_CUSTOM_HEADERS for the
+base URL. Plain POSIX sh with no other tools, for a read-only root filesystem.
+*/}}
+{{- define "scrim.execScript" -}}
+#!/bin/sh
+# scrim-exec COMMAND [ARGS...]: run COMMAND identified to scrim by this pod's service account
+# (docs/kubernetes.md, "Identity"). Generated by the scrim Helm chart.
+set -eu
+f="${SCRIM_K8S_TOKEN_FILE:?scrim-exec: SCRIM_K8S_TOKEN_FILE is not set}"
+[ "$#" -gt 0 ] || { echo "scrim-exec: no command" >&2; exit 2; }
+tok=
+IFS= read -r tok < "$f" || true
+[ -n "$tok" ] || { echo "scrim-exec: $f is empty" >&2; exit 1; }
+for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy; do
+  eval "u=\${$v:-}"
+  case $u in
+    http://*@*) ;;
+    http://*) export "$v=http://k8s:$tok@${u#http://}" ;;
+  esac
+done
+# git sends proxy credentials only after a 407, which scrim never sends.
+export GIT_HTTP_PROXY_AUTHMETHOD=basic
+nl='
+'
+hdrs=
+old_ifs=$IFS
+IFS=$nl
+set -f
+for line in ${ANTHROPIC_CUSTOM_HEADERS:-}; do
+  case $line in
+    [Xx]-[Ss][Cc][Rr][Ii][Mm]-[Ss][Ee][Ss][Ss][Ii][Oo][Nn]:*) ;;
+    *) hdrs="$hdrs$line$nl" ;;
+  esac
+done
+set +f
+IFS=$old_ifs
+export ANTHROPIC_CUSTOM_HEADERS="${hdrs}x-scrim-session: $tok"
+unset f tok u v hdrs line nl old_ifs
+exec "$@"
 {{- end -}}
 
 {{/* Agent environment, as a list of {name, value}. .base is the LLM base URL, .proxy the forward proxy. */}}
@@ -241,6 +331,10 @@ metrics:
 {{- range list "SSL_CERT_FILE" "REQUESTS_CA_BUNDLE" "CURL_CA_BUNDLE" "GIT_SSL_CAINFO" "AWS_CA_BUNDLE" "PIP_CERT" "NPM_CONFIG_CAFILE" "CARGO_HTTP_CAINFO" "DENO_CERT" "CODEX_CA_CERTIFICATE" }}
 - name: {{ . }}
   value: {{ printf "%s/ca-bundle.pem" $trust | quote }}
+{{- end }}
+{{- if $root.Values.identity.kubernetes.enabled }}
+- name: SCRIM_K8S_TOKEN_FILE
+  value: {{ $root.Values.identity.kubernetes.tokenPath | quote }}
 {{- end }}
 {{- with $root.Values.agents.extraEnv }}
 {{ toYaml . }}
@@ -307,9 +401,21 @@ nft list table inet scrim_guard
 - name: scrim-trust
   configMap:
     name: {{ .Values.ca.configMapName }}
+    items:
+      - key: scrim-ca.pem
+        path: scrim-ca.pem
+      - key: ca-bundle.pem
+        path: ca-bundle.pem
+      {{- if .Values.identity.kubernetes.enabled }}
+      - key: scrim-exec
+        path: scrim-exec
+        mode: 0555
+      {{- end }}
 {{- if .Values.identity.kubernetes.enabled }}
 - name: scrim-identity
   projected:
+    # Readable by whatever user the agent runs as; only agent containers mount it.
+    defaultMode: 0444
     sources:
       - serviceAccountToken:
           audience: {{ .Values.identity.kubernetes.audience }}

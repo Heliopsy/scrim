@@ -38,4 +38,9 @@ data:
   # ca.extraTrustedCerts.
   ca-bundle.pem: |
     {{- $bundle | nindent 4 }}
+  {{- if $.Values.identity.kubernetes.enabled }}
+  # Runs an agent command with the pod's projected token as its scrim identity.
+  scrim-exec: |
+    {{- include "scrim.execScript" $ | nindent 4 }}
+  {{- end }}
 {{- end }}

@@ -165,6 +165,22 @@ spec:
                     mountPath: /run/scrim
                   - name: scrim-tmp
                     mountPath: /tmp
+                  {{- if .Values.identity.kubernetes.enabled }}
+                  # The pod's own API token, for TokenReview; only this container sees it.
+                  - name: scrim-kube-api
+                    mountPath: {{ include "scrim.sidecarAPIPath" . }}
+                    readOnly: true
+                  {{- end }}
+                  {{- if .Values.storeAuth.serviceAccountToken.enabled }}
+                  - name: scrim-store-token
+                    mountPath: {{ dir .Values.storeAuth.serviceAccountToken.path }}
+                    readOnly: true
+                  {{- end }}
+                  {{- if and .Values.metrics.enabled .Values.metrics.authSecret.name }}
+                  - name: scrim-metrics-token
+                    mountPath: /run/secrets/scrim/metrics
+                    readOnly: true
+                  {{- end }}
                   {{- range .Values.sidecar.secretMounts }}
                   - name: scrim-secret-{{ .name }}
                     mountPath: /run/secrets/scrim/{{ .name }}
@@ -200,6 +216,40 @@ spec:
               - name: scrim-upstream-ca
                 configMap:
                   name: {{ .Values.upstreamCA.configMap }}
+              {{- end }}
+              {{- if .Values.identity.kubernetes.enabled }}
+              - name: scrim-kube-api
+                projected:
+                  defaultMode: 0444
+                  sources:
+                    - serviceAccountToken:
+                        expirationSeconds: 3600
+                        path: token
+                    - configMap:
+                        name: kube-root-ca.crt
+                        items:
+                          - key: ca.crt
+                            path: ca.crt
+              {{- end }}
+              {{- if .Values.storeAuth.serviceAccountToken.enabled }}
+              - name: scrim-store-token
+                projected:
+                  defaultMode: 0444
+                  sources:
+                    - serviceAccountToken:
+                        audience: {{ .Values.storeAuth.serviceAccountToken.audience }}
+                        expirationSeconds: {{ .Values.storeAuth.serviceAccountToken.expirationSeconds }}
+                        path: {{ base .Values.storeAuth.serviceAccountToken.path }}
+              {{- end }}
+              {{- if and .Values.metrics.enabled .Values.metrics.authSecret.name }}
+              # Must exist in every agent namespace.
+              - name: scrim-metrics-token
+                secret:
+                  secretName: {{ .Values.metrics.authSecret.name }}
+                  defaultMode: 0444
+                  items:
+                    - key: {{ .Values.metrics.authSecret.key }}
+                      path: {{ .Values.metrics.authSecret.key }}
               {{- end }}
               - name: scrim-state
                 emptyDir: {}

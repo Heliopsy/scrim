@@ -1,0 +1,2 @@
+# expect: postgres.enabled needs postgres.dsnSecret.name
+postgres: {enabled: true}

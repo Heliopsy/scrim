@@ -3,6 +3,20 @@
 # Stand-ins for the outside world in test/k8s/e2e.sh: OpenBao in dev mode (the
 # store), the fake model provider and the tool host. @TESTBIN@ and @OPENBAO@
 # are replaced by the script.
+# OpenBao reviews the service account tokens scrim logs in with, as itself.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao
+  namespace: scrim-e2e
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: scrim-k8s-e2e-openbao-auth-delegator
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
+subjects: [{kind: ServiceAccount, name: openbao, namespace: scrim-e2e}]
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,6 +29,7 @@ spec:
     metadata:
       labels: {app: openbao}
     spec:
+      serviceAccountName: openbao
       containers:
         - name: openbao
           image: @OPENBAO@

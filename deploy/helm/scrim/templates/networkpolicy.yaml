@@ -56,6 +56,10 @@ spec:
     {{- end }}
   egress:
     {{- include "scrim.dnsEgress" $np.dns | nindent 4 }}
+    {{- if .Values.identity.kubernetes.enabled }}
+    # TokenReview.
+    {{- toYaml $np.apiServerEgress | nindent 4 }}
+    {{- end }}
     {{- with $np.scrimEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -109,6 +113,10 @@ spec:
   policyTypes: [Egress]
   egress:
     {{- include "scrim.dnsEgress" $np.dns | nindent 4 }}
+    {{- if $.Values.identity.kubernetes.enabled }}
+    # TokenReview from the in-pod scrim.
+    {{- toYaml $np.apiServerEgress | nindent 4 }}
+    {{- end }}
     {{- with $np.sidecarEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

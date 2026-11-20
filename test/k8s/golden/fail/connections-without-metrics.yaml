@@ -1,0 +1,3 @@
+# expect: central.autoscaling.connections needs metrics.enabled
+postgres: {enabled: true, dsnSecret: {name: scrim-pg}}
+central: {autoscaling: {enabled: true, connections: {enabled: true}}}

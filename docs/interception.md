@@ -434,8 +434,9 @@ address were never covered.
 
 The Helm chart in `deploy/helm/scrim` ([kubernetes.md](kubernetes.md)) deploys a central scrim and
 installs a Kyverno policy that configures pods labelled `scrim.dev/inject: central` (or `sidecar`)
-when they are created: the base URL and proxy variables, the CA mounted into the pod, and, with
-TokenReview identity (tasks.md 12.2), a projected service account token with a scrim audience. A
+when they are created: the base URL and proxy variables, the CA mounted into the pod, and a
+projected service account token with a scrim audience, which scrim verifies with TokenReview to
+identify the pod as `namespace/serviceaccount` (the `scrim-exec` launcher sends it). A
 NetworkPolicy lets those pods reach only scrim and DNS, and lets scrim reach providers, stores and
 tool hosts. Agent images do not change. MCP registration in the pod waits for the edge forwarder
 (tasks.md 12.5).

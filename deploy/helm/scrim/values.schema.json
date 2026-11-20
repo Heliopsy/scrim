@@ -207,38 +207,28 @@
       },
       "additionalProperties": false
     },
-    "state": {
+    "postgres": {
       "type": "object",
       "properties": {
-        "backend": {
-          "type": "string",
-          "enum": [
-            "memory",
-            "postgres"
-          ]
+        "enabled": {
+          "type": "boolean"
         },
-        "postgres": {
+        "dsnSecret": {
           "type": "object",
           "properties": {
-            "dsnSecret": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "type": "string"
-                },
-                "key": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "additionalProperties": false
+            "name": {
+              "type": "string"
             },
-            "maxConns": {
-              "type": "integer",
-              "minimum": 1
+            "key": {
+              "type": "string",
+              "minLength": 1
             }
           },
           "additionalProperties": false
+        },
+        "maxConns": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "additionalProperties": false
@@ -287,6 +277,19 @@
             },
             "tokenReviewRBAC": {
               "type": "boolean"
+            },
+            "agents": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "unmapped": {
+              "type": "string",
+              "enum": [
+                "derive",
+                "unknown"
+              ]
             }
           },
           "additionalProperties": false
@@ -464,7 +467,7 @@
                 "string"
               ]
             },
-            "streams": {
+            "connections": {
               "type": "object",
               "properties": {
                 "enabled": {
@@ -552,6 +555,9 @@
             }
           },
           "additionalProperties": false
+        },
+        "allowUnauthenticatedRemote": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -708,6 +714,12 @@
           "additionalProperties": false
         },
         "scrimEgress": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "apiServerEgress": {
           "type": "array",
           "items": {
             "type": "object"

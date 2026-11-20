@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Values of the scrim chart. Every value is described in README.md, which
-# `just helm-docs-check` keeps in step with this file.
+# Values of the scrim chart. Every value is described in README.md, and
+# test/k8s/golden.sh (just helm-test) fails when one is missing there.
 
 # -- Overrides the chart name in resource names.
 nameOverride: ""
@@ -28,7 +28,9 @@ imagePullSecrets: []
 # -- scrim configuration, the same file format as `scrim --config` (apiVersion and kind are added).
 # Secret-valued settings take references (env:, file:, cred:, a store reference), never literals;
 # the chart refuses known credential fields that hold a literal. Settings the chart owns
-# (listeners, sockets, state, CA, placeholder keys) are set in a second file that wins.
+# (listeners, sockets, state, events, identity, metrics, CA, placeholder keys) are set in a second
+# file that wins. Every store needs `redact` targets that match at least one secret: a target that
+# loads nothing stops start-up (redaction.allow-empty-targets weakens that).
 config: {}
 # -- Name of an existing ConfigMap holding the scrim configuration under `config.yaml`, used instead of `config`.
 existingConfigMap: ""
@@ -56,7 +58,7 @@ log:
   # -- Log format: json or text.
   format: json
 
-# Upstream TLS trust for the data plane (LLM proxy and tool proxy).
+# Upstream TLS trust for the data plane (LLM proxy and tool proxy), as dataplane.upstream-ca-file.
 upstreamCA:
   # -- ConfigMap in the release namespace with a PEM bundle of extra roots for upstream TLS
   # (private tool hosts, corporate TLS inspection). System and Mozilla roots stay trusted.
@@ -100,17 +102,18 @@ placeholderKeys:
       version: 1
       key: k1
 
-# Shared state. Several replicas need PostgreSQL.
-state:
-  # -- memory (one replica; restart loses approvals and grants) or postgres.
-  backend: memory
-  postgres:
-    # -- Secret holding the DSN (postgres://user:pass@host/db?sslmode=verify-full).
-    dsnSecret:
-      name: ""
-      key: dsn
-    # -- Connection pool size per replica.
-    maxConns: 16
+# Shared state and events. Several replicas (or the HPA) need PostgreSQL: it renders
+# state.backend postgres and events.backend postgres together.
+postgres:
+  # -- Use PostgreSQL for state (approvals, grants, sessions) and for events between replicas
+  # (LISTEN/NOTIFY). Off: in-memory state in one replica; a restart loses approvals and grants.
+  enabled: false
+  # -- Secret holding the DSN (postgres://user:pass@host/db?sslmode=verify-full).
+  dsnSecret:
+    name: ""
+    key: dsn
+  # -- Connection pool size per replica.
+  maxConns: 16
 
 serviceAccount:
   # -- Create a ServiceAccount for scrim.
@@ -119,44 +122,58 @@ serviceAccount:
   name: ""
   # -- Annotations (for cloud workload identity toward stores).
   annotations: {}
-  # -- Mount the API token. Needed for TokenReview identity and store Kubernetes auth; off
-  # otherwise, scrim does not call the Kubernetes API on its own.
+  # -- Mount the API token even without identity.kubernetes (identity mounts it anyway, for
+  # TokenReview).
   automountToken: false
 
-# Kubernetes identity and store auth (land with feat/k8s-identity, tasks 12.2, 12.2c and 12.4).
+# Kubernetes identity (identity.kubernetes.*): agent pods present a projected service account
+# token for `audience`, which scrim verifies with TokenReview. Per-agent store login
+# (identity.store-login) goes in `config.identity`.
 identity:
   kubernetes:
-    # -- Identify agent pods by a projected service account token verified with TokenReview.
-    # Renders the system:auth-delegator binding, mounts scrim's own token and gives agent pods a
-    # projected token with `audience`.
-    enabled: false
-    # -- Audience of the projected agent token; tokens with another audience are refused.
+    # -- Identify agent pods by their projected token. Renders the TokenReview RBAC, mounts
+    # scrim's own API token and gives agent pods the token, SCRIM_K8S_TOKEN_FILE and the
+    # scrim-exec launcher. Off: every agent pod is an unknown caller, which the built-in rules do
+    # not inject credentials for.
+    enabled: true
+    # -- Audience of the projected agent token (identity.kubernetes.audience); tokens with
+    # another audience, such as the pod's default API token, are refused.
     audience: scrim
-    # -- Lifetime of the projected agent token in seconds (kubelet rotates it).
+    # -- Lifetime of the projected agent token in seconds. The kubelet rotates the file, but
+    # scrim-exec reads it when the agent starts: an agent process that runs longer than this
+    # loses its identity (injection is refused) until it is restarted.
     expirationSeconds: 3600
     # -- Where the token is mounted in agent containers.
     tokenPath: /var/run/secrets/scrim/token
-    # -- Create the ClusterRoleBinding to system:auth-delegator (TokenReview).
+    # -- Create a ClusterRole that may only create TokenReviews and bind it to scrim's service
+    # account (central) and to the service accounts of agents.namespaces (sidecar).
     tokenReviewRBAC: true
+    # -- Agents by service account (identity.kubernetes.agents): agent name to selectors
+    # `sa:NAMESPACE/NAME` (globs allowed), `scope:`, `label:K=V`.
+    agents: {}
+    # -- What a service account no rule maps becomes: derive (NAMESPACE/NAME) or unknown.
+    unmapped: derive
 
-# Store authentication with scrim's own service account (OpenBao or Vault Kubernetes auth,
-# Infisical Kubernetes auth, task 12.4). Configure the store itself in `config.stores`.
+# Store authentication with scrim's own service account (OpenBao Kubernetes auth, Infisical
+# kubernetes-auth), so no static store credential exists. Configure the store in `config.stores`
+# with `auth.method: kubernetes` (OpenBao) or `kubernetes-auth` (Infisical) and
+# `auth.kubernetes.token-file` set to `path`.
 storeAuth:
-  # -- Mount a projected service account token for store login.
+  # -- Mount a projected service account token for store login (central scrim and sidecars).
   serviceAccountToken:
     enabled: false
     # -- Audience the store expects (OpenBao: the role's audience, often "vault").
     audience: vault
-    # -- Lifetime in seconds.
+    # -- Lifetime in seconds. scrim reads the file again at every login.
     expirationSeconds: 3600
-    # -- Mount path; reference it as file:<path> in the store configuration.
+    # -- Mount path; reference it as `auth.kubernetes.token-file` in the store configuration.
     path: /var/run/secrets/scrim/store-token
 
 # Central mode: a Deployment of `scrim proxy` serving agent pods over a Service.
 central:
   # -- Deploy the central scrim.
   enabled: true
-  # -- Replicas when autoscaling is off. More than one needs state.backend postgres.
+  # -- Replicas when autoscaling is off. More than one needs postgres.enabled.
   replicaCount: 1
   # -- Deployment update strategy.
   strategy:
@@ -242,7 +259,7 @@ central:
     # -- minAvailable; set it instead of maxUnavailable with several replicas.
     minAvailable: ""
   autoscaling:
-    # -- Create a HorizontalPodAutoscaler (needs state.backend postgres).
+    # -- Create a HorizontalPodAutoscaler (needs postgres.enabled).
     enabled: false
     # -- Fewest replicas.
     minReplicas: 2
@@ -250,14 +267,15 @@ central:
     maxReplicas: 10
     # -- Target average CPU utilisation in percent; empty disables the CPU metric.
     targetCPUUtilizationPercentage: 70
-    # Scale on concurrent proxied streams per replica (a Pods metric served by a metrics adapter
-    # such as prometheus-adapter from scrim's metrics).
-    streams:
-      # -- Add the streams metric.
+    # Scale on open data plane connections per replica (a Pods metric served by a metrics
+    # adapter such as prometheus-adapter from scrim's scrim_dataplane_connections_active gauge,
+    # summed over its listener label). Needs metrics.enabled.
+    connections:
+      # -- Add the connections metric.
       enabled: false
       # -- Metric name as the adapter exposes it.
-      metricName: scrim_proxy_active_streams
-      # -- Target average concurrent streams per replica.
+      metricName: scrim_dataplane_connections_active
+      # -- Target average open connections per replica.
       targetAverageValue: "50"
     # -- HPA scaling behavior.
     behavior: {}
@@ -281,14 +299,18 @@ metrics:
   # -- Expose metrics (Service port, monitors, NetworkPolicy scrape rule) and turn on scrim's
   # metrics.enabled setting.
   enabled: false
-  # -- Port of the metrics and health listener.
+  # -- Port of the metrics and health listener (metrics.listen on the pod IP).
   port: 9792
-  # -- Metrics path.
+  # -- Metrics path (metrics.path).
   path: /metrics
-  # -- Secret with a bearer token scrapers must present (scrim's metrics.auth); empty means none.
+  # -- Secret with a bearer token (at least 16 bytes) scrapers must present
+  # (metrics.auth.token). Required with metrics.enabled unless allowUnauthenticatedRemote is set.
   authSecret:
     name: ""
     key: token
+  # -- Serve metrics without a token (metrics.allow-unauthenticated-remote, a weakening scrim
+  # logs at start-up): anyone who reaches the port reads them. Pair it with networkPolicy.
+  allowUnauthenticatedRemote: false
 
 serviceMonitor:
   # -- Create a Prometheus Operator ServiceMonitor for central scrim (needs metrics.enabled).
@@ -309,7 +331,8 @@ podMonitor:
   interval: 30s
 
 prometheusRule:
-  # -- Create a PrometheusRule from the chart's monitoring/prometheus-rules.yaml plus `groups`.
+  # -- Create a PrometheusRule from the chart's monitoring/scrim.rules.yaml (a copy of
+  # deploy/monitoring/rules/scrim.rules.yaml) plus `groups`.
   enabled: false
   # -- Extra labels.
   labels: {}
@@ -324,7 +347,8 @@ grafanaDashboard:
     grafana_dashboard: "1"
   # -- Annotations (for example grafana_folder).
   annotations: {}
-  # -- Dashboard JSON; empty uses the chart's monitoring/dashboard.json.
+  # -- Dashboard JSON; empty uses the chart's monitoring/scrim-dashboard.json (a copy of
+  # deploy/monitoring/grafana/scrim-dashboard.json).
   json: ""
 
 # Agent pods: which pods use scrim, and how.
@@ -366,6 +390,15 @@ networkPolicy:
   scrimEgress:
     - ports:
         - port: 443
+          protocol: TCP
+  # -- Egress to the Kubernetes API server, for TokenReview (identity.kubernetes) from central
+  # scrim and sidecar pods. Policies see the API server's endpoint port, often 6443, not the
+  # Service port. Narrow it with `to` (the API server's addresses) where you can.
+  apiServerEgress:
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
           protocol: TCP
   # -- Egress rules of sidecar agent pods besides DNS (what the in-pod scrim must reach).
   sidecarEgress:

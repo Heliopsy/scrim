@@ -1,0 +1,6 @@
+# Metrics without a token (metrics.allow-unauthenticated-remote), limited by NetworkPolicy.
+metrics:
+  enabled: true
+  allowUnauthenticatedRemote: true
+networkPolicy:
+  enabled: true

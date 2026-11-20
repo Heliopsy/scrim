@@ -190,13 +190,36 @@ HorizontalPodAutoscaler, with every scrim setting exposed through values or a co
 
 ### Requirement: Autoscaling on concurrent streams
 
-The chart SHALL allow autoscaling on the number of concurrent proxied streams per replica, not only on
-CPU.
+The chart SHALL allow autoscaling on the load of proxied streams per replica, not only on CPU, using
+a metric scrim exports: the open data plane connections (`scrim_dataplane_connections_active`), each
+of which carries at most one stream at a time.
 
 #### Scenario: Scale on streams
 
-- **WHEN** concurrent streams per replica exceed the configured target
+- **WHEN** open connections per replica exceed the configured target
 - **THEN** the autoscaler adds replicas
+
+#### Scenario: Connections metric without metrics
+
+- **WHEN** the connections metric is enabled while scrim's metrics are off
+- **THEN** the chart refuses to render and names `metrics.enabled`
+
+### Requirement: Several replicas share state and events
+
+The chart SHALL render `state.backend` and `events.backend` together from one PostgreSQL setting and
+set `deployment.replicas`, and SHALL refuse more than one replica, or the autoscaler, without
+PostgreSQL.
+
+#### Scenario: Replicas on memory state
+
+- **WHEN** the values ask for two replicas without PostgreSQL
+- **THEN** the chart refuses to render and names the PostgreSQL setting
+
+#### Scenario: Replicas on PostgreSQL
+
+- **WHEN** the values enable PostgreSQL and the autoscaler
+- **THEN** scrim's configuration has `state.backend` and `events.backend` set to postgres and
+  `deployment.replicas` set to the autoscaler's maximum
 
 ### Requirement: Network policy
 
@@ -253,17 +276,69 @@ values holds a literal.
 - **WHEN** the values set a store token to a literal instead of a reference
 - **THEN** the chart refuses to render and names the field
 
-### Requirement: Private upstream roots
+### Requirement: Private upstream roots in the chart
 
-scrim SHALL accept a PEM bundle of extra roots for upstream TLS (`proxy.upstream-ca-file`), trusted
-by the LLM proxy and the tool proxy in addition to the system and Mozilla roots, and SHALL refuse to
-start the data plane when the file cannot be read or holds no certificate.
+The chart SHALL mount an operator's PEM bundle of extra upstream roots and set
+`dataplane.upstream-ca-file` to it, in central and sidecar mode.
 
-#### Scenario: Tool host with a private CA
+#### Scenario: Tool host with a private CA in the cluster
 
-- **WHEN** a credential is bound to a host whose certificate is signed by a private CA listed in
-  `proxy.upstream-ca-file`
+- **WHEN** a credential is bound to a tool host whose certificate is signed by a private CA given to
+  the chart
 - **THEN** the tool proxy connects to it and injects the credential
+
+### Requirement: Agent pod identity in the chart
+
+With Kubernetes identity on (the chart's default), the chart SHALL give every labelled agent
+container a projected service account token for scrim's audience and a launcher that sends it where
+scrim expects a caller's token (the password of the proxy user `k8s` and `x-scrim-session`), SHALL
+let scrim create TokenReviews and nothing else, and SHALL install no policy rule that injects for
+unknown callers.
+
+#### Scenario: Agent started through the launcher
+
+- **WHEN** an agent command in a labelled pod runs through the launcher and sends a placeholder
+  toward the credential's bound host
+- **THEN** scrim identifies the pod's service account with TokenReview and the built-in rule injects
+  the credential
+
+#### Scenario: Agent started without the launcher
+
+- **WHEN** the same request comes from a process started without the launcher
+- **THEN** the caller is unknown and nothing is injected
+
+#### Scenario: Token never forwarded
+
+- **WHEN** an identified agent calls a provider through the base URL
+- **THEN** neither the provider nor scrim's logs see the agent's token
+
+### Requirement: Store login with the pod's service account
+
+The chart SHALL mount a projected token with the store's audience into central scrim and every
+sidecar for store Kubernetes authentication, so an installation can run with no static store
+credential.
+
+#### Scenario: No static store credential
+
+- **WHEN** the store is configured with Kubernetes auth and the token mount is enabled
+- **THEN** scrim loads its redaction set and injects credentials with no store credential in any
+  Secret
+
+### Requirement: Metrics from the chart
+
+The chart SHALL render scrim's `metrics.*` settings from its values, SHALL refuse metrics on the pod
+IP without a bearer token unless the operator sets the weakening that allows it, and SHALL ship the
+alert rules and dashboard of `deploy/monitoring` unchanged.
+
+#### Scenario: Metrics without a token
+
+- **WHEN** metrics are enabled without a token Secret or the weakening
+- **THEN** the chart refuses to render and names the token setting
+
+#### Scenario: Bundled rules drift
+
+- **WHEN** the chart's copy of the alert rules or dashboard differs from `deploy/monitoring`
+- **THEN** the chart test fails
 
 ### Requirement: Agent pod injection policy
 

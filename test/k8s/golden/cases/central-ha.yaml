@@ -1,15 +1,18 @@
-# Several replicas on PostgreSQL, autoscaling on CPU and streams, TCP admin API.
-state:
-  backend: postgres
-  postgres:
-    dsnSecret: {name: scrim-pg, key: dsn}
+# Several replicas on PostgreSQL (state and events), autoscaling on CPU and connections,
+# metrics with a token, TCP admin API.
+postgres:
+  enabled: true
+  dsnSecret: {name: scrim-pg, key: dsn}
+metrics:
+  enabled: true
+  authSecret: {name: scrim-metrics, key: token}
 central:
   pdb: {minAvailable: 2}
   autoscaling:
     enabled: true
     minReplicas: 3
     maxReplicas: 12
-    streams: {enabled: true, targetAverageValue: "40"}
+    connections: {enabled: true, targetAverageValue: "40"}
 admin:
   tcp:
     enabled: true

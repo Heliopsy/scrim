@@ -1,8 +1,8 @@
 {{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
 {{- $a := .Values.central.autoscaling }}
 {{- if and .Values.central.enabled $a.enabled }}
-{{- if and (not $a.targetCPUUtilizationPercentage) (not $a.streams.enabled) }}
-{{- fail "central.autoscaling needs targetCPUUtilizationPercentage or streams.enabled" }}
+{{- if and (not $a.targetCPUUtilizationPercentage) (not $a.connections.enabled) }}
+{{- fail "central.autoscaling needs targetCPUUtilizationPercentage or connections.enabled" }}
 {{- end }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -27,15 +27,16 @@ spec:
           type: Utilization
           averageUtilization: {{ $a.targetCPUUtilizationPercentage }}
     {{- end }}
-    {{- if $a.streams.enabled }}
-    # Concurrent proxied streams per replica, served by a metrics adapter.
+    {{- if $a.connections.enabled }}
+    # Open data plane connections per replica (scrim_dataplane_connections_active summed over
+    # listeners), served by a metrics adapter.
     - type: Pods
       pods:
         metric:
-          name: {{ $a.streams.metricName }}
+          name: {{ $a.connections.metricName }}
         target:
           type: AverageValue
-          averageValue: {{ $a.streams.targetAverageValue | quote }}
+          averageValue: {{ $a.connections.targetAverageValue | quote }}
     {{- end }}
   {{- with $a.behavior }}
   behavior:

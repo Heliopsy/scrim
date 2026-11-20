@@ -227,6 +227,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+      # golden.sh builds scrim to validate every configuration the chart renders.
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
       - name: Install helm
         run: |
           set -euo pipefail
@@ -235,7 +239,9 @@ jobs:
           echo "$HELM_LINUX_AMD64_SHA256  $RUNNER_TEMP/$tgz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$tgz" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/linux-amd64" >> "$GITHUB_PATH"
-      # Lint, golden `helm template` output, refused values, README coverage.
+      # Lint, golden `helm template` output, scrim config validate of every
+      # rendered configuration, refused values, README coverage, monitoring
+      # copies, the scrim-exec launcher.
       - run: test/k8s/golden.sh
 
   # GitHub-hosted: test/e2e/sandbox.sh needs unprivileged user and network

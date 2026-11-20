@@ -60,17 +60,25 @@ data:
     proxy:
       listen: 127.0.0.1:9790
       forward-listen: 127.0.0.1:9791
-      {{- if $.Values.upstreamCA.configMap }}
+    {{- if $.Values.upstreamCA.configMap }}
+    dataplane:
       upstream-ca-file: /etc/scrim/upstream-ca/{{ $.Values.upstreamCA.key }}
-      {{- end }}
+    {{- end }}
     {{- include "scrim.metricsSettings" (dict "root" $ "listen" (printf "0.0.0.0:%v" $.Values.metrics.port)) | nindent 4 }}
+    {{- $api := include "scrim.sidecarAPIPath" $ }}
+    {{- include "scrim.identitySettings" (dict "root" $ "tokenFile" (printf "%s/token" $api) "caFile" (printf "%s/ca.crt" $api)) | nindent 4 }}
     admin:
       url: unix:/run/scrim/admin.sock
     redaction:
       placeholder-keys:
         {{- include "scrim.placeholderKeysConfig" (dict "root" $ "path" "/etc/scrim/placeholder") | trim | nindent 8 }}
+    # One scrim per pod, so nothing is shared between replicas.
+    deployment:
+      replicas: 1
     state:
       backend: memory
+    events:
+      backend: local
   {{- with $.Values.policyRules }}
   policy.yaml: |
     {{- toYaml . | nindent 4 }}

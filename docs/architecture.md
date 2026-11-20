@@ -464,7 +464,7 @@ flowchart TB
       kag["agent"]
       edge["edge forwarder<br>ssh-agent, db ports,<br>no values, M2"]
     end
-    subgraph central["scrim Deployment, HPA on streams"]
+    subgraph central["scrim Deployment, HPA on CPU and connections"]
       kcp["scrim replicas<br>control plane + data plane"]
     end
     pg[("PostgreSQL<br>shared state, notify")]
@@ -499,8 +499,8 @@ central deployment is the default. Valkey and NATS events and extra audit sinks 
 Status: v0.1.0 ships the laptop path and the forward proxy; `scrim run` and `scrim proxy` are on
 `main`. The Helm chart with central and sidecar modes, the NetworkPolicies and the Kyverno admission
 policy are on `main` ([kubernetes.md](kubernetes.md)); the sidecar is a full `scrim proxy`, not
-the standalone data plane. The local service, transparent mode, edge forwarder, TokenReview
-identity and Postgres notify events are planned for M2;
+the standalone data plane. TokenReview identity, Postgres notify events and the local service are on
+`main` too. Transparent mode and the edge forwarder are planned for M2;
 Valkey, NATS and eBPF for M3. The PostgreSQL state backend and the standalone `scrim-dataplane`
 image are on `main`.
 

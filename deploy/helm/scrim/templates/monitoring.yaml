@@ -51,11 +51,12 @@ spec:
 {{- end }}
 {{- end }}
 {{- if .Values.prometheusRule.enabled }}
-{{- $bundled := .Files.Get "monitoring/prometheus-rules.yaml" | fromYaml }}
-{{- $groups := concat (default list (get $bundled "groups")) .Values.prometheusRule.groups }}
-{{- if not $groups }}
-{{- fail "prometheusRule.enabled: the chart carries no monitoring/prometheus-rules.yaml and prometheusRule.groups is empty" }}
+{{- /* monitoring/scrim.rules.yaml is a copy of deploy/monitoring/rules/scrim.rules.yaml, kept equal by test/k8s/golden.sh. */}}
+{{- $bundled := .Files.Get "monitoring/scrim.rules.yaml" | fromYaml }}
+{{- if not (get $bundled "groups") }}
+{{- fail "prometheusRule.enabled: the chart's monitoring/scrim.rules.yaml is missing or has no groups" }}
 {{- end }}
+{{- $groups := concat (get $bundled "groups") .Values.prometheusRule.groups }}
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
@@ -72,9 +73,10 @@ spec:
     {{- toYaml $groups | nindent 4 }}
 {{- end }}
 {{- if .Values.grafanaDashboard.enabled }}
-{{- $json := .Values.grafanaDashboard.json | default (.Files.Get "monitoring/dashboard.json") }}
+{{- /* monitoring/scrim-dashboard.json is a copy of deploy/monitoring/grafana/scrim-dashboard.json. */}}
+{{- $json := .Values.grafanaDashboard.json | default (.Files.Get "monitoring/scrim-dashboard.json") }}
 {{- if not $json }}
-{{- fail "grafanaDashboard.enabled: the chart carries no monitoring/dashboard.json and grafanaDashboard.json is empty" }}
+{{- fail "grafanaDashboard.enabled: the chart's monitoring/scrim-dashboard.json is missing and grafanaDashboard.json is empty" }}
 {{- end }}
 ---
 apiVersion: v1
