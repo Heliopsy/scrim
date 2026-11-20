@@ -500,3 +500,25 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+func TestParseConfig(t *testing.T) {
+	c, err := refresh.ParseConfig("bao", map[string]any{
+		"redact":  []any{"bao://kv/agents/*", "bao://kv/ci/deploy#token"},
+		"refresh": map[string]any{"interval": "1m", "staleness": "30m"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Targets) != 2 || !c.Targets[0].Prefix || c.Targets[1].Ref.Field != "token" || c.Interval != time.Minute || c.Staleness != 30*time.Minute || c.Retention != refresh.DefaultRetention {
+		t.Fatalf("config %+v", c)
+	}
+	_, err = refresh.ParseConfig("bao", map[string]any{"redact": "inf://x/y", "refresh.intervl": "1m", "refresh.retention": "-1s"})
+	if err == nil {
+		t.Fatal("bad config accepted")
+	}
+	for _, want := range []string{"names another store", "did you mean refresh.interval", "refresh.retention must be positive"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+}
