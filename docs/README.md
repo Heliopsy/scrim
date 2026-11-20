@@ -32,6 +32,7 @@ to start. The behaviour contract, with every requirement and scenario, is the Op
 
 | Page | Covers |
 | --- | --- |
+| [run.md](run.md) | `scrim run`: what it sets for Claude Code, Codex and other agents, failing closed, signals |
 | [agent-tools.md](agent-tools.md) | The MCP server, `scrim secret` commands and the human entry page |
 | [identity.md](identity.md) | How scrim knows which agent is calling: peer credentials and session tokens |
 

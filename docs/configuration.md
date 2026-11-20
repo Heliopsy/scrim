@@ -252,6 +252,9 @@ is out of date.
 | [`policy.deny-all-refresh`](#policydeny-all-refresh) | duration | `1s` | hot |
 | [`policy.rules-file`](#policyrules-file) | string | `""` | hot |
 | [`profile`](#profile) | string | `local` | hot |
+| [`run.allow-unredacted-start`](#runallow-unredacted-start) | bool | `false` | hot |
+| [`run.mcp`](#runmcp) | bool | `true` | hot |
+| [`run.placeholder-env`](#runplaceholder-env) | bool | `true` | hot |
 | [`session.max-ttl`](#sessionmax-ttl) | duration | `168h0m0s` | restart required |
 | [`session.ttl`](#sessionttl) | duration | `12h0m0s` | restart required |
 | [`state.backend`](#statebackend) | string | `memory` | restart required |
@@ -803,6 +806,45 @@ Built-in preset of defaults for a deployment shape: `local` for a laptop or VM, 
 | Flag | `--profile` |
 | Reload | hot |
 | Values | `local`, `k8s`, `ci` |
+
+### run
+
+#### `run.allow-unredacted-start`
+
+Start the agent anyway when scrim cannot start, its data plane is not ready or no session can be minted. The agent then reaches providers directly and unredacted; scrim run prints a warning.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_RUN_ALLOW_UNREDACTED_START` |
+| Flag | `--run-allow-unredacted-start` |
+| Reload | hot |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `run.mcp`
+
+Register scrim mcp with the agent for this session (Claude Code --mcp-config, Codex -c mcp_servers.scrim). Nothing is written to the agent's own configuration.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `true` |
+| Environment | `SCRIM_RUN_MCP` |
+| Flag | `--run-mcp` |
+| Reload | hot |
+
+#### `run.placeholder-env`
+
+Export each declared catalog placeholder that resolves for the session as an environment variable of the same name holding the placeholder, for example SCRIM_ACME_KEY=SCRIM_ACME_KEY.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `true` |
+| Environment | `SCRIM_RUN_PLACEHOLDER_ENV` |
+| Flag | `--run-placeholder-env` |
+| Reload | hot |
 
 ### session
 

@@ -278,7 +278,9 @@ scrim run -- claude
 
 `scrim run` starts the agent with provider base URLs, MCP registration, CA trust and a session
 identity set for that process only. Running `claude` later without the wrapper finds its
-configuration unchanged. Codex works the same way: `scrim run -- codex`.
+configuration unchanged. Codex works the same way: `scrim run -- codex`. If scrim cannot redact
+the session, the agent is not started. `scrim run --print-env -- claude` shows what would be set;
+[docs/run.md](docs/run.md) has the details per agent.
 
 ### 4. Check what the provider saw
 
