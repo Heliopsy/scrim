@@ -143,6 +143,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 13.2 Forward proxy listener; verify: an agent with HTTPS_PROXY set is redacted
 - [ ] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
 - [ ] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
+- [ ] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
 
 ## 14. Large deployments
 
