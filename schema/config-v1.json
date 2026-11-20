@@ -757,7 +757,7 @@
           "properties": {
             "dir": {
               "default": "",
-              "description": "Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture DIR` sets it.",
+              "description": "Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture=DIR` sets it.",
               "type": "string",
               "x-scrim-env": "SCRIM_PROXY_CAPTURE_DIR",
               "x-scrim-flag": "--proxy-capture-dir",

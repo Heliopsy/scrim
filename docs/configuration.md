@@ -1102,7 +1102,7 @@ Built-in preset of defaults for a deployment shape: `local` for a laptop or VM, 
 
 #### `proxy.capture.dir`
 
-Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture DIR` sets it.
+Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture=DIR` sets it.
 
 | | |
 |---|---|
