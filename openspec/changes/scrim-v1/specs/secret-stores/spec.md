@@ -164,6 +164,26 @@ custom fields) to field selectors.
 - **WHEN** a rule binds `vw://Agents/GitHub#token` and the item has a custom field `token`
 - **THEN** scrim decrypts and loads that field's value
 
+#### Scenario: Tampered ciphertext
+
+- **WHEN** an item's encrypted field fails MAC verification, or uses an unauthenticated legacy
+  encryption type
+- **THEN** scrim refuses to decrypt it and the read fails with an error that contains no value
+- **AND** nothing from that field enters the redaction set or is injected
+
+#### Scenario: Item outside the configured scope
+
+- **WHEN** the Vaultwarden store is configured with scope `Agents` and a reference names
+  `vw://Personal/Bank`
+- **THEN** the read fails as not found and the write is refused
+- **AND** scrim does not decrypt the item
+
+#### Scenario: Ambiguous item path
+
+- **WHEN** two items match `vw://Agents/Deploy`, one personal and one in organisation `Acme`
+- **THEN** the unqualified reference is refused as ambiguous
+- **AND** `vw://Agents/Deploy?org=Acme` resolves the organisation item
+
 ### Requirement: Vaultwarden unlock key supplied at start
 
 The system SHALL obtain the Vaultwarden unlock material at start from a configured source: the OS
@@ -175,6 +195,12 @@ locked, the store SHALL be reported as locked, and operations needing its values
 - **WHEN** scrim starts and the configured unlock source is empty or unreadable
 - **THEN** the Vaultwarden store is reported as locked
 - **AND** requests that depend on its values are refused
+
+#### Scenario: Unlock key given as a literal
+
+- **WHEN** the Vaultwarden store's unlock setting holds a literal instead of a reference
+- **THEN** configuration validation fails without echoing the literal
+- **AND** the store is not opened
 
 #### Scenario: Dedicated agent account
 
