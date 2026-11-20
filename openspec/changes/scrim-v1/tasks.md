@@ -18,11 +18,11 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 - [ ] 2.0 Hash-window prefilter matcher for large sets with Aho-Corasick for small sets (design D13); verify: identical output to the reference matcher on every fixture and at least 500 MB/s single core at 10,000 secrets
 
-- [ ] 2.1 Value dictionary with encoded variants (raw, JSON-escaped, base64 std/url at three alignments, hex, URL-encoded) and minimum-length rule; verify: table tests per variant and per edge length
-- [ ] 2.2 Multi-pattern matcher over raw request bytes with atomic rebuild and swap; verify: concurrent requests during rebuild never block and never miss a value present before and after the swap
-- [ ] 2.3 Deterministic placeholders with versioned key and rotation; verify: same value gives same bytes across processes; old-key placeholders still resolve after rotation
-- [ ] 2.4 Independent guard over exact outgoing bytes (separate code from 2.2), repair or withhold; verify: a value the redactor is made to miss is caught by the guard in tests
-- [ ] 2.5 Fallback detectors (pattern rules, entropy), configurable; verify: rule fixtures and false-positive corpus thresholds
+- [x] 2.1 Value dictionary with encoded variants (raw, JSON-escaped, base64 std/url at three alignments, hex, URL-encoded) and minimum-length rule; verify: table tests per variant and per edge length
+- [x] 2.2 Multi-pattern matcher over raw request bytes with atomic rebuild and swap; verify: concurrent requests during rebuild never block and never miss a value present before and after the swap
+- [x] 2.3 Deterministic placeholders with versioned key and rotation; verify: same value gives same bytes across processes; old-key placeholders still resolve after rotation
+- [x] 2.4 Independent guard over exact outgoing bytes (separate code from 2.2), repair or withhold; verify: a value the redactor is made to miss is caught by the guard in tests
+- [x] 2.5 Fallback detectors (pattern rules, entropy), configurable; verify: rule fixtures and false-positive corpus thresholds
 - [ ] 2.6 Fuzz targets for matcher, variants and guard; verify: fuzzing runs in CI for a fixed budget with zero findings
 
 ## 3. Anthropic Messages proxy (M0 exit)

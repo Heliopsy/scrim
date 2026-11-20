@@ -34,14 +34,31 @@ placeholder.
 
 ### Requirement: Short values
 
-Values shorter than the configured minimum length SHALL be matched only verbatim and in their
-encoded forms, never as fragments, and the status command SHALL list how many known values fall
+Values shorter than the configured minimum length (`redaction.min_length`, default 8 bytes) SHALL
+be matched only verbatim and in their complete encodings, never as fragments such as the inner
+base64 substring of a longer stream, and the status command SHALL list how many known values fall
 below the minimum.
 
 #### Scenario: Eight-character password
 
 - **WHEN** a known value is shorter than the minimum length
 - **THEN** it is replaced where it appears whole and the status command reports it as a short value
+
+#### Scenario: Short value inside base64
+
+- **WHEN** a short value is base64-encoded together with other bytes
+- **THEN** the encoded stream is not altered, while the base64 encoding of the value alone is replaced
+
+### Requirement: Value floor
+
+Values shorter than the floor (`redaction.short_floor`, default and minimum 4 bytes) SHALL be
+rejected when the value set is built, listed by reference in the status output and documented as
+not protected.
+
+#### Scenario: Value below the floor
+
+- **WHEN** a store holds a three-byte value
+- **THEN** the value set builds without it and the status command names its reference as unprotected
 
 ### Requirement: Deterministic placeholders
 
@@ -58,12 +75,30 @@ placeholder SHALL name the secret reference's alias, never the value.
 
 Placeholders SHALL use a fixed, documented format with distinctive delimiters that compression and
 tokenisation do not split or alter, and SHALL be valid inside JSON strings, shell words and source
-code without escaping.
+code without escaping. The format SHALL be `⟦scrim:<slug>:<vv><tag>⟧` with `⟦` U+27E6 and `⟧`
+U+27E7, at most 79 bytes.
 
 #### Scenario: Placeholder survives a compression proxy
 
 - **WHEN** a placeholder passes through a chained context-compression proxy and back
 - **THEN** the placeholder returned by the model is byte-identical and resolves
+
+#### Scenario: Placeholder in a shell command
+
+- **WHEN** a placeholder appears unquoted in a shell word, a JSON string or a YAML plain scalar
+- **THEN** it needs no escaping and contains no whitespace or shell metacharacter
+
+### Requirement: Placeholder fields
+
+The slug SHALL be the reference alias in `[a-z0-9-]`, 1 to 48 bytes, not starting or ending with
+`-`. `<vv>` SHALL be the key version as two lowercase hexadecimal digits, `01` to `ff`. `<tag>`
+SHALL be the first 8 bytes of `HMAC-SHA256(key, "scrim-placeholder-v1" || 0x00 || value)` as 16
+lowercase hexadecimal digits.
+
+#### Scenario: Pinned derivation
+
+- **WHEN** the value `correct horse battery staple` with slug `db-password` is placeholdered under key version 1 with key `0123456789abcdef0123456789abcdef`
+- **THEN** the placeholder is `⟦scrim:db-password:0120a7d732ee4c8da2⟧` in every process and on every replica
 
 ### Requirement: Placeholder key rotation
 
@@ -86,6 +121,11 @@ enabled, disabled or tuned in configuration.
 - **WHEN** a request contains a token matching an enabled pattern rule that no store holds
 - **THEN** the token is replaced with a placeholder and the audit log records the detector name
 
+#### Scenario: Detector defaults
+
+- **WHEN** no detector settings are configured
+- **THEN** every built-in pattern rule is enabled, the entropy detector is disabled, and detector placeholders use the slug `det-<rule>` and never resolve to a value
+
 ### Requirement: Independent guard
 
 After redaction, an independent guard SHALL scan the exact outgoing bytes for every known value and
@@ -97,6 +137,16 @@ not share matching logic with the redactor.
 - **WHEN** a known value remains in the bytes after redaction
 - **THEN** the guard replaces it or refuses the request
 - **AND** the audit log records a guard intervention
+
+#### Scenario: Guard decodes what the redactor does not
+
+- **WHEN** a known value of at least the minimum length reaches the guard upper-cased, JSON-escaped twice, percent-encoded, base64-encoded at any alignment (wrapped or not) or hex-encoded in any case
+- **THEN** the guard finds it in the decoded view, replaces the covering bytes with the value's placeholder, and checks the repaired bytes again
+
+#### Scenario: Repair cannot complete
+
+- **WHEN** a known value is still present after repair, or more values reach the guard than `redaction.guard.max_repairs` allows
+- **THEN** the request is refused and nothing is forwarded
 
 ### Requirement: Split placeholders in streams
 
@@ -127,6 +177,11 @@ so provider prompt caching keeps working.
 
 - **WHEN** two consecutive requests share the same conversation prefix
 - **THEN** the redacted prefixes are byte-identical
+
+#### Scenario: Placeholder from an earlier turn
+
+- **WHEN** a request carries a placeholder that resolves with the current keyring, and a known value happens to occur inside its text
+- **THEN** the placeholder is forwarded byte-identical rather than redacted again
 
 ### Requirement: Resolution follows tool policy
 

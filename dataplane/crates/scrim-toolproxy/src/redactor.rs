@@ -1,9 +1,10 @@
 //! The seam to the redaction core, and streaming redaction over it.
 //!
 //! The tool proxy does not own value matching. It asks a [`Redactor`] for the matches in a byte
-//! slice and replaces them; the data plane passes the `scrim-redact` matcher here. Until that
-//! crate is wired in, [`ValueRedactor`] is a small exact matcher over the credential values and a
-//! few encodings, enough to keep the proxy fail-closed on its own.
+//! slice and replaces them; the data plane passes the `scrim-redact` core here as
+//! [`CoreRedactor`]. [`ValueRedactor`] is a small exact matcher over the credential values and a
+//! few encodings, used for values the proxy captures itself before the core has them, and enough
+//! to keep the proxy fail-closed on its own.
 //!
 //! [`StreamRedactor`] makes any redactor work over a stream: it holds back the last
 //! `max_match_len - 1` bytes of each chunk, so a value split across chunks is still found.
@@ -176,6 +177,46 @@ impl StreamRedactor {
             None => out.extend_from_slice(&rest),
         }
         Ok(())
+    }
+}
+
+/// The redaction core behind the seam: every replacement the current `scrim-redact` snapshot
+/// makes (all encoded variants and the fallback detectors). Not ready until the data plane has
+/// stored the first snapshot; each call loads the snapshot once, so a rebuild swapped in
+/// meanwhile applies from the next call.
+pub struct CoreRedactor {
+    handle: Arc<scrim_redact::SnapshotHandle>,
+}
+
+impl CoreRedactor {
+    /// Wraps the data plane's snapshot holder.
+    pub fn new(handle: Arc<scrim_redact::SnapshotHandle>) -> Self {
+        Self { handle }
+    }
+}
+
+impl Redactor for CoreRedactor {
+    fn is_ready(&self) -> bool {
+        self.handle.is_ready()
+    }
+
+    fn max_match_len(&self) -> usize {
+        self.handle
+            .load()
+            .map_or(0, |s| s.redactor().max_match_len())
+    }
+
+    fn find(&self, haystack: &[u8], out: &mut Vec<RedactMatch>) -> Result<(), RedactError> {
+        let snap = self.handle.load().map_err(|e| RedactError(e.to_string()))?;
+        snap.redactor()
+            .find_matches(haystack, &mut |start, end, placeholder| {
+                out.push(RedactMatch {
+                    start,
+                    end,
+                    replacement: Arc::from(placeholder),
+                });
+            })
+            .map_err(|e| RedactError(e.to_string()))
     }
 }
 
@@ -364,6 +405,40 @@ mod tests {
         }
         s.finish(&mut out).unwrap();
         assert_eq!(out, b"abcdefgh-secre [A]");
+    }
+
+    #[test]
+    fn core_redactor_streams_like_whole_buffer() {
+        use scrim_redact as core;
+        let handle = Arc::new(core::SnapshotHandle::new());
+        let r: Arc<dyn Redactor> = Arc::new(CoreRedactor::new(handle.clone()));
+        assert!(!r.is_ready());
+        assert!(r.find(b"x", &mut Vec::new()).is_err());
+        let kr = Arc::new(core::Keyring::new(
+            core::PlaceholderKey::new(1, &[3; 32]).unwrap(),
+        ));
+        let entries = vec![core::Entry::new(
+            1,
+            core::RefSlug::new("tok").unwrap(),
+            core::ValueClass::Credential,
+            core::SecretValue::from_slice(b"core-secret-value-1"),
+        )];
+        handle.store(Arc::new(
+            core::Snapshot::build(entries, kr, &core::Config::default()).unwrap(),
+        ));
+        assert!(r.is_ready());
+        let input = b"a core-secret-value-1 b Y29yZS1zZWNyZXQtdmFsdWUtMQ c";
+        let (expected, n) = redact_all(r.as_ref(), input).unwrap().unwrap();
+        assert_eq!(n, 2);
+        assert!(!String::from_utf8_lossy(&expected).contains("core-secret"));
+        for split in 0..input.len() {
+            let mut s = StreamRedactor::new(r.clone());
+            let mut out = Vec::new();
+            s.push(&input[..split], &mut out).unwrap();
+            s.push(&input[split..], &mut out).unwrap();
+            s.finish(&mut out).unwrap();
+            assert_eq!(out, expected, "split at {split}");
+        }
     }
 
     #[test]

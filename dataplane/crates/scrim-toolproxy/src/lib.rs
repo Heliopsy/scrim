@@ -88,7 +88,8 @@ pub use proxy::{
     BuildError, InterceptHandler, ProxyStatus, ToolProxy, ToolProxyBuilder, ToolProxySettings,
 };
 pub use redactor::{
-    RedactError, RedactMatch, Redactor, RedactorChain, StreamRedactor, ValueRedactor, redact_all,
+    CoreRedactor, RedactError, RedactMatch, Redactor, RedactorChain, StreamRedactor, ValueRedactor,
+    redact_all,
 };
 pub use secret::SecretValue;
 pub use upstream::{UpstreamSettings, UpstreamSetupError};
