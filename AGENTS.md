@@ -157,6 +157,10 @@ an emulator in podman. State backends follow the same shape with `state.Register
   write`.
 - Release tools are pinned in `scripts/release/release.env`, downloads checked by sha256. Bump a
   tool by changing its version and checksum together.
+- The Helm chart is packaged at the release version (`scripts/release/chart.sh`), pushed to
+  `oci://ghcr.io/heliopsy/charts/scrim` after the images, signed keyless with the same identity,
+  SBOM and provenance attested; its job gets `packages`, `id-token` and `attestations` and builds no
+  code. The chart's own gate is `deploy/helm/scrim/ci/verify.sh` (`just helm-test`).
 - release-please creates the tag with `GITHUB_TOKEN`, which starts no workflow, so its workflow
   must dispatch the release: `gh workflow run release.yaml -f tag=vX.Y.Z`. A hand-pushed `v*` tag
   builds on its own.
