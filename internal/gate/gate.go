@@ -12,6 +12,10 @@
 //     approval is created and, in blocking mode, waited for. Approved
 //     proceeds; denied, expired, cancelled or any error denies.
 //
+// A provider request (`llm.forward`) is the exception the data plane makes
+// too: neither break-glass nor the default decision stops it, only a deny
+// rule or an ask rule that is not approved ([Gate.checkForward]).
+//
 // Every outcome is audited. Errors always deny.
 package gate
 
@@ -20,12 +24,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"time"
 
 	"github.com/heliopsy/scrim/internal/approval"
 	"github.com/heliopsy/scrim/internal/audit"
 	"github.com/heliopsy/scrim/internal/breakglass"
 	"github.com/heliopsy/scrim/internal/grant"
+	"github.com/heliopsy/scrim/internal/identity"
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/state"
 )
@@ -48,8 +54,11 @@ type Gate struct {
 	State      state.Store
 	// Limits returns grant limits for a rule's grant settings.
 	Limits func(policy.GrantSettings) grant.Limits
-	Log    *slog.Logger
-	Now    func() time.Time
+	// Callers resolves who sent a request the data plane asks about
+	// ([Gate.Answer]); nil evaluates every such caller as unknown.
+	Callers *identity.Resolver
+	Log     *slog.Logger
+	Now     func() time.Time
 }
 
 // Status is the outcome of a check.
@@ -85,6 +94,9 @@ type Options struct {
 	Wait bool
 	// RequestID correlates audit entries with logs and traces.
 	RequestID string
+	// Attrs are added to the decision's audit entry (how the caller was
+	// identified, for example). Metadata only, never a value.
+	Attrs map[string]string
 }
 
 // Check decides req. It never returns an error: failures deny and are
@@ -92,7 +104,7 @@ type Options struct {
 // unaudited.
 func (g *Gate) Check(ctx context.Context, req policy.Request, o Options) Verdict {
 	v := g.check(ctx, req, o)
-	if err := g.record(ctx, req, v, o.RequestID); err != nil && v.Status != Denied {
+	if err := g.record(ctx, req, v, o); err != nil && v.Status != Denied {
 		g.logErr("decision could not be audited; refusing", err)
 		return Verdict{Status: Denied, Rule: v.Rule, Reason: "decision could not be audited", ApprovalID: v.ApprovalID}
 	}
@@ -100,6 +112,9 @@ func (g *Gate) Check(ctx context.Context, req policy.Request, o Options) Verdict
 }
 
 func (g *Gate) check(ctx context.Context, req policy.Request, o Options) Verdict {
+	if req.Action == policy.ActionForward {
+		return g.checkForward(ctx, req, o)
+	}
 	if g.BreakGlass != nil && g.BreakGlass.Active() {
 		return Verdict{Status: Denied, Rule: "break-glass", Reason: breakglass.ErrActive.Error()}
 	}
@@ -107,6 +122,43 @@ func (g *Gate) check(ctx context.Context, req policy.Request, o Options) Verdict
 	if err != nil {
 		g.logErr("policy evaluation failed; denying", err)
 		return Verdict{Status: Denied, Rule: d.Rule, Reason: "policy evaluation failed"}
+	}
+	switch d.Effect {
+	case policy.Allow:
+		v := Verdict{Status: Allowed, Rule: d.Rule, Reason: d.Reason}
+		if d.GrantTTL > 0 {
+			g.allowWithDuration(ctx, req, d, &v)
+		}
+		return v
+	case policy.Ask:
+		return g.ask(ctx, req, d, o)
+	default:
+		return Verdict{Status: Denied, Rule: d.Rule, Reason: d.Reason}
+	}
+}
+
+// Reasons a provider request goes through without a rule allowing it.
+const (
+	ReasonForwardDefault    = "provider requests are not stopped by the default decision"
+	ReasonForwardBreakGlass = "break-glass deny-all does not stop provider requests"
+)
+
+// checkForward decides an `llm.forward` request with the data plane's
+// semantics (specs/policy-approvals "Provider requests are not stopped by the
+// default"): only a deny rule that matches refuses it, an ask rule raises an
+// approval, and neither the default decision nor break-glass stops it, since
+// the request is redacted whatever the rules say.
+func (g *Gate) checkForward(ctx context.Context, req policy.Request, o Options) Verdict {
+	if g.BreakGlass != nil && g.BreakGlass.Active() {
+		return Verdict{Status: Allowed, Reason: ReasonForwardBreakGlass}
+	}
+	d, err := g.Engine.Decide(ctx, req)
+	if err != nil {
+		g.logErr("policy evaluation failed; denying", err)
+		return Verdict{Status: Denied, Rule: d.Rule, Reason: "policy evaluation failed"}
+	}
+	if d.Rule == policy.DefaultRule {
+		return Verdict{Status: Allowed, Rule: d.Rule, Reason: ReasonForwardDefault}
 	}
 	switch d.Effect {
 	case policy.Allow:
@@ -212,7 +264,8 @@ func (g *Gate) ask(ctx context.Context, req policy.Request, d policy.Decision, o
 	return v
 }
 
-func (g *Gate) record(ctx context.Context, req policy.Request, v Verdict, requestID string) error {
+func (g *Gate) record(ctx context.Context, req policy.Request, v Verdict, o Options) error {
+	requestID := o.RequestID
 	if g.State == nil {
 		return nil
 	}
@@ -227,7 +280,9 @@ func (g *Gate) record(ctx context.Context, req policy.Request, v Verdict, reques
 	if target == "" {
 		target = req.Tool
 	}
-	attrs := map[string]string{"action": string(req.Action), "status": string(v.Status)}
+	attrs := make(map[string]string, len(o.Attrs)+6)
+	maps.Copy(attrs, o.Attrs)
+	attrs["action"], attrs["status"] = string(req.Action), string(v.Status)
 	if v.GrantID != "" {
 		attrs["grant"] = v.GrantID
 	}

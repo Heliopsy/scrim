@@ -287,8 +287,11 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		Listeners: ListenersFrom(cfg),
 		Policy: func() *pb.Policy {
 			ver, _ := pp.Rules.Health()
-			snap := pp.Rules.RuleSet().Snapshot(ver, pp.BreakGlass.Active())
-			return snap.Proto()
+			rs := pp.Rules.RuleSet()
+			snap := rs.Snapshot(ver, pp.BreakGlass.Active())
+			p := snap.Proto()
+			p.AskTimeoutMillis = askTimeoutMillis(approval.Timeout.Get(a.Config.Current()), rs.Config())
+			return p
 		},
 	}
 	d.builder.SetKeys(ring)
@@ -325,6 +328,9 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		return nil, err
 	}
 	d.addrs.AgentAPI, d.addrs.EntryPage = d.runtime.Socket, d.runtime.EntryURL
+	// Asks name their caller by transport; the gate verifies sessions and
+	// maps peers with the agent API's resolver. Set before anything runs.
+	pp.Gate.Callers = d.runtime.Resolver
 
 	if err := d.listenControl(cfg); err != nil {
 		d.runtime.Close()

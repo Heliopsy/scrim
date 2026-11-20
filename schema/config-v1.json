@@ -529,6 +529,25 @@
     "policy": {
       "additionalProperties": false,
       "properties": {
+        "builtin": {
+          "additionalProperties": false,
+          "properties": {
+            "inject": {
+              "default": "allow",
+              "description": "Built-in rule `builtin.inject-bound` for injecting a credential toward a host it is bound to, for an identified agent: allow, ask, or off (injection is then decided by your rules and policy.default). Deny rules in the rules file still win.",
+              "enum": [
+                "allow",
+                "ask",
+                "off"
+              ],
+              "type": "string",
+              "x-scrim-env": "SCRIM_POLICY_BUILTIN_INJECT",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
         "default": {
           "default": "deny",
           "description": "Decision applied when no rule matches. Anything other than deny is reported as a weakened protection.",

@@ -63,7 +63,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 7. Policy, approvals and grants
 
-- [x] 7.1 Rule language and evaluation (allow, deny, ask, default); verify: rule table tests and a compiled snapshot used by the data plane (data plane: `scrim-policy` passes every conformance vector and a differential property test against a port of the Go reference; `scrim-dataplane` evaluates it per request for `inject` and `llm.forward` and asks over the `Asks` stream within `Policy.ask_timeout_millis`, which the control plane does not fill yet)
+- [x] 7.1 Rule language and evaluation (allow, deny, ask, default); verify: rule table tests and a compiled snapshot used by the data plane (data plane: `scrim-policy` passes every conformance vector and a differential property test against a port of the Go reference; `scrim-dataplane` evaluates it per request for `inject` and `llm.forward` and asks over the `Asks` stream within `Policy.ask_timeout_millis`, which the control plane fills from `approvals.timeout` or the longest per-rule approval timeout; `gate.Answer` decides `llm.forward` with the data plane's forward semantics, checked by `TestForwardConformance`)
 - [x] 7.2 Approval flow with timeout deny and single-use signed decision links; verify: replayed or expired links are refused
 - [x] 7.3 ntfy notifier with action buttons and terminal `scrim approve`; verify: end-to-end approve and deny against a local ntfy in podman
 - [x] 7.4 JIT grants (ttl, max ttl, scope, use count, revoke); verify: expiry and revocation take effect on the next request
@@ -71,7 +71,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 8. Identity and agent tools
 
-- [x] 8.1 Unix socket peer credentials and session tokens from `scrim run`; verify: one agent cannot use another's token or grants (data plane: reads Unix peer credentials and the session a request names, `Proxy-Authorization` user or `x-scrim-session`, and sends them as `AskCaller`; `scrim run` naming the session on its proxy URL and the control plane resolving `AskCaller` follow)
+- [x] 8.1 Unix socket peer credentials and session tokens from `scrim run`; verify: one agent cannot use another's token or grants (data plane: reads Unix peer credentials and the session a request names, `Proxy-Authorization` user or `x-scrim-session`, and sends them as `AskCaller` with a per-ask proof of the token (design D14); `scrim run` names the session on its proxy URL and in Claude Code's `ANTHROPIC_CUSTOM_HEADERS`, and `gate.Answer` verifies the session or maps the peer and evaluates with that identity, checked end to end by `internal/daemon` `TestEndToEndSessionIdentity`)
 - [x] 8.2 MCP server (stdio) with secrets_list, secret_request, secret_gen, secret_capture, secret_ask_human, approval_status, grants_list; verify: no tool schema accepts a value and no response contains one, checked against seeded values
 - [x] 8.3 Agent-facing CLI equivalents including `scrim secret put --stdin` that never echoes; verify: golden tests and a pipe test with the value absent from all output
 - [x] 8.4 Human entry page for secret_ask_human; verify: the agent receives only stored or declined

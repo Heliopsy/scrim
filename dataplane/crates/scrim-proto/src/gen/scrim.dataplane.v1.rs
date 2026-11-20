@@ -559,6 +559,22 @@ pub struct AskCaller {
     /// peer_pid is 0 when the platform does not report it.
     #[prost(int32, tag = "5")]
     pub peer_pid: i32,
+    /// session_proof shows that the request carried the session's token, not
+    /// just its id (design D14). The client sends the token as the password of
+    /// `Proxy-Authorization: Basic <session_id>:<token>` or as the value of
+    /// `x-scrim-session` on a base-URL listener. The data plane never logs or
+    /// forwards it: it keeps only the verifier
+    /// v = SHA-256("scrim session token v1\0" || secret)
+    /// where secret is the part of `scrim_st_<id>_<secret>` after the id, and
+    /// sends
+    /// HMAC-SHA256(key = v, "scrim session proof v1\0" || session_id || "\0"
+    /// \|| id (8 bytes, big-endian) || deadline_unix_nano (8 bytes, big-endian))
+    /// The control plane recomputes it from the hash it stores. The proof is
+    /// bound to this one ask and reveals neither the token nor v, so it is not
+    /// a secret field. Empty when the request named a session without its
+    /// token: such a caller is not verified and is evaluated as unknown.
+    #[prost(bytes = "vec", tag = "6")]
+    pub session_proof: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AskAnswer {

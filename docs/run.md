@@ -48,7 +48,7 @@ name could be read as a flag. `scrim run` flags go before it:
 | --- | --- | --- |
 | `ANTHROPIC_BASE_URL` | `http://127.0.0.1:<port>/anthropic` | Anthropic SDKs and Claude Code send Messages requests to scrim's LLM proxy. |
 | `OPENAI_BASE_URL` | `http://127.0.0.1:<port>/openai/v1` | OpenAI SDKs (and older Codex releases) send requests to scrim's LLM proxy. |
-| `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, `http_proxy` | scrim's forward proxy | Tool traffic (curl, git, SDKs) goes through scrim for credential injection and response redaction. |
+| `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, `http_proxy` | `http://<session id>:<token>@127.0.0.1:<port>`, scrim's forward proxy | Tool traffic (curl, git, SDKs) goes through scrim for credential injection and response redaction. The user info identifies the session: clients send it as `Proxy-Authorization`, which ends at the proxy, so policy and grants apply to this agent. `--print-env` shows `<session-token>` in its place. |
 | `NO_PROXY`, `no_proxy` | `localhost,127.0.0.1,::1` plus chained local upstreams | Loopback, including the LLM base URL, is reached directly. |
 | `NODE_EXTRA_CA_CERTS` | `<session>/scrim-ca.pem` | Node.js adds scrim's CA to its bundled roots. |
 | `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `AWS_CA_BUNDLE`, `PIP_CERT`, `NPM_CONFIG_CAFILE`, `CARGO_HTTP_CAINFO`, `DENO_CERT` | `<session>/ca-bundle.pem` | Runtimes that replace their trust store get the system roots plus scrim's CA. |
@@ -77,6 +77,7 @@ the session and says so before the agent starts.
 | Addition | Why |
 | --- | --- |
 | `--mcp-config=<session>/mcp.json` inserted after `claude` | Registers `scrim mcp` for this session. The `=` form keeps the option from taking the prompt as a second value. Claude Code starts MCP servers with its own environment, so the session token reaches them. |
+| `ANTHROPIC_CUSTOM_HEADERS` gets `x-scrim-session: <token>` | Claude Code adds these headers to every API request, so the base-URL listener can identify the session. The listener strips the header before the provider. Headers you set there yourself are kept (an inherited `x-scrim-session` line is dropped); `--print-env` shows them as `<inherited headers>`. |
 
 `scrim run` refuses to start Claude Code when `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` or
 `CLAUDE_CODE_USE_FOUNDRY` is set: those route Claude Code to cloud endpoints scrim does not serve
@@ -94,6 +95,22 @@ through to the provider.
 | `-c mcp_servers.scrim.command=...`, `.args=["mcp"]`, `.env_vars=[...]` | Registers `scrim mcp`. Codex starts MCP servers with a reduced environment; `env_vars` passes `SCRIM_API_SOCKET`, `SCRIM_SESSION_TOKEN` and `SCRIM_SESSION_ID` through by name, so the token never appears on a command line. |
 | `CODEX_CA_CERTIFICATE` | Codex's own CA override, set to the session bundle. |
 
+Codex's base-URL requests are not identified: its built-in `openai` provider takes no extra
+headers and the id is reserved, and a provider defined by `scrim run` would change where a ChatGPT
+sign-in sends its requests. They reach scrim as an unknown caller (rules on `agent` see
+`agent.known == false`). Codex's tool traffic, and with a ChatGPT sign-in its model traffic too,
+goes through the forward proxy and carries the session. With an API key you can identify the base
+URL requests yourself with a provider of your own:
+
+```toml
+model_provider = "scrim"
+[model_providers.scrim]
+name = "scrim"
+base_url = "http://127.0.0.1:<port>/openai/v1"
+env_key = "OPENAI_API_KEY"
+env_http_headers = { "x-scrim-session" = "SCRIM_SESSION_TOKEN" }
+```
+
 Codex options given at the top level apply to every subcommand, so `scrim run -- codex exec ...`
 works. Codex first tries the Responses API over WebSocket; scrim serves HTTP only, so Codex retries
 and falls back to HTTPS after a few seconds. Both attempts go to scrim's loopback listener, never to
@@ -103,7 +120,10 @@ the provider. Tested with Codex CLI 0.171.
 
 Any other command gets the common environment only. Agents built on the Anthropic or OpenAI SDKs
 pick up the base URLs; anything that honours the proxy variables sends its tool traffic through
-scrim.
+scrim. Proxy traffic carries the session; requests to the base URL are identified only when
+the agent sends `x-scrim-session: $SCRIM_SESSION_TOKEN` with them (most SDKs take default
+headers, for example `default_headers` in the Anthropic and OpenAI Python SDKs). Without it they
+reach scrim as an unknown caller.
 
 ## Declared placeholders
 
