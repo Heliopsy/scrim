@@ -84,3 +84,12 @@ paths = [
 ]
 matchCondition = "AND"
 regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']
+
+[[allowlists]]
+description = """
+Environment variable names in the generated systemd unit. SCRIM_API_SOCKET
+names the agent API socket path; it is a path, not a key.
+"""
+paths = ['''^internal/install/units\.go$''']
+matchCondition = "AND"
+regexes = ['''"SCRIM_API_SOCKET=" \+ SystemRuntimeDir''']
