@@ -26,6 +26,7 @@ use crate::body::{BoxError, ProxyBody, empty, full};
 use crate::ca::{CaOptions, CaRing, CertificateAuthority, LeafSettings};
 use crate::capture::{CaptureSink, CapturedValues, RefusingCaptureSink};
 use crate::credential::ValidationError;
+use crate::decide::ClientInfo;
 use crate::engine::{Engine, RequestSigner, Snapshot};
 use crate::error::{ErrorCode, Refusal};
 use crate::host::{Destination, Scheme};
@@ -346,7 +347,7 @@ impl ToolProxy {
         let this = self.clone();
         let svc = service_fn(move |req: Request<Incoming>| {
             let this = this.clone();
-            async move { Ok::<_, Infallible>(this.proxy_request(req).await) }
+            async move { Ok::<_, Infallible>(this.proxy_request(req, peer).await) }
         });
         if let Err(e) = hyper::server::conn::http1::Builder::new()
             .preserve_header_case(false)
@@ -358,7 +359,15 @@ impl ToolProxy {
         }
     }
 
-    async fn proxy_request(&self, req: Request<Incoming>) -> Response<ProxyBody> {
+    async fn proxy_request(
+        &self,
+        mut req: Request<Incoming>,
+        peer: Option<SocketAddr>,
+    ) -> Response<ProxyBody> {
+        let client = ClientInfo {
+            peer,
+            session: ClientInfo::session_from(req.headers()),
+        };
         if req.method() == Method::CONNECT {
             let Some(dest) = req
                 .uri()
@@ -376,7 +385,7 @@ impl ToolProxy {
             let this = self.clone();
             tokio::spawn(async move {
                 match hyper::upgrade::on(req).await {
-                    Ok(up) => this.tunnel(dest, TokioIo::new(up)).await,
+                    Ok(up) => this.tunnel(dest, TokioIo::new(up), client).await,
                     Err(e) => tracing::debug!(error = %e, "CONNECT upgrade failed"),
                 }
             });
@@ -402,12 +411,13 @@ impl ToolProxy {
                 "request URI has no host",
             ));
         };
+        req.extensions_mut().insert(client);
         self.route(dest, req, false).await
     }
 
     /// Terminates TLS inside a CONNECT tunnel with a leaf for the CONNECT host and serves HTTP/1.1
-    /// or HTTP/2 over it.
-    async fn tunnel<IO>(&self, dest: Destination, io: IO)
+    /// or HTTP/2 over it. Every request in the tunnel carries the CONNECT's [`ClientInfo`].
+    async fn tunnel<IO>(&self, dest: Destination, io: IO, client: ClientInfo)
     where
         IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
@@ -457,9 +467,10 @@ impl ToolProxy {
             }
         };
         let this = self.clone();
-        let svc = service_fn(move |req: Request<Incoming>| {
+        let svc = service_fn(move |mut req: Request<Incoming>| {
             let this = this.clone();
             let dest = dest.clone();
+            req.extensions_mut().insert(client.clone());
             async move { Ok::<_, Infallible>(this.route(dest, req, misdirected).await) }
         });
         if let Err(e) = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())

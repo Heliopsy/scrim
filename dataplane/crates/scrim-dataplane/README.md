@@ -11,9 +11,9 @@ One `ApplySnapshot` builds, off the request path:
 | Part | From | Used by |
 | --- | --- | --- |
 | Redaction core (`scrim_redact::Snapshot`) | `values`, `placeholder_keys`, `redaction` | everything below |
-| LLM engine snapshot (`scrim_llm::core::CoreEngine`) | core, restore policy, `routes` | base-URL listeners, provider hosts on the forward proxy |
-| Tool proxy snapshot (compiled) | values with bindings, generated placeholders, `capture_rules`, core as response redactor | forward-proxy and tool-proxy listeners |
-| Decisions (`policy`) | `policy` | restore policy, break-glass |
+| Decisions (`policy::Decisions`: `scrim_policy::Table`, `RestoreEngine`) | `policy`, `restore`, values' metadata | request gate, injection policy, restore policy |
+| LLM engine snapshot (`scrim_llm::core::CoreEngine`) | core, decisions as gate and restore policy, `routes` | base-URL listeners, provider hosts on the forward proxy |
+| Tool proxy snapshot (compiled) | values with bindings, generated placeholders, `capture_rules`, core as response redactor, decisions as injection policy | forward-proxy and tool-proxy listeners |
 
 These go into one immutable bundle, published with a single atomic swap. The LLM proxy and the
 tool proxy read the bundle through snapshot sources, once per request, so a request never mixes
@@ -38,11 +38,42 @@ in. Routes: the snapshot's (`anthropic` and `openai` providers; an empty `path_p
 
 ## Decisions
 
-The decision-table evaluator is not in this build. The stand-in (`StatusResponse.policy_engine`
-`standin/v1`) restores display values in assistant text only, keeps every placeholder in tool
-arguments, never restores credentials, sends no asks, and under break-glass restores and injects
-nothing. Credential injection follows each credential's host, method, path and location binding.
-The ask broker never caches grants: the control plane reads them on every use.
+`scrim-policy` decides (`StatusResponse.policy_engine` `table/v1`). A snapshot whose `policy` or
+`restore` does not validate is rejected; a `policy` with nothing but `default_effect` and
+`break_glass` (`table_format` 0) is an empty table.
+
+| Operation | Where | Request | Outcome |
+| --- | --- | --- | --- |
+| `inject` | tool proxy, once per credential, after the binding checks | `secret.ref`, `.name`, `.store`, `.class`, `dest.host`, `.method`, `.path`, agent | the table: allow, deny (`403 policy_denied`), or ask |
+| `llm.forward` | LLM proxy request gate, before the body is read | `provider`, agent | deny and ask rules only; the default and break-glass do not stop forwarding |
+| `restore` | LLM proxy, per placeholder | `tool.name`, `secret.*`, agent, `provider` | the tool policy; deny or ask rules (or break-glass) keep the placeholder |
+
+An ask goes over the `Asks` stream with the request (`PolicyRequest`), the rule and its reason, a
+deadline, and the caller (`AskCaller`). The operation waits at most `Policy.ask_timeout_millis`
+(default 120 s); a timeout, a closed stream or anything but an allow answer denies. Grants are never
+cached: the next request asks again and the control plane reads its grants. Every decision is an
+`EVENT_KIND_DECISION` event (rule, effect, `op`, `decided` = `data_plane` or `control_plane`,
+`grant_id`, session).
+
+Restore: text follows `Snapshot.restore.display_mode` (absent `restore` restores nothing). Shell
+and edit tool calls are buffered and restored through `RestoreEngine::restore_tool_input`, each
+value escaped for its shell, heredoc or interpreter context, or kept where it would become code.
+Credentials are never restored, and scrim-llm hands the policy display values only. Thinking and
+signatures stay byte-identical.
+
+Break-glass also strips every credential's binding from the tool proxy snapshot, so nothing is
+injected even before the table is consulted.
+
+## Identity
+
+The data plane holds no session tokens and no peer-to-agent mapping (`identity.rs`). It reads the
+Unix socket peer (base-URL Unix listener), the session named as the user of
+`Proxy-Authorization: Basic` (forward proxy, `HTTPS_PROXY=http://<session>:<token>@host:port`; the
+password is never read) or the `x-scrim-session` header (base URL; stripped before forwarding). A
+request with none is an unknown caller (`agent.known` false), decided locally. A request with any
+is one the data plane cannot place: its agent fields are unknown to the table, so a rule on them
+goes to the control plane with `AskCaller` (session id, peer uid, gid, pid) to resolve and verify,
+and a restore rule on them keeps the placeholder.
 
 ## Events and status
 
@@ -65,11 +96,24 @@ below the floor (not protected) and the decision engine.
 ## Tests
 
 `tests/boundary.rs` drives the gRPC service in process. `tests/e2e.rs` starts the real binary
-with a socketpair, pushes a snapshot with generated secrets and sends traffic through every
-listener kind: Anthropic Messages over TCP and the Unix socket and through `CONNECT` to
-`api.anthropic.com` (the provider gets placeholders only, the stream comes back with the display
-value restored in text and placeholders kept in tool arguments); a placeholder toward the
-credential's bound host (injected, the echo redacted back) and toward another host (refused,
-nothing sent); break-glass; refusal before the first snapshot; and a race of applies against
-readers checking every engine sees one version. Events, refusal bodies and the binary's stderr
-are checked for the values.
+with a socketpair, pushes a snapshot with generated secrets, a decision table and restore settings,
+and sends traffic through every listener kind:
+
+- Anthropic Messages over TCP, the Unix socket and `CONNECT` to `api.anthropic.com`: the provider
+  gets placeholders only; the display value comes back restored in text, the credential never, and
+  a `curl` tool call keeps both placeholders.
+- A display value with spaces and both kinds of quotes restored into a Bash `echo` as one
+  single-quoted word; the credential kept in another Bash call and in text.
+- Injection toward the credential's bound host (injected, the echo redacted back), toward another
+  host (`unbound_destination`), and on a path a deny rule covers (`policy_denied`, nothing sent).
+- An ask rule round-tripping over the `Asks` stream: answered allow (injected, the ask carries the
+  request, rule, deadline and the session named on the proxy connection), then deny (asked again,
+  no grant cached), then no answer (denied after the ask timeout), then the stream closed (denied
+  at once). A provider request naming a session a deny rule could match is asked about and refused.
+- Break-glass: redaction continues, nothing is restored or injected.
+- Refusal before the first snapshot, and a race of applies against readers checking every engine
+  sees one version.
+
+Events, asks, refusal bodies and the binary's stderr are checked for the values (raw, JSON-escaped
+and base64). Socket files live in a short temporary directory, so long worktree paths stay under
+the Unix socket path limit.

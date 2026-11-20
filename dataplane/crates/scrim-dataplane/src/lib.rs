@@ -20,8 +20,10 @@
 //!   proxy; tool-proxy and forward-proxy listeners serve the HTTPS tool proxy,
 //!   which hands provider hosts to the LLM proxy. Transparent listeners are
 //!   still to come.
-//! - [`policy`]: restore and injection decisions (a conservative stand-in
-//!   until the decision-table evaluator lands).
+//! - [`policy`]: forwarding, injection and restore decisions from the
+//!   snapshot's decision table and restore settings (`scrim-policy`), asking
+//!   the control plane where a rule says so; [`identity`]: who a request is
+//!   from, as far as its transport tells.
 //! - [`audit`] and [`captures`]: audit events of both proxies and tool-proxy
 //!   captures reach the control plane over the Events and Captures streams.
 //!
@@ -34,6 +36,7 @@ pub mod captures;
 pub mod engine;
 pub mod events;
 pub mod harden;
+pub mod identity;
 pub mod inherit;
 pub mod listeners;
 pub mod policy;

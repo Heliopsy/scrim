@@ -265,6 +265,85 @@ pub trait RestorePolicy: Send + Sync {
         let _ = tool;
         ToolMode::Stream
     }
+
+    /// Restores one tool call's complete arguments itself, each value escaped for where it
+    /// lands (a shell word, a heredoc, an interpreter string), instead of the proxy inserting
+    /// raw values where [`RestorePolicy::decide`] allows.
+    ///
+    /// Called with the complete arguments: buffered calls ([`ToolMode::Buffered`]) at their
+    /// end, and tool calls of complete (non-streamed) responses. `arguments` is the JSON text of
+    /// the arguments, or the free-form input of a custom tool, as the agent will receive it.
+    /// `values` resolves display values only: credentials never resolve through it. `None`
+    /// (the default) leaves the call to [`RestorePolicy::decide`].
+    fn restore_tool_input(
+        &self,
+        tool: &str,
+        arguments: &str,
+        values: &dyn Placeholders,
+    ) -> Option<ToolInputRestore> {
+        let _ = (tool, arguments, values);
+        None
+    }
+}
+
+/// What [`RestorePolicy::restore_tool_input`] did to one tool call.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ToolInputRestore {
+    /// The rewritten arguments; `None` when nothing was resolved.
+    pub text: Option<String>,
+    /// Placeholders resolved.
+    pub resolved: u64,
+    /// Placeholders kept.
+    pub kept: u64,
+}
+
+/// What the proxy knows about one request before anything is forwarded, for a [`RequestGate`].
+#[derive(Debug, Clone, Copy)]
+pub struct RequestInfo<'a> {
+    /// The route that matched.
+    pub route: &'a str,
+    /// The route's provider (`anthropic`, `openai`).
+    pub provider: &'a str,
+    /// The request headers as the agent sent them (before scrim strips its own).
+    pub headers: &'a http::HeaderMap,
+    /// The request extensions: what the listener knows about the connection, such as
+    /// [`crate::server::UnixPeer`] or the tool proxy's client information.
+    pub extensions: &'a http::Extensions,
+}
+
+/// A [`RequestGate`]'s answer.
+pub enum Admission {
+    /// Forward the request; restore its response under `policy` (the snapshot's restore policy
+    /// bound to this request's caller).
+    Forward {
+        /// Restore policy for this request.
+        policy: Arc<dyn RestorePolicy>,
+    },
+    /// Refuse with `policy_denied`. `detail` names the rule and never contains a value.
+    Deny {
+        /// Value-free explanation (rule name, why).
+        detail: String,
+    },
+}
+
+impl fmt::Debug for Admission {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Forward { .. } => f.write_str("Forward"),
+            Self::Deny { detail } => f.debug_struct("Deny").field("detail", detail).finish(),
+        }
+    }
+}
+
+/// Decides, per request, whether it may go to the provider and with which restore policy
+/// (design D7: policy decisions in the data plane, asking the control plane only when a rule
+/// says so). Runs before the body is read; may wait (an approval), bounded by the gate.
+pub trait RequestGate: Send + Sync {
+    /// Decides one request.
+    fn admit<'a>(
+        &'a self,
+        req: RequestInfo<'a>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Admission> + Send + 'a>>;
 }
 
 /// Keeps every placeholder. The safe default until a policy snapshot arrives.
@@ -307,6 +386,9 @@ pub struct Snapshot {
     /// and its value dictionary from one version. `None` uses the routes the proxy was built
     /// with.
     pub routes: Option<Arc<crate::route::RouteTable>>,
+    /// Per-request admission and restore policy. `None` forwards every request and restores
+    /// under [`Snapshot::policy`].
+    pub gate: Option<Arc<dyn RequestGate>>,
 }
 
 impl fmt::Debug for Snapshot {

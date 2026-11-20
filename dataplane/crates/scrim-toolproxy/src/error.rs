@@ -57,6 +57,10 @@ pub enum ErrorCode {
     ResponseWithheld,
     /// Redaction itself failed; the response was withheld. 502.
     RedactionFailed,
+    /// The injection policy ([`crate::InjectionPolicy`]) refused a credential for this request:
+    /// a rule denied it, or an approval was denied or did not come in time. Nothing was sent
+    /// upstream. 403.
+    PolicyDenied,
 }
 
 impl ErrorCode {
@@ -79,6 +83,7 @@ impl ErrorCode {
             ErrorCode::UpstreamUnavailable => "upstream_unavailable",
             ErrorCode::ResponseWithheld => "response_withheld",
             ErrorCode::RedactionFailed => "redaction_failed",
+            ErrorCode::PolicyDenied => "policy_denied",
         }
     }
 
@@ -90,7 +95,8 @@ impl ErrorCode {
             }
             ErrorCode::UnboundCredential
             | ErrorCode::UnboundDestination
-            | ErrorCode::UndeclaredLocation => StatusCode::FORBIDDEN,
+            | ErrorCode::UndeclaredLocation
+            | ErrorCode::PolicyDenied => StatusCode::FORBIDDEN,
             ErrorCode::UnrepresentableValue | ErrorCode::ResigningUnsupported => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }

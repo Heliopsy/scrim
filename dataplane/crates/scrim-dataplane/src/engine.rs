@@ -91,8 +91,8 @@ pub struct Shared {
     pub snapshot: Current,
     /// Outgoing events.
     pub events: Arc<Bus>,
-    /// Outgoing asks.
-    pub asks: Broker,
+    /// Outgoing asks, shared with the decisions of each bundle.
+    pub asks: Arc<Broker>,
     /// Outgoing captures.
     pub captures: Arc<captures::Broker>,
     /// The HTTPS tool proxy (task 10.2). Provider hosts reached through it go to `llm`.
@@ -165,13 +165,21 @@ impl Shared {
         Ok(Self {
             snapshot: current,
             events,
-            asks: Broker::default(),
+            asks: Arc::new(Broker::default()),
             captures,
             tool_proxy,
             llm,
             listeners: Listeners::default(),
             apply: tokio::sync::Mutex::new(()),
         })
+    }
+
+    /// Where a bundle's decisions send asks and events.
+    fn hooks(&self) -> crate::policy::Hooks {
+        crate::policy::Hooks {
+            asks: Arc::clone(&self.asks),
+            events: Arc::clone(&self.events),
+        }
     }
 
     /// The version in force, 0 before the first apply.
@@ -193,7 +201,7 @@ impl Shared {
                 applied,
                 llm,
                 tool_proxy,
-            } = snapshot::build(snap, in_force)?;
+            } = snapshot::build(snap, in_force, &this.hooks())?;
             let tool_proxy = this
                 .tool_proxy
                 .compile(tool_proxy)

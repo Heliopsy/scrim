@@ -49,8 +49,21 @@ atomically (`SnapshotCell`); a request uses one snapshot from start to end.
 | `Redactor` | `scrim-redact` | known values and variants to placeholders, on raw bytes |
 | `Guard` | `scrim-redact` | independent check of the exact outgoing bytes, repair or refuse |
 | `Placeholders` | `scrim-redact` | placeholder syntax (find, partial prefix) and resolution |
-| `RestorePolicy` | control-plane snapshot | per site and tool: resolve or keep |
+| `RestorePolicy` | `scrim-policy` (`LlmRestorePolicy`) | per site and tool: resolve or keep; complete tool calls restored escaped (`restore_tool_input`) |
+| `RequestGate` | data plane binary | per request: forward with a restore policy for its caller, or refuse |
 | `AuditSink` | data plane binary | metadata-only events, non-blocking |
+
+`Snapshot::gate` runs before the body is read, with the route, provider, headers and request
+extensions (a Unix socket listener attaches `server::UnixPeer`, the kernel's peer credentials). It
+may wait (an approval). `Admission::Forward` carries the restore policy for that request's
+response; `Admission::Deny` answers `policy_denied`. The `x-scrim-session` header
+(`SESSION_HEADER`) is for the gate and never forwarded.
+
+When a tool call's arguments are complete (buffered calls, `ToolMode::Buffered`, and every call of
+a non-streamed response), the proxy offers them to `RestorePolicy::restore_tool_input`, which may
+restore them itself with each value escaped for where it lands. The `Placeholders` it gets resolve
+display values only, so a policy cannot restore a credential. Thinking and signatures are never
+offered.
 
 Feature `redact` provides the production engine: `core::CoreEngine` wraps a built
 `scrim_redact::Snapshot` and hands out the `Redactor`, `Guard` and `Placeholders` adapters (the
@@ -73,6 +86,7 @@ OpenAI). 422 is the redaction-failed status.
 | `unsupported_encoding` (compressed request body) | 415 |
 | `chain_unavailable`, `upstream_unavailable` | 502 |
 | `capture_failed` | 500 |
+| `policy_denied` (the request gate refused it) | 403 |
 
 ## Use
 
