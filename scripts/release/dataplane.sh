@@ -57,6 +57,12 @@ export CARGO_INCREMENTAL=0
 # protocol handshake report the release version.
 export SCRIM_BUILD_VERSION=$SCRIM_VERSION SCRIM_BUILD_COMMIT=$SCRIM_COMMIT
 
+# Every cargo call runs from the crate directory: rustup picks the toolchain
+# from the working directory, not from --manifest-path, so a call from the
+# repository root would use the runner's default toolchain, or fail on a
+# runner that has none.
+cd "$crate_dir"
+
 build=(build)
 if [ "${SCRIM_RELEASE_NO_AUDITABLE:-}" = 1 ]; then
   log "cargo-auditable skipped: this is not a release build"
@@ -67,10 +73,6 @@ else
 fi
 
 log "data plane $SCRIM_VERSION for $platform ($target)"
-# cargo runs from the crate directory too: rustup picks the toolchain from the
-# working directory, not from --manifest-path, so a build started from the
-# repository root would use the runner's default toolchain instead.
-cd "$crate_dir"
 cargo --version >&2
 cargo "${build[@]}" --release --locked \
   --manifest-path "$manifest" \
