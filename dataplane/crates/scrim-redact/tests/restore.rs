@@ -137,7 +137,7 @@ fn holdback_is_bounded() {
     let mut b = BlockRestorer::new();
     let mut out = String::new();
     b.push(s.resolver(), &RestoreDisplay, &long_prefix, &mut out);
-    assert!(b.held_len() <= MAX_PLACEHOLDER_LEN - 1);
+    assert!(b.held_len() < MAX_PLACEHOLDER_LEN);
     b.push(s.resolver(), &RestoreDisplay, "a", &mut out);
     // 49 slug characters cannot be a placeholder: released.
     assert_eq!(b.held_len(), 0);

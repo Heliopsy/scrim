@@ -21,7 +21,11 @@ fn build(generation: usize) -> Snapshot {
     // A stable value present in every generation, plus values that change per generation, and
     // enough of them that the auto engine switches between Aho-Corasick and hash-window.
     let mut vals: Vec<Vec<u8>> = vec![b"stable-value-present-always".to_vec()];
-    let n = if generation % 2 == 0 { 50 } else { 1500 };
+    let n = if generation.is_multiple_of(2) {
+        3
+    } else {
+        1500
+    };
     vals.extend((0..n).map(|i| format!("gen{generation}-value-{i:05}-xyz").into_bytes()));
     let refs: Vec<&[u8]> = vals.iter().map(Vec::as_slice).collect();
     snapshot_with(&refs, ValueClass::Credential, &Config::default())
