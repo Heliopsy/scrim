@@ -62,6 +62,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 6.3b Per-environment and bulk prefix mapping with collision checks; verify: one placeholder resolves to different references per profile and colliding templates fail
 - [x] 6.3c Catalog from store metadata, catalog files, environment and hot reload, with `scrim catalog show` and `scrim catalog suggest`; verify: OpenBao custom metadata binds a host and suggestions are printed, never applied
 - [x] 6.4 Store outage behaviour (last known set, fail closed for injection, degraded status); verify: tests that stop the store mid-run
+- [x] 6.5 Redact target globs (`APP_*` on env and file) and per-target value counts; a target that loads nothing stops start-up unless `redaction.allow-empty-targets` is on, and status never reports redaction active with an empty target; verify: the README quickstart config redacts `SCRIM_SECRET_X` through the real data plane, an empty target stops the daemon naming it, and with the setting the store is degraded with the target at 0 values
 
 ## 7. Policy, approvals and grants
 

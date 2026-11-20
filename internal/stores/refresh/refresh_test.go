@@ -15,6 +15,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/env"
 	"github.com/heliopsy/scrim/internal/stores/memstore"
 	"github.com/heliopsy/scrim/internal/stores/refresh"
 )
@@ -520,5 +521,136 @@ func TestParseConfig(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q lacks %q", err, want)
 		}
+	}
+}
+
+// mapEnv is an env store environment for tests.
+type mapEnv map[string]string
+
+func (m mapEnv) LookupEnv(name string) (string, bool) { v, ok := m[name]; return v, ok }
+func (m mapEnv) Environ() []string {
+	out := make([]string, 0, len(m))
+	for k, v := range m {
+		out = append(out, k+"="+v)
+	}
+	return out
+}
+
+// TestGlobTargetLoadsByNamePrefix is the README quickstart: an env store
+// with `redact: [local://SCRIM_SECRET_*]`. The trailing `*` matches names
+// by prefix; it is not a secret literally named SCRIM_SECRET_*.
+func TestGlobTargetLoadsByNamePrefix(t *testing.T) {
+	v, other := gen(t), gen(t)
+	a := env.New("local", env.Config{Prefix: "SCRIM_SECRET_"}, env.WithEnvironment(mapEnv{
+		"SCRIM_SECRET_X": v, "SCRIM_SECRETX": other, "HOME": other,
+	}))
+	tg, err := refresh.ParseTarget("local://SCRIM_SECRET_*")
+	if err != nil || !tg.Glob || tg.Prefix || tg.String() != "local://SCRIM_SECRET_*" {
+		t.Fatalf("target %+v, %v", tg, err)
+	}
+	r := newRefresher(t, a, nil, "local://SCRIM_SECRET_*")
+	if err := r.RefreshNow(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	got := set(r)
+	if _, ok := got[v]; !ok || len(got) != 1 {
+		t.Fatalf("redaction set has %d values, want SCRIM_SECRET_X only", len(got))
+	}
+	st := r.Status()
+	if len(st.Targets) != 1 || st.Targets[0].Target != "local://SCRIM_SECRET_*" || st.Targets[0].Values != 1 {
+		t.Fatalf("targets %+v", st.Targets)
+	}
+}
+
+func TestParseTargetGlobRules(t *testing.T) {
+	for _, bad := range []string{"bao://kv/a*b", "bao://kv/x*#token", "bao://*"} {
+		if _, err := refresh.ParseTarget(bad); err == nil {
+			t.Errorf("%s accepted", bad)
+		}
+	}
+}
+
+// TestGlobNeedsAStoreThatMatchesNames refuses a glob on a store that cannot
+// expand one, instead of loading nothing.
+func TestGlobNeedsAStoreThatMatchesNames(t *testing.T) {
+	s := memstore.New("mem")
+	seed(s, "agents/a", map[string]string{"token": gen(t)})
+	r := newRefresher(t, s, nil, "mem://agents/a*")
+	if err := r.RefreshNow(t.Context()); !errors.Is(err, stores.ErrUnsupported) {
+		t.Fatalf("glob on memstore: %v", err)
+	}
+}
+
+// TestEmptyTargetRefusesStartUp: a target that matches nothing on the first
+// load is a configuration problem. Redaction stays not ready, the error
+// names the target, and FirstLoad reports it so start-up fails.
+func TestEmptyTargetRefusesStartUp(t *testing.T) {
+	for _, target := range []string{"mem://agents/*", "mem://agents/missing", "mem://agents/x*"} {
+		t.Run(target, func(t *testing.T) {
+			s := memstore.New("mem")
+			seed(s, "other/a", map[string]string{"token": gen(t)})
+			var r *refresh.Refresher
+			if strings.HasSuffix(target, "x*") {
+				r = newRefresher(t, env.New("mem", env.Config{}, env.WithEnvironment(mapEnv{"OTHER": gen(t)})), nil, target)
+			} else {
+				r = newRefresher(t, s, nil, target)
+			}
+			err := r.RefreshNow(t.Context())
+			if !errors.Is(err, refresh.ErrEmptyTarget) || !strings.Contains(err.Error(), target) ||
+				!strings.Contains(err.Error(), "redaction.allow-empty-targets") {
+				t.Fatalf("refresh: %v", err)
+			}
+			if err := r.Ready(t.Context()); err == nil || !strings.Contains(err.Error(), target) {
+				t.Fatalf("ready with an empty target: %v", err)
+			}
+			if err := r.FirstLoad(t.Context()); !errors.Is(err, refresh.ErrEmptyTarget) {
+				t.Fatalf("first load: %v", err)
+			}
+			st := r.Status()
+			if st.State == refresh.StateReady || len(st.Targets) != 1 || st.Targets[0].Values != 0 {
+				t.Fatalf("status %+v", st)
+			}
+		})
+	}
+}
+
+// TestEmptyTargetAllowedIsDegraded: with the weakening setting the store
+// loads, but its status says which target holds nothing.
+func TestEmptyTargetAllowedIsDegraded(t *testing.T) {
+	s := memstore.New("mem")
+	v := gen(t)
+	seed(s, "agents/a", map[string]string{"token": v})
+	tgs := []refresh.Target{}
+	for _, x := range []string{"mem://agents/*", "mem://empty/*"} {
+		tg, err := refresh.ParseTarget(x)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tgs = append(tgs, tg)
+	}
+	r := refresh.New(s, refresh.Config{Targets: tgs, AllowEmptyTargets: true, Jitter: -1})
+	t.Cleanup(r.Close)
+	if err := r.RefreshNow(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Ready(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.FirstLoad(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	st := r.Status()
+	if st.State != refresh.StateDegraded || !strings.Contains(st.LastError, "mem://empty/*") {
+		t.Fatalf("status %+v", st)
+	}
+	want := map[string]int{"mem://agents/*": 1, "mem://empty/*": 0}
+	for _, ts := range st.Targets {
+		if want[ts.Target] != ts.Values {
+			t.Errorf("target %s: %d values", ts.Target, ts.Values)
+		}
+		delete(want, ts.Target)
+	}
+	if len(want) != 0 {
+		t.Fatalf("targets %+v", st.Targets)
 	}
 }

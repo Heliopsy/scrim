@@ -481,10 +481,46 @@ func TestRegistered(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = a.Close() }()
-	if a.Capabilities() != stores.CapRead|stores.CapList|stores.CapWatch {
+	if a.Capabilities() != stores.CapRead|stores.CapList|stores.CapWatch|stores.CapGlob {
 		t.Errorf("capabilities = %s", a.Capabilities())
 	}
 	if _, err := stores.DefaultRegistry.Open(t.Context(), stores.Instance{Name: "x", Kind: Kind, Options: map[string]any{"root": "/nonexistent/scrim-test"}}); err == nil {
 		t.Errorf("missing root accepted")
+	}
+}
+
+// TestGlobListsByPathPrefix: a trailing `*` after part of a name matches
+// every file whose path under the root starts with the text before it.
+func TestGlobListsByPathPrefix(t *testing.T) {
+	a, root := newAdapter(t, Config{})
+	for _, p := range []string{"app-one", "app-two", "apple", "dir/app-1", "dir/app-sub/x", "dir/other"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, p), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for glob, want := range map[string][]string{
+		"app-*":     {"app-one", "app-two"},
+		"dir/app-*": {"dir/app-1", "dir/app-sub/x"},
+		"dir/*":     {"dir/app-1", "dir/app-sub/x", "dir/other"},
+		"none-*":    nil,
+	} {
+		ms, err := a.List(t.Context(), stores.Ref{Scheme: "file", Path: glob})
+		if err != nil {
+			t.Fatalf("%s: %v", glob, err)
+		}
+		var got []string
+		for _, m := range ms {
+			got = append(got, m.Ref.Path)
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			t.Errorf("List %s = %v, want %v", glob, got, want)
+		}
+	}
+	if _, err := a.List(t.Context(), stores.Ref{Scheme: "file", Path: "../x*"}); !errors.Is(err, stores.ErrInvalidRef) {
+		t.Errorf("glob outside the root: %v", err)
 	}
 }

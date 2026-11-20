@@ -42,6 +42,15 @@ type Store struct {
 	Values      int       `json:"values"`
 	Degraded    bool      `json:"degraded"`
 	Reason      string    `json:"reason,omitempty"`
+	// Targets is how many values each configured redact target holds. A
+	// target with 0 values protects nothing and marks the store degraded.
+	Targets []StoreTarget `json:"targets,omitempty"`
+}
+
+// StoreTarget is one redact target of a store and its value count.
+type StoreTarget struct {
+	Target string `json:"target"`
+	Values int    `json:"values"`
 }
 
 // State describes the state backend.

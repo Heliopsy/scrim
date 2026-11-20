@@ -10,6 +10,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/stores"
+	_ "github.com/heliopsy/scrim/internal/stores/env"
 	_ "github.com/heliopsy/scrim/internal/stores/memstore"
 	"github.com/heliopsy/scrim/internal/stores/openbao"
 	"github.com/heliopsy/scrim/internal/stores/storeconfig"
@@ -75,11 +76,12 @@ func TestValidationNamesTheProblem(t *testing.T) {
 		"refresh typo":   "stores:\n  bao:\n    kind: openbao\n    address: http://x\n    token: env:T\n    refresh: {intervall: 1m}\n",
 		"foreign target": "stores:\n  bao:\n    kind: openbao\n    address: http://x\n    token: env:T\n    redact: [\"inf://p/e/*\"]\n",
 		"missing kind":   "stores:\n  bao:\n    address: http://x\n",
+		"glob on bao":    "stores:\n  bao:\n    kind: openbao\n    address: http://x\n    token: env:T\n    redact: [\"bao://kv/app-*\"]\n",
 	}
 	want := map[string]string{
 		"unknown kind": "unknown store kind", "adapter typo": "did you mean address",
 		"refresh typo": "did you mean refresh.interval", "foreign target": "names another store",
-		"missing kind": "is required",
+		"missing kind": "is required", "glob on bao": "bao://kv/app-*: store bao (capabilities read,list,watch,write) does not match names by a trailing *",
 	}
 	for name, yaml := range cases {
 		_, err := build(t, yaml, "T=tok-0123456789")
@@ -108,6 +110,72 @@ func TestCredentialsAreMaskedAndResolved(t *testing.T) {
 	for _, inst := range storeconfig.Collection.Get(cfg) {
 		if strings.Contains(inst.String("secret-id"), secretID) {
 			t.Fatal("instance fields hold the resolved value")
+		}
+	}
+}
+
+// quickstart is the README configuration.
+const quickstart = `
+stores:
+  local:
+    kind: env
+    prefix: SCRIM_SECRET_
+    redact:
+      - local://SCRIM_SECRET_*
+`
+
+func TestQuickstartGlobLoads(t *testing.T) {
+	t.Setenv("SCRIM_SECRET_X", "val-"+strings.Repeat("q", 20))
+	cfg, err := build(t, quickstart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := storeconfig.Open(t.Context(), cfg, stores.DefaultRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = o.Close() }()
+	r := o.Refreshers[0]
+	if err := r.RefreshNow(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	st := r.Status()
+	if len(st.Targets) != 1 || st.Targets[0].Target != "local://SCRIM_SECRET_*" || st.Targets[0].Values < 1 {
+		t.Fatalf("status %+v", st)
+	}
+}
+
+// TestEmptyTargetNeedsTheWeakeningSetting: a redact target that matches
+// nothing fails the first load, unless redaction.allow-empty-targets is on.
+func TestEmptyTargetNeedsTheWeakeningSetting(t *testing.T) {
+	yaml := strings.Replace(quickstart, "SCRIM_SECRET_*", "SCRIM_SECRET_NOTHING_HERE_*", 1)
+	for _, allow := range []bool{false, true} {
+		var env []string
+		if allow {
+			env = []string{"SCRIM_REDACTION_ALLOW_EMPTY_TARGETS=true"}
+		}
+		cfg, err := build(t, yaml, env...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if allow != storeconfig.AllowEmptyTargets.Get(cfg) {
+			t.Fatalf("setting not read from %v", env)
+		}
+		o, err := storeconfig.Open(t.Context(), cfg, stores.DefaultRegistry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = o.Refreshers[0].RefreshNow(t.Context())
+		st := o.Refreshers[0].Status()
+		_ = o.Close()
+		if allow {
+			if err != nil || st.State != "degraded" || st.Targets[0].Values != 0 {
+				t.Fatalf("allowed: %v, %+v", err, st)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), "local://SCRIM_SECRET_NOTHING_HERE_*") {
+			t.Fatalf("not allowed: %v", err)
 		}
 	}
 }

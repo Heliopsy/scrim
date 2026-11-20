@@ -89,6 +89,9 @@ func WriteHuman(w io.Writer, r Report) error {
 			}
 			_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%d values\trefreshed %s\t%s\n",
 				s.Name, s.Kind, state, s.Values, when(s.LastRefresh), s.Reason)
+			for _, t := range s.Targets {
+				_, _ = fmt.Fprintf(tw, "    redact %s\t\t%s\t%d values\t\t\n", t.Target, onOff(t.Values > 0, "ok", "EMPTY"), t.Values)
+			}
 		}
 	})
 

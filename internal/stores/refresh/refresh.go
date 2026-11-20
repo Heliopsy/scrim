@@ -55,45 +55,87 @@ const (
 	DefaultMaxBackoff = 5 * time.Minute
 )
 
-// Target is something the configuration marks for redaction: one secret, or
-// every secret under a prefix.
+// ErrEmptyTarget marks a redact target that loaded no value on the first
+// load: a configuration problem (a misspelt name, a glob that matches
+// nothing), not an outage. The store stays not ready and start-up fails,
+// unless [Config.AllowEmptyTargets] is set.
+var ErrEmptyTarget = errors.New("redact target loaded no values")
+
+// AllowEmptyTargetsKey is the weakening setting that lets a store start with
+// empty redact targets. It is registered by storeconfig; the name lives here
+// so error messages can point to it.
+const AllowEmptyTargetsKey = "redaction.allow-empty-targets"
+
+// Target is something the configuration marks for redaction: one secret,
+// every secret under a folder (`dir/*`), or every secret whose path starts
+// with some text (a glob, `APP_*` or `dir/app-*`).
 type Target struct {
-	Ref    stores.Ref
+	Ref stores.Ref
+	// Prefix: Ref.Path is a folder; every secret in it and below.
 	Prefix bool
+	// Glob: Ref.Path is the text before the trailing `*`; every secret
+	// whose path starts with it. Needs a store with stores.CapGlob.
+	Glob bool
 }
 
 // ParseTarget parses a configured target. A reference ending in `/*` is a
-// prefix; anything else names one secret. A field selector is allowed on a
-// single secret and limits loading to that field.
+// folder prefix; one ending in `*` right after part of a name is a glob over
+// names; anything else names one secret. A `*` anywhere else is refused, so
+// a pattern is never read as a literal secret name. A field selector is
+// allowed on a single secret and limits loading to that field.
 func ParseTarget(s string) (Target, error) {
 	r, err := stores.ParseRef(s)
 	if err != nil {
 		return Target{}, err
 	}
-	prefix := r.Path == "*" || strings.HasSuffix(r.Path, "/*")
-	if prefix {
+	var t Target
+	switch {
+	case r.Path == "*" || strings.HasSuffix(r.Path, "/*"):
+		t.Prefix = true
 		r.Path = strings.TrimSuffix(strings.TrimSuffix(r.Path, "*"), "/")
 		if r.Path == "" {
 			return Target{}, fmt.Errorf("%w: a prefix target needs a path before /*", stores.ErrInvalidRef)
 		}
+	case strings.HasSuffix(r.Path, "*"):
+		t.Glob = true
+		r.Path = strings.TrimSuffix(r.Path, "*")
 	}
-	if prefix && (r.Field != "" || r.Selectors != "") {
-		return Target{}, fmt.Errorf("%w: a prefix target takes no field or selector", stores.ErrInvalidRef)
+	if strings.Contains(r.Path, "*") {
+		return Target{}, fmt.Errorf("%w: `*` is allowed only at the end of a redact target", stores.ErrInvalidRef)
 	}
-	return Target{Ref: r, Prefix: prefix}, nil
+	if (t.Prefix || t.Glob) && (r.Field != "" || r.Selectors != "") {
+		return Target{}, fmt.Errorf("%w: a prefix or glob target takes no field or selector", stores.ErrInvalidRef)
+	}
+	t.Ref = r
+	return t, nil
 }
 
 func (t Target) String() string {
-	if t.Prefix {
+	switch {
+	case t.Prefix:
 		return t.Ref.String() + "/*"
+	case t.Glob:
+		return t.Ref.String() + "*"
 	}
 	return t.Ref.String()
 }
 
+// listRef is the prefix handed to the adapter's List and Watch.
+func (t Target) listRef() stores.Ref {
+	r := t.Ref.Secret()
+	if t.Glob {
+		r.Path += "*"
+	}
+	return r
+}
+
 // covers reports whether ref (a whole secret) is under t.
 func (t Target) covers(ref stores.Ref) bool {
-	if t.Prefix {
+	switch {
+	case t.Prefix:
 		return ref.Path == t.Ref.Path || strings.HasPrefix(ref.Path, t.Ref.Path+"/")
+	case t.Glob:
+		return strings.HasPrefix(ref.Path, t.Ref.Path)
 	}
 	return ref.Path == t.Ref.Path
 }
@@ -116,6 +158,11 @@ type Config struct {
 	Staleness time.Duration
 	// MaxBackoff bounds the retry delay after failed loads; default 5m.
 	MaxBackoff time.Duration
+	// AllowEmptyTargets lets the first load succeed although a target
+	// loaded no value (setting redaction.allow-empty-targets, a weakening
+	// one). The store is then reported degraded, naming the target. By
+	// default such a load fails with [ErrEmptyTarget].
+	AllowEmptyTargets bool
 	// Now is the clock; default time.Now.
 	Now func() time.Time
 	// OnChange, if set, is called after every change to the value set
@@ -160,8 +207,9 @@ const (
 	StateLoading State = "loading"
 	// StateReady: the last refresh succeeded.
 	StateReady State = "ready"
-	// StateDegraded: values were loaded, but the last refresh failed. The
-	// last known values are still redacted.
+	// StateDegraded: values were loaded, but the last refresh failed (the
+	// last known values are still redacted), or a redact target holds no
+	// value.
 	StateDegraded State = "degraded"
 	// StateUnavailable: no load has ever succeeded. Redaction is not ready.
 	StateUnavailable State = "unavailable"
@@ -189,6 +237,15 @@ type Status struct {
 	// in the redaction set including retained previous ones.
 	Secrets int `json:"secrets"`
 	Values  int `json:"values"`
+	// Targets counts the values each configured redact target holds.
+	Targets []TargetStatus `json:"targets"`
+}
+
+// TargetStatus is how many values one redact target holds in the redaction
+// set (current and retained). Zero means the target protects nothing.
+type TargetStatus struct {
+	Target string `json:"target"`
+	Values int    `json:"values"`
 }
 
 type entry struct {
@@ -230,6 +287,12 @@ type Refresher struct {
 	lastAttempt time.Time
 	lastErr     error
 
+	// first is closed once the first load completed or failed on an
+	// empty target; firstErr is that failure.
+	first     chan struct{}
+	firstOnce sync.Once
+	firstErr  error
+
 	kick chan struct{} // asks Run for a refresh now
 }
 
@@ -241,6 +304,7 @@ func New(a stores.Adapter, cfg Config) *Refresher {
 		a: a, cfg: cfg,
 		entries: map[string]*entry{},
 		pending: map[*secret.Value]stores.Ref{},
+		first:   make(chan struct{}),
 		kick:    make(chan struct{}, 1),
 	}
 }
@@ -329,8 +393,8 @@ func (r *Refresher) Run(ctx context.Context) {
 // watch re-reads secrets under t as the adapter reports changes, restarting
 // the watch with backoff if it cannot be started.
 func (r *Refresher) watch(ctx context.Context, t Target) {
-	prefix := t.Ref.Secret()
-	if !t.Prefix {
+	prefix := t.listRef()
+	if !t.Prefix && !t.Glob {
 		// Watch the folder holding the secret and filter.
 		if i := strings.LastIndexByte(prefix.Path, '/'); i > 0 {
 			prefix.Path = prefix.Path[:i]
@@ -367,7 +431,7 @@ func (r *Refresher) applyChange(ctx context.Context, t Target, c stores.Change) 
 		r.changed()
 	case stores.Changed:
 		ref := c.Ref.Secret()
-		if !t.Prefix {
+		if !t.Prefix && !t.Glob {
 			ref = t.Ref
 		}
 		// A failure here is covered by the next full refresh.
@@ -384,6 +448,13 @@ func (r *Refresher) RefreshNow(ctx context.Context) error {
 	r.mu.Lock()
 	r.lastAttempt = now
 	r.locked = errors.Is(err, stores.ErrLocked)
+	r.expireLocked(now)
+	if err == nil {
+		if empty := r.emptyTargetsLocked(); len(empty) > 0 && !r.loaded && !r.cfg.AllowEmptyTargets {
+			err = fmt.Errorf("store %s: %w: %s matched no secret; check the name and the store's prefix or allow list, "+
+				"or set %s to start anyway", r.a.Name(), ErrEmptyTarget, strings.Join(empty, ", "), AllowEmptyTargetsKey)
+		}
+	}
 	if err == nil {
 		r.lastSuccess = now
 		r.loaded = true
@@ -391,7 +462,14 @@ func (r *Refresher) RefreshNow(ctx context.Context) error {
 	} else {
 		r.lastErr = err
 	}
-	r.expireLocked(now)
+	if r.loaded || errors.Is(err, ErrEmptyTarget) {
+		r.firstOnce.Do(func() {
+			if !r.loaded {
+				r.firstErr = err
+			}
+			close(r.first)
+		})
+	}
 	if h, ok := r.a.(stores.CredentialHolder); ok {
 		for _, v := range r.creds {
 			v.Wipe()
@@ -410,7 +488,7 @@ func (r *Refresher) refresh(ctx context.Context) error {
 	var errs []error
 	seen := map[string]bool{}
 	for _, t := range r.cfg.Targets {
-		if !t.Prefix {
+		if !t.Prefix && !t.Glob {
 			seen[key(t.Ref)] = true
 			if err := r.load(ctx, t.Ref, stores.Metadata{}); err != nil {
 				if errors.Is(err, stores.ErrNotFound) {
@@ -427,7 +505,12 @@ func (r *Refresher) refresh(ctx context.Context) error {
 			errs = append(errs, r.err(stores.OpList, t.Ref, stores.ErrUnsupported, "a prefix target needs a store that can list", nil))
 			continue
 		}
-		ms, err := r.a.List(ctx, t.Ref)
+		if t.Glob && !r.a.Capabilities().Has(stores.CapGlob) {
+			errs = append(errs, r.err(stores.OpList, t.listRef(), stores.ErrUnsupported,
+				"target "+t.String()+": this store does not match names by a trailing *; use a folder prefix (dir/*) or name each secret", nil))
+			continue
+		}
+		ms, err := r.a.List(ctx, t.listRef())
 		if err != nil {
 			errs = append(errs, err)
 			// Keep everything under the prefix: the listing failed, so
@@ -442,6 +525,9 @@ func (r *Refresher) refresh(ctx context.Context) error {
 			continue
 		}
 		for _, m := range ms {
+			if !t.covers(m.Ref) {
+				continue
+			}
 			seen[key(m.Ref)] = true
 			if err := r.load(ctx, m.Ref.Secret(), m); err != nil && !errors.Is(err, stores.ErrNotFound) {
 				errs = append(errs, err)
@@ -552,6 +638,60 @@ func (r *Refresher) Ready(context.Context) error {
 	return r.err("load", stores.Ref{}, stores.ErrUnavailable, detail, nil)
 }
 
+// FirstLoad waits until the first load completes and returns nil, or
+// returns the [ErrEmptyTarget] error that stopped it. An unreachable store
+// is not a configuration problem: FirstLoad keeps waiting (and redaction
+// stays not ready) until it answers or ctx ends.
+func (r *Refresher) FirstLoad(ctx context.Context) error {
+	select {
+	case <-r.first:
+		return r.firstErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// targetCountsLocked counts the values each target holds.
+func (r *Refresher) targetCountsLocked() []TargetStatus {
+	out := make([]TargetStatus, 0, len(r.cfg.Targets))
+	for _, t := range r.cfg.Targets {
+		n := 0
+		for _, e := range r.entries {
+			if t.covers(e.meta.Ref) {
+				n += t.fieldCount(e.fields)
+			}
+		}
+		for _, x := range r.retired {
+			if t.covers(x.ref) && (t.Ref.Field == "" || t.Ref.Field == x.field) {
+				n++
+			}
+		}
+		out = append(out, TargetStatus{Target: t.String(), Values: n})
+	}
+	return out
+}
+
+func (t Target) fieldCount(fields map[string]secret.Value) int {
+	if t.Ref.Field == "" {
+		return len(fields)
+	}
+	if _, ok := fields[t.Ref.Field]; ok {
+		return 1
+	}
+	return 0
+}
+
+// emptyTargetsLocked names the targets that hold no value.
+func (r *Refresher) emptyTargetsLocked() []string {
+	var out []string
+	for _, ts := range r.targetCountsLocked() {
+		if ts.Values == 0 {
+			out = append(out, ts.Target)
+		}
+	}
+	return out
+}
+
 // Status reports the store's freshness.
 func (r *Refresher) Status() Status {
 	r.mu.RLock()
@@ -568,6 +708,11 @@ func (r *Refresher) Status() Status {
 	if r.lastErr != nil {
 		st.LastError = r.lastErr.Error()
 	}
+	st.Targets = r.targetCountsLocked()
+	empty := r.emptyTargetsLocked()
+	if len(empty) > 0 && r.loaded && r.lastErr == nil {
+		st.LastError = "redact target " + strings.Join(empty, ", ") + " holds no values"
+	}
 	switch {
 	case r.locked:
 		st.State = StateLocked
@@ -575,7 +720,7 @@ func (r *Refresher) Status() Status {
 		st.State = StateLoading
 	case !r.loaded:
 		st.State = StateUnavailable
-	case r.lastErr != nil:
+	case r.lastErr != nil, len(empty) > 0:
 		st.State = StateDegraded
 	default:
 		st.State = StateReady

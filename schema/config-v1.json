@@ -873,6 +873,14 @@
     "redaction": {
       "additionalProperties": false,
       "properties": {
+        "allow-empty-targets": {
+          "default": false,
+          "description": "Start even when a store's redact target matches no secret on the first load. Off, such a target stops start-up with an error naming it, since it usually means a misspelt name or pattern and redaction would protect nothing. On, the store starts and status reports the target as degraded with 0 values.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_REDACTION_ALLOW_EMPTY_TARGETS",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": true
+        },
         "min-value-length": {
           "default": 8,
           "description": "Shortest value matched in free text; shorter values are matched only in exact and encoded forms.",

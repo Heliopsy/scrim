@@ -98,10 +98,12 @@ func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) 
 	}
 	// A running daemon reports what it actually serves: interception modes
 	// from its bound listeners and open sessions, protections, providers
-	// and its data plane. Without one, the data plane is probed once.
+	// and its data plane, and its stores with the values each redact
+	// target holds. Without one, the data plane is probed once.
 	if info, err := daemon.Connect(ctx, cfg); err == nil {
 		src.Runtime = info.StatusRuntime()
 		src.DataPlane = staticDataPlane(info.StatusDataPlane())
+		src.Stores = staticStores(info.Stores)
 	}
 	st, closeFn := openStateForStatus(ctx, cfg)
 	src.State = st
@@ -129,6 +131,11 @@ func openStateForStatus(ctx context.Context, cfg *config.Config) (status.StateOf
 	}
 	return status.StateOf{Store: s}, func() { _ = s.Close() }
 }
+
+// staticStores is store health already collected by the daemon.
+type staticStores []status.Store
+
+func (s staticStores) StoreHealth(context.Context) []status.Store { return s }
 
 // staticDataPlane is a data plane status already collected.
 type staticDataPlane status.DataPlane
