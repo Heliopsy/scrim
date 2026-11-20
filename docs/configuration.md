@@ -212,12 +212,6 @@ is out of date.
 
 | Key | Type | Default | Reload |
 |---|---|---|---|
-| [`catalog.environment`](#catalogenvironment) | string | `""` | hot |
-| [`catalog.files`](#catalogfiles) | list | `[]` | hot |
-| [`catalog.metadata-from`](#catalogmetadata-from) | list | `[]` | hot |
-| [`catalog.metadata-prefix`](#catalogmetadata-prefix) | string | `scrim.` | hot |
-| [`catalog.profile`](#catalogprofile) | string | `""` | hot |
-| [`catalog.reload-interval`](#catalogreload-interval) | duration | `5s` | hot |
 | [`config.strict`](#configstrict) | bool | `true` | hot |
 | [`config.watch`](#configwatch) | bool | `true` | hot |
 | [`log.format`](#logformat) | string | `text` | hot |
@@ -233,91 +227,19 @@ is out of date.
 | [`state.sqlite.path`](#statesqlitepath) | string | `""` | restart required |
 | [`tracing.endpoint`](#tracingendpoint) | string | `""` | restart required |
 | [`tracing.sample-ratio`](#tracingsample-ratio) | float | `1` | restart required |
-| [`catalog.entries.<name>.*`](#catalogentriesname) | collection | empty | hot |
+| [`stores.<name>.*`](#storesname) | collection | empty | restart required |
 
-### `catalog.entries.<name>`
+### `stores.<name>`
 
-Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools. References only, never values.
+Secret store instances by name. The name is the instance's reference scheme (`bao://...` for an instance named bao); `kind` picks the adapter, `aliases` adds schemes, `redact` lists references and prefixes loaded into the redaction set, `refresh.*` tunes refresh and outage handling, and every other field is the adapter's own. See docs/stores.
 
 | | |
 |---|---|
 | Type | collection of named instances (names: lower-case words with dashes) |
-| Environment | `SCRIM_CATALOG_ENTRIES` (JSON object of instances, replaces the collection); `SCRIM_CATALOG_ENTRIES_<NAME>_<FIELD>` for one field |
-| Reload | hot |
-
-### catalog
-
-#### `catalog.environment`
-
-Catalog environment that selects per-environment references.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `""` |
-| Environment | `SCRIM_CATALOG_ENVIRONMENT` |
-| Flag | `--catalog-environment` |
-| Reload | hot |
-
-#### `catalog.files`
-
-Catalog files to load, in order. Each is a YAML document with `kind: Catalog` and an `entries` map. Reloaded when they change.
-
-| | |
-|---|---|
-| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
-| Default | `[]` |
-| Environment | `SCRIM_CATALOG_FILES` |
-| Flag | none |
-| Reload | hot |
-
-#### `catalog.metadata-from`
-
-Store prefixes (for example bao://kv/agents) whose secrets' metadata labels are read as catalog entries.
-
-| | |
-|---|---|
-| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
-| Default | `[]` |
-| Environment | `SCRIM_CATALOG_METADATA_FROM` |
-| Flag | none |
-| Reload | hot |
-
-#### `catalog.metadata-prefix`
-
-Prefix of the store metadata keys read as catalog bindings: <prefix>hosts, <prefix>placeholder, <prefix>profiles, <prefix>name, <prefix>class, <prefix>field.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `scrim.` |
-| Environment | `SCRIM_CATALOG_METADATA_PREFIX` |
-| Flag | none |
-| Reload | hot |
-
-#### `catalog.profile`
-
-Catalog profile (for example dev or prod) that selects per-profile references.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `""` |
-| Environment | `SCRIM_CATALOG_PROFILE` |
-| Flag | `--catalog-profile` |
-| Reload | hot |
-
-#### `catalog.reload-interval`
-
-How often catalog files are checked for changes.
-
-| | |
-|---|---|
-| Type | duration (`90s`, `5m`, `1h30m`) |
-| Default | `5s` |
-| Environment | `SCRIM_CATALOG_RELOAD_INTERVAL` |
-| Flag | none |
-| Reload | hot |
+| Environment | `SCRIM_STORES` (JSON object of instances, replaces the collection); `SCRIM_STORES_<NAME>_<FIELD>` for one field |
+| Required fields | `kind` |
+| Secret fields | `token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password`, `unlock` (references; a literal is warned about) |
+| Reload | restart required |
 
 ### config
 
