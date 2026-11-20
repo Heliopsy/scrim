@@ -71,3 +71,16 @@ paths = ['''^dataplane/crates/scrim-llm/tests/fixtures/''']
 matchCondition = "AND"
 regexTarget = "line"
 regexes = ['''"prompt_cache_key":"[0-9a-f-]{36}"''']
+
+[[allowlists]]
+description = """
+The sample Sec-WebSocket-Key from RFC 6455 section 1.3 (base64 of "the sample
+nonce"), used by the tests that check WebSocket upgrades are refused. It is a
+public example value, not a credential.
+"""
+paths = [
+  '''^dataplane/crates/scrim-llm/tests/upgrade\.rs$''',
+  '''^dataplane/crates/scrim-llm/tests/forward_proxy\.rs$''',
+]
+matchCondition = "AND"
+regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']
