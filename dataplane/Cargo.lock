@@ -1502,6 +1502,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "scrim-policy"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "regex",
+ "scrim-llm",
+ "scrim-policy",
+ "scrim-proto",
+ "scrim-redact",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "scrim-proto"
 version = "0.1.0"
 dependencies = [
