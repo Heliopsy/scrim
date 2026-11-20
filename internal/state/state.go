@@ -290,15 +290,15 @@ func Open(ctx context.Context, cfg *config.Config) (Store, error) {
 	return open(ctx, cfg)
 }
 
-// BackendSetting selects the state backend.
-//
-// The spec's local default is sqlite; until that backend lands the default
-// is memory so the binary runs.
+// BackendSetting selects the state backend: sqlite in the local profile
+// (specs/state-and-scaling "Selectable state backend"), memory in the ci and
+// k8s profiles and when nothing selects a profile's value.
 var BackendSetting = config.Register(config.Spec[string]{
 	Key:             "state.backend",
 	Default:         "memory",
+	Profiles:        map[string]string{"local": "sqlite"},
 	Enum:            []string{"memory", "sqlite", "postgres"},
-	Description:     "State backend for approvals, grants, sessions and audit metadata. memory writes nothing to disk.",
+	Description:     "State backend for approvals, grants, sessions and audit metadata. The local profile uses sqlite ($XDG_STATE_HOME/scrim/state.db); ci and k8s use memory, which writes nothing to disk (set postgres for shared state).",
 	Flag:            true,
 	RestartRequired: true,
 })

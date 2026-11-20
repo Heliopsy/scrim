@@ -77,7 +77,11 @@ var (
 
 func init() {
 	state.RegisterBackend(Name, func(ctx context.Context, cfg *config.Config) (state.Store, error) {
-		s, err := Open(ctx, PathSetting.Get(cfg), Options{AllowNetworkFS: AllowNetworkFSSetting.Get(cfg)})
+		path, err := PathFor(cfg)
+		if err != nil {
+			return nil, err
+		}
+		s, err := Open(ctx, path, Options{AllowNetworkFS: AllowNetworkFSSetting.Get(cfg)})
 		if err != nil {
 			return nil, err
 		}
@@ -110,6 +114,19 @@ type Store struct {
 }
 
 var _ state.Store = (*Store)(nil)
+
+// PathFor is the state file cfg names: state.sqlite.path, or state.db in
+// the state directory of the environment cfg was built from.
+func PathFor(cfg *config.Config) (string, error) {
+	if p := PathSetting.Get(cfg); p != "" {
+		return p, nil
+	}
+	dir, err := cfg.StateDir()
+	if err != nil {
+		return "", fmt.Errorf("state: %w", err)
+	}
+	return filepath.Join(dir, "state.db"), nil
+}
 
 // DefaultPath is the state file used when state.sqlite.path is empty.
 func DefaultPath() (string, error) {

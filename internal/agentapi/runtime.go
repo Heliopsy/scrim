@@ -145,3 +145,10 @@ func (r *Runtime) Serve(ctx context.Context) error {
 func (r *Runtime) LogAddresses(l *slog.Logger) {
 	l.Info("agent API listening", "socket", r.Socket, "entry_page", r.EntryURL)
 }
+
+// Close releases both listeners without serving, for a caller that fails
+// after New. Serve closes them itself when it returns.
+func (r *Runtime) Close() {
+	_ = r.sock.Close()
+	_ = r.entry.Close()
+}

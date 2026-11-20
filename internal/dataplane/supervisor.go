@@ -57,6 +57,9 @@ type Supervisor struct {
 	MinBackoff, MaxBackoff time.Duration
 
 	version atomic.Uint64
+	// pushMu serialises pushes, so versions reach the data plane in the
+	// order they were assigned and a push never races the start-up push.
+	pushMu  sync.Mutex
 	ready   atomic.Bool
 	mu      sync.Mutex
 	cur     *Process
@@ -216,6 +219,8 @@ func (s *Supervisor) push(ctx context.Context, p *Process) error {
 	if s.Snapshot == nil {
 		return errors.New("dataplane: no snapshot source")
 	}
+	s.pushMu.Lock()
+	defer s.pushMu.Unlock()
 	snap, err := s.Snapshot(ctx)
 	if err != nil {
 		return fmt.Errorf("dataplane: building snapshot: %w", err)
