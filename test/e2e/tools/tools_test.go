@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//go:build linux
+
 // Package tools runs real tool clients (curl, git, Node.js fetch, Python
 // requests) under `scrim run` against a real `scrim proxy` and TLS test
 // servers on bound hosts (tasks.md 10.2). Run it with `just e2e-tools`.

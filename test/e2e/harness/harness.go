@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//go:build linux
+
 // Package harness runs the real scrim binary for the end-to-end tests under
 // test/e2e: a `scrim proxy` with its own temporary directories, memory state
 // and a file store of generated values, agents and tools started under

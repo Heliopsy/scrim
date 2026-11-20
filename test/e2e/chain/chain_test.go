@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//go:build linux
+
 // Package chain runs scrim with caveman, a context compression proxy, as its
 // chained upstream (tasks.md 3.5): agent, then scrim, then caveman, then a
 // fake provider. Run it with `just e2e-chain`; it is skipped when

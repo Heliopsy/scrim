@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//go:build linux
+
 // Package session runs a realistic Claude Code session under `scrim run`
 // against a real `scrim proxy`: empty HOME, a fake key, and a fake model
 // that has the agent read a .env of seeded secrets, cat a config, git diff a
