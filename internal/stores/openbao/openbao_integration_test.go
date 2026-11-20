@@ -23,6 +23,7 @@ import (
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/internal/podmantest"
 	"github.com/heliopsy/scrim/internal/stores/openbao"
+	"github.com/heliopsy/scrim/internal/stores/refresh"
 	"github.com/heliopsy/scrim/internal/stores/storetest"
 )
 
@@ -346,5 +347,68 @@ func TestCredentialsReported(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Errorf("got %d credentials, want role ID, secret ID and session token", len(got))
+	}
+}
+
+// TestRefresherOutageMidRun is task 6.4 against a real store: load from
+// OpenBao, freeze the container mid-run, check the last known values are
+// still redacted, the store reports degraded and injection of a value that
+// was never loaded fails closed, then thaw it and see the store recover.
+func TestRefresherOutageMidRun(t *testing.T) {
+	s := startServer(t)
+	if s.container == nil {
+		t.Skip("needs a podman-managed OpenBao to pause")
+	}
+	a := s.adapter(t, "bao-outage", nil)
+	prefix := "kv/scrim-conformance/" + randHex(t, 6)
+	value := "out_" + randHex(t, 16)
+	ctx := t.Context()
+	if _, err := a.Write(ctx, stores.Ref{Scheme: "bao-outage", Path: prefix + "/github"},
+		map[string]secret.Value{"token": secret.FromString(value)}, stores.WriteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	r := refresh.New(a, refresh.Config{
+		Targets:  []refresh.Target{{Ref: stores.Ref{Scheme: "bao-outage", Path: prefix}, Prefix: true}},
+		Interval: 200 * time.Millisecond, MaxBackoff: 400 * time.Millisecond,
+	})
+	defer r.Close()
+	rctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { r.Run(rctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	waitUntil(t, "first load", func() bool { return r.Ready(ctx) == nil })
+
+	s.container.Pause(t)
+	paused := true
+	defer func() {
+		if paused {
+			s.container.Unpause(t)
+		}
+	}()
+	waitUntil(t, "degraded", func() bool { return r.Status().State == refresh.StateDegraded })
+	found := false
+	r.EachValue(func(_ refresh.Source, v secret.Value) {
+		_ = v.Expose(func(b []byte) error { found = found || string(b) == value; return nil })
+	})
+	if !found {
+		t.Fatal("last known value dropped during the outage")
+	}
+	_, err := r.Resolve(ctx, stores.Ref{Scheme: "bao-outage", Path: prefix + "/never-loaded", Field: "token"})
+	if !errors.Is(err, stores.ErrUnavailable) {
+		t.Fatalf("injection of an unloaded value during the outage: %v", err)
+	}
+	s.container.Unpause(t)
+	paused = false
+	waitUntil(t, "recovery", func() bool { return r.Status().State == refresh.StateReady })
+}
+
+func waitUntil(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }

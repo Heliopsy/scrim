@@ -66,10 +66,16 @@ type Target struct {
 // prefix; anything else names one secret. A field selector is allowed on a
 // single secret and limits loading to that field.
 func ParseTarget(s string) (Target, error) {
-	prefix := strings.HasSuffix(s, "/*")
-	r, err := stores.ParseRef(strings.TrimSuffix(s, "/*"))
+	r, err := stores.ParseRef(s)
 	if err != nil {
 		return Target{}, err
+	}
+	prefix := r.Path == "*" || strings.HasSuffix(r.Path, "/*")
+	if prefix {
+		r.Path = strings.TrimSuffix(strings.TrimSuffix(r.Path, "*"), "/")
+		if r.Path == "" {
+			return Target{}, fmt.Errorf("%w: a prefix target needs a path before /*", stores.ErrInvalidRef)
+		}
 	}
 	if prefix && (r.Field != "" || r.Selectors != "") {
 		return Target{}, fmt.Errorf("%w: a prefix target takes no field or selector", stores.ErrInvalidRef)
