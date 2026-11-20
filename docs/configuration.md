@@ -214,6 +214,7 @@ is out of date.
 |---|---|---|---|
 | [`admin.token`](#admintoken) | secret-ref | empty | hot |
 | [`admin.url`](#adminurl) | string | `""` | hot |
+| [`api.group`](#apigroup) | string | `""` | restart required |
 | [`api.permissions`](#apipermissions) | string | `0600` | restart required |
 | [`api.socket`](#apisocket) | string | `""` | restart required |
 | [`approvals.listen`](#approvalslisten) | string | `""` | restart required |
@@ -389,6 +390,18 @@ Address of the scrim admin API for operator commands: unix:/path/to/socket or ht
 | Reload | hot |
 
 ### api
+
+#### `api.group`
+
+Group (name or ID) the API socket belongs to, so members can connect with api.permissions 0660. scrim must be a member. Empty keeps the group of the process.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_API_GROUP` |
+| Flag | none |
+| Reload | restart required |
 
 #### `api.permissions`
 

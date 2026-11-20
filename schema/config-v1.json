@@ -31,6 +31,14 @@
     "api": {
       "additionalProperties": false,
       "properties": {
+        "group": {
+          "default": "",
+          "description": "Group (name or ID) the API socket belongs to, so members can connect with api.permissions 0660. scrim must be a member. Empty keeps the group of the process.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_API_GROUP",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
         "permissions": {
           "default": "0600",
           "description": "Permission bits of the API socket, octal. Widen (for example 0660) only to let agents running as other local users connect; their identity still comes from peer credentials.",
