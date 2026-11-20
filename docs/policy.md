@@ -186,4 +186,22 @@ trip; narrow it with a simple condition first, as in `op == "store.write" && now
 The table format is versioned (`Policy.table_format` in `proto/scrim/dataplane/v1`). The Go
 reference evaluator is `internal/policy` (`Snapshot.Evaluate`), and
 `internal/policy/testdata/conformance.json` holds vectors any data plane implementation must
-reproduce.
+reproduce. The Rust data plane's evaluator (`dataplane/crates/scrim-policy`) passes all of them,
+and is property-tested against an independent port of the Go reference.
+
+### Rules and restore
+
+Restoring a placeholder into a response (`op == "restore"`) is governed by the tool policy first
+(see [the restore policy](../dataplane/crates/scrim-policy/README.md)); rules can only take a restore
+away. A deny or ask rule that matches, or could match, a restore keeps the placeholder; allow rules
+and the default decision are not consulted, so `default: deny` does not switch restore off. The data
+plane cannot hold a streamed response for an approval, so an ask on restore keeps the placeholder
+too. A restore request carries `tool.name`, the value's `secret.ref`, `secret.name`, `secret.store`
+and `secret.class`, and the agent identity when the listener knows it; `secret.labels` is not
+available, and a rule that depends on a field the data plane does not have keeps the placeholder.
+
+```yaml
+- name: no-prod-in-tools
+  decision: deny
+  when: op == "restore" && secret.ref.glob("bao://kv/prod/**")
+```

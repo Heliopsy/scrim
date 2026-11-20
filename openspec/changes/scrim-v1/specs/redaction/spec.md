@@ -199,6 +199,40 @@ tools only values already in the target file; unknown and network-capable tools 
 - **WHEN** a write tool call would put a resolved value into a file that does not already contain it
 - **THEN** the value stays a placeholder in that call
 
+#### Scenario: Network-capable tool
+
+- **WHEN** a model calls a web fetch tool with a display value's placeholder in its arguments
+- **THEN** the tool receives the placeholder unresolved
+
+### Requirement: Tool roles
+
+Each tool name SHALL map to one role, `read`, `search`, `shell`, `edit`, `write`, `network` or
+`none`, from the built-in table (Claude Code, Codex CLI and Gemini CLI tool names) or a tool alias.
+Shell and edit decisions SHALL be taken on the complete arguments of the call, and while those
+stream in the placeholder SHALL stay. Policy rules SHALL only take a restore away
+(policy-approvals "Rules only restrict restore").
+
+#### Scenario: Shell call still streaming
+
+- **WHEN** a shell tool call's arguments are streamed and the proxy cannot hold them until complete
+- **THEN** every placeholder in them reaches the tool unresolved
+
+### Requirement: Edit tools keep values already in the file
+
+An edit tool SHALL receive a value only where the same call shows the value is already in the file:
+in the text it replaces, or on a context or removed line of the same file in a patch. A write tool
+replaces whole files and SHALL receive none.
+
+#### Scenario: Edit keeping a value already in the file
+
+- **WHEN** an edit tool call replaces text containing a display value's placeholder with text that contains the same placeholder
+- **THEN** both the replaced and the replacement text receive the value
+
+#### Scenario: Patch adding a value
+
+- **WHEN** a patch adds a line with a placeholder that no context or removed line of the same file holds
+- **THEN** the added line keeps the placeholder
+
 ### Requirement: Credentials are never restored into commands
 
 Values classed as credentials SHALL never be resolved into tool arguments, commands or file
@@ -225,10 +259,64 @@ resolved output would itself be executed as code, the value SHALL stay a placeho
 - **WHEN** a resolved value would flow into a pipeline that executes its input
 - **THEN** the value stays a placeholder
 
+### Requirement: Data-only command lines
+
+A value SHALL be resolved into a shell command only when every command on the line, including
+those in substitutions and nested `sh -c` scripts, is a known data-only command, which takes no code
+and runs nothing whatever its arguments, or an interpreter program the analyser can vouch for, and
+when no command writes to a file that is code. Anything the analyser does not model SHALL keep
+every placeholder on the line.
+
+#### Scenario: Value in an interpreter string
+
+- **WHEN** a display value is resolved into `python3 -c 'print("<placeholder>")'`
+- **THEN** it is escaped for the Python string literal and then for the single-quoted shell word, and the program prints exactly the value
+
+#### Scenario: Interpreter that evaluates strings
+
+- **WHEN** the placeholder sits in a string the program passes to `exec`, `eval`, `os.system` or an f-string
+- **THEN** the value stays a placeholder
+
+#### Scenario: Value written to a code file
+
+- **WHEN** a command that would receive a resolved value redirects its output to a shell start-up file or a script
+- **THEN** the value stays a placeholder
+
+### Requirement: Shell positions
+
+Within a data-only command line a value SHALL be resolved only as an argument, a here-string,
+heredoc content or an interpreter string literal; never as a command name, assignment, redirection
+target or comment, never right after a backslash or `$`, and never starting a word with `-`.
+
+#### Scenario: Value as a command name
+
+- **WHEN** a placeholder is the first word of a shell command
+- **THEN** the value stays a placeholder
+
+#### Scenario: Value read as an option
+
+- **WHEN** a display value starts with `-` and its placeholder starts an argument
+- **THEN** the value stays a placeholder
+
+### Requirement: Verbatim restore paths
+
+A restore path that inserts values without escaping them SHALL keep every value that would need
+escaping at its site.
+
+#### Scenario: Proxy that cannot escape
+
+- **WHEN** a restore path inserts values verbatim and a value needs escaping at its site
+- **THEN** the value stays a placeholder rather than being inserted unescaped
+
 ### Requirement: Tool aliases
 
 The tool policy SHALL accept aliases that map another agent's tool names onto the built-in tool
 roles, and tools without an alias or role SHALL be treated as unknown.
+
+Aliases SHALL be delivered to the data plane in the snapshot (`Snapshot.restore.tools`), each naming
+a role and, where the agent's argument names differ, the argument holding the command (shell) or
+the replaced and replacement text (edit). An alias SHALL override the built-in table, and the
+built-in table SHALL be switchable off.
 
 #### Scenario: Agent with differently named shell tool
 
@@ -240,10 +328,18 @@ roles, and tools without an alias or role SHALL be treated as unknown.
 Users SHALL be able to switch, without restart, between showing resolved values and showing
 placeholders in responses the agent displays, for example while screen sharing.
 
+The display mode SHALL travel in the snapshot (`Snapshot.restore.display_mode`), so switching it
+takes effect with the next snapshot. A snapshot without restore settings SHALL restore nothing.
+
 #### Scenario: Screen sharing
 
 - **WHEN** the display mode is set to placeholders
 - **THEN** text shown to the user keeps placeholders while tool policy resolution continues
+
+#### Scenario: Control plane without restore settings
+
+- **WHEN** the data plane applies a snapshot that carries no restore settings
+- **THEN** every placeholder in responses reaches the agent unresolved
 
 ### Requirement: Share and reveal
 
@@ -251,7 +347,16 @@ The CLI SHALL offer `share`, which replaces known values in a text or file with 
 `reveal`, which resolves placeholders in a text or file locally. `reveal` SHALL refuse credential
 values unless explicitly allowed by policy.
 
+Credentials SHALL be revealed only when their reference matches a pattern in
+`Snapshot.restore.reveal_credential_refs`, a weakening setting. While break-glass deny-all is engaged,
+`reveal` SHALL resolve nothing.
+
 #### Scenario: Preparing a bug report
 
 - **WHEN** a user runs `share` on a log file containing known values
 - **THEN** the output contains placeholders in place of every known value
+
+#### Scenario: Revealing a credential
+
+- **WHEN** a user runs `reveal` on text holding a credential's placeholder that no reveal pattern names
+- **THEN** the placeholder stays and display values in the same text are resolved

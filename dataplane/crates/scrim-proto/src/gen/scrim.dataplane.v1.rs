@@ -61,8 +61,8 @@ pub struct Snapshot {
     pub capture_rules: ::prost::alloc::vec::Vec<CaptureRule>,
     /// restore is the restore policy for placeholders in responses (redaction
     /// spec "Resolution follows tool policy", "Tool aliases", "Display modes",
-    /// "Share and reveal"; docs/restore.md). Absent, nothing is restored: every
-    /// placeholder reaches the agent unresolved.
+    /// "Share and reveal"; dataplane/crates/scrim-policy/README.md). Absent,
+    /// nothing is restored: every placeholder reaches the agent unresolved.
     #[prost(message, optional, tag = "10")]
     pub restore: ::core::option::Option<RestoreSettings>,
 }

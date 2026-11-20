@@ -692,8 +692,8 @@ type Snapshot struct {
 	CaptureRules []*CaptureRule `protobuf:"bytes,9,rep,name=capture_rules,json=captureRules,proto3" json:"capture_rules,omitempty"`
 	// restore is the restore policy for placeholders in responses (redaction
 	// spec "Resolution follows tool policy", "Tool aliases", "Display modes",
-	// "Share and reveal"; docs/restore.md). Absent, nothing is restored: every
-	// placeholder reaches the agent unresolved.
+	// "Share and reveal"; dataplane/crates/scrim-policy/README.md). Absent,
+	// nothing is restored: every placeholder reaches the agent unresolved.
 	Restore       *RestoreSettings `protobuf:"bytes,10,opt,name=restore,proto3" json:"restore,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
