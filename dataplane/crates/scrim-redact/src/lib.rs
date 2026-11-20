@@ -99,6 +99,7 @@ mod guard;
 mod guard_oracle;
 #[cfg(test)]
 mod guard_tests;
+mod guard_tx;
 mod matcher;
 mod placeholder;
 mod redactor;

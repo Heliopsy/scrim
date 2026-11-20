@@ -46,6 +46,41 @@ scrim policy snapshot policy.yaml     # the table the data plane receives
 A configuration whose rules do not compile is refused at start-up. On reload, a broken file keeps
 the previous rules in force and the error shows in health status.
 
+## Out of the box
+
+With no rules file and `policy.default: deny`, scrim does this:
+
+| Operation | Without rules | Why |
+| --- | --- | --- |
+| provider requests (`llm.forward`) | redacted and forwarded | the default decision never stops provider traffic; only a deny rule, or an ask rule that is not approved, refuses it |
+| restore of a placeholder into a tool call (`restore`) | whatever the tool policy allows | rules can only take a restore away; the default is not consulted |
+| credential injection (`inject`) | injected for an identified agent, toward a host the credential is bound to | the built-in rule `builtin.inject-bound` |
+| everything else (store writes, generation, grants, agent tools) | denied | `policy.default` |
+
+### The built-in injection rule
+
+A credential is only ever offered for injection after its host binding matched (design D5: the
+binding is the primary control, and a credential without one is never injected). On top of that,
+scrim adds one rule after the rules from your file:
+
+```yaml
+- name: builtin.inject-bound
+  decision: allow                       # policy.builtin.inject
+  when: op == "inject" && agent.known
+  reason: credential bound to this destination
+```
+
+- Deny rules still win, and ask rules still ask: rules combine as usual, so a deny on `dest.path`
+  or an ask for non-GET methods in your file applies.
+- Unknown callers (no session, no mapped peer) get no injection; they fall through to
+  `policy.default`.
+- `policy.builtin.inject: ask` makes it an ask rule; `off` removes it, and injection is then decided
+  by your rules and `policy.default` alone (with `default: deny`, nothing is injected).
+- Rule names starting with `builtin.` are reserved. The rule shows in `scrim policy snapshot` and
+  `scrim policy check` (`1 built-in`), and the setting in `scrim config show --effective`.
+- For a `scrim run` session the data plane cannot tell whether `agent.known` holds, so each
+  injection asks the control plane once (see [identity.md](identity.md#cost)).
+
 ## What a rule can see
 
 | Variable | Type | Fields |
@@ -189,8 +224,11 @@ reference evaluator is `internal/policy` (`Snapshot.Evaluate`), and
 reproduce. The Rust data plane's evaluator (`dataplane/crates/scrim-policy`) passes all of them,
 and is property-tested against an independent port of the Go reference.
 
-Asks are held for `approvals.timeout` (sent to the data plane as `Policy.ask_timeout_millis`) and
-denied when no answer arrives in time or the control plane is not connected. The data plane never
+Asks are held for `approvals.timeout`, or for the longest `approval.timeout` a rule sets if that is
+longer (sent to the data plane as `Policy.ask_timeout_millis`), and denied when no answer arrives in
+time or the control plane is not connected. The table carries no per-rule timeout: the data plane
+holds every ask for the longest, and the control plane expires each approval at its own rule's
+timeout, which then answers deny. The data plane never
 caches a grant: a request that needs one asks again, and the control plane checks the grant.
 
 ### Injection and provider requests
@@ -198,13 +236,16 @@ caches a grant: a request that needs one asks again, and the control plane check
 Each credential a request through the tool proxy would carry is decided as `op == "inject"`, with
 `secret.ref`, `secret.name`, `secret.store`, `secret.class`, `dest.host`, `dest.method` and
 `dest.path`, after its host binding allows it. A deny refuses the whole request with
-`403 policy_denied`, and nothing is sent. The default effect applies, so `default: deny` without an
-allow rule for `inject` injects nothing.
+`403 policy_denied`, and nothing is sent. The default effect applies, so with
+`policy.builtin.inject: off`, `default: deny` without an allow rule for `inject` injects nothing.
 
 Each provider request is decided as `op == "llm.forward"` with `provider`. Redaction is not governed
 by policy, so only deny and ask rules apply here: the default effect does not stop provider traffic,
 and break-glass keeps forwarding (redacted) while it stops restore and injection. A deny or a
-refused ask answers `403 policy_denied` in the provider's error shape.
+refused ask answers `403 policy_denied` in the provider's error shape. The control plane answers an
+ask about a provider request with the same rules: when its full evaluation lands on the default,
+the request is forwarded, an allow rule forwards it, a deny rule refuses it, and an ask rule raises
+an approval (`internal/gate` `TestForwardConformance` checks the two agree).
 
 The agent fields come from the transport ([identity.md](identity.md#provider-and-tool-traffic)).
 

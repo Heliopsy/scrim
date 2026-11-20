@@ -65,7 +65,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 7. Policy, approvals and grants
 
-- [x] 7.1 Rule language and evaluation (allow, deny, ask, default); verify: rule table tests and a compiled snapshot used by the data plane (data plane: `scrim-policy` passes every conformance vector and a differential property test against a port of the Go reference; `scrim-dataplane` evaluates it per request for `inject` and `llm.forward` and asks over the `Asks` stream within `Policy.ask_timeout_millis`, which the control plane does not fill yet)
+- [x] 7.1 Rule language and evaluation (allow, deny, ask, default); verify: rule table tests and a compiled snapshot used by the data plane (data plane: `scrim-policy` passes every conformance vector and a differential property test against a port of the Go reference; `scrim-dataplane` evaluates it per request for `inject` and `llm.forward` and asks over the `Asks` stream within `Policy.ask_timeout_millis`, which the control plane fills from `approvals.timeout` or the longest per-rule approval timeout; `gate.Answer` decides `llm.forward` with the data plane's forward semantics, checked by `TestForwardConformance`)
 - [x] 7.2 Approval flow with timeout deny and single-use signed decision links; verify: replayed or expired links are refused
 - [x] 7.3 ntfy notifier with action buttons and terminal `scrim approve`; verify: end-to-end approve and deny against a local ntfy in podman
 - [x] 7.4 JIT grants (ttl, max ttl, scope, use count, revoke); verify: expiry and revocation take effect on the next request
@@ -73,7 +73,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 8. Identity and agent tools
 
-- [x] 8.1 Unix socket peer credentials and session tokens from `scrim run`; verify: one agent cannot use another's token or grants (data plane: reads Unix peer credentials and the session a request names, `Proxy-Authorization` user or `x-scrim-session`, and sends them as `AskCaller`; `scrim run` naming the session on its proxy URL and the control plane resolving `AskCaller` follow)
+- [x] 8.1 Unix socket peer credentials and session tokens from `scrim run`; verify: one agent cannot use another's token or grants (data plane: reads Unix peer credentials and the session a request names, `Proxy-Authorization` user or `x-scrim-session`, and sends them as `AskCaller` with a per-ask proof of the token (design D14); `scrim run` names the session on its proxy URL and in Claude Code's `ANTHROPIC_CUSTOM_HEADERS`, and `gate.Answer` verifies the session or maps the peer and evaluates with that identity, checked end to end by `internal/daemon` `TestEndToEndSessionIdentity`)
 - [x] 8.2 MCP server (stdio) with secrets_list, secret_request, secret_gen, secret_capture, secret_ask_human, approval_status, grants_list; verify: no tool schema accepts a value and no response contains one, checked against seeded values
 - [x] 8.3 Agent-facing CLI equivalents including `scrim secret put --stdin` that never echoes; verify: golden tests and a pipe test with the value absent from all output
 - [x] 8.4 Human entry page for secret_ask_human; verify: the agent receives only stored or declined
@@ -83,8 +83,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 9.1 Per-tool restore policy, tool aliases, display modes, `scrim share` and `scrim reveal`; verify: policy tests per tool role, including none for unknown and network-capable tools (data plane: `scrim-policy` `RestoreEngine`, settings in `Snapshot.restore`, wired into the data plane with shell and edit tool calls restored escaped; the CLI commands and the control plane filling `Snapshot.restore` follow)
 - [x] 9.2 Context-aware escaping and no restore where output becomes code; verify: injection test suite and an escaping fuzzer that executes commands with zero code execution (`scrim-policy` `escape`, `tests/escape_exec.rs` runs commands under `unshare -rn`)
 - [ ] 9.3 `scrim run -- <agent>` wrapper for Claude Code and Codex; verify: real agent CLIs complete a task through scrim against a fake model
-- [ ] 9.4 Bypass matrix as a regression gate; verify: every transform is blocked, withheld or redacted
-- [ ] 9.5 `scrim audit` harness with leak checker stricter than the redactor and cache-hit reporting; verify: CI runs it with zero leaks
+- [x] 9.4 Bypass matrix as a regression gate; verify: every transform is blocked, withheld or redacted
+- [x] 9.5 `scrim audit` harness with leak checker stricter than the redactor and cache-hit reporting; verify: CI runs it with zero leaks
 - [ ] 9.6 User documentation for M1 (install, run, configure, verify with capture, limitations); verify: every documented command is exercised by a docs test
 
 ## 10. Credential injection
@@ -146,6 +146,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 13.2a `chatgpt.com` and `ab.chatgpt.com` routed to the LLM proxy (Responses codec for `/responses`, generic JSON elsewhere); verify: CONNECT to either through the forward proxy reaches the fake provider with placeholders only
 - [ ] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
 - [ ] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
+- [ ] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
 
 ## 14. Large deployments
 

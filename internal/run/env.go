@@ -5,6 +5,7 @@ package run
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -19,6 +20,15 @@ import (
 const (
 	EnvSessionID = "SCRIM_SESSION_ID"
 )
+
+// SessionHeader is the header that identifies the session on scrim's
+// base-URL listener. Its value is the session token; the data plane keeps
+// only a proof of it and never forwards the header (design D14).
+const SessionHeader = "x-scrim-session"
+
+// TokenMarker stands for the session token in the displayed value of a
+// variable that embeds it (`scrim run --print-env`).
+const TokenMarker = "<session-token>"
 
 // Files written into the session directory.
 const (
@@ -57,12 +67,19 @@ var loopback = []string{"localhost", "127.0.0.1", "::1"}
 // Var is one environment variable scrim run sets for the agent.
 type Var struct {
 	Name string `json:"name"`
-	// Value is empty for a secret variable.
+	// Value is the value, or for a secret variable what is shown instead:
+	// empty for the bare session token, else the value with [TokenMarker]
+	// where the token goes (and inherited parts that may hold secrets
+	// elided).
 	Value string `json:"value,omitempty"`
-	// Secret marks a value that is never printed: the session token.
+	// Secret marks a value that is never printed: it holds the session token.
 	Secret bool `json:"secret,omitempty"`
 	// Why is a short note for --print-env.
 	Why string `json:"why"`
+
+	// template is the value with TokenMarker for the token, when it is not
+	// the bare token. Never printed.
+	template string
 }
 
 // Plan is everything scrim run changes for the agent process. It holds no
@@ -133,6 +150,34 @@ func (b *builder) setVar(name, value, why string) {
 func (b *builder) setSecret(name, why string) {
 	b.set[name] = len(b.plan.Set)
 	b.plan.Set = append(b.plan.Set, Var{Name: name, Secret: true, Why: why})
+}
+
+// setWithToken sets name to template, with TokenMarker replaced by the
+// session token when the agent starts; display is what --print-env shows.
+func (b *builder) setWithToken(name, template, display, why string) {
+	v := Var{Name: name, Value: display, Secret: true, Why: why, template: template}
+	if i, ok := b.set[name]; ok {
+		b.plan.Set[i] = v
+		return
+	}
+	b.set[name] = len(b.plan.Set)
+	b.plan.Set = append(b.plan.Set, v)
+	delete(b.unset, name)
+}
+
+// identified reports whether the agent gets a session token to identify
+// itself with on scrim's listeners.
+func (b *builder) identified() bool { return b.in.Token && b.in.SessionID != "" }
+
+// sessionProxyURL is the forward proxy URL with the session as proxy
+// credentials (`Proxy-Authorization: Basic <session-id>:<token>`), so policy
+// and grants apply to this agent on the forward proxy and the tool proxy.
+func (b *builder) sessionProxyURL() (string, bool) {
+	u, err := url.Parse(b.in.Endpoints.ForwardProxy)
+	if err != nil || u.Scheme != "http" || u.Host == "" || !b.identified() {
+		return "", false
+	}
+	return u.Scheme + "://" + b.in.SessionID + ":" + TokenMarker + "@" + u.Host, true
 }
 
 func (b *builder) unsetVar(name string) {
@@ -247,8 +292,14 @@ func (b *builder) proxy() {
 			break
 		}
 	}
-	for _, v := range proxyVars {
-		b.setVar(v, ep.ForwardProxy, "tool traffic through scrim's forward proxy")
+	if tmpl, ok := b.sessionProxyURL(); ok {
+		for _, v := range proxyVars {
+			b.setWithToken(v, tmpl, tmpl, "tool traffic through scrim's forward proxy, identified by the session")
+		}
+	} else {
+		for _, v := range proxyVars {
+			b.setVar(v, ep.ForwardProxy, "tool traffic through scrim's forward proxy")
+		}
 	}
 	for _, v := range removedProxyVars {
 		b.unsetVar(v)
@@ -346,7 +397,11 @@ func (p *Plan) Environ(inherited []string, token secret.Value) ([]string, error)
 		// The process start needs the token as a string; this is the only
 		// conversion, and it goes straight into the child's environment.
 		_ = token.Expose(func(t []byte) error {
-			out = append(out, v.Name+"="+string(t))
+			if v.template == "" {
+				out = append(out, v.Name+"="+string(t))
+			} else {
+				out = append(out, v.Name+"="+strings.ReplaceAll(v.template, TokenMarker, string(t)))
+			}
 			return nil
 		})
 	}

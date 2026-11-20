@@ -19,6 +19,7 @@ import (
 	"github.com/heliopsy/scrim/internal/config"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
 	"github.com/heliopsy/scrim/internal/placeholder"
+	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/refresh"
@@ -344,5 +345,21 @@ func TestRestoreAliasValidation(t *testing.T) {
 		if _, err := config.Build(config.Options{Registry: config.Default, ConfigPaths: []string{p}, Environ: []string{}}); err == nil {
 			t.Errorf("accepted %q", body)
 		}
+	}
+}
+
+func TestAskTimeoutMillis(t *testing.T) {
+	cfg := policy.Config{Rules: []policy.RuleSpec{
+		{Name: "a", Decision: "ask", Approval: policy.ApprovalSettings{Timeout: policy.Duration(10 * time.Minute)}},
+		{Name: "b", Decision: "ask", Approval: policy.ApprovalSettings{Timeout: policy.Duration(time.Second)}},
+	}}
+	if got := askTimeoutMillis(2*time.Minute, cfg); got != 600_000 {
+		t.Errorf("longest rule timeout: %d", got)
+	}
+	if got := askTimeoutMillis(2*time.Minute, policy.Config{}); got != 120_000 {
+		t.Errorf("approvals.timeout: %d", got)
+	}
+	if got := askTimeoutMillis(0, policy.Config{}); got != 1 {
+		t.Errorf("zero must not mean the data plane default: %d", got)
 	}
 }

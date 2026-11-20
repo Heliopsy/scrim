@@ -126,10 +126,21 @@ func (r Ref) WithField(field string) Ref {
 func (r Ref) IsZero() bool { return r.Scheme == "" && r.Path == "" }
 
 // MarshalText implements encoding.TextMarshaler.
-func (r Ref) MarshalText() ([]byte, error) { return []byte(r.String()), nil }
+// The zero Ref (a request that involves no secret, such as llm.forward)
+// marshals to the empty string, so it reads back as the zero Ref.
+func (r Ref) MarshalText() ([]byte, error) {
+	if r.IsZero() {
+		return []byte{}, nil
+	}
+	return []byte(r.String()), nil
+}
 
 // UnmarshalText implements encoding.TextUnmarshaler.
 func (r *Ref) UnmarshalText(b []byte) error {
+	if len(b) == 0 {
+		*r = Ref{}
+		return nil
+	}
 	p, err := ParseRef(string(b))
 	if err != nil {
 		return err

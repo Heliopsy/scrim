@@ -47,6 +47,7 @@ use std::sync::Arc;
 use zeroize::Zeroizing;
 
 use crate::error::WithholdReason;
+use crate::guard_tx::{Transforms, TxScratch, derived_forms};
 use crate::restore::Resolver;
 use crate::secret::EntryId;
 
@@ -77,6 +78,15 @@ pub enum GuardView {
     Base64,
     /// Inside a decoded hex run.
     Hex,
+    /// Written one unit at a time: spaced or separated characters, character and byte lists,
+    /// runs of `\xNN`, `\NNN`, `&#NN;` or `%25NN` escapes.
+    Separated,
+    /// Inside a byte dump (`xxd`, `hexdump -C`, `od`).
+    Dump,
+    /// Inside a decoded base32 run.
+    Base32,
+    /// A fragment of a value or of its reversal: at least half of it, at least the minimum length.
+    Fragment,
 }
 
 impl GuardView {
@@ -90,6 +100,10 @@ impl GuardView {
             Self::Url => 4,
             Self::Base64 => 5,
             Self::Hex => 6,
+            Self::Separated => 7,
+            Self::Dump => 8,
+            Self::Base32 => 9,
+            Self::Fragment => 10,
         }
     }
 }
@@ -163,6 +177,8 @@ pub struct Guard {
     b64_mask_ok: [bool; 64],
     /// Some value's hex form has no digit, so hex runs without digits must be decoded too.
     hex_needs_digit_free: bool,
+    /// Transform decoders and the fragment index.
+    tx: Transforms,
     /// The guard as it was before the single-decode rewrite, built from the same inputs.
     #[cfg(any(test, feature = "oracle"))]
     oracle: crate::guard_oracle::OracleGuard,
@@ -194,6 +210,9 @@ pub struct GuardScratch {
     findings: Vec<GuardFinding>,
     repaired: Vec<u8>,
     recheck: Vec<RawHit>,
+    tx: TxScratch,
+    /// Hits of the transform views, before the fragment rule.
+    tx_hits: Vec<RawHit>,
 }
 
 /// Buffers of one worker, which checks one region of the body.
@@ -209,7 +228,8 @@ struct Part {
     view_hits: Vec<(usize, usize, u32)>,
     /// Hits in raw coordinates.
     hits: Vec<RawHit>,
-    /// Every occurrence of a value containing a backslash, before the non-overlap rule.
+    /// Every occurrence of a value containing a backslash (start, end, value index), before the
+    /// non-overlap rule.
     bs_hits: Vec<(usize, usize, u32)>,
     /// This part's piece of the JSON view, while unescaping in parallel.
     json: View,
@@ -256,6 +276,7 @@ impl GuardScratch {
             p.json.bytes.zeroize();
         }
         self.repaired.zeroize();
+        self.tx.wipe();
     }
 }
 
@@ -482,6 +503,12 @@ impl Guard {
             };
             if inp.value.len() >= min_len.max(8) {
                 long.push(gv);
+                derived_forms(inp.value, |f| {
+                    long.push(GValue {
+                        value: f,
+                        owner: i as u32,
+                    });
+                });
             } else if inp.value.len() >= SHORT_KEY {
                 short.push(gv);
             }
@@ -562,6 +589,14 @@ impl Guard {
         let hex_needs_digit_free = long
             .iter()
             .any(|v| v.value.iter().all(|&b| b >> 4 >= 10 && b & 15 >= 10));
+        let tx = Transforms::build(
+            inputs
+                .iter()
+                .enumerate()
+                .filter(|(_, inp)| inp.value.len() >= min_len.max(8))
+                .map(|(i, inp)| (inp.value, i as u32)),
+            min_len,
+        );
         let mut byte_width = vec![0u32; 256];
         let mut starts = PairSet::new();
         for (v, fold) in long
@@ -619,6 +654,7 @@ impl Guard {
             parallel_min,
             b64_mask_ok: std::array::from_fn(|mask| b64_masks.iter().any(|&m| m & mask as u8 == m)),
             hex_needs_digit_free,
+            tx,
         }
     }
 
@@ -737,6 +773,8 @@ impl Guard {
             regions,
             bs_all,
             view_hits: vh,
+            tx,
+            tx_hits,
             ..
         } = s;
         let has_json1 = has_json_escape(bytes);
@@ -758,9 +796,32 @@ impl Guard {
         }
         let work =
             |part: &mut Part, r: Region| self.check_region(bytes, base, has_json1, json1, r, part);
+        // The transform views take the whole once-unescaped view on the calling thread, so no
+        // region cut can split a reversed, spaced or dumped value.
+        let transforms = |tx: &mut TxScratch, tx_hits: &mut Vec<RawHit>| {
+            tx_hits.clear();
+            if self.long.is_empty() {
+                return;
+            }
+            self.tx.collect(
+                base,
+                tx,
+                &|v, o| self.scan(v, false, o),
+                &mut |a, b, owner, view| {
+                    let (start, end) = if has_json1 { json1.map(a, b) } else { (a, b) };
+                    tx_hits.push(RawHit {
+                        start,
+                        end,
+                        owner,
+                        view,
+                    });
+                },
+            );
+        };
         if regions.len() == 1 {
             work(&mut parts[0], regions[0]);
             self.second_views(has_json1, base, json1, json2, deeper, url, vh, out);
+            transforms(tx, tx_hits);
         } else {
             std::thread::scope(|sc| {
                 let (first, rest) = parts.split_at_mut(1);
@@ -769,6 +830,7 @@ impl Guard {
                 }
                 work(&mut first[0], regions[0]);
                 self.second_views(has_json1, base, json1, json2, deeper, url, vh, out);
+                transforms(tx, tx_hits);
             });
         }
 
@@ -791,9 +853,22 @@ impl Guard {
             out.push(RawHit {
                 start: a,
                 end: b,
-                owner: o,
+                owner: self.value(o).owner,
                 view: GuardView::Raw,
             });
+        }
+
+        // Transform hits; a fragment inside a hit already found adds nothing.
+        let found = out.len();
+        for h in tx_hits.iter() {
+            if h.view == GuardView::Fragment
+                && out[..found]
+                    .iter()
+                    .any(|o| o.start <= h.start && h.end <= o.end)
+            {
+                continue;
+            }
+            out.push(*h);
         }
     }
 
@@ -1244,7 +1319,9 @@ impl Guard {
                     }
                     let gv = self.value(c.value);
                     if raw[st..st + l] == gv.value[..] {
-                        bs_out.push((st, st + l, gv.owner));
+                        // By value, not owner: a value and its derived forms share an owner but
+                        // are searched separately.
+                        bs_out.push((st, st + l, c.value));
                     }
                 }
             }

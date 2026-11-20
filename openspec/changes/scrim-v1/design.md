@@ -271,6 +271,37 @@ bytes, and verifies candidates exactly. The set check is a few instructions per 
 set size. Aho-Corasick remains for small sets, where its SIMD prefilter is faster, and as the
 reference implementation in tests; the two must produce identical output on every fixture.
 
+### D14. Data-plane callers are verified by a per-ask proof of the session token
+
+The data plane takes a caller only from the transport and holds no session verifiers, so it cannot
+tell a session from a claim. A session id alone is public (audit entries, status), so the control
+plane needs proof that the request carried the token. Two ways were considered:
+
+- **Session id plus a peer check.** The control plane would map the client's TCP connection to a
+  process and check it descends from the session's root. That keeps the token entirely out of the
+  data plane, but it needs a socket-to-process lookup that only Linux offers without privileges
+  (`/proc/net/tcp`), leaves macOS sessions unverifiable, and over the forward proxy proves nothing
+  more than the session id on any platform where the lookup fails.
+- **A digest of the token in the ask.** Chosen. Clients send the token where it never reaches an
+  upstream: the password of `Proxy-Authorization` (`HTTPS_PROXY=http://<id>:<token>@...`, the header
+  ends at the proxy) or the value of `x-scrim-session` (stripped by the base-URL listener). On
+  arrival the data plane reduces the token to its verifier `v = SHA-256("scrim session token
+  v1\0" || secret)` (what the control plane stores) and drops it: the token is never logged, kept
+  past the request head or forwarded, and `v` lives in a zeroed type with a redacting `Debug`. An
+  ask carries `session_proof = HMAC-SHA256(v, "scrim session proof v1\0" || session id || "\0" ||
+  ask id || deadline)`, an additive field of `AskCaller` (protocol stays 1). The control plane
+  recomputes it from the stored hash, then checks the session is active and, over a Unix socket,
+  that the peer is the session's user and in its process tree. The proof is bound to one ask, so a
+  logged proof cannot be replayed for another, and it reveals neither the token nor `v`.
+
+A caller that names a session without a valid proof, or whose session is revoked, expired or used
+outside its tree, is evaluated as unknown (deny-leaning) and audited with the reason; it never
+falls back to its peer mapping. A Unix peer without a session is the innermost active session of
+its user whose tree it is in, else its `identity.peers` mapping. Over TCP the process tree cannot
+be checked, so a same-user process that reads the token from an agent's environment can act as
+that session there; the agent API and Unix sockets still enforce the tree. The data plane gets no
+session or peer map, so every rule on the agent of a request that names a session costs one ask.
+
 ## Risks / Trade-offs
 
 - [An agent invents a transform the guard does not decode] → the bypass matrix grows with every

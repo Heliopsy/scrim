@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -27,24 +26,7 @@ import (
 // Agent converts a resolved identity into the policy package's agent. The
 // session ID is carried separately, so rules can match the agent name while
 // grants and approvals stay owned by one session.
-func Agent(id identity.Identity) policy.Agent {
-	kind := policy.IdentityUnknown
-	switch id.Source {
-	case identity.SourcePeer:
-		kind = policy.IdentityPeer
-	case identity.SourceSession:
-		kind = policy.IdentitySession
-	}
-	labels := maps.Clone(id.Labels)
-	if labels == nil {
-		labels = map[string]string{}
-	}
-	labels["uid"] = strconv.FormatUint(uint64(id.Peer.UID), 10)
-	if id.SessionName != "" {
-		labels["session_name"] = id.SessionName
-	}
-	return policy.Agent{ID: id.Agent, Kind: kind, Session: id.SessionID, Labels: labels}
-}
+func Agent(id identity.Identity) policy.Agent { return id.PolicyAgent() }
 
 // owns reports whether a stored agent is the same principal as a.
 func owns(a, stored policy.Agent) bool {

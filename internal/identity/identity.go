@@ -16,10 +16,13 @@
 package identity
 
 import (
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/heliopsy/scrim/internal/policy"
 )
 
 // Source says how an identity was established.
@@ -125,4 +128,33 @@ func (i Identity) String() string {
 	b.WriteString(string(i.Source))
 	b.WriteString(")")
 	return b.String()
+}
+
+// PolicyAgent is the identity as policy rules, grants and audit see it. The
+// session ID is carried separately, so rules can match the agent name while
+// grants and approvals stay owned by one session.
+func (i Identity) PolicyAgent() policy.Agent {
+	kind := policy.IdentityUnknown
+	switch i.Source {
+	case SourcePeer:
+		kind = policy.IdentityPeer
+	case SourceSession:
+		kind = policy.IdentitySession
+	}
+	if !i.Known() {
+		kind = policy.IdentityUnknown
+	}
+	labels := maps.Clone(i.Labels)
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels["uid"] = strconv.FormatUint(uint64(i.Peer.UID), 10)
+	if i.SessionName != "" {
+		labels["session_name"] = i.SessionName
+	}
+	a := policy.Agent{ID: i.Agent, Kind: kind, Session: i.SessionID, Labels: labels}
+	if kind == policy.IdentityUnknown {
+		a.ID, a.Session = "", ""
+	}
+	return a
 }
