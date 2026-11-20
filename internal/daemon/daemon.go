@@ -330,6 +330,9 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		d.sup.Options.ExtraEnv = append(d.sup.Options.ExtraEnv, "SCRIM_DP_CAPTURE_DIR="+d.capture,
 			fmt.Sprintf("SCRIM_DP_CAPTURE_RETENTION_SECS=%d", int64(CaptureRetention.Get(cfg).Seconds())))
 	}
+	if f := dataplane.ExtraCAFile.Get(cfg); f != "" {
+		d.sup.Options.ExtraEnv = append(d.sup.Options.ExtraEnv, "SCRIM_DP_EXTRA_CA_FILE="+f)
+	}
 	d.sup.Options.ExtraEnv = append(d.sup.Options.ExtraEnv, o.DataPlaneEnv...)
 	d.sup.OnAsk = pp.Gate.Answer
 	sink := &eventSink{state: a.State, inst: a.Instruments, log: d.log}

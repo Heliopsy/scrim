@@ -242,7 +242,9 @@ such values.
 - Personal secret overrides are ignored; scrim reads and writes shared secrets only.
 - Secret imports are not followed when listing. Reference the source project directly.
 - OIDC token exchange for per-agent identities and Infisical's own approval workflows are not used
-  yet.
+  yet. Per-agent store identity (`identity.store-login`, `identity.store-credentials`, see
+  [Agent identity](../identity.md#store-identity-per-agent)) is not implemented for Infisical: a
+  store configured for it refuses every use. Infisical stores are used with scrim's own identity.
 
 ## Testing against a local Infisical
 

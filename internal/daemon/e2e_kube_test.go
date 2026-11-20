@@ -141,8 +141,10 @@ rules:
 	if err := os.WriteFile(toolCA, pki.caPEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h.opts.DataPlaneEnv = []string{"SCRIM_DP_EXTRA_CA_FILE=" + toolCA}
-	h.opts.Config.Environ = append(h.opts.Config.Environ, "SCRIM_DATAPLANE_PATH="+bin, "SCRIM_PROXY_UPSTREAM_ANTHROPIC="+up.URL)
+	// The tool API's CA reaches the data plane through dataplane.upstream-ca-file.
+	h.opts.DataPlaneEnv = nil
+	h.opts.Config.Environ = append(h.opts.Config.Environ, "SCRIM_DATAPLANE_PATH="+bin, "SCRIM_PROXY_UPSTREAM_ANTHROPIC="+up.URL,
+		"SCRIM_DATAPLANE_UPSTREAM_CA_FILE="+toolCA)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

@@ -177,6 +177,35 @@ outside the role's bound names, namespaces or audience, a missing mount, and an 
 token file are all reported as permission errors naming the store; the token file error also names
 the file and the option.
 
+### Agents' own identity (passthrough)
+
+scrim's own login loads the redaction set. To have OpenBao's policies decide what each agent pod may
+use as well, set `identity.store-login` (see [Agent identity](../identity.md#store-identity-per-agent)):
+
+```yaml
+identity:
+  kubernetes: {enabled: true}
+  store-login:
+    bao: "kubernetes role:{namespace}-{service_account}"
+```
+
+Every injection or restore of a `bao` secret then goes to the control plane. Once scrim's rules allow
+it, scrim logs in at `auth/kubernetes/login` with the calling pod's own scrim-audience token and the
+rendered role, and asks `sys/capabilities-self` whether that token may read the secret's
+`<mount>/data/<path>`. It never reads the value with the agent's token. The login is cached for two
+thirds of its lease, per pod token, and a rotated pod token is a new login. Each agent role binds one
+service account and accepts scrim's audience:
+
+```sh
+bao write auth/kubernetes/role/agents-agent-a \
+  bound_service_account_names=agent-a bound_service_account_namespaces=agents \
+  audience=scrim token_policies=agent-a token_ttl=10m
+```
+
+Agents that are not pods can use a static token instead, `identity.store-credentials:
+{bao/laptop: file:/run/secrets/bao-laptop}`, checked the same way. With either setting, an agent
+that has neither is refused for this store. `scrim doctor` lists which one applies to each agent.
+
 ## Least privilege
 
 scrim needs to read only what it redacts or injects, and to write only where agents capture or

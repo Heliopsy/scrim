@@ -48,6 +48,13 @@ var (
 		Description:     "Lock the data plane's memory so values are never swapped: auto locks when the memlock limit is unlimited and warns otherwise; require refuses to start without it.",
 		RestartRequired: true,
 	})
+	// ExtraCAFile is passed to the data plane as SCRIM_DP_EXTRA_CA_FILE.
+	ExtraCAFile = config.Register(config.Spec[string]{
+		Key: "dataplane.upstream-ca-file",
+		Description: "PEM bundle of extra roots the data plane trusts for upstream TLS (model providers and tool APIs), on top of the built-in Mozilla roots, " +
+			"for example a cluster-internal CA. Empty trusts the built-in roots only.",
+		RestartRequired: true,
+	})
 	// StartTimeout bounds launch plus handshake.
 	StartTimeout = config.Register(config.Spec[time.Duration]{
 		Key:         "dataplane.start-timeout",

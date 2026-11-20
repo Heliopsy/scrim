@@ -31,6 +31,7 @@ package openbao
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -369,7 +370,9 @@ func (a *Adapter) listKeys(ctx context.Context, prefix stores.Ref, mount, folder
 			}
 			return lr.Data.Keys, lr.Data.KeyInfo, nil
 		}
-		if !errorsIsInvalid(err) {
+		// Vault has no detailed-metadata (invalid path), and a policy may
+		// grant only metadata/ (permission denied): list metadata/ from now on.
+		if !errorsIsInvalid(err) && !errors.Is(err, stores.ErrPermission) {
 			return nil, nil, err
 		}
 		a.detailed.Store(false)

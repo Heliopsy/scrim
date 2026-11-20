@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -448,14 +449,22 @@ func TestHealthSealed(t *testing.T) {
 }
 
 // TestListFallsBackWithoutDetailedMetadata covers Vault, which has no
-// detailed-metadata endpoint: List lists keys and reads each one's metadata.
+// detailed-metadata endpoint, and a policy that grants only metadata/ (as
+// docs/stores/openbao.md promises): List lists keys and reads each one's
+// metadata.
 func TestListFallsBackWithoutDetailedMetadata(t *testing.T) {
+	for _, code := range []int{405, 403} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) { listFallsBack(t, code) })
+	}
+}
+
+func listFallsBack(t *testing.T, code int) {
 	var detailedCalls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/detailed-metadata/"):
 			detailedCalls.Add(1)
-			writeJSON(w, 405, map[string]any{"errors": []string{"unsupported operation"}})
+			writeJSON(w, code, map[string]any{"errors": []string{"unsupported operation"}})
 		case r.Method == "LIST" && r.URL.Path == "/v1/kv/metadata/agents/":
 			writeJSON(w, 200, map[string]any{"data": map[string]any{"keys": []string{"a", "deleted", "sub/"}}})
 		case r.Method == "LIST" && r.URL.Path == "/v1/kv/metadata/agents/sub/":

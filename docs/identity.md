@@ -197,6 +197,119 @@ caller. That includes the built-in injection rule (`agent.known`), so every inje
 `agent` are decided in the data plane. The data plane does not receive a peer-to-agent map, so
 agent rules on Unix-socket requests also ask.
 
+## Kubernetes service accounts
+
+In a cluster, agent pods identify themselves with a projected service account token minted for
+scrim's audience. scrim verifies it with the cluster's TokenReview API and maps the namespace,
+service account and pod to an agent.
+
+```yaml
+identity:
+  kubernetes:
+    enabled: true            # on in the k8s profile
+    audience: scrim          # tokens for any other audience are refused
+    agents:                  # optional; unmapped accounts are <namespace>/<name>
+      reviewer: "sa:agents/reviewer label:team=platform"
+      ci: "sa:ci/* scope:secrets:list"
+```
+
+The agent pod mounts a token for that audience. The kubelet rotates the file, so clients read it
+on every request:
+
+```yaml
+volumes:
+  - name: scrim-token
+    projected:
+      sources:
+        - serviceAccountToken: {audience: scrim, expirationSeconds: 3600, path: scrim}
+```
+
+The token goes where a session token would (design D14):
+
+| Listener | How the pod sends the token |
+| --- | --- |
+| forward proxy | the password of the proxy user `k8s`: `HTTPS_PROXY=http://k8s:<token>@scrim.scrim.svc:3128` |
+| base URL | the value of `x-scrim-session` (Claude Code: `ANTHROPIC_CUSTOM_HEADERS="x-scrim-session: <token>"`) |
+| agent API | `Authorization: Bearer <token>` |
+
+The forward proxy credentials end at the proxy and the base-URL listener strips `x-scrim-session`,
+so the token never reaches a provider or a tool API.
+
+Unlike a session token, the control plane has to see a service account token to verify it, so a
+proof cannot stand in for it. The data plane keeps the token in a zeroed type for the request (for
+a forward-proxy tunnel, for the life of the tunnel), sends it in the ask
+(`AskCaller.kubernetes_token`, a secret field with a redacting `Debug`), and the control plane
+wipes it once the ask is answered. The token is never logged, audited or forwarded.
+
+What the rules see:
+
+| Field | Value |
+| --- | --- |
+| `agent.id` | the `identity.kubernetes.agents` name, else `<namespace>/<service account>` |
+| `agent.kind` | `k8s` |
+| `agent.labels.namespace`, `agent.labels.service_account` | from the token |
+| `agent.labels.pod`, `agent.labels.pod_uid` | the pod the token is bound to |
+| other `agent.labels` | `label:` selectors of the matching rule |
+
+Grants and approvals belong to the agent (principal `k8s:<agent>`), so pods of one Deployment
+share them. A token the cluster does not accept for scrim's audience, including the pod's default
+API token, is an unknown caller audited with `caller=refused` and the reason, never its Unix peer.
+`identity.kubernetes.unmapped: unknown` makes every account no rule names unknown too.
+
+A verified token is cached by its hash for `identity.kubernetes.cache-ttl` (one minute by
+default), and never past the token's expiry, so a deleted pod or service account is refused within
+that bound. Refusals are not cached.
+
+### RBAC
+
+scrim's own service account must be allowed to create TokenReviews:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: scrim-auth-delegator}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
+subjects: [{kind: ServiceAccount, name: scrim, namespace: scrim}]
+```
+
+scrim reads its own token from `identity.kubernetes.token-file` and the API server's CA from
+`identity.kubernetes.ca-file` (the pod's mounted service account by default), and finds the API
+server through `KUBERNETES_SERVICE_HOST` unless `identity.kubernetes.api-server` is set. Agent
+pods need no RBAC: any pod can get a projected token for its own service account.
+
+### Store identity per agent
+
+scrim loads the redaction set with its own store identity, so a value an agent may not use is
+still redacted. Using a value can also be checked against the agent's own store identity, so the
+store's permissions and scrim's rules are intersected:
+
+```yaml
+identity:
+  # Kubernetes passthrough: log in to OpenBao with the calling pod's own token at the role
+  # the template names; {namespace}, {service_account} and {agent} are replaced.
+  store-login:
+    bao: "kubernetes role:{namespace}-{service_account} mount:kubernetes"
+  # Static fallback: a store token per agent, by reference.
+  store-credentials:
+    bao/laptop: file:/run/secrets/bao-laptop-token
+```
+
+For a store listed in either setting, every injection or restore of its secrets goes to the
+control plane. After scrim's rules allow it, the control plane asks the store, as the agent, for
+its capabilities on the secret's path (OpenBao `sys/capabilities-self`), and refuses the request
+when the agent's identity may not read it. The value itself is never read with the agent's
+identity. An agent with neither a passthrough login nor a static credential is refused for that
+store. A store in neither setting is used with scrim's own identity. OpenBao is the only store that
+implements the check so far; Infisical and Vaultwarden are used with scrim's own identity. `scrim doctor` lists, per store and agent, which identity applies
+(`kubernetes`, `static`, `shared`, or `none` for refused).
+
+### Testing in a cluster
+
+`test/k8s/identity/run.sh` runs all of this in a kind cluster on rootless podman: OpenBao with
+Kubernetes auth, two scrim replicas on one PostgreSQL logging in to OpenBao with their own service
+account, and two agent pods whose service accounts get different outcomes from scrim's rules and
+from their OpenBao roles. It removes the cluster and its images when it ends.
+
 ## What this does not protect against
 
 - Processes running as the same user that are not agents (your shell, an editor) are that user's
@@ -208,3 +321,6 @@ agent rules on Unix-socket requests also ask.
   agent API and Unix sockets it is useless outside the session's process tree; on the TCP forward
   proxy and base URL, which cannot see the client's process, a same-user process that holds the
   token is that session.
+- A Kubernetes service account token for scrim's audience is a bearer credential toward scrim.
+  Any process in the pod that can read the projected token file is that agent. Keep one agent per
+  service account, and do not mount the token into pods that are not agents.

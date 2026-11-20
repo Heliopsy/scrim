@@ -312,6 +312,35 @@ be checked, so a same-user process that reads the token from an agent's environm
 that session there; the agent API and Unix sockets still enforce the tree. The data plane gets no
 session or peer map, so every rule on the agent of a request that names a session costs one ask.
 
+**Kubernetes service account tokens.** A pod identifies itself with a projected service account
+token for scrim's audience, sent where a session token goes: the password of the proxy user
+`k8s` (`HTTPS_PROXY=http://k8s:<token>@...`) or the value of `x-scrim-session`. The per-ask proof
+cannot cover it: the control plane holds no hash of a token the cluster minted, and must see the
+token itself to verify it with TokenReview. Two ways were considered:
+
+- **Exchange first.** The pod would trade its token for a scrim session at an agent API endpoint
+  and then use the session as above. That keeps the token out of asks, but needs a client in every
+  pod that logs in, renews before the hourly rotation and rewrites what the agent sends, which an
+  agent configured by environment (`ANTHROPIC_CUSTOM_HEADERS`) cannot do.
+- **The token in the ask.** Chosen. The data plane keeps the token in a zeroed type with a
+  redacting `Debug` for the request (for a forward-proxy tunnel, the tunnel) and sends it in
+  `AskCaller.kubernetes_token`, an additive secret field (protocol stays 1) with a redacting
+  `Debug` and a zeroing `Drop` in scrim-proto. The control plane verifies it with TokenReview for
+  scrim's audience, caches a verified token by its SHA-256 until the token expires or
+  `identity.kubernetes.cache-ttl` passes, and wipes the bytes when the ask is answered. The token
+  goes nowhere but the API server that issued it, is never logged, audited or forwarded, and is
+  good only toward scrim (its audience), so the exposure is the control plane process, which holds
+  the store credentials anyway.
+
+A refused token is unknown, never the peer mapping, like a refused session. The identity is
+`<namespace>/<service account>` or an `identity.kubernetes.agents` name, kind `k8s`, with the
+namespace, service account and pod as labels. When a store checks each agent's own identity
+(`identity.store-login`, `identity.store-credentials`), the control plane adds a residual rule in
+front of the snapshot so every injection or restore of that store's secrets is asked about, and
+after scrim's rules allow it asks the store, as the agent, whether it may read the path (OpenBao
+`sys/capabilities-self`, after a Kubernetes login with the pod's own token for passthrough). The
+value is still loaded with scrim's identity, so redaction never depends on the agent's.
+
 ## Risks / Trade-offs
 
 - [An agent invents a transform the guard does not decode] → the bypass matrix grows with every
