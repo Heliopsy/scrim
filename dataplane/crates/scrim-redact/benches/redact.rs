@@ -61,9 +61,9 @@ fn body(size: (&str, usize), set: &[String], hits: bool, n: usize) -> Vec<u8> {
     }
 }
 
-/// `SCRIM_REDACT_GUARD_THREADS` overrides `Config::parallel_threads` (1: single core).
+/// `SCRIM_REDACT_THREADS` overrides `Config::parallel_threads` (1: single core).
 fn parallel_threads() -> usize {
-    std::env::var("SCRIM_REDACT_GUARD_THREADS")
+    std::env::var("SCRIM_REDACT_THREADS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(Config::default().parallel_threads)
@@ -190,7 +190,7 @@ fn latency(_c: &mut Criterion) {
         Err(_) => vec![SIZES[1]],
     };
     eprintln!(
-        "\nlatency: {runs} runs each, p50 / p99 (redact, guard on redacted bytes, protect = both), guard threads {}",
+        "\nlatency: {runs} runs each, p50 / p99 (redact, guard on redacted bytes, redact = Redactor::redact on one thread, guard = Guard::check, protect = both as protect runs them), parallel threads {}",
         parallel_threads()
     );
     for n in SETS {
