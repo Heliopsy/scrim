@@ -38,6 +38,12 @@ environment variables reach providers through scrim without a base URL change.
 - **WHEN** an agent with the proxy environment set connects to a provider host
 - **THEN** scrim terminates TLS with its CA, redacts the request and forwards it
 
+#### Scenario: Tool traffic on the same listener
+
+- **WHEN** an agent with the proxy environment set connects to a host that is not a model provider
+- **THEN** scrim terminates TLS, handles the request in the tool proxy (credential injection and
+  response redaction) and never passes the connection through uninspected
+
 ### Requirement: Transparent mode with packet filtering
 
 scrim SHALL offer a transparent mode on Linux that redirects connections to provider hosts from

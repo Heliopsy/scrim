@@ -132,6 +132,14 @@ credential is bound to. Display-type values (data the agent needs to read or kee
 already has) follow the per-tool restore policy instead, with context-aware escaping. This is the
 lesson taken from veil's tool policy, applied to credentials.
 
+The tool proxy (`dataplane/crates/scrim-toolproxy`) checks bindings against the connection it
+opens, not against what the request claims: the Host header, `:authority` and TLS server name must
+match the CONNECT target, so a shared front end cannot route an injected token to another tenant.
+Every placeholder in a request is checked before any is substituted, and each value is encoded for
+the syntax it lands in (percent-encoding in URLs and forms, string escaping in JSON, per part in
+multipart). CA rotation serves leaves with a cross certificate during the overlap, so clients that
+trust only the previous CA keep working without a second leaf cache.
+
 ### D6. Stores are brokered, and scrim enforces write-only itself
 
 scrim is the only holder of store credentials. Agents call scrim, never the store, so write-only,
