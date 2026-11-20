@@ -227,6 +227,10 @@ is out of date.
 | [`catalog.reload-interval`](#catalogreload-interval) | duration | `5s` | hot |
 | [`config.strict`](#configstrict) | bool | `true` | hot |
 | [`config.watch`](#configwatch) | bool | `true` | hot |
+| [`dataplane.memory-lock`](#dataplanememory-lock) | string | `auto` | restart required |
+| [`dataplane.path`](#dataplanepath) | string | `""` | restart required |
+| [`dataplane.restart-max-backoff`](#dataplanerestart-max-backoff) | duration | `30s` | hot |
+| [`dataplane.start-timeout`](#dataplanestart-timeout) | duration | `10s` | hot |
 | [`entry.listen`](#entrylisten) | string | `127.0.0.1:0` | restart required |
 | [`grants.default-ttl`](#grantsdefault-ttl) | duration | `30m0s` | hot |
 | [`grants.max-ttl`](#grantsmax-ttl) | duration | `8h0m0s` | hot |
@@ -473,6 +477,57 @@ Reload the configuration when a config file or an included file changes. SIGHUP 
 | Type | bool |
 | Default | `true` |
 | Environment | `SCRIM_CONFIG_WATCH` |
+| Flag | none |
+| Reload | hot |
+
+### dataplane
+
+#### `dataplane.memory-lock`
+
+Lock the data plane's memory so values are never swapped: auto locks when the memlock limit is unlimited and warns otherwise; require refuses to start without it.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `auto` |
+| Environment | `SCRIM_DATAPLANE_MEMORY_LOCK` |
+| Flag | none |
+| Reload | restart required |
+| Values | `auto`, `require` |
+
+#### `dataplane.path`
+
+Path of a scrim-dataplane binary to run instead of the embedded one. For development builds; release builds embed it.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_DATAPLANE_PATH` |
+| Flag | none |
+| Reload | restart required |
+
+#### `dataplane.restart-max-backoff`
+
+Longest wait between data plane restarts after repeated crashes.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `30s` |
+| Environment | `SCRIM_DATAPLANE_RESTART_MAX_BACKOFF` |
+| Flag | none |
+| Reload | hot |
+
+#### `dataplane.start-timeout`
+
+How long the data plane may take to start and answer the handshake.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `10s` |
+| Environment | `SCRIM_DATAPLANE_START_TIMEOUT` |
 | Flag | none |
 | Reload | hot |
 

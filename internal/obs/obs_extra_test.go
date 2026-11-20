@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -74,7 +75,7 @@ func TestLogTraceIDs(t *testing.T) {
 func scrape(t *testing.T, m *Metrics) string {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	m.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body, _ := io.ReadAll(rec.Result().Body)
 	if rec.Code != 200 {
 		t.Fatalf("status %d", rec.Code)
@@ -147,7 +148,7 @@ func TestMuxEndpoints(t *testing.T) {
 	mux := Mux(h, NewMetrics())
 	for path, want := range map[string]int{"/healthz": 200, "/livez": 200, "/readyz": 503, "/metrics": 200, "/nope": 404} {
 		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != want {
 			t.Errorf("%s = %d, want %d", path, rec.Code, want)
 		}
@@ -168,7 +169,7 @@ func TestTraceContextPropagated(t *testing.T) {
 		_, end := Timed(ctx, tr.Tracer, SpanRedaction)
 		end(nil)
 	}))
-	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	req.Header.Set("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	_ = tr.ForceFlush(context.Background())

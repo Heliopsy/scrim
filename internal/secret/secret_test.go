@@ -157,7 +157,7 @@ func TestAdoptAndEqual(t *testing.T) {
 	b := []byte("generated-" + hex.EncodeToString([]byte{1, 2, 3}))
 	keep := append([]byte(nil), b...)
 	v := secret.Adopt(b)
-	if !v.Equal(secret.New(keep)) || !v.Equal(v) {
+	if !v.Equal(secret.New(keep)) || !v.Equal(v) { //nolint:gocritic // comparing a value with itself is the case under test
 		t.Fatal("Equal failed for equal content")
 	}
 	if v.Equal(secret.FromString("other")) {

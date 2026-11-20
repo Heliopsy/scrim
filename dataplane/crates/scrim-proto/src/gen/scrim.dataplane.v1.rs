@@ -473,6 +473,68 @@ pub struct StatusResponse {
     pub listeners: ::prost::alloc::vec::Vec<ListenerStatus>,
     #[prost(string, tag = "8")]
     pub data_plane_version: ::prost::alloc::string::String,
+    /// ca_trust_bundle_pem holds the certificates of the tool-proxy CA that
+    /// clients must trust, PEM encoded; during a rotation both CAs. Public.
+    #[prost(string, tag = "9")]
+    pub ca_trust_bundle_pem: ::prost::alloc::string::String,
+    /// tool_proxy is present once the tool proxy is built.
+    #[prost(message, optional, tag = "10")]
+    pub tool_proxy: ::core::option::Option<ToolProxyStatus>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ToolProxyStatus {
+    /// ready is true when a snapshot is applied and its redactor is ready.
+    #[prost(bool, tag = "1")]
+    pub ready: bool,
+    #[prost(uint64, tag = "2")]
+    pub snapshot_version: u64,
+    /// unsupported_destinations maps destinations whose clients refused the
+    /// interception certificate to the TLS error.
+    #[prost(map = "string, string", tag = "3")]
+    pub unsupported_destinations: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(uint32, tag = "4")]
+    pub cached_leaves: u32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[prost(skip_debug)]
+pub struct CaptureRequest {
+    #[prost(uint32, tag = "1")]
+    pub protocol: u32,
+    /// id is unique per data plane process; the result echoes it.
+    #[prost(uint64, tag = "2")]
+    pub id: u64,
+    /// rule names the capture rule that matched.
+    #[prost(string, tag = "3")]
+    pub rule: ::prost::alloc::string::String,
+    /// ref is the store reference to write.
+    #[prost(string, tag = "4")]
+    pub r#ref: ::prost::alloc::string::String,
+    /// destination is `scheme://host:port` the value came from.
+    #[prost(string, tag = "5")]
+    pub destination: ::prost::alloc::string::String,
+    /// value is the captured secret. Never logged; wiped after the write.
+    #[prost(bytes = "vec", tag = "6")]
+    pub value: ::prost::alloc::vec::Vec<u8>,
+    /// deadline_unix_nano is when the data plane withholds the field instead.
+    #[prost(int64, tag = "7")]
+    pub deadline_unix_nano: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CaptureResult {
+    #[prost(uint32, tag = "1")]
+    pub protocol: u32,
+    #[prost(uint64, tag = "2")]
+    pub id: u64,
+    /// placeholder is what the agent sees in place of the value. Empty with
+    /// error set when the write failed.
+    #[prost(string, tag = "3")]
+    pub placeholder: ::prost::alloc::string::String,
+    /// error says why the value was not stored, without the value.
+    #[prost(string, tag = "4")]
+    pub error: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListenerStatus {
@@ -693,6 +755,10 @@ pub enum EventKind {
     DetectorHit = 7,
     /// a request failed closed
     Error = 8,
+    /// a capture rule stored a response value
+    Capture = 9,
+    /// a client refused scrim's certificate
+    InterceptionRefused = 10,
 }
 impl EventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -710,6 +776,8 @@ impl EventKind {
             Self::Restore => "EVENT_KIND_RESTORE",
             Self::DetectorHit => "EVENT_KIND_DETECTOR_HIT",
             Self::Error => "EVENT_KIND_ERROR",
+            Self::Capture => "EVENT_KIND_CAPTURE",
+            Self::InterceptionRefused => "EVENT_KIND_INTERCEPTION_REFUSED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -724,6 +792,8 @@ impl EventKind {
             "EVENT_KIND_RESTORE" => Some(Self::Restore),
             "EVENT_KIND_DETECTOR_HIT" => Some(Self::DetectorHit),
             "EVENT_KIND_ERROR" => Some(Self::Error),
+            "EVENT_KIND_CAPTURE" => Some(Self::Capture),
+            "EVENT_KIND_INTERCEPTION_REFUSED" => Some(Self::InterceptionRefused),
             _ => None,
         }
     }
@@ -936,6 +1006,36 @@ pub mod data_plane_client {
                 .insert(GrpcMethod::new("scrim.dataplane.v1.DataPlane", "Status"));
             self.inner.unary(req, path, codec).await
         }
+        /// Captures carries values a tool-proxy capture rule took from a response
+        /// (a token an API just issued). The control plane opens the call once; the
+        /// data plane sends a CaptureRequest and the control plane writes the value
+        /// to its store and answers with the placeholder the agent sees. A request
+        /// with no answer by its deadline, an error answer, or no attached control
+        /// plane withholds the field from the agent.
+        pub async fn captures(
+            &mut self,
+            request: impl tonic::IntoStreamingRequest<Message = super::CaptureResult>,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::CaptureRequest>>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/scrim.dataplane.v1.DataPlane/Captures",
+            );
+            let mut req = request.into_streaming_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("scrim.dataplane.v1.DataPlane", "Captures"));
+            self.inner.streaming(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -998,6 +1098,22 @@ pub mod data_plane_server {
             &self,
             request: tonic::Request<super::StatusRequest>,
         ) -> std::result::Result<tonic::Response<super::StatusResponse>, tonic::Status>;
+        /// Server streaming response type for the Captures method.
+        type CapturesStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::CaptureRequest, tonic::Status>,
+            >
+            + std::marker::Send
+            + 'static;
+        /// Captures carries values a tool-proxy capture rule took from a response
+        /// (a token an API just issued). The control plane opens the call once; the
+        /// data plane sends a CaptureRequest and the control plane writes the value
+        /// to its store and answers with the placeholder the agent sees. A request
+        /// with no answer by its deadline, an error answer, or no attached control
+        /// plane withholds the field from the agent.
+        async fn captures(
+            &self,
+            request: tonic::Request<tonic::Streaming<super::CaptureResult>>,
+        ) -> std::result::Result<tonic::Response<Self::CapturesStream>, tonic::Status>;
     }
     #[derive(Debug)]
     pub struct DataPlaneServer<T> {
@@ -1290,6 +1406,54 @@ pub mod data_plane_server {
                                 max_encoding_message_size,
                             );
                         let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/scrim.dataplane.v1.DataPlane/Captures" => {
+                    #[allow(non_camel_case_types)]
+                    struct CapturesSvc<T: DataPlane>(pub Arc<T>);
+                    impl<
+                        T: DataPlane,
+                    > tonic::server::StreamingService<super::CaptureResult>
+                    for CapturesSvc<T> {
+                        type Response = super::CaptureRequest;
+                        type ResponseStream = T::CapturesStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::CaptureResult>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as DataPlane>::captures(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CapturesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.streaming(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)

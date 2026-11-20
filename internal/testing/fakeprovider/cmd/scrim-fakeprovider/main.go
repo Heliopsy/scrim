@@ -64,7 +64,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("listening on http://%s\n", ln.Addr())
+	_, _ = fmt.Fprintf(os.Stdout, "listening on http://%s\n", ln.Addr())
 	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

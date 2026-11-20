@@ -189,6 +189,50 @@
       },
       "type": "object"
     },
+    "dataplane": {
+      "additionalProperties": false,
+      "properties": {
+        "memory-lock": {
+          "default": "auto",
+          "description": "Lock the data plane's memory so values are never swapped: auto locks when the memlock limit is unlimited and warns otherwise; require refuses to start without it.",
+          "enum": [
+            "auto",
+            "require"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_DATAPLANE_MEMORY_LOCK",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "path": {
+          "default": "",
+          "description": "Path of a scrim-dataplane binary to run instead of the embedded one. For development builds; release builds embed it.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_DATAPLANE_PATH",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "restart-max-backoff": {
+          "default": "30s",
+          "description": "Longest wait between data plane restarts after repeated crashes.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_DATAPLANE_RESTART_MAX_BACKOFF",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "start-timeout": {
+          "default": "10s",
+          "description": "How long the data plane may take to start and answer the handshake.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_DATAPLANE_START_TIMEOUT",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
     "entry": {
       "additionalProperties": false,
       "properties": {

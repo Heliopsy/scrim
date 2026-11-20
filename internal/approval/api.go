@@ -29,7 +29,7 @@ import (
 //     Operator function names nobody.
 
 // ApprovalView is the API form of an approval.
-type ApprovalView struct {
+type ApprovalView struct { //nolint:revive // the name is part of the API package other code already uses
 	ID        string    `json:"id"`
 	Status    string    `json:"status"`
 	Agent     string    `json:"agent"`
@@ -298,7 +298,7 @@ func decodeBody(r *http.Request, v any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
-		return fmt.Errorf("%w: %v", errBadRequest, err)
+		return fmt.Errorf("%w: %v", errBadRequest, err) //nolint:errorlint // the decode error is shown, not matched
 	}
 	return nil
 }

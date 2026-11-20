@@ -109,7 +109,7 @@ type Runner struct {
 	Progress func(Result)
 }
 
-// Content returns the tool output a transform renders for a value.
+// ContentFor returns the tool output a transform renders for a value.
 func ContentFor(t Transform, value string) Content {
 	return Content{
 		Command: t.Command,

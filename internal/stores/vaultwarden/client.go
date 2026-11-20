@@ -293,7 +293,7 @@ func (c *client) authed(ctx context.Context, s session, method, path string, q u
 		// request is garbage collected.
 		req, err = c.jsonRequest(ctx, method, path, q, string(tok), in)
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // err is the outer variable, checked after Expose returns
 		}
 		err = c.do(req, out)
 		return nil

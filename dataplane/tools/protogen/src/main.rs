@@ -23,6 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     config.skip_debug([
         ".scrim.dataplane.v1.ValueEntry",
         ".scrim.dataplane.v1.PlaceholderKey",
+        ".scrim.dataplane.v1.CaptureRequest",
     ]);
 
     tonic_prost_build::configure()

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/dataplane"
 	"github.com/heliopsy/scrim/internal/notify"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/policy"
@@ -51,6 +52,8 @@ type App struct {
 	PolicyParts *Policy
 
 	stop context.CancelFunc
+	// SnapshotSource builds data plane snapshots; nil sends an empty one.
+	SnapshotSource dataplane.SnapshotFunc
 }
 
 // New builds the components from the configuration opts names and starts

@@ -5,6 +5,7 @@ package auditlog_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func seeded(t *testing.T) state.Store {
 func TestHandlerPagesNewestFirst(t *testing.T) {
 	h := auditlog.Handler(seeded(t), func() time.Time { return now })
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/audit?agent=a1&ref=bao://kv/gh%23token&decision=allow&limit=3", nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/audit?agent=a1&ref=bao://kv/gh%23token&decision=allow&limit=3", nil))
 	var p auditlog.Page
 	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil || rec.Code != 200 {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
@@ -50,7 +51,7 @@ func TestHandlerPagesNewestFirst(t *testing.T) {
 		t.Fatalf("page = %+v", p)
 	}
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/audit?limit=3&before=3", nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/audit?limit=3&before=3", nil))
 	p = auditlog.Page{}
 	_ = json.Unmarshal(rec.Body.Bytes(), &p)
 	if len(p.Entries) != 2 || p.Entries[0].ID != 2 || p.NextBefore != 0 {
@@ -63,13 +64,13 @@ func TestHandlerRejectsBadQueries(t *testing.T) {
 	for _, q := range []string{"decision=maybe", "since=yesterday", "limit=x", "limit=5000", "limit=-1", "before=x", "ref=nope",
 		"since=1h&until=2h"} {
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest("GET", "/audit?"+q, nil))
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/audit?"+q, nil))
 		if rec.Code != 400 {
 			t.Errorf("%s: %d", q, rec.Code)
 		}
 	}
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("POST", "/audit", nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/audit", nil))
 	if rec.Code != 405 {
 		t.Errorf("POST: %d", rec.Code)
 	}

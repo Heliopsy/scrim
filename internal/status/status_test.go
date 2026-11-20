@@ -193,7 +193,7 @@ func TestWeakenedInDedicatedJSONField(t *testing.T) {
 	}
 	var human bytes.Buffer
 	_ = WriteHuman(&human, r)
-	section := human.String()[strings.Index(human.String(), "Weakened protections"):]
+	section := human.String()[strings.Index(human.String(), "Weakened protections"):] //nolint:gocritic // WriteHuman always writes this heading
 	if !strings.Contains(section, "state.sqlite.allow-network-filesystem") {
 		t.Fatalf("weakened setting not listed under weakened protections:\n%s", section)
 	}

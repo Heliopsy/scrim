@@ -1,0 +1,54 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - forbidigo
+    - gocritic
+    - misspell
+    - nilerr
+    - revive
+    - unconvert
+    - usestdlibvars
+    - wastedassign
+
+  settings:
+    errorlint:
+      # Error kinds are sentinels kept in a field and compared by identity
+      # (stores.Error.Kind), and some code walks error trees itself, so only
+      # the %w check is enforced.
+      comparison: false
+      asserts: false
+    forbidigo:
+      forbid:
+        - pattern: '^fmt\.Print(f|ln)?$'
+          msg: "write to the command's writer, not stdout directly"
+        - pattern: '^log\.(Print|Fatal|Panic)(f|ln)?$'
+          msg: "use the slog logger from internal/obs, which scrubs values"
+      analyze-types: true
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+
+  exclusions:
+    generated: strict
+    rules:
+      # Tests spell out literals (status codes, methods, typos fed to "did
+      # you mean") on purpose.
+      - path: _test\.go
+        linters: [forbidigo, bodyclose, usestdlibvars, misspell, gocritic]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/heliopsy/scrim
