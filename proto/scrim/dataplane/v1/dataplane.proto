@@ -303,6 +303,19 @@ message Route {
   repeated string hosts = 4;
   // path_prefix selects the route on a base-URL listener.
   string path_prefix = 5;
+  // chain, when set, sends the redacted request to another proxy (for
+  // example a context-compression proxy) in place of `upstream`.
+  RouteChain chain = 6;
+}
+
+// RouteChain is a chained upstream that receives requests after redaction.
+message RouteChain {
+  // url is the chained proxy's base URL (`http` or `https`).
+  string url = 1;
+  // direct_on_unavailable sends the redacted request straight to the
+  // route's upstream when the chained proxy cannot be reached. False refuses
+  // the request instead.
+  bool direct_on_unavailable = 2;
 }
 
 enum ListenerKind {
@@ -425,8 +438,9 @@ message AskAnswer {
   Effect effect = 3;
   string reason = 4;
   // grant_id and grant_expires_unix_nano describe the grant an approval
-  // created, so the data plane can let matching requests through until it
-  // expires without asking again.
+  // created, for audit only. The data plane does not cache grants: the
+  // control plane reads them on every use, so a revoked or used-up grant
+  // takes effect on the next request (design D7).
   string grant_id = 5;
   int64 grant_expires_unix_nano = 6;
 }
@@ -450,6 +464,29 @@ message StatusResponse {
   string ca_trust_bundle_pem = 9;
   // tool_proxy is present once the tool proxy is built.
   ToolProxyStatus tool_proxy = 10;
+  // redaction describes the value dictionary in force; absent before the
+  // first snapshot.
+  RedactionStatus redaction = 11;
+  // policy_engine names how the data plane takes restore and injection
+  // decisions, for example `standin/v1` (no rule table evaluation; display
+  // values restored in text only, credentials never) or `table/v1`.
+  string policy_engine = 12;
+}
+
+// RedactionStatus reports counts and references, never values.
+message RedactionStatus {
+  // engine is the matcher in use: `aho-corasick` or `hash-window`.
+  string engine = 1;
+  // patterns is how many encoded variants are compiled.
+  uint32 patterns = 2;
+  // short_values counts values below the minimum length, matched only
+  // whole.
+  uint32 short_values = 3;
+  // unprotected_refs are references whose values are below the floor and
+  // are not redacted.
+  repeated string unprotected_refs = 4;
+  // duplicates counts entries whose value another entry already holds.
+  uint32 duplicates = 5;
 }
 
 message ToolProxyStatus {
@@ -494,4 +531,5 @@ message ListenerStatus {
   bool bound = 3;
   // error says why the listener is not bound.
   string error = 4;
+  ListenerKind kind = 5;
 }

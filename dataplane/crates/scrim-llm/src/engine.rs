@@ -303,6 +303,10 @@ pub struct Snapshot {
     pub policy: Arc<dyn RestorePolicy>,
     /// Policy for unscannable content.
     pub binary: BinaryPolicy,
+    /// Routes that come with this snapshot (the control plane's), so a request picks its route
+    /// and its value dictionary from one version. `None` uses the routes the proxy was built
+    /// with.
+    pub routes: Option<Arc<crate::route::RouteTable>>,
 }
 
 impl fmt::Debug for Snapshot {
@@ -310,8 +314,16 @@ impl fmt::Debug for Snapshot {
         f.debug_struct("Snapshot")
             .field("version", &self.version)
             .field("binary", &self.binary)
+            .field("routes", &self.routes)
             .finish_non_exhaustive()
     }
+}
+
+/// Where a cell built with [`SnapshotCell::from_source`] reads the snapshot in force, for an
+/// embedder that publishes one bundle for several engines and swaps it once.
+pub trait SnapshotSource: Send + Sync {
+    /// The snapshot in force, if any.
+    fn load(&self) -> Option<Arc<Snapshot>>;
 }
 
 /// Holds the current [`Snapshot`]. Empty until the first one is applied; requests are refused
@@ -319,12 +331,22 @@ impl fmt::Debug for Snapshot {
 #[derive(Default)]
 pub struct SnapshotCell {
     inner: ArcSwapOption<Snapshot>,
+    source: Option<Arc<dyn SnapshotSource>>,
 }
 
 impl SnapshotCell {
     /// An empty cell.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A cell that reads every snapshot from `source`. [`SnapshotCell::store`] and
+    /// [`SnapshotCell::clear`] do nothing on it: the source decides what is in force.
+    pub fn from_source(source: Arc<dyn SnapshotSource>) -> Self {
+        Self {
+            inner: ArcSwapOption::empty(),
+            source: Some(source),
+        }
     }
 
     /// A cell holding `snapshot`.
@@ -346,7 +368,10 @@ impl SnapshotCell {
 
     /// The current snapshot, if any.
     pub fn load(&self) -> Option<Arc<Snapshot>> {
-        self.inner.load_full()
+        match &self.source {
+            Some(s) => s.load(),
+            None => self.inner.load_full(),
+        }
     }
 }
 

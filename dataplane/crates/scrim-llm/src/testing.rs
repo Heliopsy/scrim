@@ -574,6 +574,7 @@ impl Fixture {
             placeholders: Arc::new(self.fake_placeholders()),
             policy: Arc::new(self.policy.clone()),
             binary: self.binary,
+            routes: None,
         }
     }
 

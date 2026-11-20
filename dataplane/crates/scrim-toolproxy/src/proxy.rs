@@ -69,9 +69,37 @@ pub trait InterceptHandler: Send + Sync + 'static {
     ) -> Pin<Box<dyn Future<Output = Response<ProxyBody>> + Send>>;
 }
 
+/// A snapshot compiled by [`ToolProxy::compile`], ready to be put in force. Cheap to clone.
+#[derive(Clone)]
+pub struct CompiledSnapshot(Arc<Engine>);
+
+impl CompiledSnapshot {
+    /// The snapshot version.
+    pub fn version(&self) -> u64 {
+        self.0.version
+    }
+}
+
+impl std::fmt::Debug for CompiledSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CompiledSnapshot")
+            .field("version", &self.0.version)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Where a proxy built with [`ToolProxyBuilder::snapshot_source`] reads the snapshot in force,
+/// for an embedder that publishes one bundle for several engines and swaps it once. Each
+/// request reads it once and keeps what it got to the end.
+pub trait SnapshotSource: Send + Sync + 'static {
+    /// The compiled snapshot in force, if any.
+    fn current(&self) -> Option<CompiledSnapshot>;
+}
+
 /// State shared by every connection.
 pub(crate) struct Shared {
     pub(crate) engine: ArcSwapOption<Engine>,
+    source: Option<Arc<dyn SnapshotSource>>,
     pub(crate) ca: CaRing,
     pub(crate) client: HttpsClient,
     pub(crate) audit: Arc<dyn AuditSink>,
@@ -93,6 +121,17 @@ pub struct ToolProxyBuilder {
     capture_sink: Arc<dyn CaptureSink>,
     intercept: Option<Arc<dyn InterceptHandler>>,
     signers: Vec<Arc<dyn RequestSigner>>,
+    source: Option<Arc<dyn SnapshotSource>>,
+}
+
+impl Shared {
+    /// The engine in force: from the source when there is one, else the last applied.
+    pub(crate) fn current(&self) -> Option<Arc<Engine>> {
+        match &self.source {
+            Some(s) => s.current().map(|c| c.0),
+            None => self.engine.load_full(),
+        }
+    }
 }
 
 impl ToolProxyBuilder {
@@ -138,6 +177,13 @@ impl ToolProxyBuilder {
         self.intercept = Some(h);
         self
     }
+    /// Reads the snapshot in force from `source` instead of [`ToolProxy::apply`]; compile
+    /// snapshots with [`ToolProxy::compile`] and publish them through the source.
+    #[must_use]
+    pub fn snapshot_source(mut self, source: Arc<dyn SnapshotSource>) -> Self {
+        self.source = Some(source);
+        self
+    }
     /// Adds a request re-signer.
     #[must_use]
     pub fn signer(mut self, s: Arc<dyn RequestSigner>) -> Self {
@@ -156,6 +202,7 @@ impl ToolProxyBuilder {
         Ok(ToolProxy {
             shared: Arc::new(Shared {
                 engine: ArcSwapOption::empty(),
+                source: self.source,
                 ca: CaRing::new(ca, self.leaf),
                 client,
                 audit: self.audit,
@@ -218,6 +265,7 @@ impl ToolProxy {
             capture_sink: Arc::new(RefusingCaptureSink),
             intercept: None,
             signers: Vec::new(),
+            source: None,
         }
     }
 
@@ -225,11 +273,21 @@ impl ToolProxy {
     /// with. Returns the applied version, to acknowledge to the control plane.
     ///
     /// A snapshot that fails to compile is rejected and the previous one stays in force.
+    ///
+    /// A proxy built with a [`SnapshotSource`] ignores applied snapshots; publish through the
+    /// source instead.
     pub fn apply(&self, snapshot: Snapshot) -> Result<u64, ValidationError> {
-        let engine = Engine::compile(snapshot, self.shared.captured.clone())?;
-        let v = engine.version;
-        self.shared.engine.store(Some(Arc::new(engine)));
+        let compiled = self.compile(snapshot)?;
+        let v = compiled.version();
+        self.shared.engine.store(Some(compiled.0));
         Ok(v)
+    }
+
+    /// Compiles a snapshot without putting it in force, for a [`SnapshotSource`]. Fails like
+    /// [`ToolProxy::apply`].
+    pub fn compile(&self, snapshot: Snapshot) -> Result<CompiledSnapshot, ValidationError> {
+        Engine::compile(snapshot, self.shared.captured.clone())
+            .map(|e| CompiledSnapshot(Arc::new(e)))
     }
 
     /// The interception CA ring: export the trust bundle, rotate.
@@ -239,7 +297,7 @@ impl ToolProxy {
 
     /// Current status.
     pub fn status(&self) -> ProxyStatus {
-        let engine = self.shared.engine.load();
+        let engine = self.shared.current();
         ProxyStatus {
             ready: engine.as_ref().is_some_and(|e| e.redactors.is_ready()),
             snapshot_version: engine.as_ref().map(|e| e.version),
@@ -312,7 +370,7 @@ impl ToolProxy {
                     "CONNECT needs a host:port target",
                 ));
             };
-            if self.shared.engine.load().is_none() {
+            if self.shared.current().is_none() {
                 return refusal_response(&not_ready());
             }
             let this = self.clone();
@@ -463,7 +521,7 @@ impl ToolProxy {
         B: Body<Data = Bytes> + Send + Unpin + 'static,
         B::Error: Into<BoxError>,
     {
-        let Some(engine) = self.shared.engine.load_full() else {
+        let Some(engine) = self.shared.current() else {
             return refusal_response(&not_ready());
         };
         if !engine.redactors.is_ready() {

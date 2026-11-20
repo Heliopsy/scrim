@@ -138,7 +138,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 ## 13. Local service and persistent interception (M2 exit)
 
 - [ ] 13.1 systemd unit and Quadlet with a dedicated user, `scrim install` and `scrim uninstall`; verify: uninstall leaves no trace in a VM test
-- [ ] 13.2 Forward proxy listener; verify: an agent with HTTPS_PROXY set is redacted
+- [x] 13.2 Forward proxy listener; verify: an agent with HTTPS_PROXY set is redacted
 - [ ] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
 - [ ] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
 
