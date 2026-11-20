@@ -2,6 +2,8 @@
 /bin/
 /dist/
 /target/
+/dataplane/target/
+/internal/dataplane/embedded/scrim-dataplane
 
 # Local state and captures, which can hold redacted traffic
 *.db
