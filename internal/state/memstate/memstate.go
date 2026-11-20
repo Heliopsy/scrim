@@ -329,7 +329,22 @@ func (t *tx) SessionByTokenHash(_ context.Context, hash string) (*state.Session,
 	return nil, state.ErrNotFound
 }
 
-func (t *tx) EndSession(_ context.Context, id string, at time.Time) error {
+func (t *tx) ListSessions(_ context.Context, f state.SessionFilter) ([]state.Session, error) {
+	var out []state.Session
+	for _, s := range t.s.sessions {
+		if f.AgentID != "" && s.Agent.ID != f.AgentID {
+			continue
+		}
+		if f.Open && !s.EndedAt.IsZero() {
+			continue
+		}
+		out = append(out, cloneSession(*s))
+	}
+	sort.Slice(out, func(i, j int) bool { return less(out[i].CreatedAt, out[j].CreatedAt, out[i].ID, out[j].ID) })
+	return limit(out, f.Limit), nil
+}
+
+func (t *tx) EndSession(_ context.Context, id string, at time.Time, reason string) error {
 	if err := t.write(); err != nil {
 		return err
 	}
@@ -341,9 +356,27 @@ func (t *tx) EndSession(_ context.Context, id string, at time.Time) error {
 		return state.ErrConflict
 	}
 	c := cloneSession(*s)
-	c.EndedAt = at
+	c.EndedAt, c.EndReason = at, reason
 	put(t, t.s.sessions, id, &c)
 	return nil
+}
+
+func (t *tx) EndAgentSessions(ctx context.Context, agentID string, at time.Time, reason string) ([]string, error) {
+	if err := t.write(); err != nil {
+		return nil, err
+	}
+	if agentID == "" {
+		return nil, nil
+	}
+	open, _ := t.ListSessions(ctx, state.SessionFilter{AgentID: agentID, Open: true})
+	ids := make([]string, 0, len(open))
+	for _, s := range open {
+		c := cloneSession(s)
+		c.EndedAt, c.EndReason = at, reason
+		put(t, t.s.sessions, s.ID, &c)
+		ids = append(ids, s.ID)
+	}
+	return ids, nil
 }
 
 func (t *tx) AppendAudit(_ context.Context, e *audit.Entry) error {
@@ -434,6 +467,7 @@ func cloneGrant(g state.Grant) state.Grant {
 
 func cloneSession(s state.Session) state.Session {
 	s.Agent = cloneAgent(s.Agent)
+	s.Scopes = slices.Clone(s.Scopes)
 	s.Labels = maps.Clone(s.Labels)
 	return s
 }

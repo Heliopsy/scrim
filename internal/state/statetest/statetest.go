@@ -34,6 +34,7 @@ func Run(t *testing.T, f Factory) {
 		{"ApprovalLifecycle", approvalLifecycle},
 		{"GrantUseAndRevoke", grantUseAndRevoke},
 		{"Sessions", sessions},
+		{"SessionsByAgent", sessionsByAgent},
 		{"ApplyIsAtomic", applyIsAtomic},
 		{"ApplyNeedsAudit", applyNeedsAudit},
 		{"AuditQuery", auditQuery},
@@ -173,13 +174,21 @@ func grantUseAndRevoke(t *testing.T, s state.Store) {
 
 func sessions(t *testing.T, s state.Store) {
 	ctx := t.Context()
-	sess := &state.Session{Agent: agent("a1"), TokenHash: "sha256:abc", CreatedAt: t0, ExpiresAt: t0.Add(time.Hour)}
+	sess := &state.Session{Agent: agent("a1"), Name: "claude", TokenHash: "sha256:abc", UID: 1000,
+		RootPID: 4242, RootPPID: 41, RootStart: 1<<63 + 7, Scopes: []string{"secrets:list", "secrets:request"},
+		CreatedAt: t0, ExpiresAt: t0.Add(time.Hour), Labels: map[string]string{"cwd": "/w"}}
 	update(t, s, func(tx state.Tx) error { return tx.CreateSession(ctx, sess) })
 	err := s.Update(ctx, func(tx state.Tx) error {
 		return tx.CreateSession(ctx, &state.Session{Agent: agent("a2"), TokenHash: "sha256:abc", CreatedAt: t0})
 	})
 	if !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate token hash: %v", err)
+	}
+	err = s.Update(ctx, func(tx state.Tx) error {
+		return tx.CreateSession(ctx, &state.Session{ID: sess.ID, Agent: agent("a2"), CreatedAt: t0})
+	})
+	if !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("duplicate session ID: %v", err)
 	}
 	_ = s.View(ctx, func(tx state.Tx) error {
 		got, err := tx.SessionByTokenHash(ctx, "sha256:abc")
@@ -189,16 +198,142 @@ func sessions(t *testing.T, s state.Store) {
 		if _, err := tx.SessionByTokenHash(ctx, "sha256:nope"); !errors.Is(err, state.ErrNotFound) {
 			t.Errorf("unknown hash: %v", err)
 		}
-		return nil
-	})
-	update(t, s, func(tx state.Tx) error { return tx.EndSession(ctx, sess.ID, t0.Add(time.Minute)) })
-	_ = s.View(ctx, func(tx state.Tx) error {
-		got, _ := tx.GetSession(ctx, sess.ID)
-		if got.EndedAt.IsZero() {
-			t.Error("EndSession not kept")
+		got, err = tx.GetSession(ctx, sess.ID)
+		if err != nil || got.Name != "claude" || got.UID != 1000 || got.RootPID != 4242 || got.RootPPID != 41 || got.RootStart != 1<<63+7 ||
+			len(got.Scopes) != 2 || got.Scopes[1] != "secrets:request" || got.Labels["cwd"] != "/w" ||
+			!got.CreatedAt.Equal(t0) || !got.ExpiresAt.Equal(t0.Add(time.Hour)) || !got.EndedAt.IsZero() || got.EndReason != "" {
+			t.Errorf("stored session differs: %+v, %v", got, err)
+		}
+		if _, err := tx.GetSession(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
+			t.Errorf("GetSession missing: %v", err)
 		}
 		return nil
 	})
+	update(t, s, func(tx state.Tx) error { return tx.EndSession(ctx, sess.ID, t0.Add(time.Minute), "ended") })
+	_ = s.View(ctx, func(tx state.Tx) error {
+		got, _ := tx.GetSession(ctx, sess.ID)
+		if !got.EndedAt.Equal(t0.Add(time.Minute)) || got.EndReason != "ended" {
+			t.Errorf("EndSession not kept: %+v", got)
+		}
+		return nil
+	})
+	err = s.Update(ctx, func(tx state.Tx) error { return tx.EndSession(ctx, sess.ID, t0.Add(2*time.Minute), "operator") })
+	if !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("ending twice: %v", err)
+	}
+	err = s.Update(ctx, func(tx state.Tx) error { return tx.EndSession(ctx, "missing", t0, "operator") })
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("ending a missing session: %v", err)
+	}
+	_ = s.View(ctx, func(tx state.Tx) error {
+		got, _ := tx.GetSession(ctx, sess.ID)
+		if got.EndReason != "ended" || !got.EndedAt.Equal(t0.Add(time.Minute)) {
+			t.Errorf("second end overwrote the first: %+v", got)
+		}
+		return nil
+	})
+}
+
+func sessionsByAgent(t *testing.T, s state.Store) {
+	ctx := t.Context()
+	// Created out of order, so listing has to sort.
+	mk := []struct {
+		id, agent string
+		at        time.Duration
+	}{{"s3", "a1", 3}, {"s1", "a1", 1}, {"s2", "a2", 2}, {"s4", "a1", 4}}
+	update(t, s, func(tx state.Tx) error {
+		for _, m := range mk {
+			if err := tx.CreateSession(ctx, &state.Session{ID: m.id, Agent: agent(m.agent), TokenHash: "h" + m.id,
+				CreatedAt: t0.Add(m.at * time.Second), ExpiresAt: t0.Add(time.Hour)}); err != nil {
+				return err
+			}
+		}
+		return tx.EndSession(ctx, "s4", t0.Add(time.Minute), "ended")
+	})
+	ids := func(ss []state.Session) []string {
+		out := make([]string, len(ss))
+		for i, x := range ss {
+			out[i] = x.ID
+		}
+		return out
+	}
+	list := func(f state.SessionFilter) []string {
+		t.Helper()
+		var out []string
+		if err := s.View(ctx, func(tx state.Tx) error {
+			ss, err := tx.ListSessions(ctx, f)
+			out = ids(ss)
+			return err
+		}); err != nil {
+			t.Fatalf("ListSessions(%+v): %v", f, err)
+		}
+		return out
+	}
+	eq := func(what string, got []string, want ...string) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Errorf("%s = %v, want %v", what, got, want)
+			return
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Errorf("%s = %v, want %v", what, got, want)
+				return
+			}
+		}
+	}
+	eq("all", list(state.SessionFilter{}), "s1", "s2", "s3", "s4")
+	eq("a1", list(state.SessionFilter{AgentID: "a1"}), "s1", "s3", "s4")
+	eq("a1 open", list(state.SessionFilter{AgentID: "a1", Open: true}), "s1", "s3")
+	eq("limit", list(state.SessionFilter{Limit: 2}), "s1", "s2")
+
+	var ended []string
+	update(t, s, func(tx state.Tx) error {
+		var err error
+		ended, err = tx.EndAgentSessions(ctx, "a1", t0.Add(2*time.Minute), "operator")
+		return err
+	})
+	eq("ended", ended, "s1", "s3")
+	eq("a1 open after", list(state.SessionFilter{AgentID: "a1", Open: true}))
+	eq("a2 untouched", list(state.SessionFilter{AgentID: "a2", Open: true}), "s2")
+	_ = s.View(ctx, func(tx state.Tx) error {
+		for id, want := range map[string]string{"s1": "operator", "s3": "operator", "s4": "ended"} {
+			got, err := tx.GetSession(ctx, id)
+			if err != nil || got.EndReason != want {
+				t.Errorf("%s ended for %q, want %q (%v)", id, got.EndReason, want, err)
+			}
+		}
+		return nil
+	})
+	update(t, s, func(tx state.Tx) error {
+		var err error
+		ended, err = tx.EndAgentSessions(ctx, "a1", t0.Add(3*time.Minute), "operator")
+		if err == nil && len(ended) != 0 {
+			t.Errorf("ending again ended %v", ended)
+		}
+		if again, err := tx.EndAgentSessions(ctx, "", t0, "operator"); err != nil || len(again) != 0 {
+			t.Errorf("empty agent ended %v, %v", again, err)
+		}
+		return err
+	})
+	eq("a2 still open", list(state.SessionFilter{Open: true}), "s2")
+
+	// A rolled-back EndAgentSessions ends nothing.
+	boom := errors.New("roll back")
+	err := s.Update(ctx, func(tx state.Tx) error {
+		if _, err := tx.EndAgentSessions(ctx, "a2", t0, "operator"); err != nil {
+			return err
+		}
+		return boom
+	})
+	if !errors.Is(err, boom) {
+		t.Fatal(err)
+	}
+	eq("a2 after rollback", list(state.SessionFilter{AgentID: "a2", Open: true}), "s2")
+	err = s.View(ctx, func(tx state.Tx) error { _, err := tx.EndAgentSessions(ctx, "a2", t0, "operator"); return err })
+	if err == nil {
+		t.Fatal("EndAgentSessions inside View succeeded")
+	}
 }
 
 func applyIsAtomic(t *testing.T, s state.Store) {

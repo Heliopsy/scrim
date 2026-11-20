@@ -99,13 +99,36 @@ func (g Grant) Usable(t time.Time) bool {
 type Session struct {
 	ID    string
 	Agent policy.Agent
+	// Name is the optional label the minter gave the session.
+	Name string
 	// TokenHash is a hash of the session token; the token itself is never
 	// stored.
 	TokenHash string
+	// UID is the user the session is bound to.
+	UID uint32
+	// RootPID and RootStart identify the process the session is bound to,
+	// together with its descendants. RootStart is the platform's opaque
+	// process start time, so a later process reusing the PID does not match.
+	// RootPPID is that process's parent when the session was created.
+	RootPID   int32
+	RootPPID  int32
+	RootStart uint64
+	// Scopes are what the session may do, by scope name.
+	Scopes    []string
 	CreatedAt time.Time
 	ExpiresAt time.Time
+	// EndedAt is when the session was ended or revoked, EndReason why.
 	EndedAt   time.Time
+	EndReason string
 	Labels    map[string]string
+}
+
+// SessionFilter selects sessions. Zero fields match anything.
+type SessionFilter struct {
+	AgentID string
+	// Open keeps only sessions that have not been ended.
+	Open  bool
+	Limit int
 }
 
 // Event is an outbox row, delivered by the events backend after commit.
@@ -179,7 +202,13 @@ type Tx interface {
 	CreateSession(ctx context.Context, s *Session) error
 	GetSession(ctx context.Context, id string) (*Session, error)
 	SessionByTokenHash(ctx context.Context, hash string) (*Session, error)
-	EndSession(ctx context.Context, id string, at time.Time) error
+	// ListSessions returns matching sessions, oldest first.
+	ListSessions(ctx context.Context, f SessionFilter) ([]Session, error)
+	// EndSession ends one session; ErrConflict if it already ended.
+	EndSession(ctx context.Context, id string, at time.Time, reason string) error
+	// EndAgentSessions ends every open session of an agent and returns
+	// their IDs, oldest first.
+	EndAgentSessions(ctx context.Context, agentID string, at time.Time, reason string) ([]string, error)
 
 	// AppendAudit assigns e.ID.
 	AppendAudit(ctx context.Context, e *audit.Entry) error

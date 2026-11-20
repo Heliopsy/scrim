@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -315,7 +316,8 @@ func (t *Tx) RevokeGrant(ctx context.Context, id, by string, at time.Time) error
 
 // --- sessions
 
-const sessionCols = `id, agent_id, agent, token_hash, created_at, expires_at, ended_at, labels`
+const sessionCols = `id, agent_id, agent, name, token_hash, uid, root_pid, root_ppid, root_start, scopes, ` +
+	`created_at, expires_at, ended_at, end_reason, labels`
 
 // CreateSession implements [state.Tx]. An empty token hash is stored as
 // NULL, so many sessions may lack one while a set hash stays unique.
@@ -334,30 +336,46 @@ func (t *Tx) CreateSession(ctx context.Context, s *state.Session) error {
 	if err != nil {
 		return err
 	}
+	scopes := "[]"
+	if len(s.Scopes) > 0 {
+		if scopes, err = encode(s.Scopes); err != nil {
+			return err
+		}
+	}
 	var hash any
 	if s.TokenHash != "" {
 		hash = s.TokenHash
 	}
 	_, err = t.exec(ctx, "create session",
-		`INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		s.ID, s.Agent.ID, agent, hash, ts(s.CreatedAt), ts(s.ExpiresAt), ts(s.EndedAt), labels)
+		`INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.ID, s.Agent.ID, agent, s.Name, hash, int64(s.UID), int64(s.RootPID), int64(s.RootPPID), int64(s.RootStart), //nolint:gosec // stored bit for bit, read back as uint64
+		scopes, ts(s.CreatedAt), ts(s.ExpiresAt), ts(s.EndedAt), s.EndReason, labels)
 	return err
 }
 
 func scanSession(sc interface{ Scan(...any) error }) (state.Session, error) {
 	var (
-		s                       state.Session
-		agentID, agent, labels  string
-		hash                    sql.NullString
-		created, expires, ended sql.NullInt64
+		s                                 state.Session
+		agentID, agent, scopes, labels    string
+		hash                              sql.NullString
+		uid, rootPID, rootPPID, rootStart int64
+		created, expires, ended           sql.NullInt64
 	)
-	if err := sc.Scan(&s.ID, &agentID, &agent, &hash, &created, &expires, &ended, &labels); err != nil {
+	if err := sc.Scan(&s.ID, &agentID, &agent, &s.Name, &hash, &uid, &rootPID, &rootPPID, &rootStart, &scopes,
+		&created, &expires, &ended, &s.EndReason, &labels); err != nil {
 		return s, err
 	}
 	s.TokenHash = hash.String
+	s.UID, s.RootPID, s.RootPPID, s.RootStart = uint32(uid), int32(rootPID), int32(rootPPID), uint64(rootStart) //nolint:gosec // written from these types
 	s.CreatedAt, s.ExpiresAt, s.EndedAt = fromTS(created), fromTS(expires), fromTS(ended)
 	if err := decode(agent, &s.Agent); err != nil {
 		return s, err
+	}
+	if err := decode(scopes, &s.Scopes); err != nil {
+		return s, err
+	}
+	if len(s.Scopes) == 0 {
+		s.Scopes = nil
 	}
 	return s, decode(labels, &s.Labels)
 }
@@ -389,12 +407,33 @@ func (t *Tx) SessionByTokenHash(ctx context.Context, hash string) (*state.Sessio
 	return &s, nil
 }
 
+// ListSessions implements [state.Tx].
+func (t *Tx) ListSessions(ctx context.Context, f state.SessionFilter) ([]state.Session, error) {
+	if err := t.begin("ListSessions", false); err != nil {
+		return nil, err
+	}
+	var w where
+	if f.AgentID != "" {
+		w.add("agent_id = ?", f.AgentID)
+	}
+	if f.Open {
+		w.add("ended_at IS NULL")
+	}
+	rows, err := t.query(ctx, "list sessions",
+		`SELECT `+sessionCols+` FROM sessions`+w.sql()+` ORDER BY created_at, id`+limitSQL(f.Limit), w.args...)
+	if err != nil {
+		return nil, err
+	}
+	return collect(t.db, rows, "list sessions", scanSession)
+}
+
 // EndSession implements [state.Tx].
-func (t *Tx) EndSession(ctx context.Context, id string, at time.Time) error {
+func (t *Tx) EndSession(ctx context.Context, id string, at time.Time, reason string) error {
 	if err := t.begin("EndSession", true); err != nil {
 		return err
 	}
-	res, err := t.exec(ctx, "end session", `UPDATE sessions SET ended_at = ? WHERE id = ? AND ended_at IS NULL`, ts(at), id)
+	res, err := t.exec(ctx, "end session",
+		`UPDATE sessions SET ended_at = ?, end_reason = ? WHERE id = ? AND ended_at IS NULL`, ts(at), reason, id)
 	if err != nil {
 		return err
 	}
@@ -405,6 +444,45 @@ func (t *Tx) EndSession(ctx context.Context, id string, at time.Time) error {
 		return notFoundOr(err)
 	}
 	return state.ErrConflict
+}
+
+// EndAgentSessions implements [state.Tx]. The check and the update are one
+// statement, so two replicas cannot both end the same session.
+func (t *Tx) EndAgentSessions(ctx context.Context, agentID string, at time.Time, reason string) ([]string, error) {
+	if err := t.begin("EndAgentSessions", true); err != nil {
+		return nil, err
+	}
+	if agentID == "" {
+		return nil, nil
+	}
+	rows, err := t.query(ctx, "end agent sessions",
+		`UPDATE sessions SET ended_at = ?, end_reason = ? WHERE agent_id = ? AND ended_at IS NULL RETURNING id, created_at`,
+		ts(at), reason, agentID)
+	if err != nil {
+		return nil, err
+	}
+	type ended struct {
+		id      string
+		created sql.NullInt64
+	}
+	all, err := collect(t.db, rows, "end agent sessions", func(s interface{ Scan(...any) error }) (ended, error) {
+		var e ended
+		return e, s.Scan(&e.id, &e.created)
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].created.Int64 != all[j].created.Int64 {
+			return all[i].created.Int64 < all[j].created.Int64
+		}
+		return all[i].id < all[j].id
+	})
+	ids := make([]string, len(all))
+	for i, e := range all {
+		ids[i] = e.id
+	}
+	return ids, nil
 }
 
 // --- audit

@@ -156,7 +156,7 @@ func replicas(t *testing.T, n int) []*postgres.Store {
 func TestReplicasMigrateConcurrently(t *testing.T) {
 	rs := replicas(t, 4)
 	for _, r := range rs {
-		if v, err := r.SchemaVersion(t.Context()); err != nil || v != 1 {
+		if v, err := r.SchemaVersion(t.Context()); err != nil || v != 2 {
 			t.Fatalf("SchemaVersion = %d, %v", v, err)
 		}
 	}
@@ -294,7 +294,7 @@ func TestRefusesNewerSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = s.Migrate(t.Context())
-	if !errors.Is(err, state.ErrSchemaTooNew) || !strings.Contains(err.Error(), "version 9") || !strings.Contains(err.Error(), "version 1") {
+	if !errors.Is(err, state.ErrSchemaTooNew) || !strings.Contains(err.Error(), "version 9") || !strings.Contains(err.Error(), "version 2") {
 		t.Fatalf("Migrate on a newer schema = %v", err)
 	}
 }
