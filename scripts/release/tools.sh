@@ -16,6 +16,7 @@
 dir=$1
 shift
 mkdir -p "$dir/bin"
+dir=$(cd "$dir" && pwd)
 
 fetch() {
   local url=$1 want=$2 dest=$3 got
@@ -43,7 +44,10 @@ for tool in "$@"; do
       rm -f "$dir/syft.tar.gz"
       ;;
     cargo-auditable)
-      cargo install --locked --quiet --root "$dir" "cargo-auditable@$CARGO_AUDITABLE_VERSION"
+      # From dataplane/, so rustup takes the toolchain rust-toolchain.toml pins
+      # (a runner without a default toolchain has nothing else to choose).
+      (cd "$(dirname "$0")/../../dataplane" && rustup toolchain install >/dev/null &&
+        cargo install --locked --quiet --root "$dir" "cargo-auditable@$CARGO_AUDITABLE_VERSION")
       ;;
     *) die "unknown tool: $tool" ;;
   esac
