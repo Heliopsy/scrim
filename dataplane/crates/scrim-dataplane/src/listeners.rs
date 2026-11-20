@@ -25,6 +25,7 @@ use scrim_proto::v1;
 use tokio::sync::oneshot;
 
 use crate::engine::Shared;
+use crate::metrics::{DataPlaneMetrics, ProxyListener};
 
 #[derive(Debug)]
 struct Running {
@@ -144,11 +145,23 @@ fn start(l: &v1::Listener, shared: &Shared) -> Running {
             bind_tcp(&l.address).map(|listener| {
                 status.address = local(&listener, &l.address);
                 let proxy = shared.tool_proxy.clone();
-                tokio::spawn(async move {
-                    if let Err(err) = proxy.serve(listener, shutdown).await {
-                        tracing::error!(listener = name.as_str(), %err, "tool proxy listener failed");
+                match shared.metrics.clone() {
+                    None => {
+                        tokio::spawn(async move {
+                            if let Err(err) = proxy.serve(listener, shutdown).await {
+                                tracing::error!(listener = name.as_str(), %err, "tool proxy listener failed");
+                            }
+                        });
                     }
-                });
+                    Some(m) => {
+                        let kind = if l.kind() == v1::ListenerKind::ForwardProxy {
+                            ProxyListener::ForwardProxy
+                        } else {
+                            ProxyListener::ToolProxy
+                        };
+                        tokio::spawn(serve_counted(proxy, listener, shutdown, m, kind));
+                    }
+                }
                 "tool proxy"
             })
         }
@@ -204,6 +217,39 @@ fn start(l: &v1::Listener, shared: &Shared) -> Running {
         status,
         stop,
         socket,
+    }
+}
+
+/// The tool proxy's accept loop ([`scrim_toolproxy::ToolProxy::serve`]) with each connection
+/// counted while it is open.
+async fn serve_counted(
+    proxy: scrim_toolproxy::ToolProxy,
+    listener: tokio::net::TcpListener,
+    shutdown: impl std::future::Future<Output = ()>,
+    metrics: std::sync::Arc<DataPlaneMetrics>,
+    kind: ProxyListener,
+) {
+    tokio::pin!(shutdown);
+    loop {
+        tokio::select! {
+            () = &mut shutdown => return,
+            accepted = listener.accept() => {
+                let (stream, peer) = match accepted {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "accept failed");
+                        continue;
+                    }
+                };
+                let _ = stream.set_nodelay(true);
+                let open = metrics.connection(kind);
+                let proxy = proxy.clone();
+                tokio::spawn(async move {
+                    proxy.serve_connection(stream, Some(peer)).await;
+                    drop(open);
+                });
+            }
+        }
     }
 }
 

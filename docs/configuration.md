@@ -241,7 +241,11 @@ is out of date.
 | [`identity.peers`](#identitypeers) | map | `{}` | restart required |
 | [`log.format`](#logformat) | string | `text` | hot |
 | [`log.level`](#loglevel) | string | `info` | hot |
-| [`metrics.listen`](#metricslisten) | string | `""` | restart required |
+| [`metrics.allow-unauthenticated-remote`](#metricsallow-unauthenticated-remote) | bool | `false` | restart required |
+| [`metrics.auth.token`](#metricsauthtoken) | secret-ref | empty | restart required |
+| [`metrics.enabled`](#metricsenabled) | bool | `false` | restart required |
+| [`metrics.listen`](#metricslisten) | string | `127.0.0.1:9792` | restart required |
+| [`metrics.path`](#metricspath) | string | `/metrics` | restart required |
 | [`notify.ntfy.priority`](#notifyntfypriority) | int | `4` | hot |
 | [`notify.ntfy.token`](#notifyntfytoken) | secret-ref | empty | hot |
 | [`notify.ntfy.topic`](#notifyntfytopic) | string | `""` | hot |
@@ -732,16 +736,65 @@ Minimum level of log records.
 
 ### metrics
 
+#### `metrics.allow-unauthenticated-remote`
+
+Serve metrics.path on a non-loopback metrics.listen without metrics.auth.token, for a network policy or mesh that already restricts who connects. Anyone who can reach the port reads the metrics.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_METRICS_ALLOW_UNAUTHENTICATED_REMOTE` |
+| Flag | none |
+| Reload | restart required |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `metrics.auth.token`
+
+Reference to a bearer token (at least 16 bytes) a scraper must present on metrics.path. Required when metrics.listen is not a loopback address, unless metrics.allow-unauthenticated-remote is set. The health endpoints never need it.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; a literal is warned about) |
+| Default | empty |
+| Environment | `SCRIM_METRICS_AUTH_TOKEN` |
+| Flag | none |
+| Reload | restart required |
+
+#### `metrics.enabled`
+
+Serve Prometheus metrics (control plane and data plane) at metrics.path on metrics.listen. Off: nothing is measured on the request path and no metrics listener is bound.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_METRICS_ENABLED` |
+| Flag | `--metrics-enabled` |
+| Reload | restart required |
+
 #### `metrics.listen`
 
-Address of the metrics and health endpoint (Prometheus format at /metrics, /healthz or /livez, /readyz). Empty disables it; bind to loopback unless scraped remotely.
+Address of the metrics and health endpoint (/healthz or /livez, /readyz, and metrics.path while metrics.enabled). Used when metrics.enabled is true; set explicitly with metrics.enabled false it serves the health endpoints only. Bind to loopback unless scraped remotely.
 
 | | |
 |---|---|
 | Type | string |
-| Default | `""` |
+| Default | `127.0.0.1:9792` |
 | Environment | `SCRIM_METRICS_LISTEN` |
 | Flag | `--metrics-listen` |
+| Reload | restart required |
+
+#### `metrics.path`
+
+Path of the Prometheus endpoint on metrics.listen.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `/metrics` |
+| Environment | `SCRIM_METRICS_PATH` |
+| Flag | none |
 | Reload | restart required |
 
 ### notify

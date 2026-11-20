@@ -1,0 +1,267 @@
+# Alerting rules for scrim. Metric meanings and runbooks: docs/monitoring.md.
+#
+# deploy/monitoring/prometheus-rules.yaml carries these groups as its spec and
+# is generated from this file: edit here, then run
+# `scripts/monitoring-check.sh --generate`.
+groups:
+  - name: scrim.availability
+    rules:
+      - alert: ScrimDown
+        expr: up{job=~"scrim.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: scrim metrics endpoint is not answering
+          description: >-
+            Prometheus cannot scrape {{ $labels.job }} on {{ $labels.instance }}. The control
+            plane is down or its metrics listener is unreachable.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimdown
+
+      - alert: ScrimDataPlaneDown
+        expr: scrim_dataplane_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: scrim data plane is down
+          description: >-
+            The control plane on {{ $labels.instance }} reports its data plane as not running.
+            Provider traffic through this instance is refused.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimdataplanedown
+
+      - alert: ScrimDataPlaneRestarting
+        expr: increase(scrim_dataplane_restarts_total[15m]) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: scrim data plane is restarting repeatedly
+          description: >-
+            The data plane on {{ $labels.instance }} restarted more than twice in the last
+            15 minutes.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimdataplanerestarting
+
+      - alert: ScrimDataPlaneMetricsUnavailable
+        expr: scrim_dataplane_metrics_up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: scrim data plane metrics are missing
+          description: >-
+            The control plane on {{ $labels.instance }} cannot read the data plane's own
+            metrics. scrim_dataplane_* series are stale or absent.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimdataplanemetricsunavailable
+
+  - name: scrim.traffic
+    rules:
+      - alert: ScrimGuardWithholdingSpike
+        expr: >-
+          sum by (job, instance) (
+            increase(scrim_dataplane_guard_actions_total{action="withheld"}[10m])
+          ) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: scrim guard is withholding output
+          description: >-
+            The guard on {{ $labels.instance }} withheld more than 5 responses or chunks in
+            the last 10 minutes. The redactor is missing values the guard still catches.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimguardwithholdingspike
+
+      - alert: ScrimRefusalRatioHigh
+        expr: >-
+          (
+            sum by (job, instance) (rate(scrim_dataplane_refusals_total{source="llm"}[10m]))
+            /
+            sum by (job, instance) (rate(scrim_dataplane_requests_total[10m]))
+            > 0.05
+          )
+          and
+          sum by (job, instance) (rate(scrim_dataplane_requests_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: scrim refuses more than 5% of provider requests
+          description: >-
+            More than 5% of provider requests on {{ $labels.instance }} were refused over the
+            last 10 minutes. Check the refusal codes on the dashboard.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimrefusalratiohigh
+
+  - name: scrim.latency
+    rules:
+      - alert: ScrimRedactionLatencyOverBudget
+        expr: >-
+          histogram_quantile(0.99,
+            sum by (job, instance, route, le) (
+              rate(scrim_dataplane_request_added_seconds_bucket{stage="total"}[10m])
+            )
+          ) > 0.005
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: scrim request latency is over the 5 ms budget
+          description: >-
+            p99 added request latency on route {{ $labels.route }} at {{ $labels.instance }}
+            is above 5 ms, the budget for a 1 MB body with 1,000 secrets.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimredactionlatencyoverbudget
+
+      - alert: ScrimRestoreChunkLatencyOverBudget
+        expr: >-
+          histogram_quantile(0.99,
+            sum by (job, instance, route, le) (
+              rate(scrim_dataplane_restore_chunk_seconds_bucket[10m])
+            )
+          ) > 0.00005
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: scrim response restore latency is over the 50 us budget
+          description: >-
+            p99 time to restore one response chunk on route {{ $labels.route }} at
+            {{ $labels.instance }} is above 50 microseconds.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimrestorechunklatencyoverbudget
+
+  - name: scrim.stores
+    rules:
+      - alert: ScrimStoreDegraded
+        expr: scrim_store_degraded == 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: scrim secret store is degraded
+          description: >-
+            Store {{ $labels.store }} on {{ $labels.instance }} is degraded. Values from it may
+            be missing from redaction.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimstoredegraded
+
+      - alert: ScrimStoreUnreachable
+        expr: scrim_store_up == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: scrim secret store is unreachable
+          description: >-
+            Store {{ $labels.store }} on {{ $labels.instance }} has not answered for 10 minutes.
+            scrim keeps serving the last values it loaded.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimstoreunreachable
+
+      - alert: ScrimStoreStale
+        expr: scrim_store_staleness_seconds > 3600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: scrim secret store values are stale
+          description: >-
+            Store {{ $labels.store }} on {{ $labels.instance }} has not refreshed for more than
+            an hour.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimstorestale
+
+  - name: scrim.approvals
+    rules:
+      # One alert for both backlog shapes: more than 10 approvals pending for
+      # the whole last 15 minutes, or a single approval waiting over 15 minutes.
+      - alert: ScrimApprovalBacklog
+        expr: >-
+          max by (job, instance) (min_over_time(scrim_approvals_pending[15m])) > 10
+          or
+          max by (job, instance) (scrim_approvals_oldest_pending_age_seconds) > 900
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: scrim approvals are backing up
+          description: >-
+            Approvals on {{ $labels.instance }} are not being settled: more than 10 have been
+            pending for 15 minutes, or the oldest has waited over 15 minutes.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimapprovalbacklog
+
+  - name: scrim.controlplane
+    rules:
+      - alert: ScrimSnapshotPushFailing
+        expr: >-
+          sum by (job, instance) (increase(scrim_snapshot_pushes_total{result="error"}[15m])) > 0
+          unless
+          sum by (job, instance) (increase(scrim_snapshot_pushes_total{result="ok"}[15m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: scrim cannot push snapshots to the data plane
+          description: >-
+            Every snapshot push on {{ $labels.instance }} failed in the last 15 minutes. The
+            data plane runs on an old snapshot, so new values and policy are not enforced.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimsnapshotpushfailing
+
+      - alert: ScrimConfigReloadRejected
+        expr: >-
+          sum by (job, instance) (increase(scrim_config_reloads_total{result="rejected"}[30m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: scrim rejected a configuration reload
+          description: >-
+            A configuration reload on {{ $labels.instance }} was rejected in the last 30
+            minutes. The previous configuration is still in force.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimconfigreloadrejected
+
+      - alert: ScrimAuditDropping
+        expr: sum by (job, instance) (increase(scrim_audit_dropped_total[15m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: scrim is dropping audit entries
+          description: >-
+            Audit entries on {{ $labels.instance }} were dropped in the last 15 minutes. A sink
+            is slow or failing.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditdropping
+
+      - alert: ScrimWeakenedSetting
+        expr: max by (job, instance, setting) (scrim_config_weakened_settings) == 1
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: scrim runs with a weakened setting
+          description: >-
+            Setting {{ $labels.setting }} on {{ $labels.instance }} weakens a security
+            invariant and has been on for an hour.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimweakenedsetting
+
+  - name: scrim.ca
+    rules:
+      # Both alerts fire below 2 days; inhibit the warning in Alertmanager if
+      # you only want the critical one.
+      - alert: ScrimCAExpiringSoon
+        expr: >-
+          scrim_ca_certificate_not_after_timestamp_seconds{generation="current"} - time()
+          < 14 * 86400
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: scrim CA certificate expires within 14 days
+          description: >-
+            The current CA certificate on {{ $labels.instance }} expires in less than 14 days.
+            Rotate it before agents start failing TLS.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimcaexpiringsoon
+
+      - alert: ScrimCAExpiringCritical
+        expr: >-
+          scrim_ca_certificate_not_after_timestamp_seconds{generation="current"} - time()
+          < 2 * 86400
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: scrim CA certificate expires within 2 days or has expired
+          description: >-
+            The current CA certificate on {{ $labels.instance }} expires in less than 2 days, or
+            already has. Rotate it now.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimcaexpiringcritical

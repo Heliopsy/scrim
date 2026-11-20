@@ -66,6 +66,14 @@ service DataPlane {
   // with no answer by its deadline, an error answer, or no attached control
   // plane withholds the field from the agent.
   rpc Captures(stream CaptureResult) returns (stream CaptureRequest);
+
+  // Metrics returns the data plane's own counters and histograms, which it
+  // aggregates locally (atomics, fixed buckets) off the request path. The
+  // control plane calls it once per scrape of its metrics endpoint and
+  // exposes the families next to its own. A data plane started without
+  // metrics answers with enabled false and no families; one older than this
+  // call answers UNIMPLEMENTED, which the control plane treats the same way.
+  rpc Metrics(MetricsRequest) returns (MetricsResponse);
 }
 
 message HelloRequest {
@@ -674,4 +682,49 @@ message ListenerStatus {
   // error says why the listener is not bound.
   string error = 4;
   ListenerKind kind = 5;
+}
+
+message MetricsRequest {
+  uint32 protocol = 1;
+}
+
+// MetricsResponse carries metric families in Prometheus' data model. Names
+// start with `scrim_dataplane_`; label values are route names, provider
+// codecs, refusal codes and other enumerations, never a reference, a
+// placeholder or a value.
+message MetricsResponse {
+  uint32 protocol = 1;
+  // enabled is false when the data plane was started without metrics.
+  bool enabled = 2;
+  repeated MetricFamily families = 3;
+}
+
+enum MetricType {
+  METRIC_TYPE_UNSPECIFIED = 0;
+  METRIC_TYPE_COUNTER = 1;
+  METRIC_TYPE_GAUGE = 2;
+  METRIC_TYPE_HISTOGRAM = 3;
+}
+
+message MetricFamily {
+  string name = 1;
+  string help = 2;
+  MetricType type = 3;
+  repeated string label_names = 4;
+  // bucket_bounds are the histogram upper bounds in base units, ascending,
+  // without +Inf.
+  repeated double bucket_bounds = 5;
+  repeated MetricSample samples = 6;
+}
+
+message MetricSample {
+  // label_values match MetricFamily.label_names by position.
+  repeated string label_values = 1;
+  // value is the counter or gauge value.
+  double value = 2;
+  // bucket_counts are cumulative counts per bucket bound (histograms).
+  repeated uint64 bucket_counts = 3;
+  // count and sum are the histogram's observation count and sum.
+  uint64 count = 4;
+  double sum = 5;
 }

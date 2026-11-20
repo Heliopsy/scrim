@@ -47,7 +47,7 @@ restarts it with backoff and traffic is refused until it is back.
 | Entry page | `entry.listen` | `127.0.0.1:0` | Where a human types a value for `secret_ask_human`. |
 | Admin API | `admin.url` | `unix:$XDG_RUNTIME_DIR/scrim/admin.sock` | Operator commands ([approvals.md](approvals.md)). |
 | Decision links | `approvals.listen` | off | Only the decision endpoint, for `approvals.public-url` to point at through a TLS proxy. |
-| Metrics and health | `metrics.listen` | off | `/metrics`, `/livez`, `/readyz`. |
+| Metrics and health | `metrics.listen` (`127.0.0.1:9792`) | off; on with `metrics.enabled` or `--metrics` | `metrics.path`, `/healthz`, `/livez`, `/readyz`; health only when `metrics.listen` is set without the flag. See [monitoring.md](monitoring.md). |
 
 Listener addresses need a restart; a reload that changes one keeps the running listener and lists the
 setting under pending restart in `scrim status`.

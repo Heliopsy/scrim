@@ -61,7 +61,7 @@ fuzz:
 # ---------------------------------------------------------------- gates
 
 # The pre-push gate.
-check: fmt-check lint md test spec proto-check vuln
+check: fmt-check lint md test spec proto-check vuln monitoring
 
 fmt:
     gofmt -w .
@@ -79,6 +79,10 @@ lint:
 # Lint the Markdown .markdownlint-cli2.yaml selects, with the rules in .markdownlint.yaml.
 md:
     npx --yes markdownlint-cli2@0.24.1
+
+# Alert rules, their tests, the Prometheus configs and the dashboard (deploy/monitoring).
+monitoring:
+    scripts/monitoring-check.sh
 
 # Validate every OpenSpec change and spec.
 spec:

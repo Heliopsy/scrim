@@ -182,6 +182,8 @@ type Status struct {
 	// LastSuccess is the last successful refresh; LastAttempt the last try.
 	LastSuccess time.Time `json:"last_success,omitzero"`
 	LastAttempt time.Time `json:"last_attempt,omitzero"`
+	// LastDuration is how long the last full refresh took.
+	LastDuration time.Duration `json:"last_duration,omitzero"`
 	// LastError is the last refresh error, from stores.Error messages,
 	// which carry no value.
 	LastError string `json:"last_error,omitempty"`
@@ -228,6 +230,7 @@ type Refresher struct {
 	locked      bool
 	lastSuccess time.Time
 	lastAttempt time.Time
+	lastTook    time.Duration
 	lastErr     error
 
 	kick chan struct{} // asks Run for a refresh now
@@ -380,9 +383,12 @@ func (r *Refresher) applyChange(ctx context.Context, t Target, c stores.Change) 
 // retire what disappeared. On failure the previous values are kept.
 func (r *Refresher) RefreshNow(ctx context.Context) error {
 	now := r.cfg.Now()
+	began := time.Now()
 	err := r.refresh(ctx)
+	took := time.Since(began)
 	r.mu.Lock()
 	r.lastAttempt = now
+	r.lastTook = took
 	r.locked = errors.Is(err, stores.ErrLocked)
 	if err == nil {
 		r.lastSuccess = now
@@ -559,7 +565,7 @@ func (r *Refresher) Status() Status {
 	now := r.cfg.Now()
 	st := Status{
 		Store: r.a.Name(), Loaded: r.loaded,
-		LastSuccess: r.lastSuccess, LastAttempt: r.lastAttempt,
+		LastSuccess: r.lastSuccess, LastAttempt: r.lastAttempt, LastDuration: r.lastTook,
 		Secrets: len(r.entries), Values: len(r.retired),
 	}
 	for _, e := range r.entries {

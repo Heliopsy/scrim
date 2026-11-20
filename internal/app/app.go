@@ -119,7 +119,11 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 		return nil, err
 	}
 	cfg := a.Config.Current()
-	a.Instruments = obs.NewInstruments(a.Metrics, a.Scrubber)
+	if obs.MetricsEnabled.Get(cfg) {
+		a.Instruments = obs.NewInstruments(a.Metrics, a.Scrubber)
+	} else {
+		a.Instruments = obs.DisabledInstruments()
+	}
 	weak := []string{}
 	for _, w := range config.WeakenedSettings(cfg) {
 		weak = append(weak, w.Key)
@@ -161,6 +165,7 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 		OnChange: a.valuesChanged,
 		OnStatus: func(st refresh.Status) {
 			a.Instruments.StoreHealth(st.Store, st.Healthy, st.LastSuccess, st.Values, st.State == refresh.StateDegraded)
+			a.Instruments.StoreRefresh(st.Store, st.LastDuration, st.LastError != "")
 		},
 	})
 	if err != nil {

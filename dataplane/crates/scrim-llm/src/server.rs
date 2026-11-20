@@ -16,6 +16,7 @@ use hyper_util::server::conn::auto;
 use hyper_util::server::graceful::GracefulShutdown;
 use tokio::io::{AsyncRead, AsyncWrite};
 
+use crate::metrics::Listener;
 use crate::proxy::Proxy;
 
 /// How long in-flight requests may run after shutdown starts.
@@ -45,10 +46,16 @@ pub struct UnixPeer {
     pub pid: Option<i32>,
 }
 
-fn serve_conn<S>(io: S, proxy: Arc<Proxy>, graceful: &GracefulShutdown, peer: Option<UnixPeer>)
-where
+fn serve_conn<S>(
+    io: S,
+    proxy: Arc<Proxy>,
+    graceful: &GracefulShutdown,
+    peer: Option<UnixPeer>,
+    listener: Listener,
+) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    let open = proxy.metrics().map(|m| m.connection(listener));
     let svc = service_fn(move |mut req: hyper::Request<Incoming>| {
         let p = proxy.clone();
         if let Some(peer) = peer {
@@ -64,6 +71,7 @@ where
         if let Err(e) = conn.await {
             tracing::debug!(error = %e, "connection ended with an error");
         }
+        drop(open);
     });
 }
 
@@ -87,7 +95,7 @@ pub async fn serve_tcp(
             r = listener.accept() => match r {
                 Ok((stream, _)) => {
                     let _ = stream.set_nodelay(true);
-                    serve_conn(stream, proxy.clone(), &graceful, None);
+                    serve_conn(stream, proxy.clone(), &graceful, None, Listener::BaseUrl);
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "accept failed");
@@ -141,7 +149,7 @@ pub async fn serve_unix(
                         gid: c.gid(),
                         pid: c.pid(),
                     });
-                    serve_conn(stream, proxy.clone(), &graceful, peer);
+                    serve_conn(stream, proxy.clone(), &graceful, peer, Listener::Unix);
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "accept failed");

@@ -10,7 +10,9 @@
 //! - added request latency with an engine (redactor plus guard) for 10, 1,000 and 10,000 secrets,
 //!   with and without hits;
 //! - time added per streamed chunk while restoring a 20,000-event stream chunked at event and
-//!   mid-event boundaries.
+//!   mid-event boundaries;
+//! - the same request and chunk paths with metrics off and on (`metrics.enabled`): the on
+//!   numbers must meet the same budgets, and the difference is reported.
 //!
 //! Each p99 is compared with `benches/budget.json` (or the file in `SCRIM_LLM_BUDGET`). The
 //! process exits non-zero, naming the measurement, when a budget is exceeded. Run with
@@ -29,6 +31,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use scrim_llm::config::Limits;
+use scrim_llm::metrics::{LlmMetrics, Stage};
 use scrim_llm::outgoing;
 use scrim_llm::testing::Fixture;
 use scrim_llm::{Api, SseRestorer};
@@ -207,6 +210,39 @@ fn time_requests(fx: &Fixture, body: &[u8], iters: usize) -> (Duration, Duration
     best
 }
 
+/// Like [`time_requests`], recording what the proxy records per request when metrics are on:
+/// the route lookup, both stage timings, the total, the body size and the forwarded counters.
+fn time_requests_metered(
+    fx: &Fixture,
+    body: &[u8],
+    iters: usize,
+    m: &LlmMetrics,
+) -> (Duration, Duration) {
+    let snap = fx.snapshot();
+    let mut best = (Duration::MAX, Duration::MAX);
+    for _ in 0..ROUNDS {
+        let mut v = Vec::with_capacity(iters);
+        for _ in 0..iters {
+            let t = Instant::now();
+            let rm = m.route("anthropic", "anthropic");
+            rm.body_bytes(body.len());
+            let began = Instant::now();
+            let o = outgoing::prepare_timed(&snap, Api::AnthropicMessages, body, true).unwrap();
+            rm.stage(Stage::Redaction, o.stages.redaction);
+            rm.stage(Stage::Guard, o.stages.guard);
+            rm.stage(Stage::Total, began.elapsed());
+            rm.forwarded(o.report.replacements, o.report.detectors.len(), false);
+            v.push(t.elapsed());
+            std::hint::black_box(o);
+        }
+        let r = (p99(v.clone()), p50(v));
+        if r.0 < best.0 {
+            best = r;
+        }
+    }
+    best
+}
+
 fn machine() -> String {
     let cpu = std::fs::read_to_string("/proc/cpuinfo")
         .ok()
@@ -349,6 +385,84 @@ fn main() {
     );
     if us > limit {
         failures.push(format!("chunk p99: {us:.2} µs > {limit} µs"));
+    }
+
+    println!("\n## Metrics overhead (1,000 secrets, hits, metrics off vs on)\n");
+    println!(
+        "| path | off p50 | off p99 | on p50 | on p99 | p50 delta | budget |\n|---|---|---|---|---|---|---|"
+    );
+    let mut fx = Fixture::generated(1000);
+    fx.fast_guard = true;
+    let metrics = LlmMetrics::default();
+    for (name, size) in sizes {
+        let body = anthropic_body(&fx, &mut rng, *size, true);
+        let n = iters(*size).min(60);
+        let (off99, off50) = time_requests(&fx, &body, n);
+        let (on99, on50) = time_requests_metered(&fx, &body, n, &metrics);
+        let ms = |d: Duration| d.as_secs_f64() * 1e3;
+        let limit = budget["proxy_overhead_p99_ms"][name].as_f64().unwrap();
+        let engine = budget["engine"]["request_p99_ms"]["1000"]
+            .as_f64()
+            .filter(|_| *name == "1MB");
+        println!(
+            "| request {name} | {:.3} ms | {:.3} ms | {:.3} ms | {:.3} ms | {:+.1} µs | {} |",
+            ms(off50),
+            ms(off99),
+            ms(on50),
+            ms(on99),
+            (on50.as_secs_f64() - off50.as_secs_f64()) * 1e6,
+            engine.map_or_else(|| "-".to_string(), |l| format!("{l} ms")),
+        );
+        if let Some(l) = engine
+            && enforce
+            && ms(on99) > l
+        {
+            failures.push(format!(
+                "request p99 with metrics on, {name}: {:.3} ms > {l} ms",
+                ms(on99)
+            ));
+        }
+        let _ = limit;
+    }
+    let rm = metrics.route("anthropic", "anthropic");
+    let (mut off, mut on) = (Vec::new(), Vec::new());
+    for _ in 0..if quick { 1 } else { 3 } {
+        for metered in [false, true] {
+            let mut r =
+                SseRestorer::new(Api::AnthropicMessages, snap.clone(), &Limits::default()).unwrap();
+            let mut out = Vec::with_capacity(1 << 16);
+            for c in &chunks {
+                out.clear();
+                let t = Instant::now();
+                if metered {
+                    let m = Instant::now();
+                    r.push(c, &mut out);
+                    rm.chunk(m.elapsed());
+                } else {
+                    r.push(c, &mut out);
+                }
+                if metered { &mut on } else { &mut off }.push(t.elapsed());
+            }
+            r.finish(&mut out);
+            std::hint::black_box(&out);
+        }
+    }
+    let us = |d: Duration| d.as_secs_f64() * 1e6;
+    let (off50, on50) = (p50(off.clone()), p50(on.clone()));
+    let (off99, on99) = (p99(off), p99(on));
+    println!(
+        "| chunk | {:.2} µs | {:.2} µs | {:.2} µs | {:.2} µs | {:+.3} µs | {limit} µs |",
+        us(off50),
+        us(off99),
+        us(on50),
+        us(on99),
+        us(on50) - us(off50)
+    );
+    if us(on99) > limit {
+        failures.push(format!(
+            "chunk p99 with metrics on: {:.2} µs > {limit} µs",
+            us(on99)
+        ));
     }
 
     println!();

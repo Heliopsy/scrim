@@ -526,6 +526,58 @@ func (EventKind) EnumDescriptor() ([]byte, []int) {
 	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{7}
 }
 
+type MetricType int32
+
+const (
+	MetricType_METRIC_TYPE_UNSPECIFIED MetricType = 0
+	MetricType_METRIC_TYPE_COUNTER     MetricType = 1
+	MetricType_METRIC_TYPE_GAUGE       MetricType = 2
+	MetricType_METRIC_TYPE_HISTOGRAM   MetricType = 3
+)
+
+// Enum value maps for MetricType.
+var (
+	MetricType_name = map[int32]string{
+		0: "METRIC_TYPE_UNSPECIFIED",
+		1: "METRIC_TYPE_COUNTER",
+		2: "METRIC_TYPE_GAUGE",
+		3: "METRIC_TYPE_HISTOGRAM",
+	}
+	MetricType_value = map[string]int32{
+		"METRIC_TYPE_UNSPECIFIED": 0,
+		"METRIC_TYPE_COUNTER":     1,
+		"METRIC_TYPE_GAUGE":       2,
+		"METRIC_TYPE_HISTOGRAM":   3,
+	}
+)
+
+func (x MetricType) Enum() *MetricType {
+	p := new(MetricType)
+	*p = x
+	return p
+}
+
+func (x MetricType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (MetricType) Descriptor() protoreflect.EnumDescriptor {
+	return file_scrim_dataplane_v1_dataplane_proto_enumTypes[8].Descriptor()
+}
+
+func (MetricType) Type() protoreflect.EnumType {
+	return &file_scrim_dataplane_v1_dataplane_proto_enumTypes[8]
+}
+
+func (x MetricType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use MetricType.Descriptor instead.
+func (MetricType) EnumDescriptor() ([]byte, []int) {
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{8}
+}
+
 type HelloRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Protocol uint32                 `protobuf:"varint,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
@@ -3472,6 +3524,281 @@ func (x *ListenerStatus) GetKind() ListenerKind {
 	return ListenerKind_LISTENER_KIND_UNSPECIFIED
 }
 
+type MetricsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Protocol      uint32                 `protobuf:"varint,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MetricsRequest) Reset() {
+	*x = MetricsRequest{}
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetricsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetricsRequest) ProtoMessage() {}
+
+func (x *MetricsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetricsRequest.ProtoReflect.Descriptor instead.
+func (*MetricsRequest) Descriptor() ([]byte, []int) {
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *MetricsRequest) GetProtocol() uint32 {
+	if x != nil {
+		return x.Protocol
+	}
+	return 0
+}
+
+// MetricsResponse carries metric families in Prometheus' data model. Names
+// start with `scrim_dataplane_`; label values are route names, provider
+// codecs, refusal codes and other enumerations, never a reference, a
+// placeholder or a value.
+type MetricsResponse struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Protocol uint32                 `protobuf:"varint,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	// enabled is false when the data plane was started without metrics.
+	Enabled       bool            `protobuf:"varint,2,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	Families      []*MetricFamily `protobuf:"bytes,3,rep,name=families,proto3" json:"families,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MetricsResponse) Reset() {
+	*x = MetricsResponse{}
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetricsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetricsResponse) ProtoMessage() {}
+
+func (x *MetricsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetricsResponse.ProtoReflect.Descriptor instead.
+func (*MetricsResponse) Descriptor() ([]byte, []int) {
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *MetricsResponse) GetProtocol() uint32 {
+	if x != nil {
+		return x.Protocol
+	}
+	return 0
+}
+
+func (x *MetricsResponse) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *MetricsResponse) GetFamilies() []*MetricFamily {
+	if x != nil {
+		return x.Families
+	}
+	return nil
+}
+
+type MetricFamily struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Name       string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Help       string                 `protobuf:"bytes,2,opt,name=help,proto3" json:"help,omitempty"`
+	Type       MetricType             `protobuf:"varint,3,opt,name=type,proto3,enum=scrim.dataplane.v1.MetricType" json:"type,omitempty"`
+	LabelNames []string               `protobuf:"bytes,4,rep,name=label_names,json=labelNames,proto3" json:"label_names,omitempty"`
+	// bucket_bounds are the histogram upper bounds in base units, ascending,
+	// without +Inf.
+	BucketBounds  []float64       `protobuf:"fixed64,5,rep,packed,name=bucket_bounds,json=bucketBounds,proto3" json:"bucket_bounds,omitempty"`
+	Samples       []*MetricSample `protobuf:"bytes,6,rep,name=samples,proto3" json:"samples,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MetricFamily) Reset() {
+	*x = MetricFamily{}
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetricFamily) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetricFamily) ProtoMessage() {}
+
+func (x *MetricFamily) ProtoReflect() protoreflect.Message {
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetricFamily.ProtoReflect.Descriptor instead.
+func (*MetricFamily) Descriptor() ([]byte, []int) {
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *MetricFamily) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *MetricFamily) GetHelp() string {
+	if x != nil {
+		return x.Help
+	}
+	return ""
+}
+
+func (x *MetricFamily) GetType() MetricType {
+	if x != nil {
+		return x.Type
+	}
+	return MetricType_METRIC_TYPE_UNSPECIFIED
+}
+
+func (x *MetricFamily) GetLabelNames() []string {
+	if x != nil {
+		return x.LabelNames
+	}
+	return nil
+}
+
+func (x *MetricFamily) GetBucketBounds() []float64 {
+	if x != nil {
+		return x.BucketBounds
+	}
+	return nil
+}
+
+func (x *MetricFamily) GetSamples() []*MetricSample {
+	if x != nil {
+		return x.Samples
+	}
+	return nil
+}
+
+type MetricSample struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// label_values match MetricFamily.label_names by position.
+	LabelValues []string `protobuf:"bytes,1,rep,name=label_values,json=labelValues,proto3" json:"label_values,omitempty"`
+	// value is the counter or gauge value.
+	Value float64 `protobuf:"fixed64,2,opt,name=value,proto3" json:"value,omitempty"`
+	// bucket_counts are cumulative counts per bucket bound (histograms).
+	BucketCounts []uint64 `protobuf:"varint,3,rep,packed,name=bucket_counts,json=bucketCounts,proto3" json:"bucket_counts,omitempty"`
+	// count and sum are the histogram's observation count and sum.
+	Count         uint64  `protobuf:"varint,4,opt,name=count,proto3" json:"count,omitempty"`
+	Sum           float64 `protobuf:"fixed64,5,opt,name=sum,proto3" json:"sum,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MetricSample) Reset() {
+	*x = MetricSample{}
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetricSample) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetricSample) ProtoMessage() {}
+
+func (x *MetricSample) ProtoReflect() protoreflect.Message {
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetricSample.ProtoReflect.Descriptor instead.
+func (*MetricSample) Descriptor() ([]byte, []int) {
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *MetricSample) GetLabelValues() []string {
+	if x != nil {
+		return x.LabelValues
+	}
+	return nil
+}
+
+func (x *MetricSample) GetValue() float64 {
+	if x != nil {
+		return x.Value
+	}
+	return 0
+}
+
+func (x *MetricSample) GetBucketCounts() []uint64 {
+	if x != nil {
+		return x.BucketCounts
+	}
+	return nil
+}
+
+func (x *MetricSample) GetCount() uint64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *MetricSample) GetSum() float64 {
+	if x != nil {
+		return x.Sum
+	}
+	return 0
+}
+
 var File_scrim_dataplane_v1_dataplane_proto protoreflect.FileDescriptor
 
 const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
@@ -3739,7 +4066,27 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x14\n" +
 	"\x05bound\x18\x03 \x01(\bR\x05bound\x12\x14\n" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x124\n" +
-	"\x04kind\x18\x05 \x01(\x0e2 .scrim.dataplane.v1.ListenerKindR\x04kind*Q\n" +
+	"\x04kind\x18\x05 \x01(\x0e2 .scrim.dataplane.v1.ListenerKindR\x04kind\",\n" +
+	"\x0eMetricsRequest\x12\x1a\n" +
+	"\bprotocol\x18\x01 \x01(\rR\bprotocol\"\x85\x01\n" +
+	"\x0fMetricsResponse\x12\x1a\n" +
+	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12\x18\n" +
+	"\aenabled\x18\x02 \x01(\bR\aenabled\x12<\n" +
+	"\bfamilies\x18\x03 \x03(\v2 .scrim.dataplane.v1.MetricFamilyR\bfamilies\"\xec\x01\n" +
+	"\fMetricFamily\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
+	"\x04help\x18\x02 \x01(\tR\x04help\x122\n" +
+	"\x04type\x18\x03 \x01(\x0e2\x1e.scrim.dataplane.v1.MetricTypeR\x04type\x12\x1f\n" +
+	"\vlabel_names\x18\x04 \x03(\tR\n" +
+	"labelNames\x12#\n" +
+	"\rbucket_bounds\x18\x05 \x03(\x01R\fbucketBounds\x12:\n" +
+	"\asamples\x18\x06 \x03(\v2 .scrim.dataplane.v1.MetricSampleR\asamples\"\x94\x01\n" +
+	"\fMetricSample\x12!\n" +
+	"\flabel_values\x18\x01 \x03(\tR\vlabelValues\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x01R\x05value\x12#\n" +
+	"\rbucket_counts\x18\x03 \x03(\x04R\fbucketCounts\x12\x14\n" +
+	"\x05count\x18\x04 \x01(\x04R\x05count\x12\x10\n" +
+	"\x03sum\x18\x05 \x01(\x01R\x03sum*Q\n" +
 	"\x0fProtocolVersion\x12 \n" +
 	"\x1cPROTOCOL_VERSION_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18PROTOCOL_VERSION_CURRENT\x10\x01*c\n" +
@@ -3794,14 +4141,21 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x10EVENT_KIND_ERROR\x10\b\x12\x16\n" +
 	"\x12EVENT_KIND_CAPTURE\x10\t\x12#\n" +
 	"\x1fEVENT_KIND_INTERCEPTION_REFUSED\x10\n" +
-	"2\xf5\x03\n" +
+	"*t\n" +
+	"\n" +
+	"MetricType\x12\x1b\n" +
+	"\x17METRIC_TYPE_UNSPECIFIED\x10\x00\x12\x17\n" +
+	"\x13METRIC_TYPE_COUNTER\x10\x01\x12\x15\n" +
+	"\x11METRIC_TYPE_GAUGE\x10\x02\x12\x19\n" +
+	"\x15METRIC_TYPE_HISTOGRAM\x10\x032\xc9\x04\n" +
 	"\tDataPlane\x12L\n" +
 	"\x05Hello\x12 .scrim.dataplane.v1.HelloRequest\x1a!.scrim.dataplane.v1.HelloResponse\x12X\n" +
 	"\rApplySnapshot\x12\x1c.scrim.dataplane.v1.Snapshot\x1a).scrim.dataplane.v1.ApplySnapshotResponse\x12M\n" +
 	"\x06Events\x12!.scrim.dataplane.v1.EventsRequest\x1a\x1e.scrim.dataplane.v1.EventBatch0\x01\x12I\n" +
 	"\x04Asks\x12\x1d.scrim.dataplane.v1.AskAnswer\x1a\x1e.scrim.dataplane.v1.AskRequest(\x010\x01\x12O\n" +
 	"\x06Status\x12!.scrim.dataplane.v1.StatusRequest\x1a\".scrim.dataplane.v1.StatusResponse\x12U\n" +
-	"\bCaptures\x12!.scrim.dataplane.v1.CaptureResult\x1a\".scrim.dataplane.v1.CaptureRequest(\x010\x01BFZDgithub.com/heliopsy/scrim/internal/dataplane/dataplanev1;dataplanev1b\x06proto3"
+	"\bCaptures\x12!.scrim.dataplane.v1.CaptureResult\x1a\".scrim.dataplane.v1.CaptureRequest(\x010\x01\x12R\n" +
+	"\aMetrics\x12\".scrim.dataplane.v1.MetricsRequest\x1a#.scrim.dataplane.v1.MetricsResponseBFZDgithub.com/heliopsy/scrim/internal/dataplane/dataplanev1;dataplanev1b\x06proto3"
 
 var (
 	file_scrim_dataplane_v1_dataplane_proto_rawDescOnce sync.Once
@@ -3815,8 +4169,8 @@ func file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP() []byte {
 	return file_scrim_dataplane_v1_dataplane_proto_rawDescData
 }
 
-var file_scrim_dataplane_v1_dataplane_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
-var file_scrim_dataplane_v1_dataplane_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_scrim_dataplane_v1_dataplane_proto_enumTypes = make([]protoimpl.EnumInfo, 9)
+var file_scrim_dataplane_v1_dataplane_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
 var file_scrim_dataplane_v1_dataplane_proto_goTypes = []any{
 	(ProtocolVersion)(0),          // 0: scrim.dataplane.v1.ProtocolVersion
 	(DisplayMode)(0),              // 1: scrim.dataplane.v1.DisplayMode
@@ -3826,99 +4180,109 @@ var file_scrim_dataplane_v1_dataplane_proto_goTypes = []any{
 	(ConditionOp)(0),              // 5: scrim.dataplane.v1.ConditionOp
 	(ListenerKind)(0),             // 6: scrim.dataplane.v1.ListenerKind
 	(EventKind)(0),                // 7: scrim.dataplane.v1.EventKind
-	(*HelloRequest)(nil),          // 8: scrim.dataplane.v1.HelloRequest
-	(*HelloResponse)(nil),         // 9: scrim.dataplane.v1.HelloResponse
-	(*Snapshot)(nil),              // 10: scrim.dataplane.v1.Snapshot
-	(*CaCertificate)(nil),         // 11: scrim.dataplane.v1.CaCertificate
-	(*ToolAlias)(nil),             // 12: scrim.dataplane.v1.ToolAlias
-	(*RestoreSettings)(nil),       // 13: scrim.dataplane.v1.RestoreSettings
-	(*ValueEntry)(nil),            // 14: scrim.dataplane.v1.ValueEntry
-	(*CaptureRule)(nil),           // 15: scrim.dataplane.v1.CaptureRule
-	(*PlaceholderKey)(nil),        // 16: scrim.dataplane.v1.PlaceholderKey
-	(*Policy)(nil),                // 17: scrim.dataplane.v1.Policy
-	(*TableRule)(nil),             // 18: scrim.dataplane.v1.TableRule
-	(*Clause)(nil),                // 19: scrim.dataplane.v1.Clause
-	(*Condition)(nil),             // 20: scrim.dataplane.v1.Condition
-	(*PolicyRule)(nil),            // 21: scrim.dataplane.v1.PolicyRule
-	(*Route)(nil),                 // 22: scrim.dataplane.v1.Route
-	(*RouteChain)(nil),            // 23: scrim.dataplane.v1.RouteChain
-	(*Listener)(nil),              // 24: scrim.dataplane.v1.Listener
-	(*RedactionSettings)(nil),     // 25: scrim.dataplane.v1.RedactionSettings
-	(*ApplySnapshotResponse)(nil), // 26: scrim.dataplane.v1.ApplySnapshotResponse
-	(*EventsRequest)(nil),         // 27: scrim.dataplane.v1.EventsRequest
-	(*EventBatch)(nil),            // 28: scrim.dataplane.v1.EventBatch
-	(*Event)(nil),                 // 29: scrim.dataplane.v1.Event
-	(*PolicyRequest)(nil),         // 30: scrim.dataplane.v1.PolicyRequest
-	(*AskRequest)(nil),            // 31: scrim.dataplane.v1.AskRequest
-	(*AskCaller)(nil),             // 32: scrim.dataplane.v1.AskCaller
-	(*AskAnswer)(nil),             // 33: scrim.dataplane.v1.AskAnswer
-	(*StatusRequest)(nil),         // 34: scrim.dataplane.v1.StatusRequest
-	(*StatusResponse)(nil),        // 35: scrim.dataplane.v1.StatusResponse
-	(*RedactionStatus)(nil),       // 36: scrim.dataplane.v1.RedactionStatus
-	(*ToolProxyStatus)(nil),       // 37: scrim.dataplane.v1.ToolProxyStatus
-	(*CaptureRequest)(nil),        // 38: scrim.dataplane.v1.CaptureRequest
-	(*CaptureResult)(nil),         // 39: scrim.dataplane.v1.CaptureResult
-	(*ListenerStatus)(nil),        // 40: scrim.dataplane.v1.ListenerStatus
-	nil,                           // 41: scrim.dataplane.v1.Event.AttrsEntry
-	nil,                           // 42: scrim.dataplane.v1.PolicyRequest.AgentLabelsEntry
-	nil,                           // 43: scrim.dataplane.v1.PolicyRequest.SecretLabelsEntry
-	nil,                           // 44: scrim.dataplane.v1.ToolProxyStatus.UnsupportedDestinationsEntry
+	(MetricType)(0),               // 8: scrim.dataplane.v1.MetricType
+	(*HelloRequest)(nil),          // 9: scrim.dataplane.v1.HelloRequest
+	(*HelloResponse)(nil),         // 10: scrim.dataplane.v1.HelloResponse
+	(*Snapshot)(nil),              // 11: scrim.dataplane.v1.Snapshot
+	(*CaCertificate)(nil),         // 12: scrim.dataplane.v1.CaCertificate
+	(*ToolAlias)(nil),             // 13: scrim.dataplane.v1.ToolAlias
+	(*RestoreSettings)(nil),       // 14: scrim.dataplane.v1.RestoreSettings
+	(*ValueEntry)(nil),            // 15: scrim.dataplane.v1.ValueEntry
+	(*CaptureRule)(nil),           // 16: scrim.dataplane.v1.CaptureRule
+	(*PlaceholderKey)(nil),        // 17: scrim.dataplane.v1.PlaceholderKey
+	(*Policy)(nil),                // 18: scrim.dataplane.v1.Policy
+	(*TableRule)(nil),             // 19: scrim.dataplane.v1.TableRule
+	(*Clause)(nil),                // 20: scrim.dataplane.v1.Clause
+	(*Condition)(nil),             // 21: scrim.dataplane.v1.Condition
+	(*PolicyRule)(nil),            // 22: scrim.dataplane.v1.PolicyRule
+	(*Route)(nil),                 // 23: scrim.dataplane.v1.Route
+	(*RouteChain)(nil),            // 24: scrim.dataplane.v1.RouteChain
+	(*Listener)(nil),              // 25: scrim.dataplane.v1.Listener
+	(*RedactionSettings)(nil),     // 26: scrim.dataplane.v1.RedactionSettings
+	(*ApplySnapshotResponse)(nil), // 27: scrim.dataplane.v1.ApplySnapshotResponse
+	(*EventsRequest)(nil),         // 28: scrim.dataplane.v1.EventsRequest
+	(*EventBatch)(nil),            // 29: scrim.dataplane.v1.EventBatch
+	(*Event)(nil),                 // 30: scrim.dataplane.v1.Event
+	(*PolicyRequest)(nil),         // 31: scrim.dataplane.v1.PolicyRequest
+	(*AskRequest)(nil),            // 32: scrim.dataplane.v1.AskRequest
+	(*AskCaller)(nil),             // 33: scrim.dataplane.v1.AskCaller
+	(*AskAnswer)(nil),             // 34: scrim.dataplane.v1.AskAnswer
+	(*StatusRequest)(nil),         // 35: scrim.dataplane.v1.StatusRequest
+	(*StatusResponse)(nil),        // 36: scrim.dataplane.v1.StatusResponse
+	(*RedactionStatus)(nil),       // 37: scrim.dataplane.v1.RedactionStatus
+	(*ToolProxyStatus)(nil),       // 38: scrim.dataplane.v1.ToolProxyStatus
+	(*CaptureRequest)(nil),        // 39: scrim.dataplane.v1.CaptureRequest
+	(*CaptureResult)(nil),         // 40: scrim.dataplane.v1.CaptureResult
+	(*ListenerStatus)(nil),        // 41: scrim.dataplane.v1.ListenerStatus
+	(*MetricsRequest)(nil),        // 42: scrim.dataplane.v1.MetricsRequest
+	(*MetricsResponse)(nil),       // 43: scrim.dataplane.v1.MetricsResponse
+	(*MetricFamily)(nil),          // 44: scrim.dataplane.v1.MetricFamily
+	(*MetricSample)(nil),          // 45: scrim.dataplane.v1.MetricSample
+	nil,                           // 46: scrim.dataplane.v1.Event.AttrsEntry
+	nil,                           // 47: scrim.dataplane.v1.PolicyRequest.AgentLabelsEntry
+	nil,                           // 48: scrim.dataplane.v1.PolicyRequest.SecretLabelsEntry
+	nil,                           // 49: scrim.dataplane.v1.ToolProxyStatus.UnsupportedDestinationsEntry
 }
 var file_scrim_dataplane_v1_dataplane_proto_depIdxs = []int32{
-	14, // 0: scrim.dataplane.v1.Snapshot.values:type_name -> scrim.dataplane.v1.ValueEntry
-	16, // 1: scrim.dataplane.v1.Snapshot.placeholder_keys:type_name -> scrim.dataplane.v1.PlaceholderKey
-	17, // 2: scrim.dataplane.v1.Snapshot.policy:type_name -> scrim.dataplane.v1.Policy
-	22, // 3: scrim.dataplane.v1.Snapshot.routes:type_name -> scrim.dataplane.v1.Route
-	24, // 4: scrim.dataplane.v1.Snapshot.listeners:type_name -> scrim.dataplane.v1.Listener
-	25, // 5: scrim.dataplane.v1.Snapshot.redaction:type_name -> scrim.dataplane.v1.RedactionSettings
-	15, // 6: scrim.dataplane.v1.Snapshot.capture_rules:type_name -> scrim.dataplane.v1.CaptureRule
-	13, // 7: scrim.dataplane.v1.Snapshot.restore:type_name -> scrim.dataplane.v1.RestoreSettings
-	11, // 8: scrim.dataplane.v1.Snapshot.tool_proxy_ca:type_name -> scrim.dataplane.v1.CaCertificate
+	15, // 0: scrim.dataplane.v1.Snapshot.values:type_name -> scrim.dataplane.v1.ValueEntry
+	17, // 1: scrim.dataplane.v1.Snapshot.placeholder_keys:type_name -> scrim.dataplane.v1.PlaceholderKey
+	18, // 2: scrim.dataplane.v1.Snapshot.policy:type_name -> scrim.dataplane.v1.Policy
+	23, // 3: scrim.dataplane.v1.Snapshot.routes:type_name -> scrim.dataplane.v1.Route
+	25, // 4: scrim.dataplane.v1.Snapshot.listeners:type_name -> scrim.dataplane.v1.Listener
+	26, // 5: scrim.dataplane.v1.Snapshot.redaction:type_name -> scrim.dataplane.v1.RedactionSettings
+	16, // 6: scrim.dataplane.v1.Snapshot.capture_rules:type_name -> scrim.dataplane.v1.CaptureRule
+	14, // 7: scrim.dataplane.v1.Snapshot.restore:type_name -> scrim.dataplane.v1.RestoreSettings
+	12, // 8: scrim.dataplane.v1.Snapshot.tool_proxy_ca:type_name -> scrim.dataplane.v1.CaCertificate
 	2,  // 9: scrim.dataplane.v1.ToolAlias.role:type_name -> scrim.dataplane.v1.ToolRole
 	1,  // 10: scrim.dataplane.v1.RestoreSettings.display_mode:type_name -> scrim.dataplane.v1.DisplayMode
-	12, // 11: scrim.dataplane.v1.RestoreSettings.tools:type_name -> scrim.dataplane.v1.ToolAlias
+	13, // 11: scrim.dataplane.v1.RestoreSettings.tools:type_name -> scrim.dataplane.v1.ToolAlias
 	3,  // 12: scrim.dataplane.v1.ValueEntry.class:type_name -> scrim.dataplane.v1.ValueClass
-	21, // 13: scrim.dataplane.v1.Policy.rules:type_name -> scrim.dataplane.v1.PolicyRule
+	22, // 13: scrim.dataplane.v1.Policy.rules:type_name -> scrim.dataplane.v1.PolicyRule
 	4,  // 14: scrim.dataplane.v1.Policy.default_effect:type_name -> scrim.dataplane.v1.Effect
-	18, // 15: scrim.dataplane.v1.Policy.table:type_name -> scrim.dataplane.v1.TableRule
+	19, // 15: scrim.dataplane.v1.Policy.table:type_name -> scrim.dataplane.v1.TableRule
 	4,  // 16: scrim.dataplane.v1.TableRule.effect:type_name -> scrim.dataplane.v1.Effect
-	19, // 17: scrim.dataplane.v1.TableRule.clauses:type_name -> scrim.dataplane.v1.Clause
-	20, // 18: scrim.dataplane.v1.Clause.conditions:type_name -> scrim.dataplane.v1.Condition
+	20, // 17: scrim.dataplane.v1.TableRule.clauses:type_name -> scrim.dataplane.v1.Clause
+	21, // 18: scrim.dataplane.v1.Clause.conditions:type_name -> scrim.dataplane.v1.Condition
 	5,  // 19: scrim.dataplane.v1.Condition.op:type_name -> scrim.dataplane.v1.ConditionOp
 	4,  // 20: scrim.dataplane.v1.PolicyRule.effect:type_name -> scrim.dataplane.v1.Effect
-	23, // 21: scrim.dataplane.v1.Route.chain:type_name -> scrim.dataplane.v1.RouteChain
+	24, // 21: scrim.dataplane.v1.Route.chain:type_name -> scrim.dataplane.v1.RouteChain
 	6,  // 22: scrim.dataplane.v1.Listener.kind:type_name -> scrim.dataplane.v1.ListenerKind
-	29, // 23: scrim.dataplane.v1.EventBatch.events:type_name -> scrim.dataplane.v1.Event
+	30, // 23: scrim.dataplane.v1.EventBatch.events:type_name -> scrim.dataplane.v1.Event
 	7,  // 24: scrim.dataplane.v1.Event.kind:type_name -> scrim.dataplane.v1.EventKind
 	4,  // 25: scrim.dataplane.v1.Event.effect:type_name -> scrim.dataplane.v1.Effect
-	41, // 26: scrim.dataplane.v1.Event.attrs:type_name -> scrim.dataplane.v1.Event.AttrsEntry
-	42, // 27: scrim.dataplane.v1.PolicyRequest.agent_labels:type_name -> scrim.dataplane.v1.PolicyRequest.AgentLabelsEntry
-	43, // 28: scrim.dataplane.v1.PolicyRequest.secret_labels:type_name -> scrim.dataplane.v1.PolicyRequest.SecretLabelsEntry
-	30, // 29: scrim.dataplane.v1.AskRequest.request:type_name -> scrim.dataplane.v1.PolicyRequest
-	32, // 30: scrim.dataplane.v1.AskRequest.caller:type_name -> scrim.dataplane.v1.AskCaller
+	46, // 26: scrim.dataplane.v1.Event.attrs:type_name -> scrim.dataplane.v1.Event.AttrsEntry
+	47, // 27: scrim.dataplane.v1.PolicyRequest.agent_labels:type_name -> scrim.dataplane.v1.PolicyRequest.AgentLabelsEntry
+	48, // 28: scrim.dataplane.v1.PolicyRequest.secret_labels:type_name -> scrim.dataplane.v1.PolicyRequest.SecretLabelsEntry
+	31, // 29: scrim.dataplane.v1.AskRequest.request:type_name -> scrim.dataplane.v1.PolicyRequest
+	33, // 30: scrim.dataplane.v1.AskRequest.caller:type_name -> scrim.dataplane.v1.AskCaller
 	4,  // 31: scrim.dataplane.v1.AskAnswer.effect:type_name -> scrim.dataplane.v1.Effect
-	40, // 32: scrim.dataplane.v1.StatusResponse.listeners:type_name -> scrim.dataplane.v1.ListenerStatus
-	37, // 33: scrim.dataplane.v1.StatusResponse.tool_proxy:type_name -> scrim.dataplane.v1.ToolProxyStatus
-	36, // 34: scrim.dataplane.v1.StatusResponse.redaction:type_name -> scrim.dataplane.v1.RedactionStatus
-	44, // 35: scrim.dataplane.v1.ToolProxyStatus.unsupported_destinations:type_name -> scrim.dataplane.v1.ToolProxyStatus.UnsupportedDestinationsEntry
+	41, // 32: scrim.dataplane.v1.StatusResponse.listeners:type_name -> scrim.dataplane.v1.ListenerStatus
+	38, // 33: scrim.dataplane.v1.StatusResponse.tool_proxy:type_name -> scrim.dataplane.v1.ToolProxyStatus
+	37, // 34: scrim.dataplane.v1.StatusResponse.redaction:type_name -> scrim.dataplane.v1.RedactionStatus
+	49, // 35: scrim.dataplane.v1.ToolProxyStatus.unsupported_destinations:type_name -> scrim.dataplane.v1.ToolProxyStatus.UnsupportedDestinationsEntry
 	6,  // 36: scrim.dataplane.v1.ListenerStatus.kind:type_name -> scrim.dataplane.v1.ListenerKind
-	8,  // 37: scrim.dataplane.v1.DataPlane.Hello:input_type -> scrim.dataplane.v1.HelloRequest
-	10, // 38: scrim.dataplane.v1.DataPlane.ApplySnapshot:input_type -> scrim.dataplane.v1.Snapshot
-	27, // 39: scrim.dataplane.v1.DataPlane.Events:input_type -> scrim.dataplane.v1.EventsRequest
-	33, // 40: scrim.dataplane.v1.DataPlane.Asks:input_type -> scrim.dataplane.v1.AskAnswer
-	34, // 41: scrim.dataplane.v1.DataPlane.Status:input_type -> scrim.dataplane.v1.StatusRequest
-	39, // 42: scrim.dataplane.v1.DataPlane.Captures:input_type -> scrim.dataplane.v1.CaptureResult
-	9,  // 43: scrim.dataplane.v1.DataPlane.Hello:output_type -> scrim.dataplane.v1.HelloResponse
-	26, // 44: scrim.dataplane.v1.DataPlane.ApplySnapshot:output_type -> scrim.dataplane.v1.ApplySnapshotResponse
-	28, // 45: scrim.dataplane.v1.DataPlane.Events:output_type -> scrim.dataplane.v1.EventBatch
-	31, // 46: scrim.dataplane.v1.DataPlane.Asks:output_type -> scrim.dataplane.v1.AskRequest
-	35, // 47: scrim.dataplane.v1.DataPlane.Status:output_type -> scrim.dataplane.v1.StatusResponse
-	38, // 48: scrim.dataplane.v1.DataPlane.Captures:output_type -> scrim.dataplane.v1.CaptureRequest
-	43, // [43:49] is the sub-list for method output_type
-	37, // [37:43] is the sub-list for method input_type
-	37, // [37:37] is the sub-list for extension type_name
-	37, // [37:37] is the sub-list for extension extendee
-	0,  // [0:37] is the sub-list for field type_name
+	44, // 37: scrim.dataplane.v1.MetricsResponse.families:type_name -> scrim.dataplane.v1.MetricFamily
+	8,  // 38: scrim.dataplane.v1.MetricFamily.type:type_name -> scrim.dataplane.v1.MetricType
+	45, // 39: scrim.dataplane.v1.MetricFamily.samples:type_name -> scrim.dataplane.v1.MetricSample
+	9,  // 40: scrim.dataplane.v1.DataPlane.Hello:input_type -> scrim.dataplane.v1.HelloRequest
+	11, // 41: scrim.dataplane.v1.DataPlane.ApplySnapshot:input_type -> scrim.dataplane.v1.Snapshot
+	28, // 42: scrim.dataplane.v1.DataPlane.Events:input_type -> scrim.dataplane.v1.EventsRequest
+	34, // 43: scrim.dataplane.v1.DataPlane.Asks:input_type -> scrim.dataplane.v1.AskAnswer
+	35, // 44: scrim.dataplane.v1.DataPlane.Status:input_type -> scrim.dataplane.v1.StatusRequest
+	40, // 45: scrim.dataplane.v1.DataPlane.Captures:input_type -> scrim.dataplane.v1.CaptureResult
+	42, // 46: scrim.dataplane.v1.DataPlane.Metrics:input_type -> scrim.dataplane.v1.MetricsRequest
+	10, // 47: scrim.dataplane.v1.DataPlane.Hello:output_type -> scrim.dataplane.v1.HelloResponse
+	27, // 48: scrim.dataplane.v1.DataPlane.ApplySnapshot:output_type -> scrim.dataplane.v1.ApplySnapshotResponse
+	29, // 49: scrim.dataplane.v1.DataPlane.Events:output_type -> scrim.dataplane.v1.EventBatch
+	32, // 50: scrim.dataplane.v1.DataPlane.Asks:output_type -> scrim.dataplane.v1.AskRequest
+	36, // 51: scrim.dataplane.v1.DataPlane.Status:output_type -> scrim.dataplane.v1.StatusResponse
+	39, // 52: scrim.dataplane.v1.DataPlane.Captures:output_type -> scrim.dataplane.v1.CaptureRequest
+	43, // 53: scrim.dataplane.v1.DataPlane.Metrics:output_type -> scrim.dataplane.v1.MetricsResponse
+	47, // [47:54] is the sub-list for method output_type
+	40, // [40:47] is the sub-list for method input_type
+	40, // [40:40] is the sub-list for extension type_name
+	40, // [40:40] is the sub-list for extension extendee
+	0,  // [0:40] is the sub-list for field type_name
 }
 
 func init() { file_scrim_dataplane_v1_dataplane_proto_init() }
@@ -3931,8 +4295,8 @@ func file_scrim_dataplane_v1_dataplane_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_scrim_dataplane_v1_dataplane_proto_rawDesc), len(file_scrim_dataplane_v1_dataplane_proto_rawDesc)),
-			NumEnums:      8,
-			NumMessages:   37,
+			NumEnums:      9,
+			NumMessages:   41,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

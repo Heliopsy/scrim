@@ -52,6 +52,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 5.2 Audit log (metadata only) written with the state change it records; verify: a failure between the two writes leaves neither
 - [x] 5.3 Structured logs, metrics, traces and health endpoints with a secret-free type for values; verify: a test that seeds known values and greps every log, metric and trace output for them
 - [x] 5.4 `scrim status` and `scrim doctor`; verify: reports active protections, interception mode, degraded stores and weakened settings in fixture setups
+- [x] 5.5 Prometheus monitoring behind `metrics.enabled`: control-plane metrics, data plane metrics over the `Metrics` call, bearer token for non-loopback listeners; verify: daemon end-to-end test scrapes the expected series after traffic through the real data plane and greps the page for every seeded value and encoding
+- [x] 5.6 Monitoring assets (alert rules with promtool tests, Grafana dashboard, scrape config) and runbooks in `docs/monitoring.md`; verify: `scripts/monitoring-check.sh` in CI
 
 ## 6. OpenBao and Infisical adapters
 

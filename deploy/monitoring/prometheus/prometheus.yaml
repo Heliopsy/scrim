@@ -1,0 +1,11 @@
+# Minimal Prometheus configuration that loads the scrim scrape job and rules.
+# scripts/monitoring-check.sh validates it with `promtool check config`.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - ../rules/scrim.rules.yaml
+
+scrape_config_files:
+  - scrape-config.yaml
