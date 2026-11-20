@@ -36,11 +36,11 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 4. Configuration
 
-- [ ] 4.1 Schema-versioned config file, `SCRIM_*` environment mapping, flags, precedence and search order; verify: precedence table tests and generated JSON Schema committed
-- [ ] 4.2 Secret-valued settings by reference (file, env, store ref, systemd credential); verify: literal secrets rejected where a reference is required
-- [ ] 4.3 `scrim config validate` and `scrim config show --effective` with provenance and masking; verify: golden output tests
-- [ ] 4.4 Hot reload with atomic apply or full rejection; verify: an invalid edit keeps the old config and reports why
-- [ ] 4.5 Weakening settings named, warned at start-up and shown in status; verify: test per weakening setting
+- [x] 4.1 Schema-versioned config file, `SCRIM_*` environment mapping, flags, precedence and search order; verify: precedence table tests and generated JSON Schema committed
+- [x] 4.2 Secret-valued settings by reference (file, env, store ref, systemd credential); verify: literal secrets rejected where a reference is required
+- [x] 4.3 `scrim config validate` and `scrim config show --effective` with provenance and masking; verify: golden output tests
+- [x] 4.4 Hot reload with atomic apply or full rejection; verify: an invalid edit keeps the old config and reports why
+- [x] 4.5 Weakening settings named, warned at start-up and shown in status; verify: test per weakening setting
 
 ## 5. State, audit and observability
 
