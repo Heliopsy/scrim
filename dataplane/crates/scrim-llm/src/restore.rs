@@ -20,7 +20,10 @@ pub(crate) enum TextKind {
     /// the codec re-encodes the surrounding JSON string.
     Plain,
     /// JSON source text (streamed `partial_json`, function-call `arguments`). The value is
-    /// resolved only inside a string literal, and JSON-escaped there.
+    /// resolved only inside a string literal, and JSON-escaped there. Inside a quoted part of a
+    /// string literal (after an odd number of `\"`: JSON text nested in the string, or a quoted
+    /// shell word), one escape would not be enough, so a value that escaping changes is kept as
+    /// its placeholder there.
     JsonText,
 }
 
@@ -43,6 +46,7 @@ impl Ctx<'_> {
         &self,
         site: &RestoreSite<'_>,
         placeholder: &str,
+        fits: impl Fn(&[u8]) -> bool,
     ) -> Option<std::sync::Arc<crate::engine::SecretValue>> {
         let Some(r) = self.snap.placeholders.resolve(placeholder) else {
             self.stats.kept.set(self.stats.kept.get() + 1);
@@ -51,7 +55,8 @@ impl Ctx<'_> {
         // Credentials are never restored, whatever the policy says (design D5).
         let ok = r.class != ValueClass::Credential
             && self.snap.policy.decide(site, &r.reference, r.class) == RestoreDecision::Resolve
-            && std::str::from_utf8(r.value.expose()).is_ok();
+            && std::str::from_utf8(r.value.expose()).is_ok()
+            && fits(r.value.expose());
         if ok {
             self.stats.resolved.set(self.stats.resolved.get() + 1);
             Some(r.value)
@@ -66,6 +71,9 @@ impl Ctx<'_> {
 struct JsonLex {
     in_str: bool,
     esc: bool,
+    /// Inside the string, an odd number of escaped quotes so far: the position is inside a quoted
+    /// part of the string's content (a nested JSON string, a quoted shell word).
+    quoted: bool,
 }
 
 impl JsonLex {
@@ -74,6 +82,9 @@ impl JsonLex {
             if self.in_str {
                 if self.esc {
                     self.esc = false;
+                    if b == b'"' {
+                        self.quoted = !self.quoted;
+                    }
                 } else if b == b'\\' {
                     self.esc = true;
                 } else if b == b'"' {
@@ -81,9 +92,15 @@ impl JsonLex {
                 }
             } else if b == b'"' {
                 self.in_str = true;
+                self.quoted = false;
             }
         }
     }
+}
+
+/// Whether JSON string escaping leaves `v` unchanged, so it reads the same at any nesting depth.
+fn escape_free(v: &[u8]) -> bool {
+    !v.iter().any(|&c| c == b'"' || c == b'\\' || c < 0x20)
 }
 
 /// Restores one content block of a stream.
@@ -171,7 +188,9 @@ impl StreamText {
                         TextKind::Plain => true,
                         TextKind::JsonText => self.lex.in_str && !self.lex.esc,
                     };
-                    match eligible.then(|| ctx.decide(site, ph)).flatten() {
+                    let quoted = self.kind == TextKind::JsonText && self.lex.quoted;
+                    let fits = |v: &[u8]| !quoted || escape_free(v);
+                    match eligible.then(|| ctx.decide(site, ph, fits)).flatten() {
                         Some(v) => {
                             // decide() checked UTF-8.
                             let v = std::str::from_utf8(v.expose()).unwrap_or_default();
@@ -287,6 +306,39 @@ mod tests {
         );
         let v: serde_json::Value = serde_json::from_str(&out.replace(&ph, "0")).unwrap();
         assert_eq!(v["a"], "x va\"l\\ue-with-quote y");
+    }
+
+    #[test]
+    fn json_text_keeps_values_escaping_changes_inside_nested_strings() {
+        let fx = Fixture::new(&[("q", "va\"l\\ue-with-quote"), ("p", "plain-display-value")]);
+        let (snap, stats) = ctx_for(&fx);
+        let ctx = Ctx {
+            snap: &snap,
+            stats: &stats,
+        };
+        let (q, p) = (fx.placeholder("q"), fx.placeholder("p"));
+        let site = RestoreSite::ToolInput {
+            tool: "Bash",
+            arguments: None,
+        };
+        // `input` holds JSON text: its string is one level deeper than `arguments` itself.
+        let src = format!(
+            "{{\"input\":\"{{\\\"pw\\\":\\\"{q}\\\",\\\"user\\\":\\\"{p}\\\"}}\",\"cmd\":\"echo \\\"{q}\\\" {q}\"}}"
+        );
+        let out = restore_complete(&ctx, &site, TextKind::JsonText, &src).unwrap();
+        // Resolved once, at the top level of `cmd`; kept in the nested string and the quoted word.
+        assert_eq!(out.matches(&q).count(), 2);
+        assert!(!out.contains(&p));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let inner: serde_json::Value = serde_json::from_str(v["input"].as_str().unwrap()).unwrap();
+        assert_eq!(inner["pw"], q.as_str());
+        assert_eq!(inner["user"], "plain-display-value");
+        assert_eq!(
+            v["cmd"],
+            format!("echo \"{q}\" va\"l\\ue-with-quote").as_str()
+        );
+        assert_eq!(stats.resolved.get(), 2);
+        assert_eq!(stats.kept.get(), 2);
     }
 
     #[test]

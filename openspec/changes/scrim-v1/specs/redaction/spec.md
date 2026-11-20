@@ -32,6 +32,38 @@ placeholder.
 - **WHEN** a request contains the base64 encoding of a known value embedded at any offset
 - **THEN** the forwarded request contains no substring that decodes back to the value
 
+### Requirement: Nested JSON is matched
+
+JSON text inside a JSON string (tool-call `arguments`, a tool result holding `JSON.stringify`
+output, an MCP text block wrapping JSON) escapes a value once per level. Redaction SHALL match each
+value JSON-escaped up to `redaction.json_depth` times (default 3, accepted 2 to 4), and the guard
+SHALL unescape the outgoing bytes as often. Identical escaped forms SHALL be compiled once.
+
+#### Scenario: Value without JSON-escaped characters
+
+- **WHEN** a known value contains no character any JSON escaping style changes
+- **THEN** nesting adds no compiled patterns for it
+
+#### Scenario: Inner and outer serialisers differ
+
+- **WHEN** a value's inner levels are escaped in any JSON style redaction matches singly and its
+  outer levels in minimal, Go HTML-safe or non-ASCII `\uXXXX` escaping
+- **THEN** the redactor replaces it, and other mixes of styles are left to the guard
+
+#### Scenario: Password with quotes in tool-call arguments
+
+- **WHEN** an OpenAI Chat request carries a known value containing `"` and `\` inside a prior tool
+  call's `arguments`, and inside a tool result whose JSON holds another JSON string
+- **THEN** the forwarded request holds the placeholder at both places and no string, decoded to
+  any depth up to `redaction.json_depth`, contains the value
+
+#### Scenario: Nesting the redactor does not compile
+
+- **WHEN** a value reaches the guard JSON-escaped up to `redaction.json_depth` times in any mix of
+  styles, including every character as `\uXXXX`
+- **THEN** the guard finds it in the matching unescaped view and repairs the escaped bytes, so
+  the body stays valid JSON at every level
+
 ### Requirement: Short values
 
 Values shorter than the configured minimum length (`redaction.min_length`, default 8 bytes) SHALL
@@ -140,7 +172,7 @@ not share matching logic with the redactor.
 
 #### Scenario: Guard decodes what the redactor does not
 
-- **WHEN** a known value of at least the minimum length reaches the guard upper-cased, JSON-escaped twice, percent-encoded, base64-encoded at any alignment (wrapped or not) or hex-encoded in any case
+- **WHEN** a known value of at least the minimum length reaches the guard upper-cased, JSON-escaped up to `redaction.json_depth` times, percent-encoded, base64-encoded at any alignment (wrapped or not) or hex-encoded in any case
 - **THEN** the guard finds it in the decoded view, replaces the covering bytes with the value's placeholder, and checks the repaired bytes again
 
 #### Scenario: Repair cannot complete
@@ -258,6 +290,14 @@ resolved output would itself be executed as code, the value SHALL stay a placeho
 
 - **WHEN** a value containing `$(` and quotes is resolved into a shell command
 - **THEN** the command treats the value as data and executes nothing from it
+
+#### Scenario: Value restored into tool-call arguments
+
+- **WHEN** a display value containing `"` and `\` is resolved into a tool call's JSON `arguments`
+- **THEN** it is escaped for the arguments JSON and again for the response JSON around it, so the
+  tool receives the value exactly
+- **AND** where the placeholder sits inside a quoted part of an arguments string (JSON nested in
+  the string, a quoted shell word), a value that escaping changes stays a placeholder
 
 #### Scenario: Output piped into a shell
 

@@ -8,7 +8,9 @@
 //! Views:
 //!
 //! * the bytes as they are;
-//! * JSON-unescaped, once and twice (`\"`, `\\`, `\/`, `\n`..., `\uXXXX` with surrogate pairs);
+//! * JSON-unescaped, once, twice and more, up to `redaction.json_depth` rounds (`\"`, `\\`, `\/`,
+//!   `\n`..., `\uXXXX` with surrogate pairs), so JSON text nested in JSON strings is read the way
+//!   its innermost consumer reads it;
 //! * percent-decoded (`%XX`, either case);
 //! * every run of base64 characters (both alphabets at once, runs may continue across line
 //!   breaks), decoded at all four character alignments;
@@ -54,6 +56,8 @@ pub enum GuardView {
     Json,
     /// After two rounds of JSON unescaping.
     JsonTwice,
+    /// After three or more rounds of JSON unescaping (up to `redaction.json_depth`).
+    JsonDeep,
     /// After percent-decoding.
     Url,
     /// Inside a decoded base64 run.
@@ -118,6 +122,8 @@ pub struct Guard {
     placeholders: Vec<Box<[u8]>>,
     entry_ids: Vec<EntryId>,
     max_repairs: usize,
+    /// Rounds of JSON unescaping, at least 2.
+    json_depth: usize,
     resolver: Arc<Resolver>,
     /// Indices (long first, then short) of values containing a backslash.
     backslash_values: Vec<u32>,
@@ -142,6 +148,8 @@ impl std::fmt::Debug for Guard {
 pub struct GuardScratch {
     json1: View,
     json2: View,
+    /// Views after three and more rounds of JSON unescaping.
+    deeper: Vec<View>,
     url: View,
     run_pos: Vec<u32>,
     run_chars: Vec<u8>,
@@ -173,6 +181,9 @@ impl GuardScratch {
         use zeroize::Zeroize;
         self.json1.bytes.zeroize();
         self.json2.bytes.zeroize();
+        for v in &mut self.deeper {
+            v.bytes.zeroize();
+        }
         self.url.bytes.zeroize();
         self.run_chars.zeroize();
         self.decoded.zeroize();
@@ -286,6 +297,7 @@ impl Guard {
         inputs: &[GuardInput<'_>],
         min_len: usize,
         max_repairs: usize,
+        json_depth: usize,
         resolver: Arc<Resolver>,
     ) -> Self {
         let mut long = Vec::new();
@@ -423,6 +435,7 @@ impl Guard {
             placeholders,
             entry_ids,
             max_repairs,
+            json_depth: json_depth.max(2),
             resolver,
             backslash_values,
             b64_masks,
@@ -548,6 +561,11 @@ impl Guard {
                     let (a, b) = json2.map(a, b);
                     json1.map(a, b)
                 });
+                if self.json_depth > 2 {
+                    let mut deeper = std::mem::take(&mut s.deeper);
+                    self.scan_deeper(&json1, &json2, &mut deeper, &mut vh, out);
+                    s.deeper = deeper;
+                }
                 s.json2 = json2;
             }
         } else {
@@ -753,6 +771,43 @@ impl Guard {
                 end: b,
                 owner: o,
                 view,
+            });
+        }
+    }
+
+    /// Rounds three to `json_depth` of JSON unescaping, each derived from the previous one and
+    /// scanned near its decoded units: an occurrence that differs from the previous view must
+    /// contain a byte one of its units produced, and the previous view is covered the same way down
+    /// to the fully scanned first one. Stops at the first view whose escapes cannot matter.
+    fn scan_deeper(
+        &self,
+        json1: &View,
+        json2: &View,
+        deeper: &mut Vec<View>,
+        vh: &mut Vec<(usize, usize, u32)>,
+        out: &mut Vec<RawHit>,
+    ) {
+        let extra = self.json_depth - 2;
+        if deeper.len() < extra {
+            deeper.resize_with(extra, View::default);
+        }
+        for k in 0..extra {
+            let (done, rest) = deeper.split_at_mut(k);
+            let parent = done.last().unwrap_or(json2);
+            if !self.json_escapes_matter(&parent.bytes) {
+                break;
+            }
+            let view = &mut rest[0];
+            json_unescape(&parent.bytes, view);
+            vh.clear();
+            self.scan_near_units(view, true, vh);
+            push_mapped(out, vh, GuardView::JsonDeep, |a, b| {
+                let (mut a, mut b) = view.map(a, b);
+                for v in done.iter().rev() {
+                    (a, b) = v.map(a, b);
+                }
+                let (a, b) = json2.map(a, b);
+                json1.map(a, b)
             });
         }
     }
@@ -1402,7 +1457,7 @@ mod tests {
                 placeholder: b"[x]",
             },
         ];
-        let g = Guard::build(&inputs, 8, 64, empty_resolver());
+        let g = Guard::build(&inputs, 8, 64, 3, empty_resolver());
         let mut s = GuardScratch::new();
         assert_eq!(
             g.check(b"a first-value-123 b", &mut s),

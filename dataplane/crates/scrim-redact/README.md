@@ -46,11 +46,26 @@ for f in sent.findings { audit_guard_intervention(f.entry, f.view) }
 
 **Variants (`variants.rs`).** Each value is compiled with the forms agents and their tools produce:
 raw; JSON-escaped (minimal, `\/`, `\uXXXX` lower and upper case, PHP, Go and Gson HTML-safe, and
-double-escaped); the stable inner base64 substring at byte offsets 0, 1 and 2, standard and
+nested, see below); the stable inner base64 substring at byte offsets 0, 1 and 2, standard and
 URL-safe; hex lower and upper; percent-encoding (`%2F`, `%2f`, form encoding, Python `quote`,
 JavaScript `encodeURIComponent`). Duplicates are removed. Values below `min_len` (default 8) are
 short: matched verbatim and in whole encodings only (the full base64 of the value alone, padded and
 unpadded, instead of inner fragments). Values below `short_floor` (4) are rejected and reported.
+
+JSON text inside a JSON string (tool-call `arguments`, a tool result holding `JSON.stringify`
+output, an MCP text block wrapping JSON) escapes a value once per level. Each value is compiled
+escaped two to `json_depth` (default 3, at most 4) times: `inner^k outer^(d-k)`, the inner levels
+in any single-level style above, the outer levels in minimal, Go or Python escaping (one program,
+the agent, writes the outer levels). A value with nothing JSON escapes adds no pattern; one with
+only `"` and `\` adds one per level; the leak suite's password (all the symbols, ASCII) adds 15 at
+depth 3, and with a non-ASCII letter 43. Other mixes, and every character as `\uXXXX`, are the
+guard's: it unescapes to the same depth. Depth 3 covers `arguments` holding JSON that itself holds
+a JSON string (Codex code mode `text(JSON.stringify(result))` of a tool result); 4 is allowed for
+deeper tool chains at about 5 % more patterns. Measured on the bench sets (10, 1,000 and 10,000
+secrets): 73, 6,641 and 65,832 patterns before, 87, 7,044 and 69,963 at depth 3 (+19 %, +6 %,
++6 %; the 10-value set was already split into two Teddy automata and still is). Redact throughput
+on the 1 MB bench bodies, best of 40, moved within 0 to 13 % (machine noise is about as large);
+on a body made only of nested tool turns, the third JSON view costs the guard about 15 %.
 
 **Matching (`matcher.rs`).** Non-overlapping leftmost-longest over the raw bytes; the request is
 never decoded or re-serialised. Two engines, byte-identical output, chosen by pattern count
@@ -78,7 +93,7 @@ time.
 
 **Guard (`guard.rs`).** Shares no matching code with the redactor and works the other way round:
 it decodes the bytes into views and searches the raw values there, ASCII case-insensitively. Views:
-raw, JSON-unescaped once and twice, percent-decoded, every base64 run (both alphabets, joined
+raw, JSON-unescaped once, twice and up to `json_depth` times, percent-decoded, every base64 run (both alphabets, joined
 across line breaks) at all four alignments, every hex run (any case) at both alignments. Values are
 indexed by five-byte grams at offsets 0 to 3, so only every fourth position of a view is probed.
 Exact necessary conditions keep the cost down: 64-byte blocks without an eleven-character base64
@@ -103,6 +118,8 @@ explicit primitive for injection at the network edge.
 
 * Values shorter than 4 bytes are not protected; values shorter than `min_len` are not found
   inside longer base64 streams.
+* Base64 or hex of a JSON-escaped form (a base64-encoded JSON file holding the value with a
+  quote) is not compiled, and the guard does not JSON-unescape decoded base64.
 * The guard folds ASCII case only. Transforms other than the listed encodings (reversal, rot13,
   spacing, compression) are out of scope here; the leak checker and the bypass matrix cover them.
 * `aho-corasick` keeps its own copy of patterns that this crate cannot wipe. Pattern bytes owned by
