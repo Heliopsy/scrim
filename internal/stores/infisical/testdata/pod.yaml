@@ -1,0 +1,49 @@
+# Local Infisical for the adapter's integration tests, run with rootless
+# podman:
+#
+#   podman kube play --publish 127.0.0.1:<port>:8080 pod.yaml
+#
+# The test harness (infisical_integration_test.go) expands the ${...}
+# variables with freshly generated values before playing the file, so no key
+# or password here is ever reused. Postgres and Redis keep their data in the
+# pod's ephemeral storage; `podman kube down` removes everything.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${POD_NAME}
+  labels:
+    app.kubernetes.io/part-of: scrim-stores-test
+spec:
+  restartPolicy: Never
+  containers:
+    - name: postgres
+      image: docker.io/library/postgres:16-alpine
+      env:
+        - name: POSTGRES_USER
+          value: infisical
+        - name: POSTGRES_PASSWORD
+          value: ${DB_PASSWORD}
+        - name: POSTGRES_DB
+          value: infisical
+    - name: redis
+      image: docker.io/library/redis:7-alpine
+      args: ["redis-server", "--save", "", "--appendonly", "no"]
+    - name: backend
+      image: docker.io/infisical/infisical:${INFISICAL_VERSION}
+      env:
+        - name: NODE_ENV
+          value: production
+        - name: ENCRYPTION_KEY
+          value: ${ENCRYPTION_KEY}
+        - name: AUTH_SECRET
+          value: ${AUTH_SECRET}
+        - name: DB_CONNECTION_URI
+          value: postgres://infisical:${DB_PASSWORD}@localhost:5432/infisical
+        - name: REDIS_URL
+          value: redis://localhost:6379
+        - name: SITE_URL
+          value: http://localhost:8080
+        - name: TELEMETRY_ENABLED
+          value: "false"
+      ports:
+        - containerPort: 8080
