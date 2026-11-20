@@ -20,7 +20,8 @@ pub struct Answer {
     pub allowed: bool,
     /// Why, for audit.
     pub reason: String,
-    /// The grant an approval created, if any.
+    /// The grant an approval created, if any, for audit. Never cached: the
+    /// control plane reads grants on every use.
     pub grant_id: String,
     /// When that grant expires (Unix nanoseconds).
     pub grant_expires_unix_nano: i64,

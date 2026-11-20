@@ -36,6 +36,8 @@ mod body;
 pub mod capture;
 pub mod codec;
 pub mod config;
+#[cfg(feature = "redact")]
+pub mod core;
 pub mod engine;
 pub mod error;
 #[cfg(feature = "intercept")]
@@ -60,7 +62,7 @@ pub use config::{ChainConfig, OnUnavailable, Provider, ProxyConfig, RouteConfig}
 pub use engine::{
     BinaryPolicy, EngineError, Guard, GuardVerdict, KeepAll, PlaceholderMatch, Placeholders,
     RedactReport, Redactor, Resolved, RestoreDecision, RestorePolicy, RestoreSite, SecretRef,
-    SecretValue, Snapshot, SnapshotCell, ToolMode, ValueClass,
+    SecretValue, Snapshot, SnapshotCell, SnapshotSource, ToolMode, ValueClass,
 };
 pub use error::{ERROR_HEADER, Refusal};
 pub use proxy::{BuildError, Proxy};

@@ -137,6 +137,40 @@ environment variables reach providers through scrim without a base URL change.
 - **THEN** scrim terminates TLS, handles the request in the tool proxy (credential injection and
   response redaction) and never passes the connection through uninspected
 
+### Requirement: One snapshot version per request
+
+The data plane SHALL build every part of a control-plane snapshot (dictionary, LLM routes, tool
+proxy credentials, policy) before any is used, publish them with one atomic swap and serve each
+request with exactly one snapshot version. A snapshot that fails to build SHALL be rejected with
+the previous one left in force, and before the first snapshot all traffic SHALL be refused.
+
+#### Scenario: Snapshot replaced during traffic
+
+- **WHEN** a snapshot is applied while requests are in flight
+- **THEN** each request uses either the old or the new dictionary, routes, credentials and policy, never a mix
+
+#### Scenario: Rejected snapshot
+
+- **WHEN** a snapshot names a provider the data plane cannot serve
+- **THEN** it is rejected with a message naming the route and the snapshot in force is unchanged
+
+#### Scenario: Before the first snapshot
+
+- **WHEN** a request reaches the data plane before any snapshot is applied
+- **THEN** it is refused as not ready and nothing reaches a provider or a tool host
+
+### Requirement: Data plane status
+
+The data plane's status SHALL report each listener with its kind and whether it is bound, the
+snapshot version, the value count, the redaction engine, the values that are not protected and the
+decision engine, and SHALL report ready only when a snapshot is in force and every listener is
+bound.
+
+#### Scenario: Listener cannot be bound
+
+- **WHEN** a snapshot names a listener whose address is in use or whose kind is not implemented
+- **THEN** status lists that listener as unbound with the reason and reports the data plane not ready
+
 ### Requirement: Transparent mode with packet filtering
 
 scrim SHALL offer a transparent mode on Linux that redirects connections to provider hosts from
