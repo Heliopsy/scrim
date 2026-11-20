@@ -1,0 +1,2 @@
+# expect: several replicas need shared state
+central: {replicaCount: 2}

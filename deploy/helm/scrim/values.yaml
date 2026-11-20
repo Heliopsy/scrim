@@ -1,0 +1,423 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Values of the scrim chart. Every value is described in README.md, which
+# `just helm-docs-check` keeps in step with this file.
+
+# -- Overrides the chart name in resource names.
+nameOverride: ""
+# -- Overrides the full resource name prefix (default: release name, plus "-scrim" unless it already contains it).
+fullnameOverride: ""
+# -- Labels added to every resource.
+commonLabels: {}
+# -- Kubernetes cluster DNS domain, used in the Service addresses agents get.
+clusterDomain: cluster.local
+
+image:
+  # -- scrim image (control plane with the data plane embedded).
+  repository: ghcr.io/heliopsy/scrim
+  # -- Image tag; empty means the chart's appVersion.
+  tag: ""
+  # -- Image digest (sha256:...); when set it is used instead of the tag.
+  digest: ""
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+
+# -- Pull secrets for the scrim image, by name.
+imagePullSecrets: []
+
+# -- scrim configuration, the same file format as `scrim --config` (apiVersion and kind are added).
+# Secret-valued settings take references (env:, file:, cred:, a store reference), never literals;
+# the chart refuses known credential fields that hold a literal. Settings the chart owns
+# (listeners, sockets, state, CA, placeholder keys) are set in a second file that wins.
+config: {}
+# -- Name of an existing ConfigMap holding the scrim configuration under `config.yaml`, used instead of `config`.
+existingConfigMap: ""
+
+# -- Policy rules file (YAML object with `default` and `rules`, see docs/policy.md). Empty means
+# no rules file: built-in defaults apply.
+policyRules: {}
+
+# -- Secrets mounted read-only into scrim at /run/secrets/scrim/<name>/<key>, for `file:` references
+# in `config`. Each item: {name, secretName, items (optional, as in a Secret volume)}.
+secretMounts: []
+
+# -- Extra environment variables for the scrim container (use valueFrom.secretKeyRef with `env:`
+# references; never put secret values here).
+extraEnv: []
+
+# -- Extra volumes for the scrim pod (central mode).
+extraVolumes: []
+# -- Extra volume mounts for the scrim container (central mode).
+extraVolumeMounts: []
+
+log:
+  # -- Log level: debug, info, warn or error.
+  level: info
+  # -- Log format: json or text.
+  format: json
+
+# Upstream TLS trust for the data plane (LLM proxy and tool proxy).
+upstreamCA:
+  # -- ConfigMap in the release namespace with a PEM bundle of extra roots for upstream TLS
+  # (private tool hosts, corporate TLS inspection). System and Mozilla roots stay trusted.
+  configMap: ""
+  # -- Key of the bundle in that ConfigMap.
+  key: ca.crt
+
+# Interception CA: the tool proxy signs leaves for bound hosts with it; agents trust its
+# certificate. The key never leaves scrim's pods.
+ca:
+  # -- Generate a CA with Helm on first install and keep it (Secret with helm.sh/resource-policy: keep,
+  # reused on upgrade through lookup). Ed25519, PKCS#8. Ignored when existingSecret is set.
+  create: true
+  # -- Validity of a generated CA in days.
+  validityDays: 730
+  # -- Existing kubernetes.io/tls Secret with the CA: `tls.crt` and a PKCS#8 `tls.key`
+  # (cert-manager: privateKey.encoding PKCS8). scrim never rotates it.
+  existingSecret: ""
+  # -- PEM certificate of existingSecret, published to agents. Empty reads it from the Secret
+  # with lookup at install time (not available to `helm template`).
+  certificate: ""
+  # -- Extra PEM certificates appended to the agents' ca-bundle.pem (for cluster services agents
+  # reach outside the proxy).
+  extraTrustedCerts: ""
+  # -- Name of the ConfigMap with the public CA (scrim-ca.pem, ca-bundle.pem) in the release
+  # namespace and every agent namespace.
+  configMapName: scrim-ca
+
+# Placeholder keys: placeholders are an HMAC of the value, so every replica and sidecar must
+# share them.
+placeholderKeys:
+  # -- Generate a 64-byte key on first install and keep it (reused on upgrade through lookup).
+  # Ignored when existingSecret is set.
+  create: true
+  # -- Existing Secret holding the keys.
+  existingSecret: ""
+  # -- Keys of existingSecret: list of {name, version, key} (key = data key in the Secret). The
+  # highest version is current.
+  keys:
+    - name: k1
+      version: 1
+      key: k1
+
+# Shared state. Several replicas need PostgreSQL.
+state:
+  # -- memory (one replica; restart loses approvals and grants) or postgres.
+  backend: memory
+  postgres:
+    # -- Secret holding the DSN (postgres://user:pass@host/db?sslmode=verify-full).
+    dsnSecret:
+      name: ""
+      key: dsn
+    # -- Connection pool size per replica.
+    maxConns: 16
+
+serviceAccount:
+  # -- Create a ServiceAccount for scrim.
+  create: true
+  # -- Name; empty means the full name.
+  name: ""
+  # -- Annotations (for cloud workload identity toward stores).
+  annotations: {}
+  # -- Mount the API token. Needed for TokenReview identity and store Kubernetes auth; off
+  # otherwise, scrim does not call the Kubernetes API on its own.
+  automountToken: false
+
+# Kubernetes identity and store auth (land with feat/k8s-identity, tasks 12.2, 12.2c and 12.4).
+identity:
+  kubernetes:
+    # -- Identify agent pods by a projected service account token verified with TokenReview.
+    # Renders the system:auth-delegator binding, mounts scrim's own token and gives agent pods a
+    # projected token with `audience`.
+    enabled: false
+    # -- Audience of the projected agent token; tokens with another audience are refused.
+    audience: scrim
+    # -- Lifetime of the projected agent token in seconds (kubelet rotates it).
+    expirationSeconds: 3600
+    # -- Where the token is mounted in agent containers.
+    tokenPath: /var/run/secrets/scrim/token
+    # -- Create the ClusterRoleBinding to system:auth-delegator (TokenReview).
+    tokenReviewRBAC: true
+
+# Store authentication with scrim's own service account (OpenBao or Vault Kubernetes auth,
+# Infisical Kubernetes auth, task 12.4). Configure the store itself in `config.stores`.
+storeAuth:
+  # -- Mount a projected service account token for store login.
+  serviceAccountToken:
+    enabled: false
+    # -- Audience the store expects (OpenBao: the role's audience, often "vault").
+    audience: vault
+    # -- Lifetime in seconds.
+    expirationSeconds: 3600
+    # -- Mount path; reference it as file:<path> in the store configuration.
+    path: /var/run/secrets/scrim/store-token
+
+# Central mode: a Deployment of `scrim proxy` serving agent pods over a Service.
+central:
+  # -- Deploy the central scrim.
+  enabled: true
+  # -- Replicas when autoscaling is off. More than one needs state.backend postgres.
+  replicaCount: 1
+  # -- Deployment update strategy.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  # -- Resources of the scrim container.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  # -- Pod annotations.
+  podAnnotations: {}
+  # -- Pod labels.
+  podLabels: {}
+  # -- Pod security context.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  # -- Container security context.
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    capabilities:
+      drop: [ALL]
+  # -- Grace period; scrim finishes in-flight requests for up to 15s on SIGTERM.
+  terminationGracePeriodSeconds: 30
+  # -- Liveness probe on /livez.
+  livenessProbe:
+    httpGet:
+      path: /livez
+      port: health
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  # -- Readiness probe on /readyz (the data plane holds a snapshot and every listener is bound).
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: health
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 2
+  # -- Startup probe on /livez.
+  startupProbe:
+    httpGet:
+      path: /livez
+      port: health
+    periodSeconds: 2
+    failureThreshold: 30
+  # -- Node selector.
+  nodeSelector: {}
+  # -- Tolerations.
+  tolerations: []
+  # -- Affinity.
+  affinity: {}
+  # -- Topology spread constraints.
+  topologySpreadConstraints: []
+  # -- Priority class.
+  priorityClassName: ""
+  service:
+    # -- Service type. Keep ClusterIP: the listeners serve plain HTTP and the forward proxy.
+    type: ClusterIP
+    # -- Service annotations.
+    annotations: {}
+    # -- LLM base URL port (agents use http://<service>:<port>/anthropic and /openai/v1).
+    llmPort: 9790
+    # -- Forward proxy port (HTTPS_PROXY).
+    forwardPort: 9791
+  pdb:
+    # -- Create a PodDisruptionBudget.
+    enabled: true
+    # -- maxUnavailable (used when minAvailable is empty).
+    maxUnavailable: 1
+    # -- minAvailable; set it instead of maxUnavailable with several replicas.
+    minAvailable: ""
+  autoscaling:
+    # -- Create a HorizontalPodAutoscaler (needs state.backend postgres).
+    enabled: false
+    # -- Fewest replicas.
+    minReplicas: 2
+    # -- Most replicas.
+    maxReplicas: 10
+    # -- Target average CPU utilisation in percent; empty disables the CPU metric.
+    targetCPUUtilizationPercentage: 70
+    # Scale on concurrent proxied streams per replica (a Pods metric served by a metrics adapter
+    # such as prometheus-adapter from scrim's metrics).
+    streams:
+      # -- Add the streams metric.
+      enabled: false
+      # -- Metric name as the adapter exposes it.
+      metricName: scrim_proxy_active_streams
+      # -- Target average concurrent streams per replica.
+      targetAverageValue: "50"
+    # -- HPA scaling behavior.
+    behavior: {}
+
+# Admin API over TCP, for operators outside the pod (`scrim approve --admin-url`). Off: use
+# `kubectl exec deploy/<name> -- scrim approve ...` against the Unix socket.
+admin:
+  tcp:
+    # -- Serve the admin API on a TCP port of the Service.
+    enabled: false
+    # -- Port.
+    port: 9793
+    # -- Secret with the bearer token (at least 16 bytes).
+    tokenSecret:
+      name: ""
+      key: token
+
+# Metrics and health. The health endpoints (/livez, /readyz) are always served on the health
+# port for the probes; `enabled` exposes /metrics on the Service and to Prometheus.
+metrics:
+  # -- Expose metrics (Service port, monitors, NetworkPolicy scrape rule) and turn on scrim's
+  # metrics.enabled setting.
+  enabled: false
+  # -- Port of the metrics and health listener.
+  port: 9792
+  # -- Metrics path.
+  path: /metrics
+  # -- Secret with a bearer token scrapers must present (scrim's metrics.auth); empty means none.
+  authSecret:
+    name: ""
+    key: token
+
+serviceMonitor:
+  # -- Create a Prometheus Operator ServiceMonitor for central scrim (needs metrics.enabled).
+  enabled: false
+  # -- Extra labels (for the Prometheus serviceMonitorSelector).
+  labels: {}
+  # -- Scrape interval.
+  interval: 30s
+  # -- Scrape timeout.
+  scrapeTimeout: 10s
+
+podMonitor:
+  # -- Create a PodMonitor per agent namespace for sidecars (needs metrics.enabled and sidecar.enabled).
+  enabled: false
+  # -- Extra labels.
+  labels: {}
+  # -- Scrape interval.
+  interval: 30s
+
+prometheusRule:
+  # -- Create a PrometheusRule from the chart's monitoring/prometheus-rules.yaml plus `groups`.
+  enabled: false
+  # -- Extra labels.
+  labels: {}
+  # -- Extra rule groups.
+  groups: []
+
+grafanaDashboard:
+  # -- Create a ConfigMap with the dashboard JSON, labelled for the Grafana sidecar.
+  enabled: false
+  # -- Labels; the Grafana sidecar picks up grafana_dashboard: "1" by default.
+  labels:
+    grafana_dashboard: "1"
+  # -- Annotations (for example grafana_folder).
+  annotations: {}
+  # -- Dashboard JSON; empty uses the chart's monitoring/dashboard.json.
+  json: ""
+
+# Agent pods: which pods use scrim, and how.
+agents:
+  # -- Label that marks agent pods. Value `central` uses the central Service, `sidecar` adds an
+  # in-pod scrim.
+  label: scrim.dev/inject
+  # -- Namespaces agent pods run in. The chart creates the public CA ConfigMap, the agent env
+  # ConfigMaps, NetworkPolicies and sidecar resources there before any pod starts.
+  namespaces: []
+  # -- Extra NO_PROXY entries for agents (hosts reached without scrim; they also need a
+  # NetworkPolicy egress rule).
+  noProxy: []
+  # -- Extra environment variables for agent containers.
+  extraEnv: []
+  # -- Mount path of the CA files in agent containers.
+  trustPath: /etc/scrim/trust
+
+# Kyverno admission policy that configures labelled pods.
+kyverno:
+  # -- Install the ClusterPolicy (needs Kyverno 1.13 or later).
+  enabled: false
+  # -- Refuse labelled pods when Kyverno cannot process them.
+  failurePolicy: Fail
+
+networkPolicy:
+  # -- Create NetworkPolicies (needs a CNI that enforces them).
+  enabled: false
+  # -- Pod and namespace selectors of the cluster DNS.
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  # -- Egress rules of central scrim besides DNS (providers, stores, tool hosts, PostgreSQL).
+  # The default allows HTTPS anywhere.
+  scrimEgress:
+    - ports:
+        - port: 443
+          protocol: TCP
+  # -- Egress rules of sidecar agent pods besides DNS (what the in-pod scrim must reach).
+  sidecarEgress:
+    - ports:
+        - port: 443
+          protocol: TCP
+  # -- Where Prometheus scrapes from (used when metrics.enabled).
+  prometheus:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: monitoring
+    podSelector: {}
+  # -- Peers allowed to the admin TCP port (NetworkPolicy `from` entries).
+  adminFrom: []
+
+# Sidecar mode: an in-pod `scrim proxy` on loopback for pods labelled `sidecar`.
+sidecar:
+  # -- Render the per-namespace sidecar resources and the sidecar injection rule.
+  enabled: false
+  # -- Resources of the sidecar.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      memory: 384Mi
+  # -- Container security context of the sidecar (it runs as UID 65532; the egress guard
+  # lets only that UID out).
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
+  # -- Secrets (that must exist in every agent namespace) mounted into the sidecar, as secretMounts.
+  secretMounts: []
+  # -- Name of the CA Secret in agent namespaces. Created by the chart when ca.create is on;
+  # otherwise provide it in each namespace.
+  caSecretName: scrim-sidecar-ca
+  # -- Name of the placeholder key Secret in agent namespaces (same rule as caSecretName).
+  keysSecretName: scrim-sidecar-keys
+  # Egress guard: an init container that installs nftables rules in the pod's network namespace
+  # so only the sidecar's UID reaches the network. A NetworkPolicy applies to the whole pod and
+  # cannot tell the agent from the sidecar.
+  egressGuard:
+    # -- Install the guard. Without it the agent can reach whatever the pod's NetworkPolicy allows.
+    enabled: true
+    # -- Image with the `nft` binary and a shell, required when enabled.
+    image: ""
+    # -- Pull policy.
+    pullPolicy: IfNotPresent

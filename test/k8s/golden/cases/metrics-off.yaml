@@ -1,0 +1,7 @@
+# NetworkPolicy and Kyverno without metrics: no scrape rule, no monitors.
+agents:
+  namespaces: [agents, ci]
+networkPolicy:
+  enabled: true
+kyverno:
+  enabled: true

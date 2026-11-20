@@ -214,6 +214,30 @@ jobs:
         env:
           SCRIM_TEST_DATAPLANE: ${{ github.workspace }}/dataplane/target/debug/scrim-dataplane
 
+  helm:
+    name: Helm chart
+    runs-on: ho-z10
+    permissions:
+      contents: read
+    env:
+      HELM_VERSION: "4.1.4"
+      # sha256 from get.helm.sh/helm-v<version>-linux-amd64.tar.gz.sha256sum.
+      HELM_LINUX_AMD64_SHA256: 70b2c30a19da4db264dfd68c8a3664e05093a361cefd89572ffb36f8abfa3d09
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install helm
+        run: |
+          set -euo pipefail
+          tgz="helm-v${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL --retry 5 -o "$RUNNER_TEMP/$tgz" "https://get.helm.sh/$tgz"
+          echo "$HELM_LINUX_AMD64_SHA256  $RUNNER_TEMP/$tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tgz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/linux-amd64" >> "$GITHUB_PATH"
+      # Lint, golden `helm template` output, refused values, README coverage.
+      - run: test/k8s/golden.sh
+
   proto:
     name: Generated code up to date
     runs-on: ho-z10

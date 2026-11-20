@@ -1,0 +1,19 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- if and .Values.placeholderKeys.create (not .Values.placeholderKeys.existingSecret) }}
+{{- include "scrim.generatedKey" . }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "scrim.fullname" . }}-placeholder-keys
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scrim.labels" . | nindent 4 }}
+  annotations:
+    # Placeholders in running conversations are derived from this key.
+    helm.sh/resource-policy: keep
+type: Opaque
+data:
+  k1: {{ .Values.__scrimKey | b64enc }}
+{{- else if not .Values.placeholderKeys.existingSecret }}
+{{- fail "set placeholderKeys.create=true or placeholderKeys.existingSecret: every replica needs the same placeholder keys" }}
+{{- end }}

@@ -1,0 +1,44 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- $a := .Values.central.autoscaling }}
+{{- if and .Values.central.enabled $a.enabled }}
+{{- if and (not $a.targetCPUUtilizationPercentage) (not $a.streams.enabled) }}
+{{- fail "central.autoscaling needs targetCPUUtilizationPercentage or streams.enabled" }}
+{{- end }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "scrim.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scrim.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "scrim.fullname" . }}
+  minReplicas: {{ $a.minReplicas }}
+  maxReplicas: {{ $a.maxReplicas }}
+  metrics:
+    {{- if $a.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $a.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if $a.streams.enabled }}
+    # Concurrent proxied streams per replica, served by a metrics adapter.
+    - type: Pods
+      pods:
+        metric:
+          name: {{ $a.streams.metricName }}
+        target:
+          type: AverageValue
+          averageValue: {{ $a.streams.targetAverageValue | quote }}
+    {{- end }}
+  {{- with $a.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

@@ -17,6 +17,7 @@ to start. The behaviour contract, with every requirement and scenario, is the Op
 | --- | --- |
 | [install.md](install.md) | Release archives, signature and provenance checks, container images, reproducible builds |
 | [running.md](running.md) | `scrim proxy`: the daemon, its listeners and sockets, snapshots, capture mode, shutdown, a systemd unit |
+| [kubernetes.md](kubernetes.md) | The Helm chart: central and sidecar modes, Kyverno injection, NetworkPolicy, CA and keys, identity, scaling, monitoring, troubleshooting |
 | [configuration.md](configuration.md) | Config files, `SCRIM_*` environment variables, flags, precedence, profiles, reload and every setting |
 
 ## Secrets

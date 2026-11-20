@@ -159,3 +159,19 @@ e2e-ntfy port="":
 clean:
     rm -rf bin/ dist/ {{embed}}
     cd dataplane && cargo clean
+
+# ---------------------------------------------------------------- kubernetes
+
+# Helm chart: lint, golden `helm template` output and refused values (test/k8s/golden).
+helm-test:
+    test/k8s/golden.sh
+
+# Rewrite the golden output after checking the diff of `just helm-test`.
+helm-golden-update:
+    test/k8s/golden.sh --update
+
+# Creates and deletes its own kind cluster, images and network (test/k8s/e2e.sh).
+#
+# End-to-end test of the chart in kind on rootless podman with Calico, Kyverno and OpenBao.
+k8s-e2e:
+    test/k8s/e2e.sh

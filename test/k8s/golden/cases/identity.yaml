@@ -1,0 +1,11 @@
+# Values for Kubernetes identity and store auth (feat/k8s-identity).
+identity:
+  kubernetes:
+    enabled: true
+storeAuth:
+  serviceAccountToken:
+    enabled: true
+agents:
+  namespaces: [agents]
+kyverno:
+  enabled: true

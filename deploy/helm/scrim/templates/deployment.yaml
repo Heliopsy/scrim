@@ -1,0 +1,251 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- if .Values.central.enabled }}
+{{- $c := .Values.central }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "scrim.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scrim.labels" . | nindent 4 }}
+    app.kubernetes.io/component: proxy
+spec:
+  {{- if not $c.autoscaling.enabled }}
+  replicas: {{ $c.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    {{- toYaml $c.strategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "scrim.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "scrim.selectorLabels" . | nindent 8 }}
+        {{- with $c.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+        {{- with $c.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "scrim.serviceAccountName" . }}
+      automountServiceAccountToken: {{ or .Values.serviceAccount.automountToken .Values.identity.kubernetes.enabled }}
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- with $c.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ $c.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml $c.podSecurityContext | nindent 8 }}
+      containers:
+        - name: scrim
+          image: {{ include "scrim.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: [proxy]
+          env:
+            - name: SCRIM_CONFIG
+              value: {{ if .Values.existingConfigMap }}/etc/scrim/user/config.yaml{{ else }}/etc/scrim/config/config.yaml{{ end }}:/etc/scrim/config/chart.yaml
+            - name: XDG_RUNTIME_DIR
+              value: /run/scrim
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: llm
+              containerPort: 9790
+              protocol: TCP
+            - name: forward
+              containerPort: 9791
+              protocol: TCP
+            - name: {{ if .Values.metrics.enabled }}metrics{{ else }}health{{ end }}
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            {{- if .Values.admin.tcp.enabled }}
+            - name: admin
+              containerPort: {{ .Values.admin.tcp.port }}
+              protocol: TCP
+            {{- end }}
+          {{- range $probe := list "livenessProbe" "readinessProbe" "startupProbe" }}
+          {{- with index $c $probe }}
+          {{ $probe }}:
+            {{- $p := deepCopy . }}
+            {{- if and (hasKey $p "httpGet") (eq (toString $p.httpGet.port) "health") $.Values.metrics.enabled }}
+            {{- $_ := set $p.httpGet "port" "metrics" }}
+            {{- end }}
+            {{- toYaml $p | nindent 12 }}
+          {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $c.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/scrim/config
+              readOnly: true
+            {{- if .Values.existingConfigMap }}
+            - name: user-config
+              mountPath: /etc/scrim/user
+              readOnly: true
+            {{- end }}
+            - name: ca
+              mountPath: /etc/scrim/ca
+              readOnly: true
+            - name: placeholder-keys
+              mountPath: /etc/scrim/placeholder
+              readOnly: true
+            {{- if .Values.upstreamCA.configMap }}
+            - name: upstream-ca
+              mountPath: /etc/scrim/upstream-ca
+              readOnly: true
+            {{- end }}
+            - name: state
+              mountPath: /var/lib/scrim
+            - name: run
+              mountPath: /run/scrim
+            - name: tmp
+              mountPath: /tmp
+            {{- if eq .Values.state.backend "postgres" }}
+            - name: postgres
+              mountPath: /run/secrets/scrim/postgres
+              readOnly: true
+            {{- end }}
+            {{- if .Values.admin.tcp.enabled }}
+            - name: admin-token
+              mountPath: /run/secrets/scrim/admin
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.metrics.enabled .Values.metrics.authSecret.name }}
+            - name: metrics-token
+              mountPath: /run/secrets/scrim/metrics
+              readOnly: true
+            {{- end }}
+            {{- if .Values.storeAuth.serviceAccountToken.enabled }}
+            - name: store-token
+              mountPath: {{ dir .Values.storeAuth.serviceAccountToken.path }}
+              readOnly: true
+            {{- end }}
+            {{- range .Values.secretMounts }}
+            - name: secret-{{ .name }}
+              mountPath: /run/secrets/scrim/{{ .name }}
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "scrim.fullname" . }}-config
+        {{- if .Values.existingConfigMap }}
+        - name: user-config
+          configMap:
+            name: {{ .Values.existingConfigMap }}
+            items:
+              - key: config.yaml
+                path: config.yaml
+        {{- end }}
+        - name: ca
+          secret:
+            secretName: {{ include "scrim.caSecretName" . }}
+            defaultMode: 0440
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: placeholder-keys
+          secret:
+            secretName: {{ include "scrim.keysSecretName" . }}
+            defaultMode: 0440
+        {{- if .Values.upstreamCA.configMap }}
+        - name: upstream-ca
+          configMap:
+            name: {{ .Values.upstreamCA.configMap }}
+        {{- end }}
+        - name: state
+          emptyDir: {}
+        - name: run
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- if eq .Values.state.backend "postgres" }}
+        - name: postgres
+          secret:
+            secretName: {{ .Values.state.postgres.dsnSecret.name }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.state.postgres.dsnSecret.key }}
+                path: {{ .Values.state.postgres.dsnSecret.key }}
+        {{- end }}
+        {{- if .Values.admin.tcp.enabled }}
+        - name: admin-token
+          secret:
+            secretName: {{ .Values.admin.tcp.tokenSecret.name }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.admin.tcp.tokenSecret.key }}
+                path: {{ .Values.admin.tcp.tokenSecret.key }}
+        {{- end }}
+        {{- if and .Values.metrics.enabled .Values.metrics.authSecret.name }}
+        - name: metrics-token
+          secret:
+            secretName: {{ .Values.metrics.authSecret.name }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.metrics.authSecret.key }}
+                path: {{ .Values.metrics.authSecret.key }}
+        {{- end }}
+        {{- if .Values.storeAuth.serviceAccountToken.enabled }}
+        - name: store-token
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  audience: {{ .Values.storeAuth.serviceAccountToken.audience }}
+                  expirationSeconds: {{ .Values.storeAuth.serviceAccountToken.expirationSeconds }}
+                  path: {{ base .Values.storeAuth.serviceAccountToken.path }}
+        {{- end }}
+        {{- range .Values.secretMounts }}
+        - name: secret-{{ .name }}
+          secret:
+            secretName: {{ .secretName }}
+            defaultMode: 0440
+            {{- with .items }}
+            items:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $c.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

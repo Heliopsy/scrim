@@ -1,0 +1,117 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- $label := .Values.agents.label }}
+{{- if .Values.central.enabled }}
+# Central scrim: agents reach the LLM and forward proxy ports; scrim reaches DNS and what
+# networkPolicy.scrimEgress allows (providers, stores, tool hosts, PostgreSQL).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "scrim.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scrim.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "scrim.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- if .Values.agents.namespaces }}
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values:
+                  {{- toYaml .Values.agents.namespaces | nindent 18 }}
+            {{- else }}
+            {}
+            {{- end }}
+          podSelector:
+            matchLabels:
+              {{ $label }}: central
+      ports:
+        - port: 9790
+          protocol: TCP
+        - port: 9791
+          protocol: TCP
+    {{- if .Values.metrics.enabled }}
+    - from:
+        - namespaceSelector:
+            {{- toYaml $np.prometheus.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml $np.prometheus.podSelector | nindent 12 }}
+      ports:
+        - port: {{ .Values.metrics.port }}
+          protocol: TCP
+    {{- end }}
+    {{- if and .Values.admin.tcp.enabled $np.adminFrom }}
+    - from:
+        {{- toYaml $np.adminFrom | nindent 8 }}
+      ports:
+        - port: {{ .Values.admin.tcp.port }}
+          protocol: TCP
+    {{- end }}
+  egress:
+    {{- include "scrim.dnsEgress" $np.dns | nindent 4 }}
+    {{- with $np.scrimEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+{{- range $ns := .Values.agents.namespaces }}
+{{- if $.Values.central.enabled }}
+---
+# Agent pods labelled {{ $label }}=central reach only scrim and DNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "scrim.fullname" $ }}-agents-central
+  namespace: {{ $ns }}
+  labels:
+    {{- include "scrim.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{ $label }}: central
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- include "scrim.selectorLabels" $ | nindent 14 }}
+      ports:
+        - port: 9790
+          protocol: TCP
+        - port: 9791
+          protocol: TCP
+    {{- include "scrim.dnsEgress" $np.dns | nindent 4 }}
+{{- end }}
+{{- if $.Values.sidecar.enabled }}
+---
+# Agent pods labelled {{ $label }}=sidecar: the pod reaches DNS and what the in-pod scrim
+# needs. The egress guard keeps the agent's own processes on loopback.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "scrim.fullname" $ }}-agents-sidecar
+  namespace: {{ $ns }}
+  labels:
+    {{- include "scrim.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{ $label }}: sidecar
+  policyTypes: [Egress]
+  egress:
+    {{- include "scrim.dnsEgress" $np.dns | nindent 4 }}
+    {{- with $np.sidecarEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

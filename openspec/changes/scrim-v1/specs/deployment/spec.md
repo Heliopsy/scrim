@@ -131,6 +131,63 @@ model provider traffic, and let scrim reach providers, stores and notifiers.
 - **WHEN** network policies are enabled and an agent pod connects to a provider directly
 - **THEN** the connection is refused
 
+### Requirement: Sidecar mode
+
+The chart SHALL optionally run the full `scrim proxy` inside each agent pod on loopback instead of a
+central Deployment, with an egress guard that lets only the sidecar's user open outbound
+connections, and SHALL refuse sidecar mode without the guard unless it is turned off explicitly.
+
+#### Scenario: Sidecar agent cannot bypass
+
+- **WHEN** a pod labelled for sidecar mode starts with the egress guard
+- **THEN** its agent reaches providers and tool hosts only through the in-pod scrim
+- **AND** a direct connection from the agent to the provider is refused
+
+#### Scenario: Sidecar without a guard image
+
+- **WHEN** sidecar mode is enabled without a guard image and the guard is not turned off
+- **THEN** the chart refuses to render and names the setting
+
+### Requirement: One CA and placeholder key set per installation
+
+Every scrim pod of an installation (replicas and sidecars) SHALL use the same interception CA and
+the same placeholder keys, held in Kubernetes Secrets the chart creates once and keeps across
+upgrades, or supplied by the operator. The CA's public certificate SHALL be published to every agent
+namespace; its private key SHALL be mounted only into scrim containers.
+
+#### Scenario: Upgrade keeps the CA
+
+- **WHEN** the chart is upgraded
+- **THEN** the CA certificate agents trust is unchanged
+
+#### Scenario: Agent pods get the certificate only
+
+- **WHEN** an agent pod is configured by the injection policy
+- **THEN** it mounts the CA certificate and no container but scrim's mounts the CA key
+
+### Requirement: Chart values hold no secrets
+
+The chart SHALL take credentials only as references to Secrets (mounted files or environment from
+Secret keys), and SHALL refuse to render when a credential field of the scrim configuration in the
+values holds a literal.
+
+#### Scenario: Literal store token
+
+- **WHEN** the values set a store token to a literal instead of a reference
+- **THEN** the chart refuses to render and names the field
+
+### Requirement: Private upstream roots
+
+scrim SHALL accept a PEM bundle of extra roots for upstream TLS (`proxy.upstream-ca-file`), trusted
+by the LLM proxy and the tool proxy in addition to the system and Mozilla roots, and SHALL refuse to
+start the data plane when the file cannot be read or holds no certificate.
+
+#### Scenario: Tool host with a private CA
+
+- **WHEN** a credential is bound to a host whose certificate is signed by a private CA listed in
+  `proxy.upstream-ca-file`
+- **THEN** the tool proxy connects to it and injects the credential
+
 ### Requirement: Agent pod injection policy
 
 The chart SHALL optionally install an admission policy that configures pods carrying a documented
@@ -140,6 +197,17 @@ label to use scrim (environment, CA, MCP config, identity token), without changi
 
 - **WHEN** a pod with the scrim agent label is created
 - **THEN** it starts with scrim's base URLs, CA bundle and identity token in place
+
+#### Scenario: Labelled pod in an unprepared namespace
+
+- **WHEN** a pod with the scrim agent label is created in a namespace the chart did not prepare
+- **THEN** it is refused, rather than started without its CA, environment or network policy
+
+#### Scenario: Configuration without the admission policy
+
+- **WHEN** the admission policy is not installed
+- **THEN** the chart provides the same environment as a ConfigMap in each agent namespace for the
+  pod to reference
 
 ### Requirement: Long-running daemon
 
@@ -157,6 +225,13 @@ snapshot and every listener is bound, and SHALL stop gracefully on SIGINT or SIG
 
 - **WHEN** the data plane has not yet applied a snapshot or a listener is not bound
 - **THEN** the readiness endpoint fails and names the reason
+
+#### Scenario: Repeated store credentials and retained values
+
+- **WHEN** a store's own credential appears twice (a static token that is also the current token) or
+  a rotated value is retained next to the current one
+- **THEN** the data plane accepts the snapshot, the repeated value is sent once and the current
+  value keeps its catalog name
 
 #### Scenario: Graceful stop
 

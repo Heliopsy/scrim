@@ -1,0 +1,34 @@
+# Several replicas on PostgreSQL, autoscaling on CPU and streams, TCP admin API.
+state:
+  backend: postgres
+  postgres:
+    dsnSecret: {name: scrim-pg, key: dsn}
+central:
+  pdb: {minAvailable: 2}
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    streams: {enabled: true, targetAverageValue: "40"}
+admin:
+  tcp:
+    enabled: true
+    tokenSecret: {name: scrim-admin, key: token}
+networkPolicy:
+  enabled: true
+  adminFrom:
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: ops}
+config:
+  stores:
+    bao:
+      kind: openbao
+      address: https://bao.example.com:8200
+      auth: {method: approle}
+      role-id: file:/run/secrets/scrim/bao/role-id
+      secret-id: file:/run/secrets/scrim/bao/secret-id
+      redact: ["bao://kv/agents/*"]
+secretMounts:
+  - {name: bao, secretName: scrim-bao-approle}
+agents:
+  namespaces: [agents]

@@ -1,0 +1,97 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- $metricsOff := not .Values.metrics.enabled }}
+{{- if and $metricsOff (or .Values.serviceMonitor.enabled .Values.podMonitor.enabled) }}
+{{- fail "serviceMonitor and podMonitor need metrics.enabled=true" }}
+{{- end }}
+{{- if and .Values.serviceMonitor.enabled .Values.central.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "scrim.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scrim.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "scrim.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: {{ .Values.metrics.path }}
+      interval: {{ .Values.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
+      {{- include "scrim.scrapeAuth" . | nindent 6 }}
+{{- end }}
+{{- if and .Values.podMonitor.enabled .Values.sidecar.enabled }}
+{{- range $ns := .Values.agents.namespaces }}
+---
+# Sidecars in {{ $ns }}. The bearer token Secret, if any, must exist in this namespace.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "scrim.fullname" $ }}-sidecars
+  namespace: {{ $ns }}
+  labels:
+    {{- include "scrim.labels" $ | nindent 4 }}
+    {{- with $.Values.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{ $.Values.agents.label }}: sidecar
+  podMetricsEndpoints:
+    - port: scrim-health
+      path: {{ $.Values.metrics.path }}
+      interval: {{ $.Values.podMonitor.interval }}
+      {{- include "scrim.scrapeAuth" $ | nindent 6 }}
+{{- end }}
+{{- end }}
+{{- if .Values.prometheusRule.enabled }}
+{{- $bundled := .Files.Get "monitoring/prometheus-rules.yaml" | fromYaml }}
+{{- $groups := concat (default list (get $bundled "groups")) .Values.prometheusRule.groups }}
+{{- if not $groups }}
+{{- fail "prometheusRule.enabled: the chart carries no monitoring/prometheus-rules.yaml and prometheusRule.groups is empty" }}
+{{- end }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "scrim.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scrim.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    {{- toYaml $groups | nindent 4 }}
+{{- end }}
+{{- if .Values.grafanaDashboard.enabled }}
+{{- $json := .Values.grafanaDashboard.json | default (.Files.Get "monitoring/dashboard.json") }}
+{{- if not $json }}
+{{- fail "grafanaDashboard.enabled: the chart carries no monitoring/dashboard.json and grafanaDashboard.json is empty" }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "scrim.fullname" . }}-dashboard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scrim.labels" . | nindent 4 }}
+    {{- with .Values.grafanaDashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.grafanaDashboard.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  scrim.json: |
+    {{- $json | nindent 4 }}
+{{- end }}

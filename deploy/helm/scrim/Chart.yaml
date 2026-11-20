@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+apiVersion: v2
+name: scrim
+description: Keeps secret values away from LLM providers while AI agents keep working
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.29.0-0"
+home: https://github.com/Heliopsy/scrim
+sources:
+  - https://github.com/Heliopsy/scrim
+icon: https://raw.githubusercontent.com/Heliopsy/scrim/main/scrim.svg
+annotations:
+  artifacthub.io/license: AGPL-3.0-only
+keywords: [llm, secrets, redaction, proxy, agents]
+maintainers:
+  - name: Heliopsy
+    url: https://github.com/Heliopsy

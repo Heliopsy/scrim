@@ -1,0 +1,224 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- if .Values.kyverno.enabled }}
+{{- $label := .Values.agents.label }}
+{{- $trust := .Values.agents.trustPath }}
+{{- $modes := list }}
+{{- if .Values.central.enabled }}{{ $modes = append $modes "central" }}{{ end }}
+{{- if .Values.sidecar.enabled }}{{ $modes = append $modes "sidecar" }}{{ end }}
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: {{ include "scrim.fullname" . }}-{{ .Release.Namespace }}-inject
+  labels:
+    {{- include "scrim.labels" . | nindent 4 }}
+  annotations:
+    policies.kyverno.io/title: scrim agent injection
+    policies.kyverno.io/description: >-
+      Pods labelled {{ $label }}=central get the base URLs, forward proxy and CA of the central
+      scrim; pods labelled {{ $label }}=sidecar get an in-pod scrim. Labelled pods outside the
+      prepared namespaces are refused.
+    # Mutate Pods only, never their controllers: a Deployment in Git stays as written.
+    pod-policies.kyverno.io/autogen-controllers: none
+spec:
+  background: false
+  failurePolicy: {{ .Values.kyverno.failurePolicy }}
+  rules:
+    - name: require-prepared-namespace
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              operations: [CREATE]
+              selector:
+                matchExpressions:
+                  - key: {{ $label }}
+                    operator: Exists
+      validate:
+        failureAction: Enforce
+        message: >-
+          Pods labelled {{ $label }} must run in a namespace listed in the scrim chart's
+          agents.namespaces (where its CA, environment and NetworkPolicies exist), with a label
+          value of {{ join " or " $modes }}.
+        deny:
+          conditions:
+            any:
+              - key: "{{ "{{" }} request.namespace {{ "}}" }}"
+                operator: AnyNotIn
+                value:
+                  {{- toYaml (default (list "") .Values.agents.namespaces) | nindent 18 }}
+              - key: {{ printf "{{ request.object.metadata.labels.\"%s\" }}" $label | quote }}
+                operator: AnyNotIn
+                value:
+                  {{- toYaml $modes | nindent 18 }}
+    {{- if .Values.central.enabled }}
+    - name: inject-central
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              operations: [CREATE]
+              selector:
+                matchLabels:
+                  {{ $label }}: central
+      mutate:
+        patchStrategicMerge:
+          spec:
+            containers:
+              - (name): "*"
+                env:
+                  {{- include "scrim.centralAgentEnv" . | nindent 18 }}
+                volumeMounts:
+                  {{- include "scrim.agentMounts" . | nindent 18 }}
+            volumes:
+              {{- include "scrim.agentVolumes" . | nindent 14 }}
+    {{- end }}
+    {{- if .Values.sidecar.enabled }}
+    - name: inject-sidecar
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              operations: [CREATE]
+              selector:
+                matchLabels:
+                  {{ $label }}: sidecar
+      mutate:
+        patchStrategicMerge:
+          spec:
+            initContainers:
+              {{- if .Values.sidecar.egressGuard.enabled }}
+              - name: scrim-egress-guard
+                image: {{ .Values.sidecar.egressGuard.image }}
+                imagePullPolicy: {{ .Values.sidecar.egressGuard.pullPolicy }}
+                command: [sh, -c]
+                args:
+                  - |
+                    {{- include "scrim.egressGuardScript" . | nindent 20 }}
+                securityContext:
+                  runAsUser: 0
+                  runAsNonRoot: false
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities:
+                    drop: [ALL]
+                    add: [NET_ADMIN]
+                resources:
+                  requests:
+                    cpu: 10m
+                    memory: 16Mi
+                  limits:
+                    memory: 32Mi
+              {{- end }}
+              - name: scrim
+                image: {{ include "scrim.image" . }}
+                imagePullPolicy: {{ .Values.image.pullPolicy }}
+                # A native sidecar: it starts, and passes its startup probe, before the agent.
+                restartPolicy: Always
+                args: [proxy]
+                env:
+                  - name: SCRIM_CONFIG
+                    value: /etc/scrim/config/config.yaml:/etc/scrim/config/chart.yaml
+                  - name: XDG_RUNTIME_DIR
+                    value: /run/scrim
+                ports:
+                  - name: scrim-health
+                    containerPort: {{ .Values.metrics.port }}
+                    protocol: TCP
+                startupProbe:
+                  httpGet:
+                    path: /readyz
+                    port: {{ .Values.metrics.port }}
+                  periodSeconds: 1
+                  failureThreshold: 120
+                readinessProbe:
+                  httpGet:
+                    path: /readyz
+                    port: {{ .Values.metrics.port }}
+                  periodSeconds: 5
+                livenessProbe:
+                  httpGet:
+                    path: /livez
+                    port: {{ .Values.metrics.port }}
+                  periodSeconds: 10
+                resources:
+                  {{- toYaml .Values.sidecar.resources | nindent 18 }}
+                securityContext:
+                  {{- toYaml .Values.sidecar.securityContext | nindent 18 }}
+                volumeMounts:
+                  - name: scrim-sidecar-config
+                    mountPath: /etc/scrim/config
+                    readOnly: true
+                  - name: scrim-sidecar-ca
+                    mountPath: /etc/scrim/ca
+                    readOnly: true
+                  - name: scrim-sidecar-keys
+                    mountPath: /etc/scrim/placeholder
+                    readOnly: true
+                  {{- if .Values.upstreamCA.configMap }}
+                  - name: scrim-upstream-ca
+                    mountPath: /etc/scrim/upstream-ca
+                    readOnly: true
+                  {{- end }}
+                  - name: scrim-state
+                    mountPath: /var/lib/scrim
+                  - name: scrim-run
+                    mountPath: /run/scrim
+                  - name: scrim-tmp
+                    mountPath: /tmp
+                  {{- range .Values.sidecar.secretMounts }}
+                  - name: scrim-secret-{{ .name }}
+                    mountPath: /run/secrets/scrim/{{ .name }}
+                    readOnly: true
+                  {{- end }}
+            containers:
+              - (name): "*"
+                env:
+                  {{- include "scrim.sidecarAgentEnv" . | nindent 18 }}
+                volumeMounts:
+                  {{- include "scrim.agentMounts" . | nindent 18 }}
+            volumes:
+              {{- include "scrim.agentVolumes" . | nindent 14 }}
+              # Mounted only into the scrim container. The agent pod has no fsGroup to rely
+              # on, so the files are world-readable inside that one mount.
+              - name: scrim-sidecar-config
+                configMap:
+                  name: {{ include "scrim.fullname" . }}-sidecar-config
+              - name: scrim-sidecar-ca
+                secret:
+                  secretName: {{ .Values.sidecar.caSecretName }}
+                  defaultMode: 0444
+                  items:
+                    - key: tls.crt
+                      path: tls.crt
+                    - key: tls.key
+                      path: tls.key
+              - name: scrim-sidecar-keys
+                secret:
+                  secretName: {{ .Values.sidecar.keysSecretName }}
+                  defaultMode: 0444
+              {{- if .Values.upstreamCA.configMap }}
+              - name: scrim-upstream-ca
+                configMap:
+                  name: {{ .Values.upstreamCA.configMap }}
+              {{- end }}
+              - name: scrim-state
+                emptyDir: {}
+              - name: scrim-run
+                emptyDir:
+                  medium: Memory
+                  sizeLimit: 64Mi
+              - name: scrim-tmp
+                emptyDir:
+                  sizeLimit: 64Mi
+              {{- range .Values.sidecar.secretMounts }}
+              - name: scrim-secret-{{ .name }}
+                secret:
+                  secretName: {{ .secretName }}
+                  defaultMode: 0444
+                  {{- with .items }}
+                  items:
+                    {{- toYaml . | nindent 20 }}
+                  {{- end }}
+              {{- end }}
+    {{- end }}
+{{- end }}

@@ -1,0 +1,141 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Stand-ins for the outside world in test/k8s/e2e.sh: OpenBao in dev mode (the
+# store), the fake model provider and the tool host. @TESTBIN@ and @OPENBAO@
+# are replaced by the script.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openbao
+  namespace: scrim-e2e
+spec:
+  selector:
+    matchLabels: {app: openbao}
+  template:
+    metadata:
+      labels: {app: openbao}
+    spec:
+      containers:
+        - name: openbao
+          image: @OPENBAO@
+          command: [sh, -c]
+          args:
+            - exec bao server -dev -dev-listen-address=0.0.0.0:8200 -dev-root-token-id="$(cat /run/secrets/bao/token)"
+          env:
+            - name: SKIP_SETCAP
+              value: "true"
+          ports:
+            - containerPort: 8200
+          readinessProbe:
+            httpGet: {path: /v1/sys/health, port: 8200}
+            periodSeconds: 2
+          volumeMounts:
+            - {name: root, mountPath: /run/secrets/bao, readOnly: true}
+      volumes:
+        - name: root
+          secret: {secretName: openbao-root}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openbao
+  namespace: scrim-e2e
+spec:
+  selector: {app: openbao}
+  ports:
+    - {port: 8200, targetPort: 8200}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fakeprovider
+  namespace: scrim-e2e
+spec:
+  selector:
+    matchLabels: {app: fakeprovider}
+  template:
+    metadata:
+      labels: {app: fakeprovider}
+    spec:
+      containers:
+        - name: fakeprovider
+          image: @TESTBIN@
+          imagePullPolicy: Never
+          command: [/usr/local/bin/scrim-fakeprovider, -listen, "0.0.0.0:18089"]
+          ports:
+            - containerPort: 18089
+          readinessProbe:
+            httpGet: {path: /_fake/health, port: 18089}
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fakeprovider
+  namespace: scrim-e2e
+spec:
+  selector: {app: fakeprovider}
+  ports:
+    - {name: http, port: 18089, targetPort: 18089}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: toolhost
+  namespace: scrim-e2e
+spec:
+  selector:
+    matchLabels: {app: toolhost}
+  template:
+    metadata:
+      labels: {app: toolhost}
+    spec:
+      containers:
+        - name: toolhost
+          image: @TESTBIN@
+          imagePullPolicy: Never
+          command: [/usr/local/bin/toolhost, -listen, ":8443", -cert, /tls/tls.crt, -key, /tls/tls.key, -control, ":8080"]
+          ports:
+            - containerPort: 8443
+            - containerPort: 8080
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            periodSeconds: 2
+          volumeMounts:
+            - {name: tls, mountPath: /tls, readOnly: true}
+      volumes:
+        - name: tls
+          secret: {secretName: toolhost-tls}
+---
+# The bound name of the tool API.
+apiVersion: v1
+kind: Service
+metadata:
+  name: toolhost
+  namespace: scrim-e2e
+spec:
+  selector: {app: toolhost}
+  ports:
+    - {name: https, port: 443, targetPort: 8443}
+---
+# The same server under a name no credential is bound to.
+apiVersion: v1
+kind: Service
+metadata:
+  name: unbound
+  namespace: scrim-e2e
+spec:
+  selector: {app: toolhost}
+  ports:
+    - {name: https, port: 443, targetPort: 8443}
+---
+# What the tool host received, for the test.
+apiVersion: v1
+kind: Service
+metadata:
+  name: toolhost-control
+  namespace: scrim-e2e
+spec:
+  selector: {app: toolhost}
+  ports:
+    - {name: http, port: 8080, targetPort: 8080}

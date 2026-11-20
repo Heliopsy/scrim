@@ -1,0 +1,2 @@
+# expect: admin.tcp.enabled needs admin.tcp.tokenSecret.name
+admin: {tcp: {enabled: true}}

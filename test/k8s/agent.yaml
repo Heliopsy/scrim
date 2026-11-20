@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# An agent pod of test/k8s/e2e.sh: curl in a loop-free shell, labelled for
+# injection. @MODE@ is central or sidecar, @TOOLS@ the tools image. Nothing
+# about scrim is in it; Kyverno adds the environment, the CA and, in sidecar
+# mode, the in-pod scrim and the egress guard.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: agent-@MODE@
+  labels:
+    scrim.dev/inject: @MODE@
+spec:
+  terminationGracePeriodSeconds: 1
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: agent
+      image: @TOOLS@
+      imagePullPolicy: Never
+      command: [sleep, "86400"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}

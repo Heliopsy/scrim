@@ -1,0 +1,19 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- if and .Values.central.enabled .Values.central.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "scrim.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scrim.labels" . | nindent 4 }}
+spec:
+  {{- if not (eq (toString .Values.central.pdb.minAvailable) "") }}
+  minAvailable: {{ .Values.central.pdb.minAvailable }}
+  {{- else }}
+  maxUnavailable: {{ .Values.central.pdb.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "scrim.selectorLabels" . | nindent 6 }}
+{{- end }}
