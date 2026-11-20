@@ -7,6 +7,12 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+  # rustls-pemfile is unmaintained; its replacement is the PEM support in
+  # rustls-pki-types. It is a dev-dependency of scrim-toolproxy's tests only and
+  # is not in any shipped binary. Remove this entry when those tests move off it.
+  { id = "RUSTSEC-2025-0134", reason = "test-only dev-dependency of scrim-toolproxy" },
+]
 
 [licenses]
 version = 2
