@@ -135,8 +135,7 @@ an emulator in podman. State backends follow the same shape with `state.Register
   Its archive, checksum and signing steps are a few lines of shell here.
 - No cross linker, no cargo-zigbuild. Each Linux data plane is built on a native runner of its
   architecture (GitHub's `ubuntu-24.04` for amd64 and `ubuntu-24.04-arm` for arm64) against musl,
-  both darwin targets on one macOS runner with Apple's toolchain (the self-hosted Mac for a release,
-  GitHub's `macos-15` for a pull request). The Go
+  both darwin targets on GitHub's `macos-15` with Apple's toolchain. The Go
   control plane is `CGO_ENABLED=0` and cross-compiles from one Linux runner, embedding the data
   plane built for the same target. Zig would add a third toolchain whose libc and linker nobody else
   tests.

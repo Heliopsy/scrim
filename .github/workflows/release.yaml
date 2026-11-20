@@ -29,10 +29,9 @@ name: Release
 # - linux-arm64 data plane: GitHub's ubuntu-24.04-arm. There is no self-hosted
 #   Linux arm64 runner, and a cross build would need the cross linker or
 #   cargo-zigbuild that the native musl build exists to avoid (AGENTS.md).
-# - darwin data planes: the self-hosted Mac (self-hosted, macOS, ARM64) for a
-#   release, both targets with Apple's toolchain. It is a personal machine, so
-#   pull requests build darwin on GitHub's macos-15 instead and code from a
-#   pull request never runs on it.
+# - darwin data planes: GitHub's macos-15, both targets with Apple's
+#   toolchain, for pull requests and releases. No Mac runner is registered for
+#   the org (the self-hosted Mac belongs to other repositories).
 # - reproduce: another GitHub ubuntu-24.04 runner and a different checkout
 #   path from the build it is compared with.
 # - image-check and image: GitHub-hosted, they need podman.
@@ -111,7 +110,10 @@ jobs:
               echo "::error::dispatch the release from $DEFAULT_BRANCH, not $GITHUB_REF"
               exit 1
             fi
-            mac_runner='["self-hosted","macOS","ARM64"]'
+            # GitHub's macos-15 until a Mac runner is registered for the org;
+            # the self-hosted Mac belongs to other repositories, so a release
+            # job asking for it waits forever.
+            mac_runner='"macos-15"'
             tag=${INPUT_TAG:-$GITHUB_REF_NAME}
             if ! [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
               echo "::error::'$tag' is not a release tag (vMAJOR.MINOR.PATCH[-PRERELEASE])"
