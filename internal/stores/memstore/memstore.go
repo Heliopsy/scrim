@@ -105,6 +105,11 @@ func (s *Store) Read(_ context.Context, ref stores.Ref) (stores.Secret, error) {
 	if err := s.fail(stores.OpRead, ref, stores.CapRead); err != nil {
 		return stores.Secret{}, err
 	}
+	if ref.Selectors != "" {
+		// The memory store keeps one version; a selector it cannot honour
+		// is refused rather than ignored.
+		return stores.Secret{}, stores.NewError(s.name, stores.OpRead, ref, stores.ErrInvalidRef, nil)
+	}
 	e, ok := s.data[ref.Path]
 	if !ok {
 		return stores.Secret{}, stores.NewError(s.name, stores.OpRead, ref, stores.ErrNotFound, nil)

@@ -24,6 +24,8 @@ import (
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/version"
+	"github.com/heliopsy/scrim/internal/stores/refresh"
+	"github.com/heliopsy/scrim/internal/stores/storeconfig"
 )
 
 // App is the running control plane's components.
@@ -38,6 +40,9 @@ type App struct {
 	Stores   *stores.Set
 	Policy   policy.Engine
 	Notifier notify.Notifier
+	// Refreshers keep each store's values for redaction and injection;
+	// Start runs them.
+	Refreshers []*refresh.Refresher
 	// Instruments are the shared scrim metrics; Tracing the tracer.
 	Instruments *obs.Instruments
 	Tracing     *obs.Tracing
@@ -106,6 +111,17 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 	a.Health.Live("process", func(context.Context) error { return nil })
 	a.Health.Ready("state", a.State.Health)
 
+	opened, err := storeconfig.Open(ctx, cfg, stores.DefaultRegistry)
+	if err != nil {
+		_ = a.State.Close()
+		return nil, err
+	}
+	a.Stores, a.Refreshers = opened.Set, opened.Refreshers
+	for _, r := range a.Refreshers {
+		// Not ready until the store's first load: requests that depend on
+		// it are refused rather than forwarded with a partial redaction set.
+		a.Health.Ready("store "+r.Store(), r.Ready)
+	}
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	a.stop = cancel
 	go func() {
@@ -116,6 +132,13 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 	return a, nil
 }
 
+// Start runs every store refresher until ctx ends.
+func (a *App) Start(ctx context.Context) {
+	for _, r := range a.Refreshers {
+		go r.Run(ctx)
+	}
+}
+
 // Close releases everything New opened.
 func (a *App) Close() error {
 	if a.stop != nil {
@@ -124,6 +147,9 @@ func (a *App) Close() error {
 	var errs []error
 	if a.Tracing != nil {
 		errs = append(errs, a.Tracing.Shutdown(context.Background()))
+	}
+	for _, r := range a.Refreshers {
+		r.Close()
 	}
 	if a.Stores != nil {
 		errs = append(errs, a.Stores.Close())
