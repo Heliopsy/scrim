@@ -1,0 +1,25 @@
+# scrim from the kustomize overlays in your fleet repository (a copy of
+# deploy/examples/kubernetes/kustomize under scrim/). One Application per
+# cluster; applicationset.yaml generates them for every environment.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: scrim-staging
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: scrim
+  destination:
+    name: staging
+    namespace: scrim
+  source:
+    repoURL: https://github.com/example-org/fleet
+    targetRevision: main
+    path: scrim/overlays/staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

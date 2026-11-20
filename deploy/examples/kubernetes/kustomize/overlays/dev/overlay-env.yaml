@@ -1,0 +1,6 @@
+apiVersion: scrim.dev/v1
+kind: Config
+catalog:
+  environment: dev
+log:
+  level: debug

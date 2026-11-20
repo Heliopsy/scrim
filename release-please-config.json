@@ -11,6 +11,54 @@
         {
           "type": "generic",
           "path": "deploy/helm/scrim/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/examples/ansible/roles/scrim/defaults/main.yml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/examples/cloud-init/user-data.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/examples/kubernetes/kustomize/base/deployment.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/examples/kubernetes/kustomize/base/kustomization.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/examples/kubernetes/kustomize/overlays/prod/kustomization.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/examples/kubernetes/kustomize/overlays/staging/kustomization.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/examples/kubernetes/raw/30-deployment.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/examples/podman/compose/compose.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/examples/podman/kube/scrim.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/examples/podman/run.sh"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/examples/workstation/install.sh"
+        },
+        {
+          "type": "generic",
+          "path": "scripts/deploy-examples/cloud-init.py"
         }
       ]
     }

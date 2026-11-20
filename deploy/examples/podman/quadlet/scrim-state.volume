@@ -1,0 +1,3 @@
+# ~/.config/containers/systemd/scrim-state.volume: the named volume
+# systemd-scrim-state that holds scrim's SQLite state, placeholder key and CA.
+[Volume]

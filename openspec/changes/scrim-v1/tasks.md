@@ -154,6 +154,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [ ] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
 - [ ] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
   - progress: the system trust store (`update-ca-certificates`, `update-ca-trust`) is installed and reverted by `scrim install --system`, and a system-store client trusts scrim through the forward proxy in the VM test; Java truststore and transparent mode open
+- [x] 13.6 Deployment guides with tested examples for every target and GitOps tool (docs/deploy, deploy/examples); verify: `just deploy-examples-check` and `just deploy-examples-smoke` pass in CI
 
 ## 14. Large deployments
 

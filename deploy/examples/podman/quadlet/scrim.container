@@ -1,0 +1,47 @@
+# ~/.config/containers/systemd/scrim.container (rootless), or
+# /etc/containers/systemd/scrim.container (rootful).
+#
+# Quadlet turns this file into scrim.service at the next daemon-reload. It
+# needs the podman secret scrim-github-token and the config file at
+# ~/.config/scrim/container.yaml (deploy/examples/podman/config.yaml):
+#
+#   printf '%s' "$GITHUB_TOKEN" | podman secret create scrim-github-token -
+#   systemctl --user daemon-reload
+#   systemctl --user start scrim
+#
+# With the 0.1 tag and AutoUpdate=registry, `podman auto-update` (or its
+# timer) pulls new 0.1.x patch releases and restarts the service, and rolls
+# back when the new container fails to start.
+
+[Unit]
+Description=scrim, keeps secret values away from LLM providers
+Documentation=https://github.com/Heliopsy/scrim/blob/main/docs/deploy/containers.md
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=scrim
+Image=ghcr.io/heliopsy/scrim:0.1
+AutoUpdate=registry
+Exec=proxy
+ReadOnly=true
+DropCapability=all
+NoNewPrivileges=true
+Tmpfs=/run/scrim:rw,mode=0700,U
+Environment=XDG_RUNTIME_DIR=/run/scrim
+Volume=scrim-state.volume:/var/lib/scrim
+Volume=%h/.config/scrim/container.yaml:/etc/scrim/config.yaml:ro,Z
+Secret=scrim-github-token,target=/run/scrim-secrets/agents/github-token,uid=65532,gid=65532,mode=0400
+PublishPort=127.0.0.1:9790:9790
+PublishPort=127.0.0.1:9791:9791
+PublishPort=127.0.0.1:9792:9792
+HealthCmd=["/usr/local/bin/scrim", "doctor", "--timeout", "5s"]
+HealthInterval=30s
+HealthStartPeriod=20s
+
+[Service]
+Restart=on-failure
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

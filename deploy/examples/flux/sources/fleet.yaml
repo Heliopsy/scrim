@@ -1,0 +1,16 @@
+# Only when scrim's manifests live in another repository than the one
+# `flux bootstrap` set up as flux-system: a second source for it. Replace the
+# URL, create the deploy key Secret fleet-deploy-key with `flux create secret
+# git`, and use `name: fleet` in the Kustomizations' sourceRef.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: fleet
+  namespace: flux-system
+spec:
+  interval: 5m
+  url: ssh://git@github.com/example-org/fleet
+  ref:
+    branch: main
+  secretRef:
+    name: fleet-deploy-key

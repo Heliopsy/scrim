@@ -443,6 +443,7 @@ veil's per-tool policy.
 | Page | Covers |
 | --- | --- |
 | [docs/install.md](docs/install.md) | Release archives, signature and provenance checks, images, reproducible builds |
+| [docs/deploy/README.md](docs/deploy/README.md) | Deployment examples for every target: workstation, systemd, cloud-init, Ansible, podman, Kubernetes, Helm, Flux, Argo CD |
 | [docs/configuration.md](docs/configuration.md) | Config files, environment, flags, precedence, reload and every setting |
 | [docs/stores/README.md](docs/stores/README.md) | Store adapters, capabilities, freshness and outages |
 | [docs/stores/openbao.md](docs/stores/openbao.md) | OpenBao and Vault-compatible KV v2 |

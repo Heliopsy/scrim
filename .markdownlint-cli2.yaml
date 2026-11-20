@@ -8,6 +8,8 @@ ignores:
   - ".worktrees/**"
   - "target/**"
   - "dataplane/target/**"
+  # Pinned tools `just deploy-examples-check` installs, with their own docs.
+  - ".tools/**"
   # OpenSpec's own agent prompts, written by `openspec init`/`update`.
   - ".claude/**"
   # Written by the benchmark harness.

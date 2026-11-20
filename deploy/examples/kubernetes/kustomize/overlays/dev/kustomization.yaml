@@ -1,0 +1,15 @@
+# dev: follows the newest 0.1.x image. Flux image automation rewrites the tag
+# below (the marker comment names its ImagePolicy); staging and prod move only
+# through reviewed commits.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+configMapGenerator:
+  - name: scrim-config
+    behavior: merge
+    files:
+      - overlay-env.yaml
+images:
+  - name: ghcr.io/heliopsy/scrim
+    newTag: 0.1.0 # {"$imagepolicy": "flux-system:scrim:tag"}
