@@ -1,0 +1,41 @@
+# scrim from the signed OCI chart (sources/scrim-chart.yaml). The values are a
+# ConfigMap generated from values.yaml next to this file, so a values change
+# is a reviewed commit and a new ConfigMap name. scrim logs in to OpenBao with
+# its own service account, so no store credential is in the cluster; the
+# PostgreSQL DSN, when you add it, is a Secret from SOPS or External Secrets
+# (deploy/examples/secrets), referenced by name, never inline.
+#
+# helm-controller renders with cluster access, so the chart's generated CA,
+# placeholder key and metrics token are read back on every upgrade; Flux needs
+# no values-gitops.yaml.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: scrim
+  namespace: scrim
+spec:
+  interval: 30m
+  releaseName: scrim
+  chartRef:
+    kind: OCIRepository
+    name: scrim-chart
+    namespace: flux-system
+  # From git instead (sources/scrim-chart-git.yaml): replace chartRef with
+  #   chart:
+  #     spec:
+  #       chart: ./deploy/helm/scrim
+  #       reconcileStrategy: Revision
+  #       sourceRef: {kind: GitRepository, name: scrim, namespace: flux-system}
+  valuesFrom:
+    - kind: ConfigMap
+      name: scrim-values
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+      strategy: rollback
+  driftDetection:
+    mode: enabled

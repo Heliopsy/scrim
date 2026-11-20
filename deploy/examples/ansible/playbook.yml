@@ -1,0 +1,9 @@
+---
+# ansible-playbook -i inventory.ini playbook.yml
+# ansible-playbook -i inventory.ini playbook.yml -e scrim_version=0.1.0   # pin or roll back
+# ansible-playbook -i inventory.ini playbook.yml -e scrim_state=absent    # uninstall
+- name: Run scrim as a system service
+  hosts: scrim
+  become: true
+  roles:
+    - role: scrim

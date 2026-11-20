@@ -1,0 +1,29 @@
+# /etc/scrim/config.yaml inside the compose service.
+#
+# Compose has no portable way to hand a file to a non-root container user, so
+# this example reads the secret from scrim's environment, which compose fills
+# from the shell that runs `podman compose up`. Nothing secret is in a file.
+apiVersion: scrim.dev/v1
+kind: Config
+
+stores:
+  local:
+    kind: env
+    prefix: SCRIM_SECRET_
+    redact:
+      - local://SCRIM_SECRET_GITHUB_TOKEN
+
+catalog:
+  entries:
+    github:
+      ref: local://SCRIM_SECRET_GITHUB_TOKEN
+      hosts: [api.github.com]
+      placeholder: SCRIM_GITHUB_TOKEN
+      inject: ["header:Authorization"]
+
+proxy:
+  listen: 0.0.0.0:9790
+  forward-listen: 0.0.0.0:9791
+
+metrics:
+  listen: 0.0.0.0:9792

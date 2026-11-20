@@ -1,0 +1,35 @@
+---
+- name: Stop and disable scrim
+  ansible.builtin.systemd_service:
+    name: scrim.service
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Remove the unit, binary and download cache
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/scrim.service
+    - "{{ scrim_bin }}"
+    - /var/cache/scrim-install
+
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Remove config, secrets and state
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/scrim
+    - /var/lib/scrim
+  when: scrim_purge | bool
+
+- name: Remove the scrim user
+  ansible.builtin.user:
+    name: scrim
+    state: absent
+  when: scrim_purge | bool
