@@ -42,10 +42,11 @@ var (
 	})
 	// MlockSetting is passed to the data plane as SCRIM_DP_MLOCK.
 	MlockSetting = config.Register(config.Spec[string]{
-		Key:         "dataplane.memory-lock",
-		Default:     "auto",
-		Enum:        []string{"auto", "require"},
-		Description: "Lock the data plane's memory so values are never swapped: auto locks when the memlock limit is unlimited and warns otherwise; require refuses to start without it.",
+		Key:             "dataplane.memory-lock",
+		Default:         "auto",
+		Enum:            []string{"auto", "require"},
+		Description:     "Lock the data plane's memory so values are never swapped: auto locks when the memlock limit is unlimited and warns otherwise; require refuses to start without it.",
+		RestartRequired: true,
 	})
 	// StartTimeout bounds launch plus handshake.
 	StartTimeout = config.Register(config.Spec[time.Duration]{
