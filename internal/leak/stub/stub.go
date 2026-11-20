@@ -25,7 +25,16 @@ import (
 
 // PassThrough returns a reverse proxy that forwards every request unchanged.
 func PassThrough(upstream *url.URL) http.Handler {
-	return httputil.NewSingleHostReverseProxy(upstream)
+	rp := httputil.NewSingleHostReverseProxy(upstream)
+	rp.Transport = transport()
+	rp.FlushInterval = -1
+	return rp
+}
+
+// transport gives each stand-in its own connection pool, so it never shares
+// connections with the harness client or another stand-in.
+func transport() *http.Transport {
+	return http.DefaultTransport.(*http.Transport).Clone()
 }
 
 // Placeholder renders the design D3 placeholder for a seed under key.
@@ -76,7 +85,7 @@ func Naive(upstream *url.URL, seeds []leak.Seed) http.Handler {
 		r.Body = io.NopCloser(bytes.NewReader(b))
 		r.ContentLength = int64(len(b))
 		r.Header.Set("Content-Length", strconv.Itoa(len(b)))
-	}}
+	}, Transport: transport(), FlushInterval: -1}
 	rp.ModifyResponse = func(resp *http.Response) error {
 		b, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()

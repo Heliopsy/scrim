@@ -37,6 +37,10 @@ type Target struct {
 	Client *http.Client
 }
 
+// defaultClient has its own connection pool, separate from
+// http.DefaultTransport, which in-process stand-in proxies may also use.
+var defaultClient = &http.Client{Timeout: 60 * time.Second, Transport: http.DefaultTransport.(*http.Transport).Clone()}
+
 // Send sends one request through the proxy and returns status and body.
 func (t Target) Send(ctx context.Context, r Request) (int, []byte, error) {
 	u := strings.TrimRight(t.BaseURL, "/") + t.Prefix[r.API] + r.Path
@@ -65,7 +69,7 @@ func (t Target) Send(ctx context.Context, r Request) (int, []byte, error) {
 	}
 	c := t.Client
 	if c == nil {
-		c = &http.Client{Timeout: 30 * time.Second}
+		c = defaultClient
 	}
 	resp, err := c.Do(hr)
 	if err != nil {
