@@ -340,6 +340,11 @@ func (r *Reviewer) review(ctx context.Context, tok []byte) (Account, error) {
 // reviewBody builds the TokenReview request by hand, so the only copy of
 // the token is one the caller wipes.
 func reviewBody(tok []byte, audience string) ([]byte, error) {
+	// Projected service account tokens are a few KB; anything far larger is
+	// not one, and bounding it keeps a hostile caller from sizing the buffer.
+	if len(tok) == 0 || len(tok) > maxTokenLen {
+		return nil, ErrMalformed
+	}
 	for _, b := range tok {
 		if !isTokenByte(b) {
 			return nil, ErrMalformed
@@ -357,6 +362,9 @@ func reviewBody(tok []byte, audience string) ([]byte, error) {
 	b = append(b, `]}}`...)
 	return b, nil
 }
+
+// maxTokenLen bounds the token scrim sends to the TokenReview API.
+const maxTokenLen = 16 << 10
 
 func isTokenByte(b byte) bool {
 	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '-' || b == '_' || b == '.'

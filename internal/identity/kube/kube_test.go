@@ -167,6 +167,7 @@ func TestReviewRefusals(t *testing.T) {
 		"not a JWT":       {"scrim_st_abc", ErrMalformed},
 		"bad payload":     {"eyJhbGciOiJSUzI1NiJ9.!!!.c2ln", ErrMalformed},
 		"quote injection": {`eyJhbGciOiJSUzI1NiJ9.eyJleHAiOjF9.a"b`, ErrMalformed},
+		"oversized":       {jwt(exp) + strings.Repeat("a", 20<<10), ErrMalformed},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := r.Review(t.Context(), []byte(c.tok))
