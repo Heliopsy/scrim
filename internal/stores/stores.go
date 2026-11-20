@@ -76,6 +76,10 @@ type Metadata struct {
 	// OpenBao custom metadata), used by the catalog. Adapters must not put
 	// values here.
 	Labels map[string]string
+	// WriteOnly marks a secret under a path the adapter is configured to
+	// treat as write-only: scrim may write it but never loads it from the
+	// store, so only the value scrim itself wrote is redacted.
+	WriteOnly bool
 }
 
 // Secret is a secret read from a store: its metadata and the values of the

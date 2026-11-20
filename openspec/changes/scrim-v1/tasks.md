@@ -51,13 +51,13 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 6. OpenBao and Infisical adapters
 
-- [ ] 6.1 Store adapter contract, capability declaration, reference scheme parser and the shared conformance suite; verify: the suite runs against a fake adapter and fails on a deliberately broken one
-- [ ] 6.2 OpenBao adapter (AppRole, KV v2 read, list, watch, write without read); verify: contract suite against OpenBao dev mode in podman
-- [ ] 6.3 Infisical adapter (Universal Auth, read, list, watch, write); verify: contract suite against a local Infisical in podman
+- [x] 6.1 Store adapter contract, capability declaration, reference scheme parser and the shared conformance suite; verify: the suite runs against a fake adapter and fails on a deliberately broken one
+- [x] 6.2 OpenBao adapter (AppRole, KV v2 read, list, watch, write without read); verify: contract suite against OpenBao dev mode in podman
+- [x] 6.3 Infisical adapter (Universal Auth, read, list, watch, write); verify: contract suite against a local Infisical in podman
 - [ ] 6.3a Secret catalog: logical names, bindings, declared placeholders, reference placeholders without a catalog; verify: rules, profiles and MCP tools accept catalog names and a literal value in a catalog fails validation
 - [ ] 6.3b Per-environment and bulk prefix mapping with collision checks; verify: one placeholder resolves to different references per profile and colliding templates fail
 - [ ] 6.3c Catalog from store metadata, catalog files, environment and hot reload, with `scrim catalog show` and `scrim catalog suggest`; verify: OpenBao custom metadata binds a host and suggestions are printed, never applied
-- [ ] 6.4 Store outage behaviour (last known set, fail closed for injection, degraded status); verify: tests that stop the store mid-run
+- [x] 6.4 Store outage behaviour (last known set, fail closed for injection, degraded status); verify: tests that stop the store mid-run
 
 ## 7. Policy, approvals and grants
 
@@ -120,7 +120,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [ ] 11a.2 AWS Secrets Manager and SSM Parameter Store adapters with ambient identity and version/stage selectors; verify: conformance suite against LocalStack in podman
 - [ ] 11a.3 Google Secret Manager and Azure Key Vault adapters with workload identity; verify: conformance suite against the services or compatible fakes
 - [ ] 11a.4 1Password, Bitwarden Secrets Manager and Doppler adapters; verify: conformance suite against each service's test account or recorded fixtures
-- [ ] 11a.5 Kubernetes Secrets adapter and local sources (env, file, SOPS file, OS keyring) with read-only capabilities declared where applicable; verify: conformance suite in kind and locally, writes to read-only sources refused
+- [x] 11a.5 Local env and file sources with read-only capabilities declared; verify: conformance suite locally, writes to read-only sources refused
+- [ ] 11a.5b Kubernetes Secrets adapter and local SOPS-file and OS keyring sources with read-only capabilities declared where applicable; verify: conformance suite in kind and locally, writes to read-only sources refused
 
 ## 12. Shared state and Kubernetes
 
