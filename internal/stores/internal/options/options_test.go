@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/heliopsy/scrim/internal/config"
 )
 
 func TestNestedDottedAndStringForms(t *testing.T) {
@@ -69,5 +71,26 @@ func TestParseSize(t *testing.T) {
 		if _, err := ParseSize(in); err == nil {
 			t.Errorf("ParseSize(%q) accepted", in)
 		}
+	}
+}
+
+func TestSecretRef(t *testing.T) {
+	d := New("s", map[string]any{
+		"a": config.SecretRef("env:A"),
+		"b": "file:/run/b",
+		"c": 3,
+	})
+	if got := d.SecretRef("a"); got != "env:A" {
+		t.Errorf("a = %q", got)
+	}
+	if got := d.SecretRef("b"); got != "file:/run/b" {
+		t.Errorf("b = %q", got)
+	}
+	if got := d.SecretRef("unset"); got != "" {
+		t.Errorf("unset = %q", got)
+	}
+	_ = d.SecretRef("c")
+	if err := d.Finish(); err == nil || !strings.Contains(err.Error(), "option c must be a secret reference") {
+		t.Errorf("Finish = %v", err)
 	}
 }

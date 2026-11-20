@@ -90,6 +90,25 @@ func (d *Decoder) SecretRef(key string) config.SecretRef {
 	return config.SecretRef(d.String(key, ""))
 }
 
+// SecretRef returns a secret-valued option in reference form (`env:NAME`,
+// `file:/path`, a store reference or a literal), or "" when unset. Both
+// config.SecretRef and plain strings are accepted. The value is not
+// resolved here.
+func (d *Decoder) SecretRef(key string) config.SecretRef {
+	v, ok := d.take(key)
+	if !ok {
+		return ""
+	}
+	switch x := v.(type) {
+	case config.SecretRef:
+		return x
+	case string:
+		return config.SecretRef(x)
+	}
+	d.fail(key, "a secret reference")
+	return ""
+}
+
 // Bool returns a boolean option, or def when unset.
 func (d *Decoder) Bool(key string, def bool) bool {
 	v, ok := d.take(key)
