@@ -201,12 +201,18 @@ references at most and SHALL never contain a value or request content.
 The proxy SHALL answer 422 (the redaction-failed status) for malformed bodies, redactor errors,
 guard errors, guard refusals and unscannable content under `block`; 503 with `Retry-After` while
 redaction is not ready; 404 for an unknown route; 413 for an oversized body; 415 for a compressed
-body; 502 for an unreachable provider or chained upstream; 500 when capture cannot record.
+body; 502 for an unreachable provider or chained upstream; 500 when capture cannot record; 403
+with `policy_denied` when a rule denies the request or its approval is denied or times out.
 
 #### Scenario: Guard refusal status
 
 - **WHEN** the guard refuses a request
 - **THEN** the agent receives status 422 and the provider receives nothing
+
+#### Scenario: Provider request denied by a rule
+
+- **WHEN** a deny rule matches `op == "llm.forward"` for the request's provider
+- **THEN** the agent receives status 403 with `x-scrim-error: policy_denied` and the provider receives nothing
 
 ### Requirement: Streaming without whole buffering
 

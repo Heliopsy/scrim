@@ -129,6 +129,29 @@ plain HTTP, a setting named for what it weakens.
   does not allow plain HTTP
 - **THEN** the request is refused as an unbound destination
 
+### Requirement: Injection follows the decision table
+
+After a credential's binding allows a request, the tool proxy SHALL decide the injection with the
+decision table (`op` `inject`, with the credential's reference, name, store and class, the
+destination host, method and path, and the caller) before anything is substituted. A deny SHALL
+refuse the whole request with status 403 and code `policy_denied`. An ask SHALL hold the request for
+the control plane's answer, bounded as every ask is, and the data plane SHALL NOT cache a grant.
+
+#### Scenario: Deny rule on a bound host
+
+- **WHEN** a credential is bound to `api.github.com` and a rule denies `op == "inject"` for `dest.path` `/admin`
+- **THEN** a request to `https://api.github.com/admin` carrying its placeholder is refused with `policy_denied` and nothing is sent upstream
+
+#### Scenario: Approval answered, then asked again
+
+- **WHEN** an ask rule covers an injection and the control plane allows the first request
+- **THEN** the first request is injected, and the next one is asked about again
+
+#### Scenario: Approval times out
+
+- **WHEN** an ask rule covers an injection and no answer arrives within the ask timeout
+- **THEN** the request is refused with `policy_denied` and nothing is sent upstream
+
 ### Requirement: Documented refusals
 
 Every refusal and withheld response from the tool proxy SHALL carry a stable error code in an

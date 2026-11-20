@@ -189,6 +189,25 @@ reference evaluator is `internal/policy` (`Snapshot.Evaluate`), and
 reproduce. The Rust data plane's evaluator (`dataplane/crates/scrim-policy`) passes all of them,
 and is property-tested against an independent port of the Go reference.
 
+Asks are held for `approvals.timeout` (sent to the data plane as `Policy.ask_timeout_millis`) and
+denied when no answer arrives in time or the control plane is not connected. The data plane never
+caches a grant: a request that needs one asks again, and the control plane checks the grant.
+
+### Injection and provider requests
+
+Each credential a request through the tool proxy would carry is decided as `op == "inject"`, with
+`secret.ref`, `secret.name`, `secret.store`, `secret.class`, `dest.host`, `dest.method` and
+`dest.path`, after its host binding allows it. A deny refuses the whole request with
+`403 policy_denied`, and nothing is sent. The default effect applies, so `default: deny` without an
+allow rule for `inject` injects nothing.
+
+Each provider request is decided as `op == "llm.forward"` with `provider`. Redaction is not governed
+by policy, so only deny and ask rules apply here: the default effect does not stop provider traffic,
+and break-glass keeps forwarding (redacted) while it stops restore and injection. A deny or a
+refused ask answers `403 policy_denied` in the provider's error shape.
+
+The agent fields come from the transport ([identity.md](identity.md#provider-and-tool-traffic)).
+
 ### Rules and restore
 
 Restoring a placeholder into a response (`op == "restore"`) is governed by the tool policy first

@@ -110,6 +110,7 @@ impl CoreEngine {
             policy,
             binary,
             routes: None,
+            gate: None,
         }
     }
 }

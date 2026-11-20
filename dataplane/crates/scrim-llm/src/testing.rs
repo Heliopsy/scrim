@@ -575,6 +575,7 @@ impl Fixture {
             policy: Arc::new(self.policy.clone()),
             binary: self.binary,
             routes: None,
+            gate: None,
         }
     }
 

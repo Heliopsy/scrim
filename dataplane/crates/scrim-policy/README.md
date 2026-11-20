@@ -48,11 +48,13 @@ Wiring notes for the data plane binary:
 
 - Build one `RestoreEngine` per applied snapshot (`from_snapshot`) and swap it with the snapshot.
   A snapshot whose `policy` or `restore` fails validation should be rejected like any other.
-- scrim-llm: use `LlmRestorePolicy::new(engine, caller)` as `Snapshot.policy`. It returns
-  `ToolMode::Buffered` for shell and edit tools. `SecretRef` must carry the value's
-  `ValueEntry.ref` (or its slug, when unique). scrim-llm inserts raw values, so `decide` keeps a
-  value that would need shell escaping (`KeepReason::NeedsEscaping`); calling
-  `restore_tool_input` on buffered arguments instead restores those escaped.
+- scrim-llm: use `LlmRestorePolicy::new(engine, caller)` as `Snapshot.policy` (the data plane
+  binds one per request through its request gate). It returns `ToolMode::Buffered` for shell and
+  edit tools. `SecretRef` must carry the value's `ValueEntry.ref` (or its slug, when unique).
+  Streamed placeholders are decided with `decide`, which keeps a value that would need shell
+  escaping (`KeepReason::NeedsEscaping`) because scrim-llm inserts raw values there; complete
+  tool calls come through scrim-llm's `RestorePolicy::restore_tool_input`, which this crate
+  implements with `restore_tool_input`, so those values are restored escaped.
 - scrim-redact: build entries with `EntryId(i)` for the `i`-th `ValueEntry` so `RedactValues` and
   `BlockPolicy` map entries to references by position (they fall back to a unique slug).
 - `Caller` carries the agent identity and provider when the listener knows them. With

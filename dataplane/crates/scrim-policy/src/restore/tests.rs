@@ -561,3 +561,58 @@ fn block_policy_for_streams() {
     };
     assert!(!f.engine.block_policy(&c, At::Text).allow(&other));
 }
+
+/// scrim-llm's placeholders over the test values.
+#[cfg(feature = "llm")]
+struct LlmValues<'a>(&'a Values);
+
+#[cfg(feature = "llm")]
+impl scrim_llm::Placeholders for LlmValues<'_> {
+    fn max_len(&self) -> usize {
+        64
+    }
+
+    fn find(&self, _text: &str) -> Option<scrim_llm::PlaceholderMatch> {
+        None
+    }
+
+    fn resolve(&self, placeholder: &str) -> Option<scrim_llm::Resolved> {
+        let (reference, class, value) = self.0.0.get(placeholder)?;
+        Some(scrim_llm::Resolved {
+            reference: scrim_llm::SecretRef::new(reference.as_str()),
+            class: match class {
+                ValueClass::Display => scrim_llm::ValueClass::Display,
+                ValueClass::Credential => scrim_llm::ValueClass::Credential,
+            },
+            value: Arc::new(scrim_llm::SecretValue::new(value.clone())),
+        })
+    }
+}
+
+#[cfg(feature = "llm")]
+#[test]
+fn llm_policy_restores_complete_tool_input_escaped() {
+    use scrim_llm::RestorePolicy as _;
+    let v = "it's a \"quoted\" value";
+    let f = fixture(
+        Settings::standard(),
+        None,
+        &[("v", D, v), ("k", C, "credential-value-123")],
+    );
+    let p = LlmRestorePolicy::new(Arc::new(f.engine), Caller::default());
+    let args = bash(&format!("echo {} && echo {}", ph("v"), ph("k")));
+    let out = p
+        .restore_tool_input("Bash", &args, &LlmValues(&f.values))
+        .unwrap();
+    let cmd: serde_json::Value = serde_json::from_str(out.text.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        cmd["command"],
+        format!("echo 'it'\\''s a \"quoted\" value' && echo {}", ph("k"))
+    );
+    assert_eq!((out.resolved, out.kept), (1, 1));
+    // Nothing to restore: no text.
+    let none = p
+        .restore_tool_input("Bash", &bash("echo hi"), &LlmValues(&f.values))
+        .unwrap();
+    assert_eq!((none.text, none.resolved, none.kept), (None, 0, 0));
+}

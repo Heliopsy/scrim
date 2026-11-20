@@ -255,9 +255,16 @@ pub struct Policy {
     #[prost(message, repeated, tag = "7")]
     pub table: ::prost::alloc::vec::Vec<TableRule>,
     /// table_format is the version of the table semantics; a data plane that
-    /// does not implement it rejects the snapshot. Currently 1.
+    /// does not implement it rejects the snapshot. Currently 1. A policy with
+    /// no table, rules, engine or compiled program may leave it 0: it is an
+    /// empty table of the current format (default_effect and break_glass only).
     #[prost(uint32, tag = "8")]
     pub table_format: u32,
+    /// ask_timeout_millis bounds how long the data plane holds an operation
+    /// that went to the control plane (AskRequest) before it denies it. 0 means
+    /// 120000, the default of `approvals.timeout`.
+    #[prost(uint64, tag = "9")]
+    pub ask_timeout_millis: u64,
 }
 /// TableRule is one rule in disjunctive normal form: it matches when any
 /// clause matches. The data plane evaluates every rule to match, no match or
@@ -524,6 +531,34 @@ pub struct AskRequest {
     /// deadline_unix_nano is when the data plane denies without an answer.
     #[prost(int64, tag = "6")]
     pub deadline_unix_nano: i64,
+    /// caller is what the transport told the data plane about who sent the
+    /// request. When it is set, the agent fields of `request` are empty: the
+    /// data plane cannot map it to an identity, and the control plane resolves
+    /// it before it evaluates the rules.
+    #[prost(message, optional, tag = "7")]
+    pub caller: ::core::option::Option<AskCaller>,
+}
+/// AskCaller is the transport identity of a request the data plane asks
+/// about. The data plane holds no session tokens and verifies none; the
+/// control plane decides what each part is worth.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AskCaller {
+    /// session_id is the scrim session the request names: the user name of
+    /// `Proxy-Authorization: Basic` on the forward proxy, or the
+    /// `x-scrim-session` header on a base-URL listener. A claim, not verified.
+    #[prost(string, tag = "1")]
+    pub session_id: ::prost::alloc::string::String,
+    /// unix_peer is set when the request came over a Unix socket listener;
+    /// peer_uid, peer_gid and peer_pid are the kernel's peer credentials then.
+    #[prost(bool, tag = "2")]
+    pub unix_peer: bool,
+    #[prost(uint32, tag = "3")]
+    pub peer_uid: u32,
+    #[prost(uint32, tag = "4")]
+    pub peer_gid: u32,
+    /// peer_pid is 0 when the platform does not report it.
+    #[prost(int32, tag = "5")]
+    pub peer_pid: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AskAnswer {
@@ -582,7 +617,8 @@ pub struct StatusResponse {
     pub redaction: ::core::option::Option<RedactionStatus>,
     /// policy_engine names how the data plane takes restore and injection
     /// decisions, for example `standin/v1` (no rule table evaluation; display
-    /// values restored in text only, credentials never) or `table/v1`.
+    /// values restored in text only, credentials never) or `table/v1` (the
+    /// decision table of format 1, scrim-policy).
     #[prost(string, tag = "12")]
     pub policy_engine: ::prost::alloc::string::String,
 }
