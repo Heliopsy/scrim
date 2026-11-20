@@ -4,6 +4,7 @@
 //! (through a chained upstream if configured), restore the response.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use bytes::Bytes;
 use http::header::{self, HeaderMap, HeaderName, HeaderValue};
@@ -19,6 +20,7 @@ use crate::config::{OnUnavailable, ProxyConfig};
 use crate::engine::{Admission, RedactReport, RequestInfo, Snapshot, SnapshotCell};
 use crate::error::Refusal;
 use crate::head;
+use crate::metrics::{LlmMetrics, RouteMetrics, Stage, UpstreamError};
 use crate::outgoing::{self, Outgoing};
 use crate::restore::{Ctx, RestoreStats};
 use crate::route::{Route, RouteError, RouteTable};
@@ -47,6 +49,7 @@ pub struct Proxy {
     client: UpstreamClient,
     audit: Arc<dyn AuditSink>,
     capture: Option<Arc<Capture>>,
+    metrics: Option<Arc<LlmMetrics>>,
 }
 
 impl std::fmt::Debug for Proxy {
@@ -65,6 +68,7 @@ struct Target<'a> {
     query: Option<&'a str>,
     method: &'a http::Method,
     headers: &'a HeaderMap,
+    metrics: Option<&'a RouteMetrics>,
 }
 
 /// Why one send failed.
@@ -230,7 +234,21 @@ impl Proxy {
             client,
             audit,
             capture,
+            metrics: None,
         })
+    }
+
+    /// Records the proxy's metrics into `m` (see [`crate::metrics`]). Without it nothing is
+    /// measured.
+    #[must_use]
+    pub fn with_metrics(mut self, m: Arc<LlmMetrics>) -> Self {
+        self.metrics = Some(m);
+        self
+    }
+
+    /// The metrics this proxy records into, if any.
+    pub fn metrics(&self) -> Option<&Arc<LlmMetrics>> {
+        self.metrics.as_ref()
     }
 
     /// The snapshot cell.
@@ -249,6 +267,13 @@ impl Proxy {
             reason = r.reason.code(),
             "request refused"
         );
+        if let Some(m) = &self.metrics {
+            let rm = route.map_or_else(|| m.route("", ""), |r| m.route(&r.name, r.provider.name()));
+            rm.refused(r.reason);
+            if r.reason == RefusalReason::ChainUnavailable {
+                rm.upstream_error(UpstreamError::ChainUnavailable);
+            }
+        }
         self.audit.record(AuditEvent::Refused {
             route: route.map(|r| r.name.clone()),
             reason: r.reason,
@@ -336,7 +361,14 @@ impl Proxy {
             Ok(s) => s,
             Err(r) => return self.refuse(Some(route), api, &r),
         };
-        let mut out = match self.prepare(&snap, api, &parts.headers, body).await {
+        let rm = self
+            .metrics
+            .as_ref()
+            .map(|m| m.route(&route.name, route.provider.name()));
+        let (mut out, began) = match self
+            .prepare(&snap, api, &parts.headers, body, rm.as_deref())
+            .await
+        {
             Ok(o) => o,
             Err(r) => return self.refuse(Some(route), api, &r),
         };
@@ -358,35 +390,44 @@ impl Proxy {
                 out.guard_repaired.push(r);
             }
         }
+        if let (Some(rm), Some(began)) = (&rm, began) {
+            rm.stage(Stage::Redaction, out.stages.redaction);
+            rm.stage(Stage::Guard, out.stages.guard);
+            rm.stage(Stage::Total, began.elapsed());
+        }
         let target = Target {
             route,
             rest: &head.path,
             query: head.query.as_deref(),
             method: &parts.method,
             headers: &headers,
+            metrics: rm.as_deref(),
         };
         match self.forward(&target, &out).await {
             Ok((upstream_resp, record, chain_skipped)) => {
-                self.audit_forwarded(route, &snap, &out, chain_skipped);
-                self.respond(route, api, snap, upstream_resp, record).await
+                self.audit_forwarded(route, &snap, &out, chain_skipped, rm.as_deref());
+                self.respond(route, api, snap, upstream_resp, record, rm)
+                    .await
             }
             Err(Forward::Refused(r)) => self.refuse(Some(route), api, &r),
             Err(Forward::AfterSend(r, chain_skipped)) => {
                 // The request may have left, so it is audited as forwarded.
-                self.audit_forwarded(route, &snap, &out, chain_skipped);
+                self.audit_forwarded(route, &snap, &out, chain_skipped, rm.as_deref());
                 r.to_response(api).map(full)
             }
         }
     }
 
-    /// Reads the body within the limit, then redacts and guards it.
+    /// Reads the body within the limit, then redacts and guards it. With metrics, also returns
+    /// when the checks began (after the body was read), for the total added latency.
     async fn prepare<B>(
         &self,
         snap: &Arc<Snapshot>,
         api: Api,
         headers: &HeaderMap,
         body: B,
-    ) -> Result<Outgoing, Refusal>
+        rm: Option<&RouteMetrics>,
+    ) -> Result<(Outgoing, Option<Instant>), Refusal>
     where
         B: Body<Data = Bytes> + Send + 'static,
         B::Error: Into<BoxError>,
@@ -412,19 +453,28 @@ impl Proxy {
                 ));
             }
         };
+        if let Some(rm) = rm {
+            rm.body_bytes(body.len());
+        }
+        let began = rm.map(|_| Instant::now());
+        let timed = began.is_some();
         if body.is_empty() && api == Api::Generic {
-            return Ok(Outgoing {
-                body: Bytes::new(),
-                report: RedactReport::default(),
-                guard_repaired: vec![],
-                unscanned: vec![],
-            });
+            return Ok((
+                Outgoing {
+                    body: Bytes::new(),
+                    report: RedactReport::default(),
+                    guard_repaired: vec![],
+                    unscanned: vec![],
+                    stages: outgoing::Stages::default(),
+                },
+                began,
+            ));
         }
         if body.len() < self.cfg.limits.offload_threshold {
-            return outgoing::prepare(snap, api, &body);
+            return outgoing::prepare_timed(snap, api, &body, timed).map(|o| (o, began));
         }
         let s = snap.clone();
-        tokio::task::spawn_blocking(move || outgoing::prepare(&s, api, &body))
+        tokio::task::spawn_blocking(move || outgoing::prepare_timed(&s, api, &body, timed))
             .await
             .unwrap_or_else(|_| {
                 Err(Refusal::new(
@@ -432,6 +482,7 @@ impl Proxy {
                     "redaction task failed",
                 ))
             })
+            .map(|o| (o, began))
     }
 
     /// Captures and sends the redacted request: to the chained upstream first when one is
@@ -493,7 +544,16 @@ impl Proxy {
         *up.method_mut() = t.method.clone();
         *up.uri_mut() = uri;
         *up.headers_mut() = t.headers.clone();
-        match self.client.request(up).await {
+        let sent = t.metrics.map(|_| Instant::now());
+        let res = self.client.request(up).await;
+        if let (Some(m), Some(sent)) = (t.metrics, sent) {
+            match &res {
+                Ok(r) => m.upstream(sent.elapsed(), r.status()),
+                Err(e) if e.is_connect() => m.upstream_error(UpstreamError::Connect),
+                Err(_) => m.upstream_error(UpstreamError::Failed),
+            }
+        }
+        match res {
             Ok(r) => Ok((r, record)),
             Err(e) if e.is_connect() => Err(SendError::Connect),
             Err(e) => {
@@ -503,7 +563,21 @@ impl Proxy {
         }
     }
 
-    fn audit_forwarded(&self, route: &Route, snap: &Snapshot, out: &Outgoing, chain_skipped: bool) {
+    fn audit_forwarded(
+        &self,
+        route: &Route,
+        snap: &Snapshot,
+        out: &Outgoing,
+        chain_skipped: bool,
+        rm: Option<&RouteMetrics>,
+    ) {
+        if let Some(rm) = rm {
+            rm.forwarded(
+                out.report.replacements,
+                out.report.detectors.len(),
+                !out.guard_repaired.is_empty(),
+            );
+        }
         self.audit.record(AuditEvent::Forwarded {
             route: route.name.clone(),
             snapshot: snap.version,
@@ -523,6 +597,7 @@ impl Proxy {
         snap: Arc<Snapshot>,
         resp: Response<hyper::body::Incoming>,
         record: Option<Record>,
+        rm: Option<Arc<RouteMetrics>>,
     ) -> Response<ProxyBody> {
         let (mut parts, body) = resp.into_parts();
         let tee = match record {
@@ -535,7 +610,11 @@ impl Proxy {
         let json = restorable && mime_is(&parts.headers, "application/json");
         let audit = self.audit.clone();
         let name = route.name.clone();
+        let end_metrics = rm.clone();
         let on_end: crate::body::OnEnd = Box::new(move |resolved, kept| {
+            if let Some(m) = end_metrics {
+                m.restored(resolved, kept);
+            }
             if resolved + kept > 0 {
                 audit.record(AuditEvent::Restored {
                     route: name,
@@ -546,7 +625,7 @@ impl Proxy {
         });
 
         if sse && let Some(r) = SseRestorer::new(api, snap.clone(), &self.cfg.limits) {
-            let b = Restoring::new(body, None, tee, Some(r), Some(on_end));
+            let b = Restoring::new(body, None, tee, Some(r), Some(on_end)).timed(rm);
             return Response::from_parts(parts, BodyExt::boxed_unsync(b));
         }
         if json && api != Api::Generic {

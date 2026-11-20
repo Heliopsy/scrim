@@ -88,6 +88,7 @@ func TestTelemetryLeak(t *testing.T) {
 			in.Redaction("anthropic", "rule-"+f, f, 1)
 			in.GuardRefusal(f, "agent")
 			in.StoreHealth(f, false, time.Now(), 1, true)
+			in.StoreRefresh(f, time.Millisecond, true)
 			raw.WithLabelValues(f).Inc()
 			span.AddEvent("event "+f, trace.WithAttributes(attribute.String("detail", f)))
 			_, end := Timed(ctx, tracing.Tracer, SpanGuard, attribute.String("rule", f))
@@ -101,7 +102,7 @@ func TestTelemetryLeak(t *testing.T) {
 	var dump strings.Builder
 	dump.WriteString(jsonLogs.String())
 	dump.WriteString(textLogs.String())
-	mux := Mux(health, metrics)
+	mux := Mux(health, metrics, MuxOptions{})
 	for _, p := range []string{"/metrics", "/readyz", "/healthz"} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))

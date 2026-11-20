@@ -244,6 +244,21 @@ impl DataPlane for Service {
         }))
     }
 
+    async fn metrics(
+        &self,
+        req: Request<v1::MetricsRequest>,
+    ) -> Result<Response<v1::MetricsResponse>, Status> {
+        check(req.into_inner().protocol)?;
+        Ok(Response::new(
+            self.shared
+                .metrics
+                .as_ref()
+                .map_or_else(crate::metrics::disabled, |m| {
+                    m.export(self.shared.events.dropped_total())
+                }),
+        ))
+    }
+
     type CapturesStream = BoxStream<v1::CaptureRequest>;
 
     async fn captures(

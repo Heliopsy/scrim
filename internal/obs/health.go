@@ -9,6 +9,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/heliopsy/scrim/internal/secret"
 )
 
 // Check reports one component's health. A nil error is healthy. The error
@@ -116,16 +118,29 @@ func (h *Health) Handler() http.Handler {
 	return mux
 }
 
-// Mux serves the health endpoints of h and, when m is not nil, /metrics:
-// everything metrics.listen exposes.
-func Mux(h *Health, m *Metrics) *http.ServeMux {
+// MuxOptions say how [Mux] serves metrics.
+type MuxOptions struct {
+	// Path is where metrics are served; empty means /metrics.
+	Path string
+	// Token, when not zero, is the bearer token the metrics path requires.
+	// The health endpoints never require it.
+	Token secret.Value
+}
+
+// Mux serves the health endpoints of h and, when m is not nil, the metrics
+// at o.Path: everything metrics.listen exposes.
+func Mux(h *Health, m *Metrics, o MuxOptions) *http.ServeMux {
 	mux := http.NewServeMux()
 	hh := h.Handler()
 	for _, p := range []string{"/healthz", "/livez", "/readyz"} {
 		mux.Handle("GET "+p, hh)
 	}
 	if m != nil {
-		mux.Handle("GET /metrics", m.Handler())
+		path := o.Path
+		if path == "" {
+			path = "/metrics"
+		}
+		mux.Handle("GET "+path, RequireBearer(m.Handler(), o.Token))
 	}
 	return mux
 }

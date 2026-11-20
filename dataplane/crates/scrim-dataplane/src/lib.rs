@@ -26,6 +26,8 @@
 //!   from, as far as its transport tells.
 //! - [`audit`] and [`captures`]: audit events of both proxies and tool-proxy
 //!   captures reach the control plane over the Events and Captures streams.
+//! - [`metrics`]: counters and histograms aggregated in process when the control plane asks
+//!   for them (`SCRIM_DP_METRICS=1`), read over the Metrics call once per scrape.
 //!
 //! The process exits when the control plane's end of the socket closes, so a
 //! dead control plane never leaves a data plane serving traffic.
@@ -39,6 +41,7 @@ pub mod harden;
 pub mod identity;
 pub mod inherit;
 pub mod listeners;
+pub mod metrics;
 pub mod policy;
 pub mod server;
 pub mod settings;
