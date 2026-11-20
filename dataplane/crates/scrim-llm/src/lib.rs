@@ -62,10 +62,11 @@ pub use body::{BoxError, ProxyBody};
 pub use codec::Api;
 pub use config::{ChainConfig, OnUnavailable, Provider, ProxyConfig, RouteConfig};
 pub use engine::{
-    BinaryPolicy, EngineError, Guard, GuardVerdict, KeepAll, PlaceholderMatch, Placeholders,
-    RedactReport, Redactor, Resolved, RestoreDecision, RestorePolicy, RestoreSite, SecretRef,
-    SecretValue, Snapshot, SnapshotCell, SnapshotSource, ToolMode, ValueClass,
+    Admission, BinaryPolicy, EngineError, Guard, GuardVerdict, KeepAll, PlaceholderMatch,
+    Placeholders, RedactReport, Redactor, RequestGate, RequestInfo, Resolved, RestoreDecision,
+    RestorePolicy, RestoreSite, SecretRef, SecretValue, Snapshot, SnapshotCell, SnapshotSource,
+    ToolInputRestore, ToolMode, ValueClass,
 };
 pub use error::{ERROR_HEADER, Refusal};
-pub use proxy::{BuildError, Proxy};
+pub use proxy::{BuildError, Proxy, SESSION_HEADER};
 pub use stream::{SseRestorer, restore_json};

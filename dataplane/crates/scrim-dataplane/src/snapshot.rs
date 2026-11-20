@@ -5,10 +5,12 @@
 //! [`build`] validates the message and derives, from one value dictionary and one keyring:
 //!
 //! - the redaction core ([`scrim_redact::Snapshot`]): redactor, guard and resolver;
+//! - the decisions ([`crate::policy::Decisions`]): the decision table from `policy` and the
+//!   restore engine from `restore` and the dictionary's metadata;
 //! - the LLM proxy's engine snapshot (the core behind `scrim-llm`'s engine traits, with the
-//!   restore policy from [`crate::policy`]) and its route table;
-//! - the tool proxy's snapshot: credentials with their bindings and generated placeholders, and
-//!   the core as its response redactor;
+//!   decisions as its request gate and restore policy) and its route table;
+//! - the tool proxy's snapshot: credentials with their bindings and generated placeholders, the
+//!   core as its response redactor and the decisions as its injection policy;
 //! - [`Applied`], the metadata the service reports (no secret bytes).
 //!
 //! Building is the expensive part (up to about a second for 10,000 values) and runs off the
@@ -26,7 +28,7 @@ use scrim_llm::{BinaryPolicy, SecretRef};
 use scrim_proto::v1;
 use scrim_redact as rc;
 
-use crate::policy::Decisions;
+use crate::policy::{self, Decisions, Hooks};
 
 /// Shortest value matched in free text when the snapshot does not say
 /// (`RedactionSettings.min_value_length` unset).
@@ -70,8 +72,8 @@ pub struct Applied {
     pub current_key: u8,
     /// Compiled policy.
     pub policy: v1::Policy,
-    /// Decisions taken under `policy`.
-    pub decisions: Decisions,
+    /// Decisions taken under `policy` and the restore settings.
+    pub decisions: Arc<Decisions>,
     /// Provider routes as received (empty means the built-in defaults).
     pub routes: Vec<v1::Route>,
     /// Listeners to bind.
@@ -175,40 +177,22 @@ fn invalid(why: impl Into<String>) -> Rejected {
     Rejected::Invalid(why.into())
 }
 
-/// Policy engines this build can run, besides the decision table.
-const ENGINES: &[&str] = &[];
-
-/// Decision table formats this build accepts (`Policy.table_format`).
-const TABLE_FORMATS: &[u32] = &[1];
-
 /// Validates `snap` against the version in force and builds every part. On error nothing is
-/// published and `snap`'s secret bytes are zeroed when it drops.
-pub fn build(mut snap: v1::Snapshot, applied: u64) -> Result<Built, Rejected> {
+/// published and `snap`'s secret bytes are zeroed when it drops. `hooks` are where the
+/// decisions send asks and events.
+pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Built, Rejected> {
     if snap.version <= applied {
         return Err(Rejected::Stale {
             offered: snap.version,
             applied,
         });
     }
-    let policy = snap.policy.take().unwrap_or_default();
-    check_policy(&policy)?;
-    for l in &snap.listeners {
-        if l.kind() == v1::ListenerKind::Unspecified || l.address.is_empty() {
-            return Err(invalid(format!(
-                "listener {:?} needs a kind and address",
-                l.name
-            )));
-        }
-    }
-    for v in &snap.values {
-        if v.value.is_empty() {
-            return Err(invalid(format!("value for {} is empty", v.r#ref)));
-        }
-    }
+    let mut policy = snap.policy.take().unwrap_or_default();
+    policy::normalise(&mut policy);
+    check_entries(&snap)?;
     let routes = RouteTable::new(&route_configs(&snap.routes)?)
         .map_err(|e| invalid(format!("routes: {e}")))?;
     let keyring = Arc::new(keyring(&snap.placeholder_keys, !snap.values.is_empty())?);
-    let decisions = Decisions::new(&policy);
     let min_value_length = match snap.redaction.as_ref().map(|r| r.min_value_length) {
         None | Some(0) => DEFAULT_MIN_VALUE_LENGTH,
         Some(n) => n.max(4),
@@ -216,6 +200,16 @@ pub fn build(mut snap: v1::Snapshot, applied: u64) -> Result<Built, Rejected> {
 
     // The redaction core. Entry id i is the i-th value of the snapshot.
     let slugs: Vec<rc::RefSlug> = snap.values.iter().map(slug_of).collect();
+    let decisions = Arc::new(
+        Decisions::new(
+            snap.version,
+            &policy,
+            snap.restore.as_ref(),
+            value_index(&snap.values, &slugs),
+            hooks.clone(),
+        )
+        .map_err(|e| invalid(e.to_string()))?,
+    );
     let entries = snap
         .values
         .iter()
@@ -240,7 +234,7 @@ pub fn build(mut snap: v1::Snapshot, applied: u64) -> Result<Built, Rejected> {
     );
 
     let bound_hosts: Vec<Vec<String>> = snap.values.iter().map(|v| v.bound_hosts.clone()).collect();
-    let tool_proxy = tool_proxy_snapshot(&mut snap, &keyring, &core, decisions)?;
+    let tool_proxy = tool_proxy_snapshot(&mut snap, &keyring, &core, &decisions)?;
 
     // The LLM proxy's engine.
     let engine = CoreEngine::new(
@@ -250,12 +244,14 @@ pub fn build(mut snap: v1::Snapshot, applied: u64) -> Result<Built, Rejected> {
             .enumerate()
             .map(|(i, v)| (rc::EntryId(i as u64), SecretRef::new(v.r#ref.as_str()))),
     );
+    // The snapshot-wide policy is for an unknown caller; the gate binds it to each request's.
     let mut llm = engine.snapshot(
         snap.version,
-        Arc::new(decisions.restore_policy()),
+        Arc::new(decisions.restore_policy(scrim_policy::Caller::default())),
         BinaryPolicy::Pass,
     );
     llm.routes = Some(Arc::new(routes));
+    llm.gate = Some(decisions.llm_gate());
 
     let values = snap
         .values
@@ -292,16 +288,35 @@ pub fn build(mut snap: v1::Snapshot, applied: u64) -> Result<Built, Rejected> {
     })
 }
 
+/// Every listener has a kind and an address, every value bytes.
+fn check_entries(snap: &v1::Snapshot) -> Result<(), Rejected> {
+    for l in &snap.listeners {
+        if l.kind() == v1::ListenerKind::Unspecified || l.address.is_empty() {
+            return Err(invalid(format!(
+                "listener {:?} needs a kind and address",
+                l.name
+            )));
+        }
+    }
+    for v in &snap.values {
+        if v.value.is_empty() {
+            return Err(invalid(format!("value for {} is empty", v.r#ref)));
+        }
+    }
+    Ok(())
+}
+
 /// The tool proxy's snapshot: credentials with generated placeholders (current key first), the
-/// core as response redactor. Under break-glass no credential keeps a binding, so none is
-/// injected; the caller keeps the original bindings for status.
+/// core as response redactor, the decisions as injection policy. Under break-glass no
+/// credential keeps a binding either, so none is injected; the caller keeps the original
+/// bindings for status.
 fn tool_proxy_snapshot(
     snap: &mut v1::Snapshot,
     keyring: &rc::Keyring,
     core: &Arc<rc::Snapshot>,
-    decisions: Decisions,
+    decisions: &Arc<Decisions>,
 ) -> Result<scrim_toolproxy::Snapshot, Rejected> {
-    if !decisions.injection_allowed() {
+    if decisions.break_glass() {
         for v in &mut snap.values {
             v.bound_hosts.clear();
         }
@@ -317,23 +332,25 @@ fn tool_proxy_snapshot(
     let handle = Arc::new(rc::SnapshotHandle::new());
     handle.store(Arc::clone(core));
     tool_proxy.redactor = Some(Arc::new(scrim_toolproxy::CoreRedactor::new(handle)));
+    tool_proxy.injection = Some(decisions.injection_policy());
     Ok(tool_proxy)
 }
 
-fn check_policy(policy: &v1::Policy) -> Result<(), Rejected> {
-    if !policy.engine.is_empty() && !ENGINES.contains(&policy.engine.as_str()) {
-        return Err(invalid(format!(
-            "policy engine {:?} is not supported by this data plane",
-            policy.engine
-        )));
+/// The restore engine's value index: entry `i` is `values[i]`, with the slug the redaction core
+/// uses for it, so placeholders map back to their entries by position and slug.
+fn value_index(values: &[v1::ValueEntry], slugs: &[rc::RefSlug]) -> scrim_policy::ValueIndex {
+    let mut ix = scrim_policy::ValueIndex::new();
+    for (e, slug) in values.iter().zip(slugs) {
+        ix.push(scrim_policy::ValueInfo {
+            reference: e.r#ref.as_str().into(),
+            slug: slug.as_str().into(),
+            class: scrim_policy::ValueClass::from_proto(e.class),
+            name: e.name.as_str().into(),
+            store: e.store.as_str().into(),
+            traits: scrim_policy::escape::ValueTraits::of(&e.value),
+        });
     }
-    if !policy.table.is_empty() && !TABLE_FORMATS.contains(&policy.table_format) {
-        return Err(invalid(format!(
-            "policy table format {} is not supported by this data plane",
-            policy.table_format
-        )));
-    }
-    Ok(())
+    ix
 }
 
 fn core_class(c: v1::ValueClass) -> rc::ValueClass {
@@ -500,7 +517,7 @@ mod tests {
     }
 
     fn ok(s: v1::Snapshot) -> Built {
-        match build(s, 0) {
+        match build(s, 0, &Hooks::default()) {
             Ok(b) => b,
             Err(e) => panic!("rejected: {e}"),
         }
@@ -603,7 +620,7 @@ mod tests {
     #[test]
     fn rejects() {
         assert_eq!(
-            build(snap(3), 3).err(),
+            build(snap(3), 3, &Hooks::default()).err(),
             Some(Rejected::Stale {
                 offered: 3,
                 applied: 3
@@ -612,7 +629,7 @@ mod tests {
         let reject = |f: &dyn Fn(&mut v1::Snapshot)| {
             let mut s = snap(1);
             f(&mut s);
-            match build(s, 0) {
+            match build(s, 0, &Hooks::default()) {
                 Err(Rejected::Invalid(why)) => {
                     assert!(!why.contains("runtime-made-value"), "{why}");
                     why
@@ -665,6 +682,6 @@ mod tests {
             table_format: 1,
             ..Default::default()
         });
-        assert!(build(s, 0).is_ok());
+        assert!(build(s, 0, &Hooks::default()).is_ok());
     }
 }

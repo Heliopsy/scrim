@@ -16,7 +16,7 @@ use crate::body::{BoxError, ProxyBody, Restoring, full};
 use crate::capture::{Capture, CaptureError, Record};
 use crate::codec::{self, Api};
 use crate::config::{OnUnavailable, ProxyConfig};
-use crate::engine::{RedactReport, Snapshot, SnapshotCell};
+use crate::engine::{Admission, RedactReport, RequestInfo, Snapshot, SnapshotCell};
 use crate::error::Refusal;
 use crate::head;
 use crate::outgoing::{self, Outgoing};
@@ -104,9 +104,10 @@ enum Forward {
 }
 
 /// Request headers never forwarded: hop-by-hop headers (RFC 9110 section 7.6.1), `host` (set
-/// from the upstream URI), `content-length` (recomputed after redaction) and `accept-encoding`
-/// (replaced by `identity` so responses can be restored).
+/// from the upstream URI), `content-length` (recomputed after redaction), `accept-encoding`
+/// (replaced by `identity` so responses can be restored) and scrim's own session header.
 const STRIP_REQUEST: &[&str] = &[
+    SESSION_HEADER,
     "connection",
     "keep-alive",
     "proxy-connection",
@@ -120,6 +121,10 @@ const STRIP_REQUEST: &[&str] = &[
     "content-length",
     "accept-encoding",
 ];
+
+/// The header an agent names its scrim session in on a base-URL listener (`x-scrim-session:
+/// <session id>`). Read by the request gate, never forwarded.
+pub const SESSION_HEADER: &str = "x-scrim-session";
 
 /// Response headers never forwarded.
 const STRIP_RESPONSE: &[&str] = &[
@@ -148,6 +153,33 @@ fn strip(headers: &mut HeaderMap, names: &[&str]) {
     }
     for n in names {
         headers.remove(*n);
+    }
+}
+
+/// Runs the snapshot's request gate, if any. Returns the snapshot the request uses from here
+/// on: the same one with the restore policy bound to this request's caller.
+async fn admit(
+    snap: Arc<Snapshot>,
+    route: &Route,
+    parts: &http::request::Parts,
+) -> Result<Arc<Snapshot>, Refusal> {
+    let Some(gate) = snap.gate.clone() else {
+        return Ok(snap);
+    };
+    let info = RequestInfo {
+        route: &route.name,
+        provider: route.provider.name(),
+        headers: &parts.headers,
+        extensions: &parts.extensions,
+    };
+    match gate.admit(info).await {
+        Admission::Forward { policy } => {
+            let mut s = (*snap).clone();
+            s.policy = policy;
+            s.gate = None;
+            Ok(Arc::new(s))
+        }
+        Admission::Deny { detail } => Err(Refusal::new(RefusalReason::PolicyDenied, detail)),
     }
 }
 
@@ -280,6 +312,10 @@ impl Proxy {
             return self.refuse(Some(route), api, &r);
         };
         let (parts, body) = req.into_parts();
+        let snap = match admit(snap, route, &parts).await {
+            Ok(s) => s,
+            Err(r) => return self.refuse(Some(route), api, &r),
+        };
         let mut out = match self.prepare(&snap, api, &parts.headers, body).await {
             Ok(o) => o,
             Err(r) => return self.refuse(Some(route), api, &r),

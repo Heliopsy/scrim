@@ -10,8 +10,30 @@
 
 use std::cell::Cell;
 
-use crate::engine::{PlaceholderMatch, RestoreDecision, RestoreSite, Snapshot, ValueClass};
+use crate::engine::{
+    PlaceholderMatch, Placeholders, Resolved, RestoreDecision, RestoreSite, Snapshot, ValueClass,
+};
 use crate::json;
+
+/// The snapshot's placeholders with credentials taken out: what a policy that restores tool
+/// arguments itself gets, so a credential cannot be restored whatever the policy does.
+struct DisplayOnly<'a>(&'a dyn Placeholders);
+
+impl Placeholders for DisplayOnly<'_> {
+    fn max_len(&self) -> usize {
+        self.0.max_len()
+    }
+
+    fn find(&self, text: &str) -> Option<PlaceholderMatch> {
+        self.0.find(text)
+    }
+
+    fn resolve(&self, placeholder: &str) -> Option<Resolved> {
+        self.0
+            .resolve(placeholder)
+            .filter(|r| r.class == ValueClass::Display)
+    }
+}
 
 /// How resolved values are written into the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,12 +250,32 @@ impl StreamText {
 }
 
 /// Restores a complete text. Returns `None` when nothing was resolved.
+///
+/// When `text` is a tool call's complete arguments, the policy may restore them itself
+/// ([`crate::RestorePolicy::restore_tool_input`]), escaping each value for where it lands.
 pub(crate) fn restore_complete(
     ctx: &Ctx<'_>,
     site: &RestoreSite<'_>,
     kind: TextKind,
     text: &str,
 ) -> Option<String> {
+    if let RestoreSite::ToolInput {
+        tool,
+        arguments: Some(arguments),
+    } = *site
+        && arguments == text
+        && let Some(r) = ctx.snap.policy.restore_tool_input(
+            tool,
+            text,
+            &DisplayOnly(ctx.snap.placeholders.as_ref()),
+        )
+    {
+        ctx.stats
+            .resolved
+            .set(ctx.stats.resolved.get() + r.resolved);
+        ctx.stats.kept.set(ctx.stats.kept.get() + r.kept);
+        return r.text.filter(|_| r.resolved > 0);
+    }
     let before = ctx.stats.resolved.get();
     let mut st = StreamText::new(kind);
     let mut out = String::with_capacity(text.len());

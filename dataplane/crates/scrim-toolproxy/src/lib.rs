@@ -54,6 +54,7 @@ mod ca;
 mod capture;
 mod codec;
 mod credential;
+mod decide;
 mod digest;
 mod engine;
 mod error;
@@ -81,6 +82,7 @@ pub use credential::{
     Location, Locations, MIN_DECLARED_PLACEHOLDER_LEN, Placeholder, PlaceholderKind,
     ValidationError,
 };
+pub use decide::{ClientInfo, InjectionDecision, InjectionPolicy, InjectionRequest, is_session_id};
 pub use engine::{RequestSigner, Snapshot, ToolProxyConfig};
 pub use error::{ErrorCode, Refusal};
 pub use host::{Destination, HostPattern, HostPatternError, Scheme};

@@ -1450,6 +1450,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "scrim-llm",
+ "scrim-policy",
  "scrim-proto",
  "scrim-redact",
  "scrim-toolproxy",

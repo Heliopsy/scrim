@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::capture::{CaptureRule, CaptureRuleSpec, CapturedValues};
 use crate::credential::{CredentialSet, CredentialSpec, ValidationError};
+use crate::decide::InjectionPolicy;
 use crate::error::Refusal;
 use crate::host::Destination;
 use crate::inject::Injector;
@@ -84,6 +85,8 @@ pub struct Snapshot {
     /// The redaction core's matcher over every known value. When `None`, responses are redacted
     /// against the credential values only.
     pub redactor: Option<Arc<dyn Redactor>>,
+    /// Per-request injection decisions. `None` injects wherever the bindings allow.
+    pub injection: Option<Arc<dyn InjectionPolicy>>,
 }
 
 impl Snapshot {
@@ -115,6 +118,7 @@ impl Snapshot {
             credentials,
             capture_rules,
             redactor: None,
+            injection: None,
         })
     }
 }
@@ -126,6 +130,7 @@ pub(crate) struct Engine {
     pub(crate) injector: Arc<Injector>,
     pub(crate) redactors: RedactorChain,
     pub(crate) capture_rules: Vec<CaptureRule>,
+    pub(crate) injection: Option<Arc<dyn InjectionPolicy>>,
 }
 
 impl Engine {
@@ -160,6 +165,7 @@ impl Engine {
             injector,
             redactors: RedactorChain(vec![base, captured]),
             capture_rules: s.capture_rules,
+            injection: s.injection,
         })
     }
 

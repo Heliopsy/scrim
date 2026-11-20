@@ -26,6 +26,14 @@ pub enum Provider {
 }
 
 impl Provider {
+    /// The provider's name in policy rules (`provider`): `anthropic` or `openai`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Provider::Anthropic => "anthropic",
+            Provider::Openai => "openai",
+        }
+    }
+
     /// The API a request speaks, from its method and the path after the route prefix.
     pub fn api_for(self, method: &http::Method, path: &str) -> Api {
         if method != http::Method::POST {
