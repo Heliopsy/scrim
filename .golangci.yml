@@ -24,9 +24,6 @@ linters:
       # the %w check is enforced.
       comparison: false
       asserts: false
-    misspell:
-      # Deliberate typos in tests of "did you mean" suggestions.
-      ignore-rules: [adress, levle, aprovals]
     forbidigo:
       forbid:
         - pattern: '^fmt\.Print(f|ln)?$'
@@ -42,8 +39,10 @@ linters:
   exclusions:
     generated: strict
     rules:
+      # Tests spell out literals (status codes, methods, typos fed to "did
+      # you mean") on purpose.
       - path: _test\.go
-        linters: [forbidigo, bodyclose]
+        linters: [forbidigo, bodyclose, usestdlibvars, misspell, gocritic]
 
 formatters:
   enable:
