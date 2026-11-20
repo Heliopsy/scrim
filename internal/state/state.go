@@ -110,8 +110,9 @@ type Session struct {
 	// together with its descendants. RootStart is the platform's opaque
 	// process start time, so a later process reusing the PID does not match.
 	// RootPPID is that process's parent when the session was created.
-	RootPID   int32
-	RootPPID  int32
+	RootPID  int32
+	RootPPID int32
+	// RootStart must fit in an int64 (SQL backends store it signed).
 	RootStart uint64
 	// Scopes are what the session may do, by scope name.
 	Scopes    []string

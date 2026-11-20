@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -346,9 +347,15 @@ func (t *Tx) CreateSession(ctx context.Context, s *state.Session) error {
 	if s.TokenHash != "" {
 		hash = s.TokenHash
 	}
+	// Process start times are clock ticks or microseconds since an epoch;
+	// one that does not fit a signed column is refused, never wrapped.
+	if s.RootStart > math.MaxInt64 {
+		return fmt.Errorf("create session: root process start time %d out of range", s.RootStart)
+	}
+	rootStart := int64(s.RootStart)
 	_, err = t.exec(ctx, "create session",
 		`INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		s.ID, s.Agent.ID, agent, s.Name, hash, int64(s.UID), int64(s.RootPID), int64(s.RootPPID), int64(s.RootStart), //nolint:gosec // stored bit for bit, read back as uint64
+		s.ID, s.Agent.ID, agent, s.Name, hash, int64(s.UID), int64(s.RootPID), int64(s.RootPPID), rootStart,
 		scopes, ts(s.CreatedAt), ts(s.ExpiresAt), ts(s.EndedAt), s.EndReason, labels)
 	return err
 }
@@ -366,7 +373,11 @@ func scanSession(sc interface{ Scan(...any) error }) (state.Session, error) {
 		return s, err
 	}
 	s.TokenHash = hash.String
-	s.UID, s.RootPID, s.RootPPID, s.RootStart = uint32(uid), int32(rootPID), int32(rootPPID), uint64(rootStart) //nolint:gosec // written from these types
+	if uid < 0 || uid > math.MaxUint32 || rootPID < math.MinInt32 || rootPID > math.MaxInt32 ||
+		rootPPID < math.MinInt32 || rootPPID > math.MaxInt32 || rootStart < 0 {
+		return s, fmt.Errorf("session %s: stored process binding out of range", s.ID)
+	}
+	s.UID, s.RootPID, s.RootPPID, s.RootStart = uint32(uid), int32(rootPID), int32(rootPPID), uint64(rootStart)
 	s.CreatedAt, s.ExpiresAt, s.EndedAt = fromTS(created), fromTS(expires), fromTS(ended)
 	if err := decode(agent, &s.Agent); err != nil {
 		return s, err

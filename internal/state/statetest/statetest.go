@@ -175,7 +175,7 @@ func grantUseAndRevoke(t *testing.T, s state.Store) {
 func sessions(t *testing.T, s state.Store) {
 	ctx := t.Context()
 	sess := &state.Session{Agent: agent("a1"), Name: "claude", TokenHash: "sha256:abc", UID: 1000,
-		RootPID: 4242, RootPPID: 41, RootStart: 1<<63 + 7, Scopes: []string{"secrets:list", "secrets:request"},
+		RootPID: 4242, RootPPID: 41, RootStart: 1<<62 + 7, Scopes: []string{"secrets:list", "secrets:request"},
 		CreatedAt: t0, ExpiresAt: t0.Add(time.Hour), Labels: map[string]string{"cwd": "/w"}}
 	update(t, s, func(tx state.Tx) error { return tx.CreateSession(ctx, sess) })
 	err := s.Update(ctx, func(tx state.Tx) error {
@@ -199,7 +199,7 @@ func sessions(t *testing.T, s state.Store) {
 			t.Errorf("unknown hash: %v", err)
 		}
 		got, err = tx.GetSession(ctx, sess.ID)
-		if err != nil || got.Name != "claude" || got.UID != 1000 || got.RootPID != 4242 || got.RootPPID != 41 || got.RootStart != 1<<63+7 ||
+		if err != nil || got.Name != "claude" || got.UID != 1000 || got.RootPID != 4242 || got.RootPPID != 41 || got.RootStart != 1<<62+7 ||
 			len(got.Scopes) != 2 || got.Scopes[1] != "secrets:request" || got.Labels["cwd"] != "/w" ||
 			!got.CreatedAt.Equal(t0) || !got.ExpiresAt.Equal(t0.Add(time.Hour)) || !got.EndedAt.IsZero() || got.EndReason != "" {
 			t.Errorf("stored session differs: %+v, %v", got, err)

@@ -36,8 +36,8 @@ func (t tree) Lookup(pid int32) (identity.Proc, error) {
 
 var procs = tree{
 	1:   {PID: 1, Start: 1},
-	100: {PID: 100, PPID: 1, Start: 1<<63 + 5},
-	101: {PID: 101, PPID: 100, Start: 1<<63 + 6},
+	100: {PID: 100, PPID: 1, Start: 1<<62 + 5},
+	101: {PID: 101, PPID: 100, Start: 1<<62 + 6},
 	200: {PID: 200, PPID: 1, Start: 9},
 }
 

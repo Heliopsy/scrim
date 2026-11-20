@@ -12,7 +12,9 @@ package memstate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"sort"
 	"sync"
@@ -288,6 +290,10 @@ func (t *tx) RevokeGrant(_ context.Context, id, by string, at time.Time) error {
 func (t *tx) CreateSession(_ context.Context, s *state.Session) error {
 	if err := t.write(); err != nil {
 		return err
+	}
+	if s.RootStart > math.MaxInt64 {
+		// Same contract as the SQL backends' signed column.
+		return fmt.Errorf("create session: root process start time %d out of range", s.RootStart)
 	}
 	if s.ID == "" {
 		s.ID = state.NewID()
