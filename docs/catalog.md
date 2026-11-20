@@ -15,6 +15,11 @@ rejected, and a string that looks like a credential (a GitHub or GitLab token, a
 `sk-` key, a JWT, a private key, a long random path segment) fails validation in any field. A
 catalog that fails validation is not loaded.
 
+A bound entry whose value the store has not delivered yet (the store is still loading, or a read
+failed) is still known to the tool proxy by its hosts and placeholders. A tool request toward one
+of those hosts that carries its placeholder, or any other placeholder nothing resolves, is refused
+with `503 credential_unavailable`; the placeholder is never forwarded as text.
+
 ## Entries
 
 ```yaml

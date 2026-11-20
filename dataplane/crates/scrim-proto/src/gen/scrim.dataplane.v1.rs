@@ -74,6 +74,16 @@ pub struct Snapshot {
     /// when it has none).
     #[prost(message, repeated, tag = "11")]
     pub tool_proxy_ca: ::prost::alloc::vec::Vec<CaCertificate>,
+    /// unavailable are catalog credentials bound to hosts whose value the
+    /// stores have not delivered yet (a store still loading, a read that
+    /// failed): ref, name, slug, bindings and declared placeholders, never a
+    /// value (`value` is empty). The tool proxy treats their placeholders as
+    /// credentials without a value and refuses a request that carries one
+    /// toward their bound hosts with `credential_unavailable` instead of
+    /// forwarding it as text. The redaction core ignores them. An entry whose
+    /// reference or name also has a value in `values` is ignored.
+    #[prost(message, repeated, tag = "12")]
+    pub unavailable: ::prost::alloc::vec::Vec<ValueEntry>,
 }
 /// CaCertificate is one generation of the tool-proxy CA.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

@@ -348,12 +348,37 @@ impl Engine {
         let inj = &self.injector;
         let mut occurrences = Uses::default();
         let aborted = Arc::new(AtomicBool::new(false));
+        let dest_bound = self.credentials.any_bound_to(dest);
+        // Toward a bound host, a placeholder no credential resolves is refused rather than sent
+        // as text (credential-injection spec, "Unresolved placeholders are refused").
+        let unresolved = |bytes: &[u8], hits: &[Hit], loc: &dyn std::fmt::Display| {
+            if !dest_bound {
+                return Ok(());
+            }
+            match crate::unresolved::find(bytes, hits) {
+                None => Ok(()),
+                Some(u) => Err(refuse(
+                    &BTreeSet::new(),
+                    Refusal::new(
+                        ErrorCode::CredentialUnavailable,
+                        format!(
+                            "the {loc} carries {} that no available credential resolves; nothing was sent to {dest}",
+                            u.describe()
+                        ),
+                    ),
+                )),
+            }
+        };
 
         // URL.
         let query = parts.uri.query().map(str::to_owned);
         let path_hits = inj.scan(raw_path.as_bytes());
+        unresolved(raw_path.as_bytes(), &path_hits, &Location::Path)?;
         occurrences.add(&path_hits, &Location::Path);
         let query_hits = query.as_deref().map_or_default(|q| inj.scan(q.as_bytes()));
+        if let Some(q) = &query {
+            unresolved(q.as_bytes(), &query_hits, &Location::Query)?;
+        }
         occurrences.add(&query_hits, &Location::Query);
 
         // Headers.
@@ -366,6 +391,7 @@ impl Engine {
             };
             let bytes = value.as_bytes();
             let hits = inj.scan(bytes);
+            unresolved(bytes, &hits, &loc)?;
             if !hits.is_empty() {
                 occurrences.add(&hits, &loc);
                 header_hits.push(HeaderHits {
@@ -381,6 +407,7 @@ impl Engine {
                 && let Ok(decoded) = STANDARD.decode(bytes[6..].trim_ascii())
             {
                 let hits = inj.scan(&decoded);
+                unresolved(&decoded, &hits, &loc)?;
                 if !hits.is_empty() {
                     occurrences.add(&hits, &loc);
                     header_hits.push(HeaderHits {
@@ -393,7 +420,6 @@ impl Engine {
         }
 
         // Body.
-        let dest_bound = self.credentials.any_bound_to(dest);
         let ct = parts
             .headers
             .get(header::CONTENT_TYPE)
@@ -426,7 +452,7 @@ impl Engine {
                     ));
                 }
                 let stages = if identity {
-                    vec![Stage::Scan(ScanStage::new(inj.clone()))]
+                    vec![Stage::Scan(ScanStage::new(inj.clone(), dest_bound))]
                 } else {
                     Vec::new()
                 };
@@ -500,6 +526,7 @@ impl Engine {
                         }
                         Ok(decoded) => {
                             let hits = inj.scan(&decoded);
+                            unresolved(&decoded, &hits, &Location::Body)?;
                             if hits.is_empty() {
                                 BodyPlan::Unchanged(bytes)
                             } else {
