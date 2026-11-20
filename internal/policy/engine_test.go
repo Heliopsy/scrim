@@ -253,12 +253,12 @@ func TestLiveKeepsPreviousRulesOnBadReload(t *testing.T) {
 
 func TestConfigJSON(t *testing.T) {
 	src := `{"default":"ask","rules":[{"name":"r","decision":"allow","when":"op == \"inject\"",
-		"grant":{"ttl":"30m","max_ttl":"2h","uses":3,"scope":"destination"},"reason":"why"}]}`
+		"grant":{"ttl":"30m","max_ttl":"2h","uses":3,"scope":"host"},"reason":"why"}]}`
 	var c Config
 	if err := json.Unmarshal([]byte(src), &c); err != nil {
 		t.Fatal(err)
 	}
-	if c.Default != "ask" || c.Rules[0].Grant.TTL.D() != 30*time.Minute || c.Rules[0].Grant.Scope != ScopeDestination {
+	if c.Default != "ask" || c.Rules[0].Grant.TTL.D() != 30*time.Minute || c.Rules[0].Grant.Scope != ScopeHost {
 		t.Fatalf("decoded %+v", c)
 	}
 	if err := json.Unmarshal([]byte(`{"rules":[{"name":"r","grant":{"ttl":"-1m"}}]}`), &c); err == nil {

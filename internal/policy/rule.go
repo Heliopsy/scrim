@@ -73,12 +73,12 @@ type GrantScope string
 
 // Grant scopes.
 const (
-	// ScopeRequest covers the same operation, destination host, method and
-	// tool as the approved request. This is the default.
+	// ScopeRequest covers the destination host and tool of the approved
+	// request. This is the default.
 	ScopeRequest GrantScope = "request"
-	// ScopeDestination covers any method and path toward the same host.
-	ScopeDestination GrantScope = "destination"
-	// ScopeSecret covers any operation on the reference that policy would
+	// ScopeHost covers the destination host from any tool.
+	ScopeHost GrantScope = "host"
+	// ScopeSecret covers every operation on the reference that policy would
 	// otherwise send to ask.
 	ScopeSecret GrantScope = "secret"
 )
@@ -86,7 +86,7 @@ const (
 // Valid reports whether s is a known scope or empty.
 func (s GrantScope) Valid() bool {
 	switch s {
-	case "", ScopeRequest, ScopeDestination, ScopeSecret:
+	case "", ScopeRequest, ScopeHost, ScopeSecret:
 		return true
 	}
 	return false
@@ -162,7 +162,7 @@ func (c *Config) validateShape() ([]Effect, error) {
 		}
 		effects[i] = eff
 		if !r.Grant.Scope.Valid() {
-			add(fmt.Errorf("grant.scope %q is not request, destination or secret", r.Grant.Scope))
+			add(fmt.Errorf("grant.scope %q is not request, host or secret", r.Grant.Scope))
 		}
 		if r.Grant.Uses < 0 {
 			add(errors.New("grant.uses must not be negative"))

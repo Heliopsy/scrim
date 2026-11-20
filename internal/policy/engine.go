@@ -296,6 +296,9 @@ func (l *Live) Decide(ctx context.Context, req Request) (Decision, error) {
 	return l.cur.Load().Decide(ctx, req)
 }
 
+// Rule returns the rule with the given name from the rule set in force.
+func (l *Live) Rule(name string) (RuleSpec, bool) { return l.cur.Load().Rule(name) }
+
 // Evaluate evaluates req against the rule set in force.
 func (l *Live) Evaluate(req Request) Result { return l.cur.Load().Evaluate(req) }
 
