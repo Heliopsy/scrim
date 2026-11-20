@@ -29,6 +29,11 @@ impl fmt::Debug for ValueEntry {
             .field("bound_hosts", &self.bound_hosts)
             .field("name", &self.name)
             .field("store", &self.store)
+            .field("declared_placeholders", &self.declared_placeholders)
+            .field("bound_methods", &self.bound_methods)
+            .field("bound_paths", &self.bound_paths)
+            .field("inject_locations", &self.inject_locations)
+            .field("allow_plaintext_http", &self.allow_plaintext_http)
             .finish()
     }
 }

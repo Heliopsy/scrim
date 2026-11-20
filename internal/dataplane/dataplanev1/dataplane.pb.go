@@ -488,7 +488,9 @@ type Snapshot struct {
 	// listeners are the sockets the data plane serves.
 	Listeners []*Listener `protobuf:"bytes,7,rep,name=listeners,proto3" json:"listeners,omitempty"`
 	// redaction holds matcher settings.
-	Redaction     *RedactionSettings `protobuf:"bytes,8,opt,name=redaction,proto3" json:"redaction,omitempty"`
+	Redaction *RedactionSettings `protobuf:"bytes,8,opt,name=redaction,proto3" json:"redaction,omitempty"`
+	// capture_rules apply to tool-proxy responses.
+	CaptureRules  []*CaptureRule `protobuf:"bytes,9,rep,name=capture_rules,json=captureRules,proto3" json:"capture_rules,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -579,6 +581,13 @@ func (x *Snapshot) GetRedaction() *RedactionSettings {
 	return nil
 }
 
+func (x *Snapshot) GetCaptureRules() []*CaptureRule {
+	if x != nil {
+		return x.CaptureRules
+	}
+	return nil
+}
+
 type ValueEntry struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// ref is the store reference the value was read from, for example
@@ -595,9 +604,24 @@ type ValueEntry struct {
 	// name is the catalog name, if the secret has one.
 	Name string `protobuf:"bytes,6,opt,name=name,proto3" json:"name,omitempty"`
 	// store is the store instance the value came from.
-	Store         string `protobuf:"bytes,7,opt,name=store,proto3" json:"store,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Store string `protobuf:"bytes,7,opt,name=store,proto3" json:"store,omitempty"`
+	// declared_placeholders are user-declared placeholder strings standing for
+	// this value (for example `SCRIM_ACME_KEY`), unique across the snapshot.
+	// Safe to log.
+	DeclaredPlaceholders []string `protobuf:"bytes,8,rep,name=declared_placeholders,json=declaredPlaceholders,proto3" json:"declared_placeholders,omitempty"`
+	// bound_methods restrict injection to these HTTP methods. Empty allows all.
+	BoundMethods []string `protobuf:"bytes,9,rep,name=bound_methods,json=boundMethods,proto3" json:"bound_methods,omitempty"`
+	// bound_paths restrict injection to these path globs (`*` matches any run,
+	// including `/`). Empty allows all.
+	BoundPaths []string `protobuf:"bytes,10,rep,name=bound_paths,json=boundPaths,proto3" json:"bound_paths,omitempty"`
+	// inject_locations are the request parts the placeholder may be replaced
+	// in: `header`, `header:<name>`, `cookie`, `query`, `path`, `body`,
+	// `anywhere`. Empty means `header`.
+	InjectLocations []string `protobuf:"bytes,11,rep,name=inject_locations,json=injectLocations,proto3" json:"inject_locations,omitempty"`
+	// allow_plaintext_http also injects over plain `http://`. Weakening.
+	AllowPlaintextHttp bool `protobuf:"varint,12,opt,name=allow_plaintext_http,json=allowPlaintextHttp,proto3" json:"allow_plaintext_http,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ValueEntry) Reset() {
@@ -679,6 +703,149 @@ func (x *ValueEntry) GetStore() string {
 	return ""
 }
 
+func (x *ValueEntry) GetDeclaredPlaceholders() []string {
+	if x != nil {
+		return x.DeclaredPlaceholders
+	}
+	return nil
+}
+
+func (x *ValueEntry) GetBoundMethods() []string {
+	if x != nil {
+		return x.BoundMethods
+	}
+	return nil
+}
+
+func (x *ValueEntry) GetBoundPaths() []string {
+	if x != nil {
+		return x.BoundPaths
+	}
+	return nil
+}
+
+func (x *ValueEntry) GetInjectLocations() []string {
+	if x != nil {
+		return x.InjectLocations
+	}
+	return nil
+}
+
+func (x *ValueEntry) GetAllowPlaintextHttp() bool {
+	if x != nil {
+		return x.AllowPlaintextHttp
+	}
+	return false
+}
+
+// CaptureRule stores a value an API returns (a newly created token) under
+// `store_ref` and hands the agent its placeholder instead.
+type CaptureRule struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// hosts the request goes to (exact or `*.suffix`, optional `:port`).
+	Hosts []string `protobuf:"bytes,2,rep,name=hosts,proto3" json:"hosts,omitempty"`
+	// methods of the request; empty matches all.
+	Methods []string `protobuf:"bytes,3,rep,name=methods,proto3" json:"methods,omitempty"`
+	// path glob of the request; empty matches all.
+	Path string `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
+	// status codes of the response; empty matches every 2xx.
+	Status []uint32 `protobuf:"varint,5,rep,packed,name=status,proto3" json:"status,omitempty"`
+	// Exactly one of json_pointer (RFC 6901, into a JSON body) and header.
+	JsonPointer string `protobuf:"bytes,6,opt,name=json_pointer,json=jsonPointer,proto3" json:"json_pointer,omitempty"`
+	Header      string `protobuf:"bytes,7,opt,name=header,proto3" json:"header,omitempty"`
+	// store_ref is the reference the value is written to.
+	StoreRef      string `protobuf:"bytes,8,opt,name=store_ref,json=storeRef,proto3" json:"store_ref,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CaptureRule) Reset() {
+	*x = CaptureRule{}
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CaptureRule) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CaptureRule) ProtoMessage() {}
+
+func (x *CaptureRule) ProtoReflect() protoreflect.Message {
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CaptureRule.ProtoReflect.Descriptor instead.
+func (*CaptureRule) Descriptor() ([]byte, []int) {
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *CaptureRule) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CaptureRule) GetHosts() []string {
+	if x != nil {
+		return x.Hosts
+	}
+	return nil
+}
+
+func (x *CaptureRule) GetMethods() []string {
+	if x != nil {
+		return x.Methods
+	}
+	return nil
+}
+
+func (x *CaptureRule) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *CaptureRule) GetStatus() []uint32 {
+	if x != nil {
+		return x.Status
+	}
+	return nil
+}
+
+func (x *CaptureRule) GetJsonPointer() string {
+	if x != nil {
+		return x.JsonPointer
+	}
+	return ""
+}
+
+func (x *CaptureRule) GetHeader() string {
+	if x != nil {
+		return x.Header
+	}
+	return ""
+}
+
+func (x *CaptureRule) GetStoreRef() string {
+	if x != nil {
+		return x.StoreRef
+	}
+	return ""
+}
+
 type PlaceholderKey struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// version is embedded in placeholders derived with this key.
@@ -693,7 +860,7 @@ type PlaceholderKey struct {
 
 func (x *PlaceholderKey) Reset() {
 	*x = PlaceholderKey{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[4]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -705,7 +872,7 @@ func (x *PlaceholderKey) String() string {
 func (*PlaceholderKey) ProtoMessage() {}
 
 func (x *PlaceholderKey) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[4]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -718,7 +885,7 @@ func (x *PlaceholderKey) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaceholderKey.ProtoReflect.Descriptor instead.
 func (*PlaceholderKey) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{4}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *PlaceholderKey) GetVersion() uint32 {
@@ -766,7 +933,7 @@ type Policy struct {
 
 func (x *Policy) Reset() {
 	*x = Policy{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[5]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -778,7 +945,7 @@ func (x *Policy) String() string {
 func (*Policy) ProtoMessage() {}
 
 func (x *Policy) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[5]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -791,7 +958,7 @@ func (x *Policy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Policy.ProtoReflect.Descriptor instead.
 func (*Policy) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{5}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Policy) GetVersion() uint64 {
@@ -857,7 +1024,7 @@ type PolicyRule struct {
 
 func (x *PolicyRule) Reset() {
 	*x = PolicyRule{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[6]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -869,7 +1036,7 @@ func (x *PolicyRule) String() string {
 func (*PolicyRule) ProtoMessage() {}
 
 func (x *PolicyRule) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[6]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -882,7 +1049,7 @@ func (x *PolicyRule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PolicyRule.ProtoReflect.Descriptor instead.
 func (*PolicyRule) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{6}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *PolicyRule) GetName() string {
@@ -968,7 +1135,7 @@ type Route struct {
 
 func (x *Route) Reset() {
 	*x = Route{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[7]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -980,7 +1147,7 @@ func (x *Route) String() string {
 func (*Route) ProtoMessage() {}
 
 func (x *Route) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[7]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -993,7 +1160,7 @@ func (x *Route) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Route.ProtoReflect.Descriptor instead.
 func (*Route) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{7}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Route) GetName() string {
@@ -1043,7 +1210,7 @@ type Listener struct {
 
 func (x *Listener) Reset() {
 	*x = Listener{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[8]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1055,7 +1222,7 @@ func (x *Listener) String() string {
 func (*Listener) ProtoMessage() {}
 
 func (x *Listener) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[8]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1068,7 +1235,7 @@ func (x *Listener) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Listener.ProtoReflect.Descriptor instead.
 func (*Listener) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{8}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Listener) GetName() string {
@@ -1103,7 +1270,7 @@ type RedactionSettings struct {
 
 func (x *RedactionSettings) Reset() {
 	*x = RedactionSettings{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[9]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1115,7 +1282,7 @@ func (x *RedactionSettings) String() string {
 func (*RedactionSettings) ProtoMessage() {}
 
 func (x *RedactionSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[9]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1128,7 +1295,7 @@ func (x *RedactionSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RedactionSettings.ProtoReflect.Descriptor instead.
 func (*RedactionSettings) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{9}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *RedactionSettings) GetMinValueLength() uint32 {
@@ -1151,7 +1318,7 @@ type ApplySnapshotResponse struct {
 
 func (x *ApplySnapshotResponse) Reset() {
 	*x = ApplySnapshotResponse{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[10]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1163,7 +1330,7 @@ func (x *ApplySnapshotResponse) String() string {
 func (*ApplySnapshotResponse) ProtoMessage() {}
 
 func (x *ApplySnapshotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[10]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1176,7 +1343,7 @@ func (x *ApplySnapshotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApplySnapshotResponse.ProtoReflect.Descriptor instead.
 func (*ApplySnapshotResponse) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{10}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ApplySnapshotResponse) GetProtocol() uint32 {
@@ -1209,7 +1376,7 @@ type EventsRequest struct {
 
 func (x *EventsRequest) Reset() {
 	*x = EventsRequest{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[11]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1221,7 +1388,7 @@ func (x *EventsRequest) String() string {
 func (*EventsRequest) ProtoMessage() {}
 
 func (x *EventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[11]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1234,7 +1401,7 @@ func (x *EventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EventsRequest.ProtoReflect.Descriptor instead.
 func (*EventsRequest) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{11}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *EventsRequest) GetProtocol() uint32 {
@@ -1257,7 +1424,7 @@ type EventBatch struct {
 
 func (x *EventBatch) Reset() {
 	*x = EventBatch{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[12]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1269,7 +1436,7 @@ func (x *EventBatch) String() string {
 func (*EventBatch) ProtoMessage() {}
 
 func (x *EventBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[12]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1282,7 +1449,7 @@ func (x *EventBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EventBatch.ProtoReflect.Descriptor instead.
 func (*EventBatch) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{12}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *EventBatch) GetProtocol() uint32 {
@@ -1335,7 +1502,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[13]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1347,7 +1514,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[13]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1360,7 +1527,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{13}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Event) GetSeq() uint64 {
@@ -1479,7 +1646,7 @@ type PolicyRequest struct {
 
 func (x *PolicyRequest) Reset() {
 	*x = PolicyRequest{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[14]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1491,7 +1658,7 @@ func (x *PolicyRequest) String() string {
 func (*PolicyRequest) ProtoMessage() {}
 
 func (x *PolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[14]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1504,7 +1671,7 @@ func (x *PolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PolicyRequest.ProtoReflect.Descriptor instead.
 func (*PolicyRequest) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{14}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *PolicyRequest) GetAgentId() string {
@@ -1587,7 +1754,7 @@ type AskRequest struct {
 
 func (x *AskRequest) Reset() {
 	*x = AskRequest{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[15]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1599,7 +1766,7 @@ func (x *AskRequest) String() string {
 func (*AskRequest) ProtoMessage() {}
 
 func (x *AskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[15]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1612,7 +1779,7 @@ func (x *AskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AskRequest.ProtoReflect.Descriptor instead.
 func (*AskRequest) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{15}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *AskRequest) GetProtocol() uint32 {
@@ -1675,7 +1842,7 @@ type AskAnswer struct {
 
 func (x *AskAnswer) Reset() {
 	*x = AskAnswer{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[16]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1687,7 +1854,7 @@ func (x *AskAnswer) String() string {
 func (*AskAnswer) ProtoMessage() {}
 
 func (x *AskAnswer) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[16]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1700,7 +1867,7 @@ func (x *AskAnswer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AskAnswer.ProtoReflect.Descriptor instead.
 func (*AskAnswer) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{16}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *AskAnswer) GetProtocol() uint32 {
@@ -1754,7 +1921,7 @@ type StatusRequest struct {
 
 func (x *StatusRequest) Reset() {
 	*x = StatusRequest{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[17]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1766,7 +1933,7 @@ func (x *StatusRequest) String() string {
 func (*StatusRequest) ProtoMessage() {}
 
 func (x *StatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[17]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1779,7 +1946,7 @@ func (x *StatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusRequest.ProtoReflect.Descriptor instead.
 func (*StatusRequest) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{17}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *StatusRequest) GetProtocol() uint32 {
@@ -1806,7 +1973,7 @@ type StatusResponse struct {
 
 func (x *StatusResponse) Reset() {
 	*x = StatusResponse{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[18]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1818,7 +1985,7 @@ func (x *StatusResponse) String() string {
 func (*StatusResponse) ProtoMessage() {}
 
 func (x *StatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[18]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1831,7 +1998,7 @@ func (x *StatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusResponse.ProtoReflect.Descriptor instead.
 func (*StatusResponse) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{18}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *StatusResponse) GetProtocol() uint32 {
@@ -1903,7 +2070,7 @@ type ListenerStatus struct {
 
 func (x *ListenerStatus) Reset() {
 	*x = ListenerStatus{}
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[19]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1915,7 +2082,7 @@ func (x *ListenerStatus) String() string {
 func (*ListenerStatus) ProtoMessage() {}
 
 func (x *ListenerStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[19]
+	mi := &file_scrim_dataplane_v1_dataplane_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1928,7 +2095,7 @@ func (x *ListenerStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListenerStatus.ProtoReflect.Descriptor instead.
 func (*ListenerStatus) Descriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{19}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ListenerStatus) GetName() string {
@@ -1973,7 +2140,7 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x03pid\x18\x03 \x01(\rR\x03pid\x128\n" +
 	"\x18applied_snapshot_version\x18\x04 \x01(\x04R\x16appliedSnapshotVersion\x12#\n" +
 	"\rmemory_locked\x18\x05 \x01(\bR\fmemoryLocked\x12\x1a\n" +
-	"\bdumpable\x18\x06 \x01(\bR\bdumpable\"\xaf\x03\n" +
+	"\bdumpable\x18\x06 \x01(\bR\bdumpable\"\xf5\x03\n" +
 	"\bSnapshot\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversion\x126\n" +
@@ -1982,7 +2149,8 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x06policy\x18\x05 \x01(\v2\x1a.scrim.dataplane.v1.PolicyR\x06policy\x121\n" +
 	"\x06routes\x18\x06 \x03(\v2\x19.scrim.dataplane.v1.RouteR\x06routes\x12:\n" +
 	"\tlisteners\x18\a \x03(\v2\x1c.scrim.dataplane.v1.ListenerR\tlisteners\x12C\n" +
-	"\tredaction\x18\b \x01(\v2%.scrim.dataplane.v1.RedactionSettingsR\tredaction\"\xc9\x01\n" +
+	"\tredaction\x18\b \x01(\v2%.scrim.dataplane.v1.RedactionSettingsR\tredaction\x12D\n" +
+	"\rcapture_rules\x18\t \x03(\v2\x1f.scrim.dataplane.v1.CaptureRuleR\fcaptureRules\"\xa1\x03\n" +
 	"\n" +
 	"ValueEntry\x12\x10\n" +
 	"\x03ref\x18\x01 \x01(\tR\x03ref\x12\x12\n" +
@@ -1992,7 +2160,23 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\vbound_hosts\x18\x05 \x03(\tR\n" +
 	"boundHosts\x12\x12\n" +
 	"\x04name\x18\x06 \x01(\tR\x04name\x12\x14\n" +
-	"\x05store\x18\a \x01(\tR\x05store\"V\n" +
+	"\x05store\x18\a \x01(\tR\x05store\x123\n" +
+	"\x15declared_placeholders\x18\b \x03(\tR\x14declaredPlaceholders\x12#\n" +
+	"\rbound_methods\x18\t \x03(\tR\fboundMethods\x12\x1f\n" +
+	"\vbound_paths\x18\n" +
+	" \x03(\tR\n" +
+	"boundPaths\x12)\n" +
+	"\x10inject_locations\x18\v \x03(\tR\x0finjectLocations\x120\n" +
+	"\x14allow_plaintext_http\x18\f \x01(\bR\x12allowPlaintextHttp\"\xd5\x01\n" +
+	"\vCaptureRule\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05hosts\x18\x02 \x03(\tR\x05hosts\x12\x18\n" +
+	"\amethods\x18\x03 \x03(\tR\amethods\x12\x12\n" +
+	"\x04path\x18\x04 \x01(\tR\x04path\x12\x16\n" +
+	"\x06status\x18\x05 \x03(\rR\x06status\x12!\n" +
+	"\fjson_pointer\x18\x06 \x01(\tR\vjsonPointer\x12\x16\n" +
+	"\x06header\x18\a \x01(\tR\x06header\x12\x1b\n" +
+	"\tstore_ref\x18\b \x01(\tR\bstoreRef\"V\n" +
 	"\x0ePlaceholderKey\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\fR\x03key\x12\x18\n" +
@@ -2155,7 +2339,7 @@ func file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP() []byte {
 }
 
 var file_scrim_dataplane_v1_dataplane_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_scrim_dataplane_v1_dataplane_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_scrim_dataplane_v1_dataplane_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_scrim_dataplane_v1_dataplane_proto_goTypes = []any{
 	(ProtocolVersion)(0),          // 0: scrim.dataplane.v1.ProtocolVersion
 	(ValueClass)(0),               // 1: scrim.dataplane.v1.ValueClass
@@ -2166,58 +2350,60 @@ var file_scrim_dataplane_v1_dataplane_proto_goTypes = []any{
 	(*HelloResponse)(nil),         // 6: scrim.dataplane.v1.HelloResponse
 	(*Snapshot)(nil),              // 7: scrim.dataplane.v1.Snapshot
 	(*ValueEntry)(nil),            // 8: scrim.dataplane.v1.ValueEntry
-	(*PlaceholderKey)(nil),        // 9: scrim.dataplane.v1.PlaceholderKey
-	(*Policy)(nil),                // 10: scrim.dataplane.v1.Policy
-	(*PolicyRule)(nil),            // 11: scrim.dataplane.v1.PolicyRule
-	(*Route)(nil),                 // 12: scrim.dataplane.v1.Route
-	(*Listener)(nil),              // 13: scrim.dataplane.v1.Listener
-	(*RedactionSettings)(nil),     // 14: scrim.dataplane.v1.RedactionSettings
-	(*ApplySnapshotResponse)(nil), // 15: scrim.dataplane.v1.ApplySnapshotResponse
-	(*EventsRequest)(nil),         // 16: scrim.dataplane.v1.EventsRequest
-	(*EventBatch)(nil),            // 17: scrim.dataplane.v1.EventBatch
-	(*Event)(nil),                 // 18: scrim.dataplane.v1.Event
-	(*PolicyRequest)(nil),         // 19: scrim.dataplane.v1.PolicyRequest
-	(*AskRequest)(nil),            // 20: scrim.dataplane.v1.AskRequest
-	(*AskAnswer)(nil),             // 21: scrim.dataplane.v1.AskAnswer
-	(*StatusRequest)(nil),         // 22: scrim.dataplane.v1.StatusRequest
-	(*StatusResponse)(nil),        // 23: scrim.dataplane.v1.StatusResponse
-	(*ListenerStatus)(nil),        // 24: scrim.dataplane.v1.ListenerStatus
-	nil,                           // 25: scrim.dataplane.v1.Event.AttrsEntry
+	(*CaptureRule)(nil),           // 9: scrim.dataplane.v1.CaptureRule
+	(*PlaceholderKey)(nil),        // 10: scrim.dataplane.v1.PlaceholderKey
+	(*Policy)(nil),                // 11: scrim.dataplane.v1.Policy
+	(*PolicyRule)(nil),            // 12: scrim.dataplane.v1.PolicyRule
+	(*Route)(nil),                 // 13: scrim.dataplane.v1.Route
+	(*Listener)(nil),              // 14: scrim.dataplane.v1.Listener
+	(*RedactionSettings)(nil),     // 15: scrim.dataplane.v1.RedactionSettings
+	(*ApplySnapshotResponse)(nil), // 16: scrim.dataplane.v1.ApplySnapshotResponse
+	(*EventsRequest)(nil),         // 17: scrim.dataplane.v1.EventsRequest
+	(*EventBatch)(nil),            // 18: scrim.dataplane.v1.EventBatch
+	(*Event)(nil),                 // 19: scrim.dataplane.v1.Event
+	(*PolicyRequest)(nil),         // 20: scrim.dataplane.v1.PolicyRequest
+	(*AskRequest)(nil),            // 21: scrim.dataplane.v1.AskRequest
+	(*AskAnswer)(nil),             // 22: scrim.dataplane.v1.AskAnswer
+	(*StatusRequest)(nil),         // 23: scrim.dataplane.v1.StatusRequest
+	(*StatusResponse)(nil),        // 24: scrim.dataplane.v1.StatusResponse
+	(*ListenerStatus)(nil),        // 25: scrim.dataplane.v1.ListenerStatus
+	nil,                           // 26: scrim.dataplane.v1.Event.AttrsEntry
 }
 var file_scrim_dataplane_v1_dataplane_proto_depIdxs = []int32{
 	8,  // 0: scrim.dataplane.v1.Snapshot.values:type_name -> scrim.dataplane.v1.ValueEntry
-	9,  // 1: scrim.dataplane.v1.Snapshot.placeholder_keys:type_name -> scrim.dataplane.v1.PlaceholderKey
-	10, // 2: scrim.dataplane.v1.Snapshot.policy:type_name -> scrim.dataplane.v1.Policy
-	12, // 3: scrim.dataplane.v1.Snapshot.routes:type_name -> scrim.dataplane.v1.Route
-	13, // 4: scrim.dataplane.v1.Snapshot.listeners:type_name -> scrim.dataplane.v1.Listener
-	14, // 5: scrim.dataplane.v1.Snapshot.redaction:type_name -> scrim.dataplane.v1.RedactionSettings
-	1,  // 6: scrim.dataplane.v1.ValueEntry.class:type_name -> scrim.dataplane.v1.ValueClass
-	11, // 7: scrim.dataplane.v1.Policy.rules:type_name -> scrim.dataplane.v1.PolicyRule
-	2,  // 8: scrim.dataplane.v1.Policy.default_effect:type_name -> scrim.dataplane.v1.Effect
-	2,  // 9: scrim.dataplane.v1.PolicyRule.effect:type_name -> scrim.dataplane.v1.Effect
-	3,  // 10: scrim.dataplane.v1.Listener.kind:type_name -> scrim.dataplane.v1.ListenerKind
-	18, // 11: scrim.dataplane.v1.EventBatch.events:type_name -> scrim.dataplane.v1.Event
-	4,  // 12: scrim.dataplane.v1.Event.kind:type_name -> scrim.dataplane.v1.EventKind
-	2,  // 13: scrim.dataplane.v1.Event.effect:type_name -> scrim.dataplane.v1.Effect
-	25, // 14: scrim.dataplane.v1.Event.attrs:type_name -> scrim.dataplane.v1.Event.AttrsEntry
-	19, // 15: scrim.dataplane.v1.AskRequest.request:type_name -> scrim.dataplane.v1.PolicyRequest
-	2,  // 16: scrim.dataplane.v1.AskAnswer.effect:type_name -> scrim.dataplane.v1.Effect
-	24, // 17: scrim.dataplane.v1.StatusResponse.listeners:type_name -> scrim.dataplane.v1.ListenerStatus
-	5,  // 18: scrim.dataplane.v1.DataPlane.Hello:input_type -> scrim.dataplane.v1.HelloRequest
-	7,  // 19: scrim.dataplane.v1.DataPlane.ApplySnapshot:input_type -> scrim.dataplane.v1.Snapshot
-	16, // 20: scrim.dataplane.v1.DataPlane.Events:input_type -> scrim.dataplane.v1.EventsRequest
-	21, // 21: scrim.dataplane.v1.DataPlane.Asks:input_type -> scrim.dataplane.v1.AskAnswer
-	22, // 22: scrim.dataplane.v1.DataPlane.Status:input_type -> scrim.dataplane.v1.StatusRequest
-	6,  // 23: scrim.dataplane.v1.DataPlane.Hello:output_type -> scrim.dataplane.v1.HelloResponse
-	15, // 24: scrim.dataplane.v1.DataPlane.ApplySnapshot:output_type -> scrim.dataplane.v1.ApplySnapshotResponse
-	17, // 25: scrim.dataplane.v1.DataPlane.Events:output_type -> scrim.dataplane.v1.EventBatch
-	20, // 26: scrim.dataplane.v1.DataPlane.Asks:output_type -> scrim.dataplane.v1.AskRequest
-	23, // 27: scrim.dataplane.v1.DataPlane.Status:output_type -> scrim.dataplane.v1.StatusResponse
-	23, // [23:28] is the sub-list for method output_type
-	18, // [18:23] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	10, // 1: scrim.dataplane.v1.Snapshot.placeholder_keys:type_name -> scrim.dataplane.v1.PlaceholderKey
+	11, // 2: scrim.dataplane.v1.Snapshot.policy:type_name -> scrim.dataplane.v1.Policy
+	13, // 3: scrim.dataplane.v1.Snapshot.routes:type_name -> scrim.dataplane.v1.Route
+	14, // 4: scrim.dataplane.v1.Snapshot.listeners:type_name -> scrim.dataplane.v1.Listener
+	15, // 5: scrim.dataplane.v1.Snapshot.redaction:type_name -> scrim.dataplane.v1.RedactionSettings
+	9,  // 6: scrim.dataplane.v1.Snapshot.capture_rules:type_name -> scrim.dataplane.v1.CaptureRule
+	1,  // 7: scrim.dataplane.v1.ValueEntry.class:type_name -> scrim.dataplane.v1.ValueClass
+	12, // 8: scrim.dataplane.v1.Policy.rules:type_name -> scrim.dataplane.v1.PolicyRule
+	2,  // 9: scrim.dataplane.v1.Policy.default_effect:type_name -> scrim.dataplane.v1.Effect
+	2,  // 10: scrim.dataplane.v1.PolicyRule.effect:type_name -> scrim.dataplane.v1.Effect
+	3,  // 11: scrim.dataplane.v1.Listener.kind:type_name -> scrim.dataplane.v1.ListenerKind
+	19, // 12: scrim.dataplane.v1.EventBatch.events:type_name -> scrim.dataplane.v1.Event
+	4,  // 13: scrim.dataplane.v1.Event.kind:type_name -> scrim.dataplane.v1.EventKind
+	2,  // 14: scrim.dataplane.v1.Event.effect:type_name -> scrim.dataplane.v1.Effect
+	26, // 15: scrim.dataplane.v1.Event.attrs:type_name -> scrim.dataplane.v1.Event.AttrsEntry
+	20, // 16: scrim.dataplane.v1.AskRequest.request:type_name -> scrim.dataplane.v1.PolicyRequest
+	2,  // 17: scrim.dataplane.v1.AskAnswer.effect:type_name -> scrim.dataplane.v1.Effect
+	25, // 18: scrim.dataplane.v1.StatusResponse.listeners:type_name -> scrim.dataplane.v1.ListenerStatus
+	5,  // 19: scrim.dataplane.v1.DataPlane.Hello:input_type -> scrim.dataplane.v1.HelloRequest
+	7,  // 20: scrim.dataplane.v1.DataPlane.ApplySnapshot:input_type -> scrim.dataplane.v1.Snapshot
+	17, // 21: scrim.dataplane.v1.DataPlane.Events:input_type -> scrim.dataplane.v1.EventsRequest
+	22, // 22: scrim.dataplane.v1.DataPlane.Asks:input_type -> scrim.dataplane.v1.AskAnswer
+	23, // 23: scrim.dataplane.v1.DataPlane.Status:input_type -> scrim.dataplane.v1.StatusRequest
+	6,  // 24: scrim.dataplane.v1.DataPlane.Hello:output_type -> scrim.dataplane.v1.HelloResponse
+	16, // 25: scrim.dataplane.v1.DataPlane.ApplySnapshot:output_type -> scrim.dataplane.v1.ApplySnapshotResponse
+	18, // 26: scrim.dataplane.v1.DataPlane.Events:output_type -> scrim.dataplane.v1.EventBatch
+	21, // 27: scrim.dataplane.v1.DataPlane.Asks:output_type -> scrim.dataplane.v1.AskRequest
+	24, // 28: scrim.dataplane.v1.DataPlane.Status:output_type -> scrim.dataplane.v1.StatusResponse
+	24, // [24:29] is the sub-list for method output_type
+	19, // [19:24] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_scrim_dataplane_v1_dataplane_proto_init() }
@@ -2231,7 +2417,7 @@ func file_scrim_dataplane_v1_dataplane_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_scrim_dataplane_v1_dataplane_proto_rawDesc), len(file_scrim_dataplane_v1_dataplane_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   21,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

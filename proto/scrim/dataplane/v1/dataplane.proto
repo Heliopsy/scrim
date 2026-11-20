@@ -99,6 +99,8 @@ message Snapshot {
   repeated Listener listeners = 7;
   // redaction holds matcher settings.
   RedactionSettings redaction = 8;
+  // capture_rules apply to tool-proxy responses.
+  repeated CaptureRule capture_rules = 9;
 }
 
 // ValueClass decides how a value is restored (D5).
@@ -128,6 +130,40 @@ message ValueEntry {
   string name = 6;
   // store is the store instance the value came from.
   string store = 7;
+  // declared_placeholders are user-declared placeholder strings standing for
+  // this value (for example `SCRIM_ACME_KEY`), unique across the snapshot.
+  // Safe to log.
+  repeated string declared_placeholders = 8;
+  // bound_methods restrict injection to these HTTP methods. Empty allows all.
+  repeated string bound_methods = 9;
+  // bound_paths restrict injection to these path globs (`*` matches any run,
+  // including `/`). Empty allows all.
+  repeated string bound_paths = 10;
+  // inject_locations are the request parts the placeholder may be replaced
+  // in: `header`, `header:<name>`, `cookie`, `query`, `path`, `body`,
+  // `anywhere`. Empty means `header`.
+  repeated string inject_locations = 11;
+  // allow_plaintext_http also injects over plain `http://`. Weakening.
+  bool allow_plaintext_http = 12;
+}
+
+// CaptureRule stores a value an API returns (a newly created token) under
+// `store_ref` and hands the agent its placeholder instead.
+message CaptureRule {
+  string name = 1;
+  // hosts the request goes to (exact or `*.suffix`, optional `:port`).
+  repeated string hosts = 2;
+  // methods of the request; empty matches all.
+  repeated string methods = 3;
+  // path glob of the request; empty matches all.
+  string path = 4;
+  // status codes of the response; empty matches every 2xx.
+  repeated uint32 status = 5;
+  // Exactly one of json_pointer (RFC 6901, into a JSON body) and header.
+  string json_pointer = 6;
+  string header = 7;
+  // store_ref is the reference the value is written to.
+  string store_ref = 8;
 }
 
 message PlaceholderKey {
