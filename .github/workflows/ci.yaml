@@ -153,6 +153,8 @@ jobs:
         with:
           manifest-path: dataplane/Cargo.toml
           command: check advisories licenses bans sources
+      # History reachable from the commit under test; without --log-opts
+      # gitleaks scans every fetched branch, including unmerged ones.
       - name: gitleaks
         env:
           GITLEAKS_VERSION: 8.30.1
@@ -163,4 +165,4 @@ jobs:
           curl -fsSLo "$RUNNER_TEMP/$tarball" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$tarball"
           echo "$GITLEAKS_SHA256  $RUNNER_TEMP/$tarball" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
-          "$RUNNER_TEMP/gitleaks" git --redact --no-banner --config .gitleaks.toml .
+          "$RUNNER_TEMP/gitleaks" git --redact --no-banner --verbose --config .gitleaks.toml --log-opts=HEAD .
