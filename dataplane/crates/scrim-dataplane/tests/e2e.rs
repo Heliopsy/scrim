@@ -723,6 +723,76 @@ async fn secrets_never_reach_the_provider_and_credentials_reach_only_bound_hosts
     );
     assert_eq!(provider.received().len(), 3);
 
+    // 6. Secrets outside the body: a custom header (quoted, and base64) and a query parameter
+    // with every byte percent-encoded reach the provider only as placeholders; the agent's own
+    // provider key passes through untouched.
+    let pct = s.db.bytes().fold(String::new(), |mut acc, b| {
+        use std::fmt::Write as _;
+        let _ = write!(acc, "%{b:02X}");
+        acc
+    });
+    let mut req = post_messages(
+        &format!("/anthropic/v1/messages?beta=true&trace={pct}"),
+        &base,
+        messages_request(&s),
+    );
+    let h = req.headers_mut();
+    h.insert(
+        "x-debug-context",
+        format!("db=\"{}\"; key={}", s.db, s.api).parse().unwrap(),
+    );
+    h.insert(
+        "x-debug-b64",
+        base64(format!("ACME_KEY={}", s.api).as_bytes())
+            .parse()
+            .unwrap(),
+    );
+    let got = send_http(TcpStream::connect(&base).await.unwrap(), req).await;
+    assert_eq!(got.status, 200, "{}", s.scrub(&got.body));
+    let rec = &provider.received()[3];
+    let decoded: String = {
+        let b = rec.uri.as_bytes();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'%' && i + 2 < b.len() {
+                out.push(
+                    u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).unwrap(), 16).unwrap(),
+                );
+                i += 3;
+            } else {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+        String::from_utf8(out).unwrap()
+    };
+    s.assert_absent("provider request target", &decoded);
+    assert!(decoded.contains(&s.db_ph), "{}", s.scrub(&decoded));
+    assert!(
+        rec.uri.contains("beta=true&trace="),
+        "{}",
+        s.scrub(&rec.uri)
+    );
+    for name in ["x-debug-context", "x-debug-b64"] {
+        let v = String::from_utf8_lossy(rec.headers[name].as_bytes()).into_owned();
+        s.assert_absent(name, &v);
+    }
+    let ctx = String::from_utf8_lossy(rec.headers["x-debug-context"].as_bytes()).into_owned();
+    assert!(
+        ctx == format!("db=\"{}\"; key={}", s.db_ph, s.api_ph),
+        "{}",
+        s.scrub(&ctx)
+    );
+    assert_eq!(
+        rec.headers
+            .get("x-api-key")
+            .map(http::HeaderValue::as_bytes),
+        Some(&b"agent-own-provider-key"[..]),
+        "the agent's provider credential passes through"
+    );
+    assert_eq!(provider.received().len(), 4);
+
     // Every redaction, restore, injection and refusal reached the Events stream.
     let ev = dp
         .event("LLM redaction", |e| {

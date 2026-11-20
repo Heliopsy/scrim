@@ -19,9 +19,14 @@ Spec: `openspec/changes/scrim-v1/specs/llm-proxy`, plus the base-URL and forward
   path: Anthropic Messages (and `count_tokens`), OpenAI Chat Completions, OpenAI Responses (and
   `/responses/compact`). Other paths are forwarded with the whole body redacted.
 - **Upstream.** Pooled hyper client, rustls with webpki and/or native roots plus an optional extra
-  CA bundle, ALPN `h2` and `http/1.1`. The agent's own `authorization`, `x-api-key` and other
-  headers pass through untouched; hop-by-hop headers are dropped and `accept-encoding` is set to
-  `identity` so responses can be restored.
+  CA bundle, ALPN `h2` and `http/1.1`. The agent's own `authorization` and `x-api-key` pass
+  through untouched; hop-by-hop headers are dropped and `accept-encoding` is set to `identity` so
+  responses can be restored.
+- **Request head** (`head`). Every other header value, every path segment and every query key and
+  value is redacted on its raw bytes and again percent-decoded (`+` as a space in the query), and
+  re-encoded where it changed. The guard checks the exact request line and header block plus the
+  decoded target; a value it cannot repair in place (a header name) refuses the request. Response
+  headers are returned as sent, nothing restored in them.
 - **Request side.** The codec parses the body with a strict span scanner (no re-serialisation) and
   lists byte-stable spans: allowlisted configuration (`model`, `max_tokens`, `stream`, ...),
   thinking text and signatures, redacted thinking, `encrypted_content`, reasoning items, and base64
