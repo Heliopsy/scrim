@@ -135,3 +135,86 @@ proptest! {
         }
     }
 }
+
+/// What `protect` returned, owned, for comparing two snapshots.
+type Outcome = Result<(Vec<u8>, Stats, GuardOutcome, Vec<GuardFinding>), Error>;
+
+fn protect_owned(s: &Snapshot, input: &[u8]) -> Outcome {
+    let mut ws = Workspace::new();
+    s.protect(input, &mut ws)
+        .map(|p| (p.bytes.to_vec(), p.stats, p.guard, p.findings.to_vec()))
+}
+
+/// `input` with genuine placeholders of the values inserted at `cuts`, so the redactor's
+/// copy-and-skip path (a seek past matches) runs too.
+fn with_placeholders(values: &[Vec<u8>], input: &[u8], cuts: &[(usize, usize)]) -> Vec<u8> {
+    let kr = keyring();
+    let mut points: Vec<(usize, usize)> = cuts
+        .iter()
+        .map(|&(at, v)| (at % (input.len() + 1), v % values.len()))
+        .collect();
+    points.sort_unstable();
+    let mut out = Vec::new();
+    let mut last = 0;
+    for (at, v) in points {
+        out.extend_from_slice(&input[last..at]);
+        let slug = RefSlug::new(&format!("s{}", v + 1)).unwrap();
+        out.extend_from_slice(placeholder_for(kr.current(), &slug, &values[v]).as_bytes());
+        last = at;
+    }
+    out.extend_from_slice(&input[last..]);
+    out
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 512, ..ProptestConfig::default() })]
+
+    /// Splitting a body over threads (matching and guard) changes nothing: same bytes, counts,
+    /// guard outcome and findings as on one thread, with tiny regions so that matches straddle
+    /// region ends all the time.
+    #[test]
+    fn parallel_protect_matches_sequential(
+        (values, hay) in prop::collection::vec(value(), 1..10)
+            .prop_flat_map(|vs| (Just(vs.clone()), haystack(vs))),
+        cuts in prop::collection::vec((any::<usize>(), any::<usize>()), 0..4),
+    ) {
+        let refs: Vec<&[u8]> = values.iter().map(Vec::as_slice).collect();
+        let hay = with_placeholders(&values, &hay, &cuts);
+        for kind in [EngineKind::AhoCorasick, EngineKind::HashWindow] {
+            let one = Config { parallel_threads: 1, ..engine(kind) };
+            let s1 = snapshot_with(&refs, ValueClass::Display, &one);
+            let want = protect_owned(&s1, &hay);
+            for (threads, min) in [(2usize, 4usize), (3, 16), (8, 8)] {
+                let cfg = Config { parallel_threads: threads, parallel_min_bytes: min, ..one.clone() };
+                let s = snapshot_with(&refs, ValueClass::Display, &cfg);
+                prop_assert_eq!(&protect_owned(&s, &hay), &want);
+            }
+        }
+    }
+}
+
+#[test]
+fn parallel_protect_matches_sequential_on_fixtures() {
+    for n in [10usize, 300] {
+        let secrets = gen_secrets(31 + n as u64, n);
+        let refs: Vec<&[u8]> = secrets.iter().map(|s| s.as_bytes()).collect();
+        let one = Config {
+            parallel_threads: 1,
+            ..Config::default()
+        };
+        let s1 = snapshot_with(&refs, ValueClass::Credential, &one);
+        let s4 = snapshot_with(
+            &refs,
+            ValueClass::Credential,
+            &Config {
+                parallel_threads: 4,
+                parallel_min_bytes: 1 << 12,
+                ..Config::default()
+            },
+        );
+        for seed in 0..3u64 {
+            let (body, _) = gen_body(seed, 200_000, &secrets);
+            assert_eq!(protect_owned(&s4, &body), protect_owned(&s1, &body));
+        }
+    }
+}

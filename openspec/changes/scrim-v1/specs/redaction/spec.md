@@ -32,6 +32,38 @@ placeholder.
 - **WHEN** a request contains the base64 encoding of a known value embedded at any offset
 - **THEN** the forwarded request contains no substring that decodes back to the value
 
+### Requirement: Nested JSON is matched
+
+JSON text inside a JSON string (tool-call `arguments`, a tool result holding `JSON.stringify`
+output, an MCP text block wrapping JSON) escapes a value once per level. Redaction SHALL match each
+value JSON-escaped up to `redaction.json_depth` times (default 3, accepted 2 to 4), and the guard
+SHALL unescape the outgoing bytes as often. Identical escaped forms SHALL be compiled once.
+
+#### Scenario: Value without JSON-escaped characters
+
+- **WHEN** a known value contains no character any JSON escaping style changes
+- **THEN** nesting adds no compiled patterns for it
+
+#### Scenario: Inner and outer serialisers differ
+
+- **WHEN** a value's inner levels are escaped in any JSON style redaction matches singly and its
+  outer levels in minimal, Go HTML-safe or non-ASCII `\uXXXX` escaping
+- **THEN** the redactor replaces it, and other mixes of styles are left to the guard
+
+#### Scenario: Password with quotes in tool-call arguments
+
+- **WHEN** an OpenAI Chat request carries a known value containing `"` and `\` inside a prior tool
+  call's `arguments`, and inside a tool result whose JSON holds another JSON string
+- **THEN** the forwarded request holds the placeholder at both places and no string, decoded to
+  any depth up to `redaction.json_depth`, contains the value
+
+#### Scenario: Nesting the redactor does not compile
+
+- **WHEN** a value reaches the guard JSON-escaped up to `redaction.json_depth` times in any mix of
+  styles, including every character as `\uXXXX`
+- **THEN** the guard finds it in the matching unescaped view and repairs the escaped bytes, so
+  the body stays valid JSON at every level
+
 ### Requirement: Short values
 
 Values shorter than the configured minimum length (`redaction.min_length`, default 8 bytes) SHALL
@@ -88,6 +120,24 @@ U+27E7, at most 79 bytes.
 - **WHEN** a placeholder appears unquoted in a shell word, a JSON string or a YAML plain scalar
 - **THEN** it needs no escaping and contains no whitespace or shell metacharacter
 
+### Requirement: Percent-form placeholders
+
+Where only ASCII may go (an HTTP request header value or request target), a placeholder SHALL be
+written in its percent form `%E2%9F%A6scrim:<slug>:<vv><tag>%E2%9F%A7`, at most 91 bytes: the two
+brackets percent-encoded, either hex case accepted, nothing else changed. The percent form SHALL
+name the same entry: it SHALL resolve wherever the placeholder resolves, the redactor and guard
+SHALL treat it as that placeholder, and a value restored in its place SHALL be percent-encoded.
+
+#### Scenario: Placeholder in a request header
+
+- **WHEN** a known value in a request header value is replaced
+- **THEN** the header carries the placeholder's percent form, holds only visible ASCII (an RFC 9110 field-value without obs-text), is accepted by a provider front end that rejects obs-text, and resolves to the same entry as the placeholder
+
+#### Scenario: Percent-form placeholder restored
+
+- **WHEN** a model's tool call carries a display value's placeholder in percent form and the tool policy restores it
+- **THEN** the tool receives the value percent-encoded in its place
+
 ### Requirement: Placeholder fields
 
 The slug SHALL be the reference alias in `[a-z0-9-]`, 1 to 48 bytes, not starting or ending with
@@ -140,13 +190,71 @@ not share matching logic with the redactor.
 
 #### Scenario: Guard decodes what the redactor does not
 
-- **WHEN** a known value of at least the minimum length reaches the guard upper-cased, JSON-escaped twice, percent-encoded, base64-encoded at any alignment (wrapped or not) or hex-encoded in any case
+- **WHEN** a known value of at least the minimum length reaches the guard upper-cased, JSON-escaped up to `redaction.json_depth` times, percent-encoded, base64-encoded at any alignment (wrapped or not), hex-encoded in any case, or in one of the tool transforms the guard decodes
 - **THEN** the guard finds it in the decoded view, replaces the covering bytes with the value's placeholder, and checks the repaired bytes again
 
 #### Scenario: Repair cannot complete
 
 - **WHEN** a known value is still present after repair, or more values reach the guard than `redaction.guard.max_repairs` allows
 - **THEN** the request is refused and nothing is forwarded
+
+### Requirement: Guard decodes tool transforms
+
+The guard SHALL find a known value of at least the minimum length in the output of tools agents
+run over files: reversal, rot13, rot47, base64 of base64, base32, byte dumps joined across lines,
+units written one at a time with a fixed separator, runs of byte escapes, and these inside a
+base64 text data URL. Repairs SHALL cover a dump's ASCII column and keep JSON valid.
+
+#### Scenario: Reversed value in a tool result
+
+- **WHEN** a tool result holds the output of `rev` over a file containing a known value
+- **THEN** the guard replaces the reversed value with the value's placeholder
+
+#### Scenario: Byte dump across lines
+
+- **WHEN** a tool result holds `xxd` output of a known value longer than one dump line
+- **THEN** the guard joins the lines, replaces the hex groups and the ASCII column with the
+  placeholder, and the body stays valid JSON
+
+#### Scenario: Spaced letters in a header
+
+- **WHEN** a request header carries a known value with a space after every character
+- **THEN** the guard repairs the header or the request is refused
+
+### Requirement: Guard fragments
+
+The guard SHALL find any run of at least half a known value (at least the minimum length, at most
+24 bytes) or of its reversal, unless the run holds fewer than the minimum length of bytes outside
+the value's format-fixed parts (PEM armour, a JWT header and payload start).
+
+#### Scenario: Half a value
+
+- **WHEN** the first half of a 40-byte known value reaches the guard
+- **THEN** the guard replaces it, while PEM armour or a JWT header alone is left unchanged
+
+### Requirement: Guard decoder cost
+
+Each transform decoder of the guard SHALL do bounded work per input byte, decode only runs above a
+length threshold, see the whole body regardless of how the guard splits work between threads, and
+allocate nothing on a clean request once its buffers have grown.
+
+#### Scenario: Value across a worker cut
+
+- **WHEN** a reversed or spaced value straddles the point where the guard splits a large body
+  between worker threads
+- **THEN** the guard still finds it
+
+### Requirement: Guard decoding limitations
+
+The guard SHALL NOT be required to decode look-alike Unicode (no shell tool produces it, tables
+are unbounded), spelling alphabets (unbounded), compressed content (unbounded work per byte), the
+base85 family (its alphabet covers most printable text), lower-case base32, other ciphers, or
+fragments below the threshold, and the documentation SHALL list each with its reason.
+
+#### Scenario: Documented limitation
+
+- **WHEN** a known value reaches the guard in NATO spelling
+- **THEN** the guard is not required to find it and the documentation lists the limitation
 
 ### Requirement: Split placeholders in streams
 
@@ -199,6 +307,45 @@ tools only values already in the target file; unknown and network-capable tools 
 - **WHEN** a write tool call would put a resolved value into a file that does not already contain it
 - **THEN** the value stays a placeholder in that call
 
+#### Scenario: Network-capable tool
+
+- **WHEN** a model calls a web fetch tool with a display value's placeholder in its arguments
+- **THEN** the tool receives the placeholder unresolved
+
+### Requirement: Tool roles
+
+Each tool name SHALL map to one role, `read`, `search`, `shell`, `edit`, `write`, `network` or
+`none`, from the built-in table (Claude Code, Codex CLI and Gemini CLI tool names) or a tool alias.
+Shell and edit decisions SHALL be taken on the complete arguments of the call, and while those
+stream in the placeholder SHALL stay. Policy rules SHALL only take a restore away
+(policy-approvals "Rules only restrict restore").
+
+#### Scenario: Shell call still streaming
+
+- **WHEN** a shell tool call's arguments are streamed and the proxy cannot hold them until complete
+- **THEN** every placeholder in them reaches the tool unresolved
+
+### Requirement: Edit tools keep values already in the file
+
+An edit tool SHALL receive a value only where the same call shows the value is already in the file:
+in the text it replaces, or on a context or removed line of the same file in a patch. A write tool
+replaces whole files and SHALL receive none.
+
+#### Scenario: Edit keeping a value already in the file
+
+- **WHEN** an edit tool call replaces text containing a display value's placeholder with text that contains the same placeholder
+- **THEN** both the replaced and the replacement text receive the value
+
+#### Scenario: Earlier edit creating the replaced text
+
+- **WHEN** one call applies several edits and only an earlier edit's replacement introduces the placeholder that a later edit replaces
+- **THEN** the earlier replacement keeps the placeholder
+
+#### Scenario: Patch adding a value
+
+- **WHEN** a patch adds a line with a placeholder that no context or removed line of the same file holds
+- **THEN** the added line keeps the placeholder
+
 ### Requirement: Credentials are never restored into commands
 
 Values classed as credentials SHALL never be resolved into tool arguments, commands or file
@@ -220,15 +367,82 @@ resolved output would itself be executed as code, the value SHALL stay a placeho
 - **WHEN** a value containing `$(` and quotes is resolved into a shell command
 - **THEN** the command treats the value as data and executes nothing from it
 
+#### Scenario: Value restored into tool-call arguments
+
+- **WHEN** a display value containing `"` and `\` is resolved into a tool call's JSON `arguments`
+- **THEN** it is escaped for the arguments JSON and again for the response JSON around it, so the
+  tool receives the value exactly
+- **AND** where the placeholder sits inside a quoted part of an arguments string (JSON nested in
+  the string, a quoted shell word), a value that escaping changes stays a placeholder
+
 #### Scenario: Output piped into a shell
 
 - **WHEN** a resolved value would flow into a pipeline that executes its input
 - **THEN** the value stays a placeholder
 
+### Requirement: Data-only command lines
+
+A value SHALL be resolved into a shell command only when every command on the line, including
+those in substitutions and nested `sh -c` scripts, is a known data-only command, which takes no code
+and runs nothing whatever its arguments, or an interpreter program the analyser can vouch for, and
+when no command writes to a file that is code. Anything the analyser does not model SHALL keep
+every placeholder on the line.
+
+#### Scenario: Value in an interpreter string
+
+- **WHEN** a display value is resolved into `python3 -c 'print("<placeholder>")'`
+- **THEN** it is escaped for the Python string literal and then for the single-quoted shell word, and the program prints exactly the value
+
+#### Scenario: Interpreter that evaluates strings
+
+- **WHEN** the placeholder sits in a string the program passes to `exec`, `eval`, `os.system` or an f-string
+- **THEN** the value stays a placeholder
+
+#### Scenario: Value written to a code file
+
+- **WHEN** a command that would receive a resolved value redirects its output to a shell start-up file or a script
+- **THEN** the value stays a placeholder
+
+### Requirement: Shell positions
+
+Within a data-only command line a value SHALL be resolved only as an argument, a here-string,
+heredoc content or an interpreter string literal; never as a command name, assignment, redirection
+target or comment, never right after a backslash or `$`, and never starting a word with `-`.
+
+#### Scenario: Value as a command name
+
+- **WHEN** a placeholder is the first word of a shell command
+- **THEN** the value stays a placeholder
+
+#### Scenario: Value that would end a heredoc
+
+- **WHEN** a placeholder fills a heredoc line and the value would make that line equal the delimiter
+- **THEN** the value stays a placeholder
+
+#### Scenario: Value read as an option
+
+- **WHEN** a display value starts with `-` and its placeholder starts an argument
+- **THEN** the value stays a placeholder
+
+### Requirement: Verbatim restore paths
+
+A restore path that inserts values without escaping them SHALL keep every value that would need
+escaping at its site.
+
+#### Scenario: Proxy that cannot escape
+
+- **WHEN** a restore path inserts values verbatim and a value needs escaping at its site
+- **THEN** the value stays a placeholder rather than being inserted unescaped
+
 ### Requirement: Tool aliases
 
 The tool policy SHALL accept aliases that map another agent's tool names onto the built-in tool
 roles, and tools without an alias or role SHALL be treated as unknown.
+
+Aliases SHALL be delivered to the data plane in the snapshot (`Snapshot.restore.tools`), each naming
+a role and, where the agent's argument names differ, the argument holding the command (shell) or
+the replaced and replacement text (edit). An alias SHALL override the built-in table, and the
+built-in table SHALL be switchable off.
 
 #### Scenario: Agent with differently named shell tool
 
@@ -240,10 +454,18 @@ roles, and tools without an alias or role SHALL be treated as unknown.
 Users SHALL be able to switch, without restart, between showing resolved values and showing
 placeholders in responses the agent displays, for example while screen sharing.
 
+The display mode SHALL travel in the snapshot (`Snapshot.restore.display_mode`), so switching it
+takes effect with the next snapshot. A snapshot without restore settings SHALL restore nothing.
+
 #### Scenario: Screen sharing
 
 - **WHEN** the display mode is set to placeholders
 - **THEN** text shown to the user keeps placeholders while tool policy resolution continues
+
+#### Scenario: Control plane without restore settings
+
+- **WHEN** the data plane applies a snapshot that carries no restore settings
+- **THEN** every placeholder in responses reaches the agent unresolved
 
 ### Requirement: Share and reveal
 
@@ -251,7 +473,16 @@ The CLI SHALL offer `share`, which replaces known values in a text or file with 
 `reveal`, which resolves placeholders in a text or file locally. `reveal` SHALL refuse credential
 values unless explicitly allowed by policy.
 
+Credentials SHALL be revealed only when their reference matches a pattern in
+`Snapshot.restore.reveal_credential_refs`, a weakening setting. While break-glass deny-all is engaged,
+`reveal` SHALL resolve nothing.
+
 #### Scenario: Preparing a bug report
 
 - **WHEN** a user runs `share` on a log file containing known values
 - **THEN** the output contains placeholders in place of every known value
+
+#### Scenario: Revealing a credential
+
+- **WHEN** a user runs `reveal` on text holding a credential's placeholder that no reveal pattern names
+- **THEN** the placeholder stays and display values in the same text are resolved

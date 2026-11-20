@@ -16,8 +16,9 @@ use crate::body::{BoxError, ProxyBody, Restoring, full};
 use crate::capture::{Capture, CaptureError, Record};
 use crate::codec::{self, Api};
 use crate::config::{OnUnavailable, ProxyConfig};
-use crate::engine::{RedactReport, Snapshot, SnapshotCell};
+use crate::engine::{Admission, RedactReport, RequestInfo, Snapshot, SnapshotCell};
 use crate::error::Refusal;
+use crate::head;
 use crate::outgoing::{self, Outgoing};
 use crate::restore::{Ctx, RestoreStats};
 use crate::route::{Route, RouteError, RouteTable};
@@ -41,7 +42,7 @@ pub enum BuildError {
 /// The LLM proxy. Cheap to share behind an [`Arc`]; one instance serves every listener.
 pub struct Proxy {
     cfg: ProxyConfig,
-    routes: RouteTable,
+    routes: Arc<RouteTable>,
     snapshots: Arc<SnapshotCell>,
     client: UpstreamClient,
     audit: Arc<dyn AuditSink>,
@@ -103,9 +104,10 @@ enum Forward {
 }
 
 /// Request headers never forwarded: hop-by-hop headers (RFC 9110 section 7.6.1), `host` (set
-/// from the upstream URI), `content-length` (recomputed after redaction) and `accept-encoding`
-/// (replaced by `identity` so responses can be restored).
+/// from the upstream URI), `content-length` (recomputed after redaction), `accept-encoding`
+/// (replaced by `identity` so responses can be restored) and scrim's own session header.
 const STRIP_REQUEST: &[&str] = &[
+    SESSION_HEADER,
     "connection",
     "keep-alive",
     "proxy-connection",
@@ -119,6 +121,11 @@ const STRIP_REQUEST: &[&str] = &[
     "content-length",
     "accept-encoding",
 ];
+
+/// The header an agent identifies its scrim session with on a base-URL listener
+/// (`x-scrim-session: <session token>`, or a bare session id, which proves nothing). Read by the
+/// request gate, never forwarded.
+pub const SESSION_HEADER: &str = "x-scrim-session";
 
 /// Response headers never forwarded.
 const STRIP_RESPONSE: &[&str] = &[
@@ -150,6 +157,45 @@ fn strip(headers: &mut HeaderMap, names: &[&str]) {
     }
 }
 
+/// Runs the snapshot's request gate, if any. Returns the snapshot the request uses from here
+/// on: the same one with the restore policy bound to this request's caller.
+async fn admit(
+    snap: Arc<Snapshot>,
+    route: &Route,
+    parts: &http::request::Parts,
+) -> Result<Arc<Snapshot>, Refusal> {
+    let Some(gate) = snap.gate.clone() else {
+        return Ok(snap);
+    };
+    let info = RequestInfo {
+        route: &route.name,
+        provider: route.provider.name(),
+        headers: &parts.headers,
+        extensions: &parts.extensions,
+    };
+    match gate.admit(info).await {
+        Admission::Forward { policy } => {
+            let mut s = (*snap).clone();
+            s.policy = policy;
+            s.gate = None;
+            Ok(Arc::new(s))
+        }
+        Admission::Deny { detail } => Err(Refusal::new(RefusalReason::PolicyDenied, detail)),
+    }
+}
+
+/// Whether the request asks for a protocol upgrade: an `Upgrade` header, or `upgrade` among
+/// the `Connection` options.
+fn is_upgrade(h: &HeaderMap) -> bool {
+    h.contains_key(header::UPGRADE)
+        || h.get_all(header::CONNECTION).iter().any(|v| {
+            v.to_str().is_ok_and(|s| {
+                s.split(',')
+                    .any(|o| o.trim().eq_ignore_ascii_case("upgrade"))
+            })
+        })
+}
+
 fn is_identity(h: &HeaderMap) -> bool {
     h.get_all(header::CONTENT_ENCODING).iter().all(|v| {
         v.to_str()
@@ -179,7 +225,7 @@ impl Proxy {
         }
         Ok(Self {
             cfg,
-            routes,
+            routes: Arc::new(routes),
             snapshots,
             client,
             audit,
@@ -218,18 +264,28 @@ impl Proxy {
         B::Error: Into<BoxError>,
     {
         let path = req.uri().path().to_string();
-        let Some((route, rest)) = self.routes.find(&path) else {
+        let snap = self.snapshots.load();
+        let routes = self.routes_of(snap.as_ref());
+        let Some((route, rest)) = routes.find(&path) else {
             let r = Refusal::new(RefusalReason::NoRoute, "");
             return self.refuse(None, Api::Generic, &r);
         };
-        self.serve(route, rest, req).await
+        self.serve(snap, route, rest, req).await
     }
 
     /// Whether a route claims provider host `host` (see [`RouteConfig::hosts`]).
     ///
     /// [`RouteConfig::hosts`]: crate::config::RouteConfig::hosts
     pub fn claims_host(&self, host: &str) -> bool {
-        self.routes.find_host(host).is_some()
+        self.routes_of(self.snapshots.load().as_ref())
+            .find_host(host)
+            .is_some()
+    }
+
+    /// The routes of `snap` when it carries them, else the configured ones.
+    fn routes_of(&self, snap: Option<&Arc<Snapshot>>) -> Arc<RouteTable> {
+        snap.and_then(|s| s.routes.clone())
+            .unwrap_or_else(|| self.routes.clone())
     }
 
     /// Handles a request that arrived for provider host `host` through the forward proxy or a
@@ -240,26 +296,47 @@ impl Proxy {
         B: Body<Data = Bytes> + Send + 'static,
         B::Error: Into<BoxError>,
     {
-        let Some(route) = self.routes.find_host(host) else {
+        let snap = self.snapshots.load();
+        let routes = self.routes_of(snap.as_ref());
+        let Some(route) = routes.find_host(host) else {
             let r = Refusal::new(RefusalReason::NoRoute, "");
             return self.refuse(None, Api::Generic, &r);
         };
         let path = req.uri().path().to_string();
-        self.serve(route, &path, req).await
+        self.serve(snap, route, &path, req).await
     }
 
-    async fn serve<B>(&self, route: &Route, rest: &str, req: Request<B>) -> Response<ProxyBody>
+    /// Serves one request with the one snapshot it loaded (route, dictionary, guard and restore
+    /// policy all from the same version).
+    async fn serve<B>(
+        &self,
+        snap: Option<Arc<Snapshot>>,
+        route: &Route,
+        rest: &str,
+        req: Request<B>,
+    ) -> Response<ProxyBody>
     where
         B: Body<Data = Bytes> + Send + 'static,
         B::Error: Into<BoxError>,
     {
         let api = route.provider.api_for(req.method(), rest);
-        let Some(snap) = self.snapshots.load() else {
+        // A WebSocket (or any other) upgrade would carry frames scrim cannot redact. Refuse it
+        // first, before the snapshot, the gate or the body, so a client with an HTTPS fallback
+        // (Codex tries the Responses API over WebSocket first) falls back at once.
+        if is_upgrade(req.headers()) {
+            let r = Refusal::new(RefusalReason::UpgradeUnsupported, "");
+            return self.refuse(Some(route), api, &r);
+        }
+        let Some(snap) = snap else {
             let r = Refusal::new(RefusalReason::NotReady, "");
             return self.refuse(Some(route), api, &r);
         };
         let (parts, body) = req.into_parts();
-        let out = match self.prepare(&snap, api, &parts.headers, body).await {
+        let snap = match admit(snap, route, &parts).await {
+            Ok(s) => s,
+            Err(r) => return self.refuse(Some(route), api, &r),
+        };
+        let mut out = match self.prepare(&snap, api, &parts.headers, body).await {
             Ok(o) => o,
             Err(r) => return self.refuse(Some(route), api, &r),
         };
@@ -269,10 +346,22 @@ impl Proxy {
             header::ACCEPT_ENCODING,
             HeaderValue::from_static("identity"),
         );
+        // The request target and headers leave too: same redactor, same guard.
+        let head = match head::prepare(&snap, &parts.method, rest, parts.uri.query(), &mut headers)
+        {
+            Ok(h) => h,
+            Err(r) => return self.refuse(Some(route), api, &r),
+        };
+        out.report.merge(head.report);
+        for r in head.guard_repaired {
+            if !out.guard_repaired.contains(&r) {
+                out.guard_repaired.push(r);
+            }
+        }
         let target = Target {
             route,
-            rest,
-            query: parts.uri.query(),
+            rest: &head.path,
+            query: head.query.as_deref(),
             method: &parts.method,
             headers: &headers,
         };

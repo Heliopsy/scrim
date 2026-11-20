@@ -7,12 +7,18 @@ of it is a secret value: rows hold identities, references, decisions and times. 
 ## State backends
 
 | `state.backend` | Use | Where |
-|---|---|---|
-| `memory` | throwaway runs, tests | process memory; a restart loses everything and pending approvals end denied |
+| --- | --- | --- |
+| `memory` | throwaway runs, tests | process memory; a restart loses everything, pending approvals end denied and `scrim run` sessions end |
 | `sqlite` | one scrim on one machine | `state.sqlite.path`, default `$XDG_STATE_HOME/scrim/state.db` |
 | `postgres` | shared and multi-replica deployments | `state.postgres.dsn`, a reference such as `env:SCRIM_PG_DSN` |
 
-The binary default is `memory` until profiles set a per-profile default (configuration tasks).
+Defaults per profile: `local` (the default profile) uses `sqlite`; `ci` and `k8s` use `memory` (set
+`postgres` for shared state in Kubernetes). The SQLite path follows the environment scrim was
+started with, so a service or a test with its own `XDG_STATE_HOME` never touches the user's file.
+
+While `scrim proxy` holds the SQLite file, commands that open state themselves (`scrim catalog`,
+`scrim api serve`) cannot open it; `scrim status` reports it as in use, and operator commands go
+through the admin API instead.
 
 ### SQLite
 
@@ -37,6 +43,8 @@ The binary default is `memory` until profiles set a per-profile default (configu
   in commit order. A replica tailing the outbox by ID never misses an event that committed late,
   for example a grant revocation made through another replica.
 - A grant's last use is a single conditional `UPDATE`: two replicas cannot both take it.
+- Sessions are shared: a `scrim run` token minted through one replica is accepted by every other,
+  and revoking an agent's sessions is one conditional `UPDATE`.
 - Audit IDs are unique and increasing per transaction but, unlike event IDs, not guaranteed to be
   visible in commit order. Page the audit log with `--before`, not as a live tail.
 
@@ -46,10 +54,16 @@ Each SQL backend embeds its migrations (`internal/state/<backend>/migrations/NNN
 in order at start-up, each in its own transaction with its `schema_migrations` row. They are forward
 only. A database migrated by a newer scrim is refused with both schema versions in the message.
 
+| Version | Change |
+| --- | --- |
+| 1 | approvals, grants, sessions, audit log, events |
+| 2 | sessions keep what `scrim run` binds them to (user, root process, scopes, name, end reason), so they survive a restart |
+
 ### No values in state
 
 SQL backends pass every stored string through the process scrubber, so a value that slipped into a
-reason, target or attribute is stored as `[scrim:redacted]`. The leak tests write such rows and then
+reason, target, attribute, session name or label is stored as `[scrim:redacted]`. Sessions store
+the hash of the token's secret part, never the token. The leak tests write such rows and then
 search the SQLite file and WAL bytes, and a JSON dump of every PostgreSQL table, for the values.
 
 ## Audit log
@@ -82,13 +96,13 @@ value was loaded), and the finished line is scrubbed again.
 `metrics.listen` (empty disables) serves:
 
 | Path | Meaning |
-|---|---|
+| --- | --- |
 | `/healthz`, `/livez` | the process answers |
 | `/readyz` | scrim can redact safely; failing checks are named, 503 otherwise |
 | `/metrics` | Prometheus text format, scrubbed as a whole |
 
 | Metric | Labels |
-|---|---|
+| --- | --- |
 | `scrim_redaction_replacements_total` | provider, rule, agent |
 | `scrim_guard_repairs_total` | provider, rule, agent |
 | `scrim_guard_refusals_total` | provider, agent |

@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
         with:
           go-version-file: go.mod
 
@@ -35,17 +35,23 @@ jobs:
           fi
           tail -n 1 passthrough.txt
 
-      # Gate against the real proxy. Until `scrim proxy` serves traffic
-      # (tasks.md 3.1) there is nothing to gate; the step says so instead of
-      # passing silently.
+      - run: rustup toolchain install
+        working-directory: dataplane
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          workspaces: dataplane
+          save-if: false
+      - run: cargo build --locked -p scrim-dataplane
+        working-directory: dataplane
+
+      # Gate against the real proxy: test/leak/start-proxy.sh runs
+      # `scrim proxy` with the seeds in a file store.
       - name: Gate against scrim proxy
+        env:
+          SCRIM_DATAPLANE_PATH: ${{ github.workspace }}/dataplane/target/debug/scrim-dataplane
         run: |
-          if go run . proxy --help 2>&1 | grep -q "not implemented"; then
-            echo "::notice::scrim proxy is not implemented yet (tasks.md 3.1); leak gate against the real proxy skipped"
-            exit 0
-          fi
-          test -x test/leak/start-proxy.sh || { echo "test/leak/start-proxy.sh missing" >&2; exit 1; }
           go run . audit run --proxy http://127.0.0.1:18484 --proxy-cmd test/leak/start-proxy.sh \
+            --route anthropic-messages=/anthropic --route openai-chat=/openai --route openai-responses=/openai \
             --upstream-listen 127.0.0.1:18089 --report leak-report.json
 
       - name: Upload reports

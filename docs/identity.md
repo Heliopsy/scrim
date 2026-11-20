@@ -14,7 +14,7 @@ arrive later.
 When a process connects to the API socket, the kernel records who it is. scrim reads that record:
 
 | Platform | Mechanism | What it reports |
-|---|---|---|
+| --- | --- | --- |
 | Linux | `SO_PEERCRED` | user, group, process |
 | macOS | `LOCAL_PEERCRED`, `LOCAL_PEERPID` | user, primary group, process |
 | others | none | the caller is unknown and refused |
@@ -32,7 +32,7 @@ Each key is an agent name (lower case, digits, `.`, `_`, `-`). Each value lists 
 by spaces:
 
 | Selector | Matches |
-|---|---|
+| --- | --- |
 | `uid:N`, `user:NAME` | the peer's user |
 | `gid:N`, `group:NAME` | the peer's primary group |
 | `scope:S` | limits the agent to scope S (repeatable; default all) |
@@ -55,7 +55,7 @@ scrim api whoami
 ### Scopes
 
 | Scope | Allows |
-|---|---|
+| --- | --- |
 | `secrets:list` | `secrets_list` |
 | `secrets:request` | `secret_request`, `approval_status`, `grants_list` |
 | `secrets:write` | `secret_gen`, `secret_capture`, `secret_ask_human`, `scrim secret put` |
@@ -90,7 +90,7 @@ minted for is refused and audited as `outside the session's process tree`.
 Grants, approvals and asks belong to a principal:
 
 | Caller | Principal |
-|---|---|
+| --- | --- |
 | peer credentials only | `<agent>` |
 | session | `<agent>/<session id>` |
 
@@ -106,7 +106,7 @@ stolen or stale token cannot be retried as something else. The caller is only to
 refused; the audit entry (action `tool.auth`) records why:
 
 | Reason | Meaning |
-|---|---|
+| --- | --- |
 | `malformed` | not shaped like a token |
 | `unknown` | no such session, or the secret part does not match |
 | `revoked` | the session was ended or revoked |
@@ -122,8 +122,80 @@ refused; the audit entry (action `tool.auth`) records why:
 - A process of the same user with `sessions:mint` can revoke any session of that user
   (`DELETE /v1/sessions/{id}`).
 
-Sessions are kept in memory: restarting the control plane ends every session, which is the safe
-direction. Persisting them in the state backend for multi-replica deployments is later work.
+### Where sessions are kept
+
+Sessions are rows in the [state backend](state-and-observability.md#state-backends), next to
+grants and approvals. A row holds the session ID, agent, name, user, the root process (PID, parent
+and start time), scopes, labels, times and why it ended; of the token it holds only the hash.
+Creating and revoking a session each write an audit entry and an event, `session.created` and
+`session.revoked`, with the session ID, agent, user, name and reason, never the hash.
+
+- With `sqlite` or `postgres`, sessions survive a control plane restart: a `scrim run` started
+  before the restart keeps working after it, and a revoked session stays revoked. With
+  `postgres`, every replica sees the same sessions.
+- With `memory`, a restart ends every session, which is the safe direction.
+
+The token is bound to the root process's PID and start time, so after a reboot (new start times) no
+old session matches any process and every old token is refused as `outside the session's process
+tree`.
+
+## Provider and tool traffic
+
+The data plane serves the agent's provider requests and tool traffic, and holds no session
+verifiers and no `identity.peers` mapping. It reads what the transport carries and leaves the
+rest to the control plane:
+
+| Listener | What the data plane reads |
+| --- | --- |
+| Unix socket base URL | the kernel's peer credentials (user, group, process) |
+| forward proxy | `Proxy-Authorization: Basic <session id>:<token>`, which clients send for `HTTPS_PROXY=http://<session id>:<token>@127.0.0.1:<port>` |
+| TCP base URL | the `x-scrim-session: <token>` header (Claude Code sends it through `ANTHROPIC_CUSTOM_HEADERS`) |
+
+Neither the proxy credentials nor the header are forwarded: `Proxy-Authorization` ends at the
+proxy, and the base-URL listener strips `x-scrim-session`. The token is in the redaction set as
+well, so it cannot reach a provider in a request body either.
+
+A request that carries none of these is an unknown caller (`agent.known` is false), and rules on
+it are decided in the data plane. A request that carries any of them is an agent the data plane
+cannot place: a rule that depends on the agent goes to the control plane, and the ask carries what
+the transport said (`AskCaller` in `proto/scrim/dataplane/v1`). A restore cannot wait for an
+answer, so a restore rule on the agent keeps the placeholder for such a request.
+
+### How the control plane verifies an ask's caller
+
+The data plane cannot verify a session, and it must not hold or log tokens. When a request carries
+a token, the data plane reduces it on arrival to its verifier, the SHA-256 the control plane
+stores for the session, and forgets the token. An ask about that request carries only a proof:
+an HMAC keyed with the verifier over the session id, the ask id and the ask deadline
+(`AskCaller.session_proof`; design D14). The control plane recomputes it from the stored hash.
+The proof is good for one ask only and reveals neither the token nor the hash.
+
+| What the ask carries | Who the rules see |
+| --- | --- |
+| a session and a valid proof | that session's agent (`agent.kind == "session"`, `agent.session`), if the session is active; over a Unix socket the peer must also be the session's user and inside its process tree |
+| a session without a proof (a bare session id), or a wrong proof | an unknown caller; the decision is audited with `caller=refused` and the reason |
+| a revoked or expired session, or a Unix peer outside the session's tree | an unknown caller, audited with the reason (`revoked`, `expired`, `outside the session's process tree`) |
+| a Unix peer and no session | the innermost active session of that user whose process tree it is in, else its `identity.peers` mapping, else unknown |
+| nothing | an unknown caller |
+
+A refused session is never retried as the peer's mapping, and agent fields in the request itself
+are ignored. Each decision's audit entry records how the caller was identified in the `caller`
+attribute (`session`, `peer`, `unmapped`, `refused`, `none`).
+
+A session id alone is public (it appears in audit entries and status), so it proves nothing. Over
+TCP the control plane checks possession of the token but cannot see the client's process, so a
+process of the same user that read the token from an agent's environment can act as that session
+on the forward proxy and the base URL (on the agent API and Unix sockets the process tree is
+checked). See [What this does not protect against](#what-this-does-not-protect-against).
+
+### Cost
+
+A rule that depends on the agent of a request carrying a session always costs one round trip to
+the control plane (a local gRPC call and a state read), since the data plane cannot place the
+caller. That includes the built-in injection rule (`agent.known`), so every injection for a
+`scrim run` session is asked about once per credential and request. Rules that do not mention
+`agent` are decided in the data plane. The data plane does not receive a peer-to-agent map, so
+agent rules on Unix-socket requests also ask.
 
 ## What this does not protect against
 
@@ -132,5 +204,7 @@ direction. Persisting them in the state backend for multi-replica deployments is
 - An agent that runs as root, or can `ptrace` another agent, can act as it. Run agents as separate
   users or in containers when they must not be able to impersonate each other.
 - A session token in an agent's environment can reach the model if the agent prints its
-  environment. It is useless off the machine and outside the process tree, but should still be
-  redacted like any other credential.
+  environment; it is in the redaction set for that reason. It is useless off the machine. On the
+  agent API and Unix sockets it is useless outside the session's process tree; on the TCP forward
+  proxy and base URL, which cannot see the client's process, a same-user process that holds the
+  token is that session.

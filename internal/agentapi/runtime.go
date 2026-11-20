@@ -17,7 +17,9 @@ import (
 	"github.com/heliopsy/scrim/internal/app"
 	"github.com/heliopsy/scrim/internal/entrypage"
 	"github.com/heliopsy/scrim/internal/identity"
+	"github.com/heliopsy/scrim/internal/identity/sessionstate"
 	"github.com/heliopsy/scrim/internal/localapi"
+	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/version"
 )
 
@@ -45,6 +47,9 @@ type Runtime struct {
 	EntryURL string
 	Service  *agenttools.Service
 	Sessions *identity.Manager
+	// Resolver identifies callers by peer credentials and session tokens,
+	// the same way for the local API and for data plane asks.
+	Resolver *identity.Resolver
 
 	api   *localapi.Server
 	page  *entrypage.Page
@@ -59,6 +64,9 @@ type Options struct {
 	Stderr   io.Writer
 	// Placeholders, when set, fills placeholders into results.
 	Placeholders Placeholders
+	// OnMint, when set, receives a copy of every session token minted (see
+	// identity.ManagerOptions.OnMint).
+	OnMint func(identity.Session, secret.Value)
 }
 
 // New builds the local API and entry page from the composition root and
@@ -73,8 +81,8 @@ func New(a *app.App, o Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	mgr := identity.NewManager(identity.NewMemorySessions(), identity.ManagerOptions{
-		DefaultTTL: SessionTTL.Get(cfg), MaxTTL: SessionMaxTTL.Get(cfg)})
+	mgr := identity.NewManager(sessionstate.New(a.State), identity.ManagerOptions{
+		DefaultTTL: SessionTTL.Get(cfg), MaxTTL: SessionMaxTTL.Get(cfg), OnMint: o.OnMint})
 
 	entryLn, err := entrypage.Listen(EntryListen.Get(cfg))
 	if err != nil {
@@ -91,16 +99,24 @@ func New(a *app.App, o Options) (*Runtime, error) {
 		notifier = &TerminalNotifier{W: w}
 	}
 	auditor := Audit{State: a.State}
+	if a.PolicyParts == nil || a.PolicyParts.Gate == nil {
+		_ = entryLn.Close()
+		return nil, errors.New("agentapi: the composition root has no policy gate")
+	}
+	// The agent tools decide with a.Policy (what callers may replace in
+	// tests), through the same grants, approvals and break-glass.
+	gv := *a.PolicyParts.Gate
+	gv.Engine = a.Policy
+	g := &gv
 	svc, err := agenttools.New(agenttools.Deps{
-		Policy: Policy{Engine: a.Policy},
-		Approvals: Approvals{Engine: a.Policy, State: a.State, Notifier: a.Notifier,
-			DefaultTTL: GrantDefaultTTL.Get(cfg), MaxTTL: GrantMaxTTL.Get(cfg), ApprovalTimeout: ApprovalTimeout.Get(cfg)},
-		Catalog:  Stores{Set: a.Stores, Placeholders: o.Placeholders},
-		Store:    Stores{Set: a.Stores, Placeholders: o.Placeholders},
-		Auditor:  auditor,
-		Notifier: notifier,
-		Links:    links,
-		Logger:   a.Log,
+		Policy:    Policy{Engine: a.Policy},
+		Approvals: Approvals{Gate: g, DefaultTTL: GrantDefaultTTL.Get(cfg), MaxTTL: GrantMaxTTL.Get(cfg)},
+		Catalog:   Stores{Set: a.Stores, Placeholders: o.Placeholders},
+		Store:     Stores{Set: a.Stores, Placeholders: o.Placeholders, Refreshers: a.Refreshers},
+		Auditor:   auditor,
+		Notifier:  notifier,
+		Links:     links,
+		Logger:    a.Log,
 	})
 	if err != nil {
 		_ = entryLn.Close()
@@ -122,9 +138,10 @@ func New(a *app.App, o Options) (*Runtime, error) {
 		_ = entryLn.Close()
 		return nil, err
 	}
-	api := &localapi.Server{Resolver: identity.Resolver{Peers: peers, Sessions: mgr}, Sessions: mgr, Tools: svc,
+	resolver := &identity.Resolver{Peers: peers, Sessions: mgr}
+	api := &localapi.Server{Resolver: *resolver, Sessions: mgr, Tools: svc,
 		Auditor: auditor, Logger: a.Log, ServerVersion: version.Version}
-	return &Runtime{Socket: path, EntryURL: links.Base(), Service: svc, Sessions: mgr,
+	return &Runtime{Socket: path, EntryURL: links.Base(), Service: svc, Sessions: mgr, Resolver: resolver,
 		api: api, page: page, sock: sockLn, entry: entryLn}, nil
 }
 
@@ -144,4 +161,11 @@ func (r *Runtime) Serve(ctx context.Context) error {
 // LogAddresses logs where the runtime listens.
 func (r *Runtime) LogAddresses(l *slog.Logger) {
 	l.Info("agent API listening", "socket", r.Socket, "entry_page", r.EntryURL)
+}
+
+// Close releases both listeners without serving, for a caller that fails
+// after New. Serve closes them itself when it returns.
+func (r *Runtime) Close() {
+	_ = r.sock.Close()
+	_ = r.entry.Close()
 }

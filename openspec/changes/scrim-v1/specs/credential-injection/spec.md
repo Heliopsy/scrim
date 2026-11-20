@@ -59,6 +59,21 @@ for trust installation.
 - **WHEN** a client that trusts only the previous CA connects during the overlap period
 - **THEN** the handshake succeeds through a cross certificate, and fails once the overlap ends
 
+#### Scenario: Restart during an overlap
+
+- **WHEN** scrim restarts while a rotation's overlap period is running
+- **THEN** it uses the same current CA and keeps the previous one until the recorded end of the overlap
+
+#### Scenario: Operator-supplied CA
+
+- **WHEN** `tool-proxy.ca.cert-file` and `tool-proxy.ca.key` name an operator's CA certificate and key reference
+- **THEN** scrim uses that CA, never rotates it, and warns before it expires
+
+#### Scenario: CA key readable by others
+
+- **WHEN** the generated CA's key file is readable by group or others
+- **THEN** scrim refuses to use it and names the file, without printing its content
+
 ### Requirement: Pinned certificates fail closed
 
 When a client refuses the interception certificate, scrim SHALL not fall back to passing the
@@ -113,6 +128,52 @@ plain HTTP, a setting named for what it weakens.
 - **WHEN** an agent sends a credential placeholder to its bound host over `http://` and the binding
   does not allow plain HTTP
 - **THEN** the request is refused as an unbound destination
+
+### Requirement: Injection follows the decision table
+
+After a credential's binding allows a request, the tool proxy SHALL decide the injection with the
+decision table (`op` `inject`, with the credential's reference, name, store and class, the
+destination host, method and path, and the caller) before anything is substituted. A deny SHALL
+refuse the whole request with status 403 and code `policy_denied`. An ask SHALL hold the request for
+the control plane's answer, bounded as every ask is, and the data plane SHALL NOT cache a grant.
+
+#### Scenario: Deny rule on a bound host
+
+- **WHEN** a credential is bound to `api.github.com` and a rule denies `op == "inject"` for `dest.path` `/admin`
+- **THEN** a request to `https://api.github.com/admin` carrying its placeholder is refused with `policy_denied` and nothing is sent upstream
+
+#### Scenario: Approval answered, then asked again
+
+- **WHEN** an ask rule covers an injection and the control plane allows the first request
+- **THEN** the first request is injected, and the next one is asked about again
+
+#### Scenario: Approval times out
+
+- **WHEN** an ask rule covers an injection and no answer arrives within the ask timeout
+- **THEN** the request is refused with `policy_denied` and nothing is sent upstream
+
+### Requirement: Injection works out of the box
+
+The system SHALL ship a built-in rule, `builtin.inject-bound`, allowing `op == "inject"` for an
+identified agent after the configured rules, so deny and ask rules still win. Injection is only
+decided after the binding matched, so it allows exactly injection toward bound hosts.
+`policy.builtin.inject` SHALL select allow (default), ask or off; the rule SHALL appear in the
+compiled snapshot, and `builtin.` rule names SHALL be reserved.
+
+#### Scenario: Default configuration
+
+- **WHEN** `policy.default` is deny, no rule mentions `inject`, and a `scrim run` agent sends a request with a credential placeholder to a host the credential is bound to
+- **THEN** the credential is injected, and the same request to an unbound host is refused
+
+#### Scenario: Unknown caller
+
+- **WHEN** a process without a session sends the same request through the forward proxy
+- **THEN** the injection is refused with `policy_denied`
+
+#### Scenario: Built-in rule switched off
+
+- **WHEN** `policy.builtin.inject` is off and no rule allows `inject`
+- **THEN** nothing is injected
 
 ### Requirement: Documented refusals
 

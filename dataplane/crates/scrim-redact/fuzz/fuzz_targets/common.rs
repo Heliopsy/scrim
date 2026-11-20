@@ -34,6 +34,18 @@ pub fn snapshot(
     engine: EngineChoice,
     class: ValueClass,
 ) -> Option<Snapshot> {
+    snapshot_threads(vals, min_len, engine, class, 1)
+}
+
+/// Like [`snapshot`], with the guard splitting every body of 16 bytes or more over `threads`
+/// workers.
+pub fn snapshot_threads(
+    vals: &[Vec<u8>],
+    min_len: usize,
+    engine: EngineChoice,
+    class: ValueClass,
+    threads: usize,
+) -> Option<Snapshot> {
     let kr = Arc::new(Keyring::new(PlaceholderKey::new(1, &[7; 32]).ok()?));
     let entries = vals
         .iter()
@@ -57,6 +69,8 @@ pub fn snapshot(
             ..Default::default()
         },
         guard_max_repairs: 10_000,
+        parallel_threads: threads,
+        parallel_min_bytes: 16,
         ..Config::default()
     };
     Snapshot::build(entries, kr, &cfg).ok()
@@ -87,4 +101,59 @@ pub fn contains_outside(s: &Snapshot, b: &[u8], n: &[u8]) -> bool {
     outside_placeholders(s, b)
         .iter()
         .any(|seg| contains(seg, n))
+}
+
+/// JSON string escaping of one level, in one of five styles: 0 minimal, 1 Go (`<>&`), 2 Python
+/// (non-ASCII), 3 escaped slash, 4 every character. Invalid UTF-8 is copied as is.
+pub fn json_level(s: &[u8], style: u8) -> Vec<u8> {
+    fn u4(o: &mut Vec<u8>, x: u32) {
+        o.extend_from_slice(format!("\\u{x:04x}").as_bytes());
+    }
+    let mut o = Vec::with_capacity(s.len() * 2);
+    let text = std::str::from_utf8(s).ok();
+    let one = |o: &mut Vec<u8>, c: char, bytes: &[u8]| {
+        let mut b16 = [0u16; 2];
+        match (style % 5, c) {
+            (4, c) => c
+                .encode_utf16(&mut b16)
+                .iter()
+                .for_each(|&x| u4(o, u32::from(x))),
+            (_, '"') => o.extend_from_slice(b"\\\""),
+            (_, '\\') => o.extend_from_slice(b"\\\\"),
+            (3, '/') => o.extend_from_slice(b"\\/"),
+            (1, '<' | '>' | '&' | '\u{2028}' | '\u{2029}') => u4(o, c as u32),
+            (2, c) if !c.is_ascii() => c
+                .encode_utf16(&mut b16)
+                .iter()
+                .for_each(|&x| u4(o, u32::from(x))),
+            (_, c) if (c as u32) < 0x20 => u4(o, c as u32),
+            _ => o.extend_from_slice(bytes),
+        }
+    };
+    match text {
+        Some(t) => {
+            for c in t.chars() {
+                let mut buf = [0u8; 4];
+                let b = c.encode_utf8(&mut buf).as_bytes().to_vec();
+                one(&mut o, c, &b);
+            }
+        }
+        None => {
+            for &b in s {
+                if b < 0x80 {
+                    one(&mut o, char::from(b), &[b]);
+                } else {
+                    o.push(b);
+                }
+            }
+        }
+    }
+    o
+}
+
+/// `v` escaped once per entry of `styles`, innermost first.
+pub fn json_nested(v: &[u8], styles: &[u8]) -> Vec<u8> {
+    styles
+        .iter()
+        .fold(v.to_vec(), |acc, &st| json_level(&acc, st))
 }

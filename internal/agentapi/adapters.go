@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,35 +13,20 @@ import (
 
 	"github.com/heliopsy/scrim/internal/agenttools"
 	"github.com/heliopsy/scrim/internal/audit"
+	"github.com/heliopsy/scrim/internal/gate"
+	"github.com/heliopsy/scrim/internal/grant"
 	"github.com/heliopsy/scrim/internal/identity"
-	"github.com/heliopsy/scrim/internal/notify"
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/refresh"
 )
 
 // Agent converts a resolved identity into the policy package's agent. The
 // session ID is carried separately, so rules can match the agent name while
 // grants and approvals stay owned by one session.
-func Agent(id identity.Identity) policy.Agent {
-	kind := policy.IdentityUnknown
-	switch id.Source {
-	case identity.SourcePeer:
-		kind = policy.IdentityPeer
-	case identity.SourceSession:
-		kind = policy.IdentitySession
-	}
-	labels := maps.Clone(id.Labels)
-	if labels == nil {
-		labels = map[string]string{}
-	}
-	labels["uid"] = strconv.FormatUint(uint64(id.Peer.UID), 10)
-	if id.SessionName != "" {
-		labels["session_name"] = id.SessionName
-	}
-	return policy.Agent{ID: id.Agent, Kind: kind, Session: id.SessionID, Labels: labels}
-}
+func Agent(id identity.Identity) policy.Agent { return id.PolicyAgent() }
 
 // owns reports whether a stored agent is the same principal as a.
 func owns(a, stored policy.Agent) bool {
@@ -124,6 +108,22 @@ type Placeholders interface {
 type Stores struct {
 	Set          *stores.Set
 	Placeholders Placeholders
+	// Refreshers, when set, take writes to their store, so a written value
+	// is in the redaction set before the write is reported.
+	Refreshers []*refresh.Refresher
+}
+
+func (s Stores) write(ctx context.Context, ref stores.Ref, fields map[string]secret.Value, o stores.WriteOptions) error {
+	if a, err := s.Set.Lookup(ref); err == nil {
+		for _, r := range s.Refreshers {
+			if r.Store() == a.Name() {
+				_, err := r.Write(ctx, ref, fields, o)
+				return err
+			}
+		}
+	}
+	_, err := s.Set.Write(ctx, ref, fields, o)
+	return err
 }
 
 func (s Stores) placeholder(r stores.Ref) string {
@@ -150,7 +150,7 @@ func (s Stores) Write(ctx context.Context, _ identity.Identity, w agenttools.Wri
 	if err := w.Value.Expose(func(b []byte) error { v = secret.New(b); return nil }); err != nil {
 		return agenttools.Written{}, err
 	}
-	_, err = s.Set.Write(ctx, r.Secret(), map[string]secret.Value{field: v}, stores.WriteOptions{CreateOnly: !w.Overwrite})
+	err = s.write(ctx, r.Secret(), map[string]secret.Value{field: v}, stores.WriteOptions{CreateOnly: !w.Overwrite})
 	v.Wipe()
 	if errors.Is(err, stores.ErrConflict) {
 		return agenttools.Written{}, agenttools.ErrExists
@@ -290,18 +290,18 @@ func outcome(o string) string {
 	}
 }
 
-// Approvals is the approval and grant service over the state backend and
-// the policy engine, until the approvals service (tasks 7.2 and 7.4) takes
-// over: it creates grants for allowed requests, pending approvals for asks,
-// and answers status and grant listings scoped to the caller.
+// Approvals answers secret_request, approval_status and grants_list through
+// the control plane's single decision path: every request goes through
+// [gate.Gate.Check] (break-glass, rules, grants, approvals), so the agent
+// tools, the data plane's asks and the admin API see the same grants and
+// approvals. Status and listings are scoped to the caller's principal.
 type Approvals struct {
-	Engine          policy.Engine
-	State           state.Store
-	Notifier        notify.Notifier
-	DefaultTTL      time.Duration
-	MaxTTL          time.Duration
-	ApprovalTimeout time.Duration
-	Now             func() time.Time
+	Gate *gate.Gate
+	// DefaultTTL and MaxTTL bound a grant secret_request creates for an
+	// allow rule without a TTL (tools.grant-default-ttl, tools.grant-max-ttl).
+	DefaultTTL time.Duration
+	MaxTTL     time.Duration
+	Now        func() time.Time
 }
 
 func (a Approvals) now() time.Time {
@@ -320,120 +320,88 @@ func (a Approvals) Request(ctx context.Context, id identity.Identity, req agentt
 	now := a.now()
 	preq := policy.Request{Agent: Agent(id), Action: policy.ActionGrant, Ref: r, Store: r.Scheme,
 		Tool: agenttools.ToolSecretRequest, Time: now}
-	d, err := a.Engine.Decide(ctx, preq)
-	if err != nil {
-		return agenttools.GrantResult{}, err
-	}
-	dur := req.Duration
-	if dur <= 0 {
-		dur = a.DefaultTTL
-	}
-	limit := a.MaxTTL
-	if d.GrantTTL > 0 && d.GrantTTL < limit {
-		limit = d.GrantTTL
-	}
-	capped := dur > limit
-	if capped {
-		dur = limit
-	}
-	switch d.Effect {
-	case policy.Allow:
-		g := &state.Grant{ID: "grt_" + state.NewID(), Agent: preq.Agent, Ref: r, Rule: d.Rule, CreatedAt: now, ExpiresAt: now.Add(dur)}
-		err := state.Apply(ctx, a.State, func(tx state.Tx) (state.Change, error) {
-			if err := tx.CreateGrant(ctx, g); err != nil {
-				return state.Change{}, err
-			}
-			return state.Change{
-				Audit:  audit.Entry{Time: now, Action: "grant.created", Actor: id.Principal(), Agent: preq.Agent, Ref: r, Effect: d.Effect, Rule: d.Rule, Subject: g.ID, Outcome: audit.OutcomeOK, Reason: req.Reason},
-				Events: []state.Event{{Kind: "grant.created", Subject: g.ID, Time: now}},
-			}, nil
-		})
+	v := a.Gate.Check(ctx, preq, gate.Options{})
+	switch v.Status {
+	case gate.Allowed:
+		if v.GrantID != "" {
+			// The rule leaves its own grant behind (allow with a TTL), or an
+			// earlier grant already covers the request.
+			dur := v.GrantExpires.Sub(now).Round(time.Second)
+			return agenttools.GrantResult{Status: agenttools.StatusGranted, GrantID: v.GrantID, ExpiresAt: v.GrantExpires,
+				Duration: dur, Capped: req.Duration > dur}, nil
+		}
+		dur := req.Duration
+		if dur <= 0 {
+			dur = a.DefaultTTL
+		}
+		capped := a.MaxTTL > 0 && dur > a.MaxTTL
+		if capped {
+			dur = a.MaxTTL
+		}
+		g, err := grant.Build(preq, policy.ScopeSecret, 0, dur, v.Rule, "", now)
 		if err != nil {
+			return agenttools.GrantResult{Status: agenttools.StatusDenied, Reason: "no grant can be made for this caller"}, nil //nolint:nilerr // an unidentified caller is refused, not an error
+		}
+		if err := a.Gate.Grants.Create(ctx, &g, id.Principal()); err != nil {
 			return agenttools.GrantResult{}, err
 		}
 		return agenttools.GrantResult{Status: agenttools.StatusGranted, GrantID: g.ID, ExpiresAt: g.ExpiresAt, Duration: dur, Capped: capped}, nil
-	case policy.Ask:
-		ap := &state.Approval{ID: "apr_" + state.NewID(), Status: state.ApprovalPending, Request: preq, Rule: d.Rule,
-			Reason: req.Reason, GrantTTL: dur, CreatedAt: now, ExpiresAt: now.Add(a.ApprovalTimeout)}
-		err := state.Apply(ctx, a.State, func(tx state.Tx) (state.Change, error) {
-			if err := tx.CreateApproval(ctx, ap); err != nil {
-				return state.Change{}, err
-			}
-			return state.Change{
-				Audit:  audit.Entry{Time: now, Action: "approval.created", Actor: id.Principal(), Agent: preq.Agent, Ref: r, Effect: d.Effect, Rule: d.Rule, Subject: ap.ID, Outcome: audit.OutcomePending, Reason: req.Reason},
-				Events: []state.Event{{Kind: "approval.created", Subject: ap.ID, Time: now}},
-			}, nil
-		})
-		if err != nil {
-			return agenttools.GrantResult{}, err
-		}
-		if a.Notifier != nil {
-			// A notifier failure leaves the approval pending until it expires;
-			// it never approves anything.
-			_ = a.Notifier.Notify(ctx, notify.Request{ApprovalID: ap.ID, Agent: preq.Agent, Summary: preq,
-				Rule: d.Rule, Reason: req.Reason, ExpiresAt: ap.ExpiresAt})
-		}
-		return agenttools.GrantResult{Status: agenttools.StatusPending, ApprovalID: ap.ID, Duration: dur, Capped: capped}, nil
+	case gate.Pending:
+		return agenttools.GrantResult{Status: agenttools.StatusPending, ApprovalID: v.ApprovalID, Duration: req.Duration}, nil
 	default:
-		return agenttools.GrantResult{Status: agenttools.StatusDenied, Reason: d.Reason}, nil
+		return agenttools.GrantResult{Status: agenttools.StatusDenied, Reason: v.Reason}, nil
 	}
 }
 
 // Approval implements agenttools.Approvals.
 func (a Approvals) Approval(ctx context.Context, id identity.Identity, approvalID string) (agenttools.ApprovalState, error) {
-	var out agenttools.ApprovalState
-	err := a.State.View(ctx, func(tx state.Tx) error {
-		ap, err := tx.GetApproval(ctx, approvalID)
-		if errors.Is(err, state.ErrNotFound) {
-			return agenttools.ErrNotFound
-		}
+	me := Agent(id)
+	ap, err := a.Gate.Approvals.Get(ctx, approvalID, me.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return agenttools.ApprovalState{}, agenttools.ErrNotFound
+	}
+	if err != nil {
+		return agenttools.ApprovalState{}, err
+	}
+	if !owns(me, ap.Request.Agent) {
+		return agenttools.ApprovalState{}, agenttools.ErrNotFound
+	}
+	out := agenttools.ApprovalState{Status: string(ap.Status), Ref: ap.Request.Ref.String(), ExpiresAt: ap.ExpiresAt}
+	if ap.Status == state.ApprovalPending && !a.now().Before(ap.ExpiresAt) {
+		out.Status = agenttools.ApprovalExpired
+	}
+	if ap.Status == state.ApprovalApproved {
+		gs, err := a.Gate.Grants.List(ctx, me.ID, false)
 		if err != nil {
-			return err
+			return agenttools.ApprovalState{}, err
 		}
-		if !owns(Agent(id), ap.Request.Agent) {
-			return agenttools.ErrNotFound
-		}
-		out = agenttools.ApprovalState{Status: string(ap.Status), Ref: ap.Request.Ref.String(), ExpiresAt: ap.ExpiresAt}
-		if ap.Status == state.ApprovalPending && !a.now().Before(ap.ExpiresAt) {
-			out.Status = agenttools.ApprovalExpired
-		}
-		if ap.Status == state.ApprovalApproved {
-			gs, err := tx.ListGrants(ctx, state.GrantFilter{AgentID: ap.Request.Agent.ID, Ref: ap.Request.Ref})
-			if err != nil {
-				return err
-			}
-			for _, g := range gs {
-				if g.ApprovalID == ap.ID {
-					out.GrantID, out.ExpiresAt = g.ID, g.ExpiresAt
-				}
+		for _, g := range gs {
+			if g.ApprovalID == ap.ID {
+				out.GrantID, out.ExpiresAt = g.ID, g.ExpiresAt
 			}
 		}
-		return nil
-	})
-	return out, err
+	}
+	return out, nil
 }
 
 // Grants implements agenttools.Approvals.
 func (a Approvals) Grants(ctx context.Context, id identity.Identity) ([]agenttools.Grant, error) {
 	me := Agent(id)
+	gs, err := a.Gate.Grants.List(ctx, me.ID, false)
+	if err != nil {
+		return nil, err
+	}
+	now := a.now()
 	var out []agenttools.Grant
-	err := a.State.View(ctx, func(tx state.Tx) error {
-		gs, err := tx.ListGrants(ctx, state.GrantFilter{AgentID: me.ID, UsableAt: a.now()})
-		if err != nil {
-			return err
+	for _, g := range gs {
+		if owns(me, g.Agent) && g.Usable(now) {
+			out = append(out, grantView(g))
 		}
-		for _, g := range gs {
-			if !owns(me, g.Agent) {
-				continue
-			}
-			out = append(out, grant(g))
-		}
-		return nil
-	})
-	return out, err
+	}
+	return out, nil
 }
 
-func grant(g state.Grant) agenttools.Grant {
+func grantView(g state.Grant) agenttools.Grant {
 	out := agenttools.Grant{ID: g.ID, Ref: g.Ref.String(), ExpiresAt: g.ExpiresAt}
 	out.Scope = append(append(out.Scope, g.Scope.Hosts...), g.Scope.Tools...)
 	if g.MaxUses > 0 {

@@ -32,12 +32,28 @@ fn builder() -> auto::Builder<TokioExecutor> {
     b
 }
 
-fn serve_conn<S>(io: S, proxy: Arc<Proxy>, graceful: &GracefulShutdown)
+/// The peer credentials of a Unix socket connection, as the kernel reports them. Attached to
+/// every request that arrives over [`serve_unix`] as a request extension, so a
+/// [`crate::RequestGate`] can identify the caller by the transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnixPeer {
+    /// User id.
+    pub uid: u32,
+    /// Group id.
+    pub gid: u32,
+    /// Process id, when the platform reports it.
+    pub pid: Option<i32>,
+}
+
+fn serve_conn<S>(io: S, proxy: Arc<Proxy>, graceful: &GracefulShutdown, peer: Option<UnixPeer>)
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let svc = service_fn(move |req: hyper::Request<Incoming>| {
+    let svc = service_fn(move |mut req: hyper::Request<Incoming>| {
         let p = proxy.clone();
+        if let Some(peer) = peer {
+            req.extensions_mut().insert(peer);
+        }
         async move { Ok::<_, Infallible>(p.handle(req).await) }
     });
     let conn = builder()
@@ -71,7 +87,7 @@ pub async fn serve_tcp(
             r = listener.accept() => match r {
                 Ok((stream, _)) => {
                     let _ = stream.set_nodelay(true);
-                    serve_conn(stream, proxy.clone(), &graceful);
+                    serve_conn(stream, proxy.clone(), &graceful, None);
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "accept failed");
@@ -117,7 +133,16 @@ pub async fn serve_unix(
     loop {
         tokio::select! {
             r = listener.accept() => match r {
-                Ok((stream, _)) => serve_conn(stream, proxy.clone(), &graceful),
+                Ok((stream, _)) => {
+                    // A connection whose peer cannot be read is still served: it is an unknown
+                    // caller, which is what the gate assumes without credentials.
+                    let peer = stream.peer_cred().ok().map(|c| UnixPeer {
+                        uid: c.uid(),
+                        gid: c.gid(),
+                        pid: c.pid(),
+                    });
+                    serve_conn(stream, proxy.clone(), &graceful, peer);
+                }
                 Err(e) => {
                     tracing::warn!(error = %e, "accept failed");
                     tokio::time::sleep(Duration::from_millis(50)).await;

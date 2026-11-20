@@ -140,3 +140,42 @@ label to use scrim (environment, CA, MCP config, identity token), without changi
 
 - **WHEN** a pod with the scrim agent label is created
 - **THEN** it starts with scrim's base URLs, CA bundle and identity token in place
+
+### Requirement: Long-running daemon
+
+`scrim proxy` SHALL run the control plane and the supervised data plane as one service with every
+configured listener, SHALL push a new data plane snapshot after every store, catalog,
+configuration, policy or break-glass change, SHALL report ready only while the data plane holds a
+snapshot and every listener is bound, and SHALL stop gracefully on SIGINT or SIGTERM.
+
+#### Scenario: Value added while running
+
+- **WHEN** a value is written to a store while the daemon runs
+- **THEN** the data plane receives a snapshot containing it without a restart
+
+#### Scenario: Not ready before the first snapshot
+
+- **WHEN** the data plane has not yet applied a snapshot or a listener is not bound
+- **THEN** the readiness endpoint fails and names the reason
+
+#### Scenario: Graceful stop
+
+- **WHEN** the daemon receives SIGTERM
+- **THEN** it removes its sockets and info file and exits without error
+
+### Requirement: Operator authentication on the admin API
+
+The admin API SHALL attribute every request to an operator from the connection: on its Unix socket
+only the user scrim runs as or root, by peer credentials; on a TCP listener only a request
+presenting the configured `admin.token`. The daemon SHALL refuse to start a TCP admin listener
+without a token.
+
+#### Scenario: Another local user
+
+- **WHEN** a different local user connects to the admin socket
+- **THEN** every operator call is refused as unauthenticated
+
+#### Scenario: TCP without a token
+
+- **WHEN** `admin.url` is a TCP address and `admin.token` is not set
+- **THEN** the daemon refuses to start and names `admin.token`

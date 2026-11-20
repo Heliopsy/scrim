@@ -19,7 +19,8 @@ use tonic::{Request, Response, Status, Streaming};
 use crate::VERSION;
 use crate::engine::Shared;
 use crate::harden::Hardening;
-use crate::snapshot::Applied;
+use crate::policy;
+use crate::settings::Settings;
 
 /// Serves the control plane on `stream` until the control plane closes its
 /// end, then returns. Returning means the process must exit: a data plane
@@ -27,7 +28,7 @@ use crate::snapshot::Applied;
 pub async fn run(stream: std::os::unix::net::UnixStream, hardening: Hardening) -> io::Result<()> {
     stream.set_nonblocking(true)?;
     let stream = UnixStream::from_std(stream)?;
-    let shared = Shared::new().map_err(io::Error::other)?;
+    let shared = Shared::with_settings(&Settings::from_env()).map_err(io::Error::other)?;
     serve(stream, Arc::new(shared), hardening).await
 }
 
@@ -56,10 +57,7 @@ pub async fn serve(
             let _ = closed_rx.await;
         })
         .await;
-    shared.listeners.stop_all();
-    shared.asks.detach();
-    shared.captures.detach();
-    shared.snapshot.store(None); // drop the dictionary now, zeroing it
+    shared.shutdown(); // drops the dictionary now, zeroing it
     result.map_err(io::Error::other)
 }
 
@@ -155,34 +153,21 @@ impl DataPlane for Service {
     ) -> Result<Response<v1::ApplySnapshotResponse>, Status> {
         let snap = req.into_inner();
         check(snap.protocol)?;
-        let reject = |e: String| {
-            tracing::warn!(reason = e.as_str(), "snapshot rejected");
-            Status::invalid_argument(e)
-        };
-        // Build the tool proxy's view before the dictionary takes the
-        // values out of the message. Generated placeholders come from the
-        // redaction core once it exists; until then the proxy shows declared
-        // or reference placeholders.
-        let proxy_snapshot = scrim_toolproxy::Snapshot::from_proto(&snap, |_| Vec::new())
-            .map_err(|e| reject(format!("tool proxy: {e}")))?;
-        let applied =
-            Applied::from_proto(snap, self.applied_version()).map_err(|e| reject(e.to_string()))?;
-        self.shared
-            .tool_proxy
-            .apply(proxy_snapshot)
-            .map_err(|e| reject(format!("tool proxy: {e}")))?;
-        let version = applied.version;
-        let count = u32::try_from(applied.values.len()).unwrap_or(u32::MAX);
-        self.shared
-            .listeners
-            .reconcile(&applied.listeners, &self.shared.tool_proxy);
-        self.shared.snapshot.store(Some(Arc::new(applied)));
-        tracing::info!(version, values = count, "snapshot applied");
-        Ok(Response::new(v1::ApplySnapshotResponse {
-            protocol: v1::PROTOCOL,
-            applied_version: version,
-            value_count: count,
-        }))
+        match self.shared.apply(snap).await {
+            Ok((version, count)) => {
+                tracing::info!(version, values = count, "snapshot applied");
+                Ok(Response::new(v1::ApplySnapshotResponse {
+                    protocol: v1::PROTOCOL,
+                    applied_version: version,
+                    value_count: count,
+                }))
+            }
+            Err(e) => {
+                let e = e.to_string();
+                tracing::warn!(reason = e.as_str(), "snapshot rejected");
+                Err(Status::invalid_argument(e))
+            }
+        }
     }
 
     type EventsStream = BoxStream<v1::EventBatch>;
@@ -245,15 +230,17 @@ impl DataPlane for Service {
             protocol: v1::PROTOCOL,
             ready: snap.is_some() && proxy_ok && listeners.iter().all(|l| l.bound),
             applied_snapshot_version: snap.as_ref().map_or(0, |s| s.version),
-            value_count: snap
-                .as_ref()
-                .map_or(0, |s| u32::try_from(s.values.len()).unwrap_or(u32::MAX)),
+            value_count: snap.as_ref().map_or(0, |s| {
+                u32::try_from(s.applied.values.len()).unwrap_or(u32::MAX)
+            }),
             memory_locked: self.hardening.memory_locked,
             dumpable: self.hardening.dumpable,
             listeners,
             data_plane_version: VERSION.to_owned(),
             ca_trust_bundle_pem: self.shared.tool_proxy.ca().trust_bundle_pem(),
             tool_proxy: Some(tool_proxy),
+            redaction: snap.as_ref().map(|s| s.applied.redaction_status()),
+            policy_engine: policy::ENGINE.to_owned(),
         }))
     }
 
@@ -285,11 +272,7 @@ impl DataPlane for Service {
 
 impl Service {
     fn applied_version(&self) -> u64 {
-        self.shared
-            .snapshot
-            .load()
-            .as_ref()
-            .map_or(0, |s| s.version)
+        self.shared.applied_version()
     }
 }
 

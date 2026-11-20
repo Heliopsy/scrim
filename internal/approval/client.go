@@ -18,6 +18,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/breakglass"
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/secret"
 )
 
 // AdminURL is where the CLI reaches the admin API.
@@ -39,8 +40,17 @@ func DefaultAdminSocket() string {
 
 // Client calls the admin API.
 type Client struct {
-	base string
-	hc   *http.Client
+	base  string
+	hc    *http.Client
+	token secret.Value
+}
+
+// WithToken returns a copy of c that presents token as a bearer token, for
+// a TCP admin listener (admin.token). The Unix socket ignores it.
+func (c *Client) WithToken(token secret.Value) *Client {
+	out := *c
+	out.token = token
+	return &out
 }
 
 // NewClient returns a client for addr (see [AdminURL]).
@@ -105,6 +115,14 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if !c.token.IsZero() {
+		if err := c.token.Expose(func(b []byte) error {
+			req.Header.Set("Authorization", "Bearer "+string(b))
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {

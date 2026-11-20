@@ -12,6 +12,7 @@
 //!             │ route by path prefix
 //!             ▼
 //!           codec plan ─▶ redactor over raw bytes ─▶ guard over exact bytes ─▶ capture
+//!           (body; the request target and headers get the same two checks in [`head`])
 //!             │                                                     (refuse on any error)
 //!             ▼
 //!           [chained upstream] ─▶ provider (rustls, pooled, HTTP/1.1 or HTTP/2)
@@ -36,8 +37,11 @@ mod body;
 pub mod capture;
 pub mod codec;
 pub mod config;
+#[cfg(feature = "redact")]
+pub mod core;
 pub mod engine;
 pub mod error;
+pub mod head;
 #[cfg(feature = "intercept")]
 pub mod intercept;
 pub mod json;
@@ -58,10 +62,11 @@ pub use body::{BoxError, ProxyBody};
 pub use codec::Api;
 pub use config::{ChainConfig, OnUnavailable, Provider, ProxyConfig, RouteConfig};
 pub use engine::{
-    BinaryPolicy, EngineError, Guard, GuardVerdict, KeepAll, PlaceholderMatch, Placeholders,
-    RedactReport, Redactor, Resolved, RestoreDecision, RestorePolicy, RestoreSite, SecretRef,
-    SecretValue, Snapshot, SnapshotCell, ToolMode, ValueClass,
+    Admission, BinaryPolicy, EngineError, Guard, GuardVerdict, KeepAll, PlaceholderMatch,
+    Placeholders, RedactReport, Redactor, RequestGate, RequestInfo, Resolved, RestoreDecision,
+    RestorePolicy, RestoreSite, SecretRef, SecretValue, Snapshot, SnapshotCell, SnapshotSource,
+    ToolInputRestore, ToolMode, ValueClass,
 };
 pub use error::{ERROR_HEADER, Refusal};
-pub use proxy::{BuildError, Proxy};
+pub use proxy::{BuildError, Proxy, SESSION_HEADER};
 pub use stream::{SseRestorer, restore_json};

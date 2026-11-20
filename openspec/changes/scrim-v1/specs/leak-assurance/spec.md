@@ -137,6 +137,19 @@ redacted), and any uncontained transform SHALL fail the release.
 - **WHEN** the matrix runs a command that prints a secret-bearing file reversed
 - **THEN** the reversed value does not reach the fake model
 
+#### Scenario: Expectations follow the redaction spec
+
+- **WHEN** a matrix row's transform is one the guard decodes under the redaction spec
+- **THEN** the row expects `guard`, and only the transforms the redaction spec lists as
+  limitations (look-alike Unicode, spelling alphabets, compression, the base85 family, values
+  split across fields or requests, binary parts) are marked `limitation`, each with its reason in
+  the row note and in the documented limitations
+
+#### Scenario: Gate against the real proxy
+
+- **WHEN** CI runs the matrix through `scrim proxy` with the seeds in a file store
+- **THEN** no row expecting `redacted`, `guard` or `withheld` leaks
+
 ### Requirement: Matrix rows state their outcome
 
 Every matrix row SHALL name its transform, its placement in the request and its provider API, and

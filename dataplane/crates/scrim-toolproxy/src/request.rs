@@ -24,6 +24,7 @@ use crate::body::{
 use crate::capture::CaptureRule;
 use crate::codec::{Codings, decode_all, encode_all, parse_codings};
 use crate::credential::Location;
+use crate::decide::{InjectionDecision, InjectionRequest};
 use crate::digest;
 use crate::engine::Engine;
 use crate::error::{ErrorCode, Refusal};
@@ -35,8 +36,11 @@ use crate::redactor::{Redactor, ValueRedactor};
 use crate::secret::SecretValue;
 use http_body_util::BodyExt;
 
-/// Headers that apply to one connection only, never forwarded.
-const HOP_BY_HOP: [HeaderName; 8] = [
+/// Headers that apply to one connection only, never forwarded, and scrim's own session header
+/// (`x-scrim-session`, which carries a session token for the LLM proxy and must not reach a tool
+/// API either).
+const HOP_BY_HOP: [HeaderName; 9] = [
+    HeaderName::from_static("x-scrim-session"),
     header::CONNECTION,
     HeaderName::from_static("proxy-connection"),
     HeaderName::from_static("keep-alive"),
@@ -604,6 +608,36 @@ impl Engine {
             }
         }
 
+        // The per-request decision, once per credential, before anything is substituted.
+        if let Some(policy) = &self.injection {
+            let mut asked = BTreeSet::new();
+            for (ci, _) in &occurrences.items {
+                if !asked.insert(*ci) {
+                    continue;
+                }
+                let c = &self.credentials.credentials()[*ci];
+                let req = InjectionRequest {
+                    credential: c.name.clone(),
+                    reference: c.reference.clone(),
+                    destination: dest.clone(),
+                    method: method.to_string(),
+                    path: path_for_binding.clone(),
+                };
+                if let InjectionDecision::Deny(why) = policy.decide(&req, &parts.extensions).await {
+                    return Err(refuse(
+                        &used,
+                        Refusal::new(
+                            ErrorCode::PolicyDenied,
+                            format!(
+                                "injecting credential `{}` toward {dest} was denied: {why}",
+                                c.name
+                            ),
+                        ),
+                    ));
+                }
+            }
+        }
+
         let creds = self.credentials.credentials();
         let value_of = |i: usize| creds[i].value.as_ref().map(SecretValue::expose);
         let unrep =
@@ -930,6 +964,7 @@ mod tests {
         h.insert(header::CONNECTION, "close, x-custom".parse().unwrap());
         h.insert("x-custom", "1".parse().unwrap());
         h.insert(header::PROXY_AUTHORIZATION, "Basic x".parse().unwrap());
+        h.insert("x-scrim-session", "scrim_st_x".parse().unwrap());
         h.insert("x-keep", "1".parse().unwrap());
         strip_hop_by_hop(&mut h);
         assert_eq!(h.len(), 1);

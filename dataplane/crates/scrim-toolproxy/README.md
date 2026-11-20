@@ -61,6 +61,7 @@ alias and never contain a value.
 | `upstream_unavailable` | 502 | upstream unreachable or failed TLS verification |
 | `response_withheld` | 502 | response could not be scanned |
 | `redaction_failed` | 502 | the redactor failed |
+| `policy_denied` | 403 | the injection policy refused a credential (a rule, a denied or expired approval) |
 
 ## Use
 
@@ -76,7 +77,12 @@ proxy.serve(listener, shutdown).await?;
 ```
 
 Seams for other work: `Redactor` (the `scrim-redact` matcher; `ValueRedactor` is a small exact
-stand-in), `RequestSigner` (AWS SigV4, task 10a.2), `ToolProxy::handle` (transparent listeners).
+stand-in), `RequestSigner` (AWS SigV4, task 10a.2), `ToolProxy::handle` (transparent listeners),
+`InjectionPolicy` (`Snapshot::injection`): once per credential a request uses, after every binding
+and location check and before anything is substituted, it decides allow or deny and may wait for
+an approval. Every request carries a `ClientInfo` extension: the client's address and the session
+it named as the user of `Proxy-Authorization: Basic` on the proxy connection (the password is
+never read).
 
 Settings (`ToolProxySettings`): `toolproxy.max_buffered_body_bytes` (32 MiB),
 `toolproxy.max_decoded_body_bytes` (128 MiB), `toolproxy.captured_values_capacity` (1024).

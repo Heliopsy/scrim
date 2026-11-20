@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -111,6 +112,8 @@ type meta struct {
 	collections map[string]colState
 	// resolver resolves references with the environment Build saw.
 	resolver refResolver
+	// stateHome and home are XDG_STATE_HOME and HOME as Build saw them.
+	stateHome, home string
 }
 
 // Build reads the whole configuration: built-in defaults, the selected
@@ -194,6 +197,7 @@ func Build(opts Options) (*Config, error) {
 	}
 	c.files = files.Files
 	c.watchDirs = files.WatchDirs
+	c.stateHome, c.home = env["XDG_STATE_HOME"], env["HOME"]
 	c.profile = profile
 	c.warnings = warnings
 	c.collections = states
@@ -437,4 +441,22 @@ func (r *Registry) runChecks(c *Config) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// StateDir is scrim's directory for local state, $XDG_STATE_HOME/scrim
+// (~/.local/state/scrim), from the environment the Config was built from,
+// so a test or a service with its own environment never touches the user's.
+func (c *Config) StateDir() (string, error) {
+	if c.stateHome != "" && filepath.IsAbs(c.stateHome) {
+		return filepath.Join(c.stateHome, "scrim"), nil
+	}
+	home := c.home
+	if home == "" {
+		h, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("config: no XDG_STATE_HOME and no home directory: %w", err)
+		}
+		home = h
+	}
+	return filepath.Join(home, ".local", "state", "scrim"), nil
 }

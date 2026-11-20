@@ -101,6 +101,10 @@ async fn handshake_snapshot_status_and_shutdown() {
         .into_inner();
     assert!(status.ready);
     assert_eq!(status.applied_snapshot_version, 5);
+    assert_eq!(status.policy_engine, scrim_dataplane::policy::ENGINE);
+    let redaction = status.redaction.unwrap();
+    assert_eq!(redaction.engine, "aho-corasick");
+    assert!(redaction.patterns > 0 && redaction.unprotected_refs.is_empty());
 
     let mut events = c
         .events(v1::EventsRequest {
@@ -207,6 +211,11 @@ async fn tool_proxy_listener_ca_and_captures() {
             kind: v1::ListenerKind::BaseUrl.into(),
             address: "127.0.0.1:0".into(),
         },
+        v1::Listener {
+            name: "sni".into(),
+            kind: v1::ListenerKind::Transparent.into(),
+            address: "127.0.0.1:0".into(),
+        },
     ];
     c.apply_snapshot(snap).await.unwrap();
 
@@ -226,7 +235,12 @@ async fn tool_proxy_listener_ca_and_captures() {
     assert!(tools.bound, "{tools:?}");
     assert!(!tools.address.ends_with(":0"), "the bound port is reported");
     let llm = status.listeners.iter().find(|l| l.name == "llm").unwrap();
-    assert!(!llm.bound && llm.error.contains("not implemented"));
+    assert!(
+        llm.bound && llm.kind() == v1::ListenerKind::BaseUrl,
+        "{llm:?}"
+    );
+    let sni = status.listeners.iter().find(|l| l.name == "sni").unwrap();
+    assert!(!sni.bound && sni.error.contains("not implemented"));
     assert!(
         !status.ready,
         "an unbound listener keeps the data plane not ready"

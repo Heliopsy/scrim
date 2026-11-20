@@ -1439,12 +1439,27 @@ name = "scrim-dataplane"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "bytes",
+ "getrandom 0.3.4",
+ "hmac 0.12.1",
+ "http",
+ "http-body-util",
+ "hyper",
  "hyper-util",
  "prost",
+ "rcgen",
  "rustix",
+ "rustls",
+ "rustls-pki-types",
+ "scrim-llm",
+ "scrim-policy",
  "scrim-proto",
+ "scrim-redact",
  "scrim-toolproxy",
+ "serde_json",
+ "sha2 0.10.9",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tonic",
  "tower",
@@ -1476,6 +1491,7 @@ dependencies = [
  "rustls-native-certs",
  "rustls-pemfile",
  "scrim-llm",
+ "scrim-redact",
  "scrim-toolproxy",
  "serde",
  "serde_json",
@@ -1487,6 +1503,22 @@ dependencies = [
  "tracing",
  "webpki-roots",
  "zeroize",
+]
+
+[[package]]
+name = "scrim-policy"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "regex",
+ "scrim-llm",
+ "scrim-policy",
+ "scrim-proto",
+ "scrim-redact",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

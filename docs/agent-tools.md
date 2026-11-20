@@ -15,7 +15,7 @@ result that refers to a secret carries its reference (`bao://kv/agents/github#to
 redaction core is wired in, its placeholder. Values move around the model instead of through it:
 
 | Tool | How the value moves |
-|---|---|
+| --- | --- |
 | `secret_gen` | made inside scrim, written to the store, wiped |
 | `secret_capture` | the command runs in the tool process; only the extracted value goes to scrim |
 | `secret_ask_human` | a person types it into a local entry page, which writes it to the store |
@@ -71,9 +71,10 @@ command = "scrim"
 args = ["mcp"]
 ```
 
-Codex may start MCP servers with a reduced environment. If `scrim api whoami` inside the agent
-reports a session but the tools report the plain user identity, pass the variables through
-explicitly, for example with an `env` table naming `SCRIM_API_SOCKET` and `SCRIM_SESSION_TOKEN`.
+Codex starts MCP servers with a reduced environment, so the session variables have to be passed
+through by name with `env_vars = ["SCRIM_API_SOCKET", "SCRIM_SESSION_TOKEN", "SCRIM_SESSION_ID"]`
+(not an `env` table, which would put the token in the file). `scrim run -- codex` does this for the
+session with `-c` options; see [run.md](run.md).
 
 ## Tools
 
@@ -283,7 +284,7 @@ Every `scrim secret` command takes `-o json` for the same fields the MCP tool re
 `-o json` are the error envelope on standard output.
 
 | Exit | Meaning |
-|---|---|
+| --- | --- |
 | 0 | success: granted, stored, approved |
 | 1 | error |
 | 3 | denied by policy, or the caller is not allowed |
@@ -296,7 +297,7 @@ HTTP/1.1 with JSON on the Unix socket, every route under `/v1`, every response c
 `Scrim-Api-Version: v1`. A client of another version is refused rather than misread.
 
 | Route | Tool |
-|---|---|
+| --- | --- |
 | `GET /v1/version` | (open) API and server version |
 | `GET /v1/whoami` | the caller's identity |
 | `POST /v1/sessions` | mint a session token (`scrim run`) |

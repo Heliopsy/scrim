@@ -5,7 +5,7 @@ redaction, keeps their values in memory only, and writes new secrets for agents,
 value back.
 
 | Store | Kind | Guide |
-|-------|------|-------|
+| ------- | ------ | ------- |
 | OpenBao (and Vault-compatible KV v2) | `openbao` | [openbao.md](openbao.md) |
 | Infisical | `infisical` | [infisical.md](infisical.md) |
 | Environment variables, files | `env`, `file` | [local.md](local.md) |
@@ -57,7 +57,7 @@ These fields are common to every kind. All other fields belong to the adapter an
 its guide.
 
 | Key | Default | Meaning |
-|-----|---------|---------|
+| ----- | --------- | --------- |
 | `stores.<name>.kind` | required | Adapter kind. |
 | `stores.<name>.aliases` | none | Extra schemes that address this instance. |
 | `stores.<name>.redact` | none | References loaded into the redaction set at start and kept fresh. A reference ending in `/*` loads every secret under that prefix; a `#field` limits a single secret to one field. References must use the instance name as their scheme. |
@@ -83,7 +83,7 @@ Values load at start, refresh on `refresh.interval` and, on stores that watch, r
 soon as the store reports a change. A secret whose version has not changed is not read again.
 
 | Situation | Redaction | Injection | Reported state |
-|-----------|-----------|-----------|----------------|
+| ----------- | ----------- | ----------- | ---------------- |
 | First load not done yet | Not ready. Requests that depend on the store are refused. | Refused | `loading`, not ready |
 | First load failed | Not ready, as above | Refused, naming the reference | `unavailable`, not ready |
 | Last refresh succeeded | Current values, plus rotated ones for `refresh.retention` | Allowed | `ready` |
@@ -118,7 +118,7 @@ SCRIM_TEST_PODMAN=1 go test -race ./internal/stores/...
 ```
 
 | Variable | Effect |
-|----------|--------|
+| ---------- | -------- |
 | `SCRIM_TEST_PODMAN=1` | Require podman: a missing podman fails the run instead of skipping it (CI). |
 | `SCRIM_TEST_PODMAN=0` | Skip the container tests. |
 | `SCRIM_TEST_OPENBAO_ADDR`, `SCRIM_TEST_OPENBAO_TOKEN` | Use an existing OpenBao (root token) instead of a container. The outage cases are skipped. |

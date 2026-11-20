@@ -166,12 +166,37 @@ impl Placeholders for FakePlaceholders {
     }
 
     fn resolve(&self, placeholder: &str) -> Option<Resolved> {
+        // The percent form (brackets percent-encoded, as in header values) names the same entry.
+        let raw;
+        let placeholder = if placeholder.starts_with('%') {
+            raw = from_percent_form(placeholder);
+            raw.as_str()
+        } else {
+            placeholder
+        };
         self.by_ph.get(placeholder).map(|e| Resolved {
             reference: e.reference.clone(),
             class: e.class,
             value: e.value.clone(),
         })
     }
+}
+
+/// The percent form of a placeholder: its non-ASCII brackets percent-encoded.
+pub fn percent_form(placeholder: &str) -> String {
+    placeholder
+        .replace(OPEN, "%E2%9F%A6scrim:")
+        .replace(CLOSE, "%E2%9F%A7")
+}
+
+fn from_percent_form(placeholder: &str) -> String {
+    let mut s = placeholder.to_string();
+    for (enc, raw) in [("%E2%9F%A6scrim:", OPEN), ("%E2%9F%A7", CLOSE)] {
+        if let Some(i) = s.to_ascii_uppercase().find(&enc.to_ascii_uppercase()) {
+            s.replace_range(i..i + enc.len(), raw);
+        }
+    }
+    s
 }
 
 /// Failure injection for the fake redactor and guard.
@@ -537,6 +562,11 @@ impl Fixture {
             .clone()
     }
 
+    /// The placeholder of `reference` in percent form, as a header value carries it.
+    pub fn placeholder_ascii(&self, reference: &str) -> String {
+        percent_form(&self.placeholder(reference))
+    }
+
     /// Longest placeholder length.
     pub fn placeholders_max_len(&self) -> usize {
         self.fake_placeholders().max_len()
@@ -574,6 +604,8 @@ impl Fixture {
             placeholders: Arc::new(self.fake_placeholders()),
             policy: Arc::new(self.policy.clone()),
             binary: self.binary,
+            routes: None,
+            gate: None,
         }
     }
 
@@ -665,7 +697,17 @@ impl Scripted {
 
 type Responder = Arc<dyn Fn(&Recorded) -> Scripted + Send + Sync>;
 
+/// Whether a header value is an RFC 9110 `field-value` without obs-text: visible ASCII, space
+/// and tab. The fake upstream is as strict as the strictest provider front end.
+pub fn is_strict_field_value(v: &[u8]) -> bool {
+    v.iter()
+        .all(|&b| b == b' ' || b == b'\t' || b.is_ascii_graphic())
+}
+
 /// A fake provider that records every request and answers from a script.
+///
+/// Like a strict provider front end, it answers `400` with `x-fake-upstream: obs-text` and
+/// records nothing when a request header value holds bytes outside visible ASCII.
 pub struct FakeUpstream {
     /// Listening address.
     pub addr: SocketAddr,
@@ -744,6 +786,19 @@ async fn handle(
     f: &Responder,
 ) -> Response<BoxedBody> {
     let (parts, body) = req.into_parts();
+    if !parts
+        .headers
+        .values()
+        .all(|v| is_strict_field_value(v.as_bytes()))
+    {
+        return Response::builder()
+            .status(400)
+            .header("x-fake-upstream", "obs-text")
+            .body(BodyExt::boxed(http_body_util::Full::new(
+                Bytes::from_static(b"header value outside visible ASCII"),
+            )))
+            .expect("response");
+    }
     let body = body
         .collect()
         .await

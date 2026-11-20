@@ -59,6 +59,85 @@ pub struct Snapshot {
     /// capture_rules apply to tool-proxy responses.
     #[prost(message, repeated, tag = "9")]
     pub capture_rules: ::prost::alloc::vec::Vec<CaptureRule>,
+    /// restore is the restore policy for placeholders in responses (redaction
+    /// spec "Resolution follows tool policy", "Tool aliases", "Display modes",
+    /// "Share and reveal"; dataplane/crates/scrim-policy/README.md). Absent,
+    /// nothing is restored: every placeholder reaches the agent unresolved.
+    #[prost(message, optional, tag = "10")]
+    pub restore: ::core::option::Option<RestoreSettings>,
+    /// tool_proxy_ca is the interception CA the control plane holds (design
+    /// D5). Exactly one entry is current: the tool proxy signs leaves with it.
+    /// A second, non-current entry is the previous generation during a
+    /// rotation's overlap: clients may still trust only it, so leaves are
+    /// served with a cross certificate until it leaves the snapshot. Empty
+    /// means the data plane keeps the CA it has (generating an ephemeral one
+    /// when it has none).
+    #[prost(message, repeated, tag = "11")]
+    pub tool_proxy_ca: ::prost::alloc::vec::Vec<CaCertificate>,
+}
+/// CaCertificate is one generation of the tool-proxy CA.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[prost(skip_debug)]
+pub struct CaCertificate {
+    /// cert_pem is the self-signed CA certificate, PEM. Public.
+    #[prost(string, tag = "1")]
+    pub cert_pem: ::prost::alloc::string::String,
+    /// key_pem is the CA's PKCS#8 private key, PEM. Secret: never logged,
+    /// wiped on both sides after use.
+    #[prost(bytes = "vec", tag = "2")]
+    pub key_pem: ::prost::alloc::vec::Vec<u8>,
+    /// current marks the generation leaves are signed with.
+    #[prost(bool, tag = "3")]
+    pub current: bool,
+}
+/// ToolAlias gives a tool name a role, adding to or overriding the built-in
+/// tool table.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ToolAlias {
+    /// name is the tool name exactly as the model calls it.
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(enumeration = "ToolRole", tag = "2")]
+    pub role: i32,
+    /// command_field is the argument holding the command for SHELL: a string is
+    /// a shell script, an array of strings an argv. Empty means `command`. When
+    /// the tool's input is not a JSON object, the whole input is the script.
+    #[prost(string, tag = "3")]
+    pub command_field: ::prost::alloc::string::String,
+    /// old_fields and new_fields name the arguments holding replaced and
+    /// replacement text for EDIT, at any depth. Empty means `old_string` and
+    /// `old_str`, and `new_string` and `new_str`. Inputs in apply_patch format
+    /// (`*** Begin Patch`) are recognised without them.
+    #[prost(string, repeated, tag = "4")]
+    pub old_fields: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "5")]
+    pub new_fields: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RestoreSettings {
+    #[prost(enumeration = "DisplayMode", tag = "1")]
+    pub display_mode: i32,
+    /// tools are tool aliases; a name listed twice rejects the snapshot.
+    #[prost(message, repeated, tag = "2")]
+    pub tools: ::prost::alloc::vec::Vec<ToolAlias>,
+    /// builtin_tools_disabled ignores the built-in tool table, so only `tools`
+    /// have roles.
+    #[prost(bool, tag = "3")]
+    pub builtin_tools_disabled: bool,
+    /// extra_shell_data_commands adds commands that a SHELL restore may feed
+    /// values to, beyond the built-in list of commands that take no code and
+    /// run nothing. Weakening: a listed command that interprets an argument as
+    /// code turns a restored value into code.
+    #[prost(string, repeated, tag = "4")]
+    pub extra_shell_data_commands: ::prost::alloc::vec::Vec<
+        ::prost::alloc::string::String,
+    >,
+    /// reveal_credential_refs are glob patterns over ValueEntry.ref of
+    /// credentials `scrim reveal` may resolve locally. Empty means reveal never
+    /// resolves credentials. Weakening. Restore into responses never resolves
+    /// credentials, whatever this holds.
+    #[prost(string, repeated, tag = "5")]
+    pub reveal_credential_refs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 #[prost(skip_debug)]
@@ -176,9 +255,16 @@ pub struct Policy {
     #[prost(message, repeated, tag = "7")]
     pub table: ::prost::alloc::vec::Vec<TableRule>,
     /// table_format is the version of the table semantics; a data plane that
-    /// does not implement it rejects the snapshot. Currently 1.
+    /// does not implement it rejects the snapshot. Currently 1. A policy with
+    /// no table, rules, engine or compiled program may leave it 0: it is an
+    /// empty table of the current format (default_effect and break_glass only).
     #[prost(uint32, tag = "8")]
     pub table_format: u32,
+    /// ask_timeout_millis bounds how long the data plane holds an operation
+    /// that went to the control plane (AskRequest) before it denies it. 0 means
+    /// 120000, the default of `approvals.timeout`.
+    #[prost(uint64, tag = "9")]
+    pub ask_timeout_millis: u64,
 }
 /// TableRule is one rule in disjunctive normal form: it matches when any
 /// clause matches. The data plane evaluates every rule to match, no match or
@@ -283,6 +369,22 @@ pub struct Route {
     /// path_prefix selects the route on a base-URL listener.
     #[prost(string, tag = "5")]
     pub path_prefix: ::prost::alloc::string::String,
+    /// chain, when set, sends the redacted request to another proxy (for
+    /// example a context-compression proxy) in place of `upstream`.
+    #[prost(message, optional, tag = "6")]
+    pub chain: ::core::option::Option<RouteChain>,
+}
+/// RouteChain is a chained upstream that receives requests after redaction.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RouteChain {
+    /// url is the chained proxy's base URL (`http` or `https`).
+    #[prost(string, tag = "1")]
+    pub url: ::prost::alloc::string::String,
+    /// direct_on_unavailable sends the redacted request straight to the
+    /// route's upstream when the chained proxy cannot be reached. False refuses
+    /// the request instead.
+    #[prost(bool, tag = "2")]
+    pub direct_on_unavailable: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Listener {
@@ -429,6 +531,50 @@ pub struct AskRequest {
     /// deadline_unix_nano is when the data plane denies without an answer.
     #[prost(int64, tag = "6")]
     pub deadline_unix_nano: i64,
+    /// caller is what the transport told the data plane about who sent the
+    /// request. When it is set, the agent fields of `request` are empty: the
+    /// data plane cannot map it to an identity, and the control plane resolves
+    /// it before it evaluates the rules.
+    #[prost(message, optional, tag = "7")]
+    pub caller: ::core::option::Option<AskCaller>,
+}
+/// AskCaller is the transport identity of a request the data plane asks
+/// about. The data plane holds no session tokens and verifies none; the
+/// control plane decides what each part is worth.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AskCaller {
+    /// session_id is the scrim session the request names: the user name of
+    /// `Proxy-Authorization: Basic` on the forward proxy, or the
+    /// `x-scrim-session` header on a base-URL listener. A claim, not verified.
+    #[prost(string, tag = "1")]
+    pub session_id: ::prost::alloc::string::String,
+    /// unix_peer is set when the request came over a Unix socket listener;
+    /// peer_uid, peer_gid and peer_pid are the kernel's peer credentials then.
+    #[prost(bool, tag = "2")]
+    pub unix_peer: bool,
+    #[prost(uint32, tag = "3")]
+    pub peer_uid: u32,
+    #[prost(uint32, tag = "4")]
+    pub peer_gid: u32,
+    /// peer_pid is 0 when the platform does not report it.
+    #[prost(int32, tag = "5")]
+    pub peer_pid: i32,
+    /// session_proof shows that the request carried the session's token, not
+    /// just its id (design D14). The client sends the token as the password of
+    /// `Proxy-Authorization: Basic <session_id>:<token>` or as the value of
+    /// `x-scrim-session` on a base-URL listener. The data plane never logs or
+    /// forwards it: it keeps only the verifier
+    /// v = SHA-256("scrim session token v1\0" || secret)
+    /// where secret is the part of `scrim_st_<id>_<secret>` after the id, and
+    /// sends
+    /// HMAC-SHA256(key = v, "scrim session proof v1\0" || session_id || "\0"
+    /// \|| id (8 bytes, big-endian) || deadline_unix_nano (8 bytes, big-endian))
+    /// The control plane recomputes it from the hash it stores. The proof is
+    /// bound to this one ask and reveals neither the token nor v, so it is not
+    /// a secret field. Empty when the request named a session without its
+    /// token: such a caller is not verified and is evaluated as unknown.
+    #[prost(bytes = "vec", tag = "6")]
+    pub session_proof: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AskAnswer {
@@ -442,8 +588,9 @@ pub struct AskAnswer {
     #[prost(string, tag = "4")]
     pub reason: ::prost::alloc::string::String,
     /// grant_id and grant_expires_unix_nano describe the grant an approval
-    /// created, so the data plane can let matching requests through until it
-    /// expires without asking again.
+    /// created, for audit only. The data plane does not cache grants: the
+    /// control plane reads them on every use, so a revoked or used-up grant
+    /// takes effect on the next request (design D7).
     #[prost(string, tag = "5")]
     pub grant_id: ::prost::alloc::string::String,
     #[prost(int64, tag = "6")]
@@ -480,6 +627,37 @@ pub struct StatusResponse {
     /// tool_proxy is present once the tool proxy is built.
     #[prost(message, optional, tag = "10")]
     pub tool_proxy: ::core::option::Option<ToolProxyStatus>,
+    /// redaction describes the value dictionary in force; absent before the
+    /// first snapshot.
+    #[prost(message, optional, tag = "11")]
+    pub redaction: ::core::option::Option<RedactionStatus>,
+    /// policy_engine names how the data plane takes restore and injection
+    /// decisions, for example `standin/v1` (no rule table evaluation; display
+    /// values restored in text only, credentials never) or `table/v1` (the
+    /// decision table of format 1, scrim-policy).
+    #[prost(string, tag = "12")]
+    pub policy_engine: ::prost::alloc::string::String,
+}
+/// RedactionStatus reports counts and references, never values.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RedactionStatus {
+    /// engine is the matcher in use: `aho-corasick` or `hash-window`.
+    #[prost(string, tag = "1")]
+    pub engine: ::prost::alloc::string::String,
+    /// patterns is how many encoded variants are compiled.
+    #[prost(uint32, tag = "2")]
+    pub patterns: u32,
+    /// short_values counts values below the minimum length, matched only
+    /// whole.
+    #[prost(uint32, tag = "3")]
+    pub short_values: u32,
+    /// unprotected_refs are references whose values are below the floor and
+    /// are not redacted.
+    #[prost(string, repeated, tag = "4")]
+    pub unprotected_refs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// duplicates counts entries whose value another entry already holds.
+    #[prost(uint32, tag = "5")]
+    pub duplicates: u32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ToolProxyStatus {
@@ -547,6 +725,8 @@ pub struct ListenerStatus {
     /// error says why the listener is not bound.
     #[prost(string, tag = "4")]
     pub error: ::prost::alloc::string::String,
+    #[prost(enumeration = "ListenerKind", tag = "5")]
+    pub kind: i32,
 }
 /// ProtocolVersion is the boundary protocol version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -572,6 +752,98 @@ impl ProtocolVersion {
         match value {
             "PROTOCOL_VERSION_UNSPECIFIED" => Some(Self::Unspecified),
             "PROTOCOL_VERSION_CURRENT" => Some(Self::Current),
+            _ => None,
+        }
+    }
+}
+/// DisplayMode decides placeholders in text the agent displays (assistant
+/// text and refusals). Tool-call arguments follow the tool roles either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DisplayMode {
+    /// DISPLAY_MODE_UNSPECIFIED is treated as PLACEHOLDERS, the safer mode.
+    Unspecified = 0,
+    /// DISPLAY_MODE_VALUES resolves display values in displayed text.
+    Values = 1,
+    /// DISPLAY_MODE_PLACEHOLDERS keeps placeholders in displayed text, for
+    /// example while screen sharing.
+    Placeholders = 2,
+}
+impl DisplayMode {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "DISPLAY_MODE_UNSPECIFIED",
+            Self::Values => "DISPLAY_MODE_VALUES",
+            Self::Placeholders => "DISPLAY_MODE_PLACEHOLDERS",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DISPLAY_MODE_UNSPECIFIED" => Some(Self::Unspecified),
+            "DISPLAY_MODE_VALUES" => Some(Self::Values),
+            "DISPLAY_MODE_PLACEHOLDERS" => Some(Self::Placeholders),
+            _ => None,
+        }
+    }
+}
+/// ToolRole is what a tool does with its arguments, which decides what may be
+/// restored into them. Credentials are never restored, whatever the role.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ToolRole {
+    /// TOOL_ROLE_UNSPECIFIED is treated as NONE.
+    Unspecified = 0,
+    /// TOOL_ROLE_NONE: nothing is restored (unknown tools).
+    None = 1,
+    /// TOOL_ROLE_READ: reads files or directories; display values are restored.
+    Read = 2,
+    /// TOOL_ROLE_SEARCH: searches files; display values are restored.
+    Search = 3,
+    /// TOOL_ROLE_SHELL: runs a shell command; display values are restored into
+    /// the command only where escaping keeps them data (redaction spec
+    /// "Context-aware escaping").
+    Shell = 4,
+    /// TOOL_ROLE_EDIT: changes part of an existing file; a value is restored
+    /// only where the call shows it is already in that file.
+    Edit = 5,
+    /// TOOL_ROLE_WRITE: writes whole files; nothing is restored.
+    Write = 6,
+    /// TOOL_ROLE_NETWORK: can reach the network; nothing is restored.
+    Network = 7,
+}
+impl ToolRole {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "TOOL_ROLE_UNSPECIFIED",
+            Self::None => "TOOL_ROLE_NONE",
+            Self::Read => "TOOL_ROLE_READ",
+            Self::Search => "TOOL_ROLE_SEARCH",
+            Self::Shell => "TOOL_ROLE_SHELL",
+            Self::Edit => "TOOL_ROLE_EDIT",
+            Self::Write => "TOOL_ROLE_WRITE",
+            Self::Network => "TOOL_ROLE_NETWORK",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "TOOL_ROLE_UNSPECIFIED" => Some(Self::Unspecified),
+            "TOOL_ROLE_NONE" => Some(Self::None),
+            "TOOL_ROLE_READ" => Some(Self::Read),
+            "TOOL_ROLE_SEARCH" => Some(Self::Search),
+            "TOOL_ROLE_SHELL" => Some(Self::Shell),
+            "TOOL_ROLE_EDIT" => Some(Self::Edit),
+            "TOOL_ROLE_WRITE" => Some(Self::Write),
+            "TOOL_ROLE_NETWORK" => Some(Self::Network),
             _ => None,
         }
     }

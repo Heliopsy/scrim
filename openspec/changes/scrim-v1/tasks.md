@@ -16,7 +16,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 2. Redaction core
 
-- [ ] 2.0 Hash-window prefilter matcher for large sets with Aho-Corasick for small sets (design D13); verify: identical output to the reference matcher on every fixture and at least 500 MB/s single core at 10,000 secrets
+- [x] 2.0 Hash-window prefilter matcher for large sets with Aho-Corasick for small sets (design D13); verify: identical output to the reference matcher on every fixture and at least 500 MB/s single core at 10,000 secrets
 
 - [x] 2.1 Value dictionary with encoded variants (raw, JSON-escaped, base64 std/url at three alignments, hex, URL-encoded) and minimum-length rule; verify: table tests per variant and per edge length
 - [x] 2.2 Multi-pattern matcher over raw request bytes with atomic rebuild and swap; verify: concurrent requests during rebuild never block and never miss a value present before and after the swap
@@ -24,6 +24,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 2.4 Independent guard over exact outgoing bytes (separate code from 2.2), repair or withhold; verify: a value the redactor is made to miss is caught by the guard in tests
 - [x] 2.5 Fallback detectors (pattern rules, entropy), configurable; verify: rule fixtures and false-positive corpus thresholds
 - [ ] 2.6 Fuzz targets for matcher, variants and guard; verify: fuzzing runs in CI for a fixed budget with zero findings
+- [x] 2.7 Nested JSON (JSON text in JSON strings) to `redaction.json_depth` in the variants and the guard, and no restore of a value escaping changes inside a quoted part of tool-call arguments; verify: OpenAI Chat tool-call arguments and a three-level tool result redacted by the real engine, the guard alone catches every style mix to the depth
 
 ## 3. Anthropic Messages proxy (M0 exit)
 
@@ -33,6 +34,9 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 3.4 Capture mode; verify: captured requests are byte-identical to what the fake upstream received
 - [ ] 3.5 Upstream chaining through caveman with redaction first; verify: caveman's store holds placeholders only, and placeholders survive compression in an end-to-end run
 - [x] 3.6 Latency budget gate; verify: CI fails when p99 per request or per chunk exceeds the configured budget on the reference fixtures
+- [x] 3.7 Request target and headers redacted and guarded like the body, only `authorization` and `x-api-key` passed through; verify: the leak gate's `header` and `query` rows are redacted for every transform the guard decodes, and an end-to-end request with secrets in a custom header and a percent-encoded query parameter reaches the fake provider with placeholders only
+- [x] 3.8 Placeholders in header values leave in percent form (`%E2%9F%A6...%E2%9F%A7`), which resolves, restores percent-encoded and is read by the guard; verify: a header redacted or guard-repaired holds only visible ASCII and a fake provider that rejects obs-text accepts it
+- [x] 3.9 WebSocket and other protocol upgrades refused with 501 `upgrade_unsupported` before anything else; verify: a handshake by base URL or through the forward proxy is refused in under 100 ms and the fake provider receives nothing
 
 ## 4. Configuration
 
@@ -61,7 +65,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 7. Policy, approvals and grants
 
-- [x] 7.1 Rule language and evaluation (allow, deny, ask, default); verify: rule table tests and a compiled snapshot used by the data plane
+- [x] 7.1 Rule language and evaluation (allow, deny, ask, default); verify: rule table tests and a compiled snapshot used by the data plane (data plane: `scrim-policy` passes every conformance vector and a differential property test against a port of the Go reference; `scrim-dataplane` evaluates it per request for `inject` and `llm.forward` and asks over the `Asks` stream within `Policy.ask_timeout_millis`, which the control plane fills from `approvals.timeout` or the longest per-rule approval timeout; `gate.Answer` decides `llm.forward` with the data plane's forward semantics, checked by `TestForwardConformance`)
 - [x] 7.2 Approval flow with timeout deny and single-use signed decision links; verify: replayed or expired links are refused
 - [x] 7.3 ntfy notifier with action buttons and terminal `scrim approve`; verify: end-to-end approve and deny against a local ntfy in podman
 - [x] 7.4 JIT grants (ttl, max ttl, scope, use count, revoke); verify: expiry and revocation take effect on the next request
@@ -69,18 +73,18 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 8. Identity and agent tools
 
-- [x] 8.1 Unix socket peer credentials and session tokens from `scrim run`; verify: one agent cannot use another's token or grants
+- [x] 8.1 Unix socket peer credentials and session tokens from `scrim run`; verify: one agent cannot use another's token or grants (data plane: reads Unix peer credentials and the session a request names, `Proxy-Authorization` user or `x-scrim-session`, and sends them as `AskCaller` with a per-ask proof of the token (design D14); `scrim run` names the session on its proxy URL and in Claude Code's `ANTHROPIC_CUSTOM_HEADERS`, and `gate.Answer` verifies the session or maps the peer and evaluates with that identity, checked end to end by `internal/daemon` `TestEndToEndSessionIdentity`)
 - [x] 8.2 MCP server (stdio) with secrets_list, secret_request, secret_gen, secret_capture, secret_ask_human, approval_status, grants_list; verify: no tool schema accepts a value and no response contains one, checked against seeded values
 - [x] 8.3 Agent-facing CLI equivalents including `scrim secret put --stdin` that never echoes; verify: golden tests and a pipe test with the value absent from all output
 - [x] 8.4 Human entry page for secret_ask_human; verify: the agent receives only stored or declined
 
 ## 9. Restore policy, wrapper and leak assurance (M1 exit)
 
-- [ ] 9.1 Per-tool restore policy, tool aliases, display modes, `scrim share` and `scrim reveal`; verify: policy tests per tool role, including none for unknown and network-capable tools
-- [ ] 9.2 Context-aware escaping and no restore where output becomes code; verify: injection test suite and an escaping fuzzer that executes commands with zero code execution
+- [x] 9.1 Per-tool restore policy, tool aliases, display modes, `scrim share` and `scrim reveal`; verify: policy tests per tool role, including none for unknown and network-capable tools (data plane: `scrim-policy` `RestoreEngine`, settings in `Snapshot.restore`, wired into the data plane with shell and edit tool calls restored escaped; the CLI commands and the control plane filling `Snapshot.restore` follow)
+- [x] 9.2 Context-aware escaping and no restore where output becomes code; verify: injection test suite and an escaping fuzzer that executes commands with zero code execution (`scrim-policy` `escape`, `tests/escape_exec.rs` runs commands under `unshare -rn`)
 - [ ] 9.3 `scrim run -- <agent>` wrapper for Claude Code and Codex; verify: real agent CLIs complete a task through scrim against a fake model
-- [ ] 9.4 Bypass matrix as a regression gate; verify: every transform is blocked, withheld or redacted
-- [ ] 9.5 `scrim audit` harness with leak checker stricter than the redactor and cache-hit reporting; verify: CI runs it with zero leaks
+- [x] 9.4 Bypass matrix as a regression gate; verify: every transform is blocked, withheld or redacted
+- [x] 9.5 `scrim audit` harness with leak checker stricter than the redactor and cache-hit reporting; verify: CI runs it with zero leaks
 - [ ] 9.6 User documentation for M1 (install, run, configure, verify with capture, limitations); verify: every documented command is exercised by a docs test
 
 ## 10. Credential injection
@@ -138,9 +142,11 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 ## 13. Local service and persistent interception (M2 exit)
 
 - [ ] 13.1 systemd unit and Quadlet with a dedicated user, `scrim install` and `scrim uninstall`; verify: uninstall leaves no trace in a VM test
-- [ ] 13.2 Forward proxy listener; verify: an agent with HTTPS_PROXY set is redacted
+- [x] 13.2 Forward proxy listener; verify: an agent with HTTPS_PROXY set is redacted
+- [x] 13.2a `chatgpt.com` and `ab.chatgpt.com` routed to the LLM proxy (Responses codec for `/responses`, generic JSON elsewhere); verify: CONNECT to either through the forward proxy reaches the fake provider with placeholders only
 - [ ] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
 - [ ] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
+- [ ] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
 
 ## 14. Large deployments
 

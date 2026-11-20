@@ -1,0 +1,12 @@
+name: setup-rust
+description: >-
+  Make sure rustup is on PATH. GitHub-hosted runners ship it; the ho-z10 pods
+  do not. When it is missing, a pinned rustup-init is downloaded, checked
+  against a pinned sha256 and run with no default toolchain, so the toolchain
+  still comes from dataplane/rust-toolchain.toml.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: "$GITHUB_ACTION_PATH/../../../scripts/ci-setup-rust.sh"

@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "scrim-policy"
+description = "scrim data-plane policy: decision-table evaluator, per-tool restore policy and context-aware escaping"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# Implements scrim-llm's RestorePolicy trait for the restore engine. The data plane binary enables
+# it; the crate itself only needs scrim-redact's public API.
+llm = ["dep:scrim-llm"]
+
+[dependencies]
+scrim-proto.workspace = true
+scrim-redact = { path = "../scrim-redact" }
+serde_json = "1.0.154"
+thiserror = "2"
+
+scrim-llm = { path = "../scrim-llm", optional = true }
+
+[dev-dependencies]
+proptest = "1.12.0"
+regex = "1.13.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.154"
+tempfile = "3.27.0"
+scrim-policy = { path = ".", features = ["llm"] }
+
+[lints]
+workspace = true

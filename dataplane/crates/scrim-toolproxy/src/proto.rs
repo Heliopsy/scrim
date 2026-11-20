@@ -97,6 +97,7 @@ impl Snapshot {
             credentials,
             capture_rules,
             redactor: Some(redactor),
+            injection: None,
         })
     }
 }

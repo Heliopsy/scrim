@@ -26,6 +26,14 @@ pub enum Provider {
 }
 
 impl Provider {
+    /// The provider's name in policy rules (`provider`): `anthropic` or `openai`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Provider::Anthropic => "anthropic",
+            Provider::Openai => "openai",
+        }
+    }
+
     /// The API a request speaks, from its method and the path after the route prefix.
     pub fn api_for(self, method: &http::Method, path: &str) -> Api {
         if method != http::Method::POST {
@@ -235,6 +243,28 @@ pub fn default_routes() -> Vec<RouteConfig> {
             chain: None,
             hosts: vec!["api.openai.com".into()],
         },
+        // Codex signed in with a ChatGPT account: the Responses API at
+        // /backend-api/codex/responses, other backend paths redacted as generic JSON.
+        RouteConfig {
+            name: "chatgpt".into(),
+            prefix: "/chatgpt".into(),
+            upstream: "https://chatgpt.com".into(),
+            provider: Provider::Openai,
+            strip_prefix: true,
+            chain: None,
+            hosts: vec!["chatgpt.com".into()],
+        },
+        // The same session's traffic on ab.chatgpt.com. Its API shape is not documented; no path
+        // there is a Responses call, so every body is redacted as generic JSON.
+        RouteConfig {
+            name: "chatgpt-ab".into(),
+            prefix: "/chatgpt-ab".into(),
+            upstream: "https://ab.chatgpt.com".into(),
+            provider: Provider::Openai,
+            strip_prefix: true,
+            chain: None,
+            hosts: vec!["ab.chatgpt.com".into()],
+        },
     ]
 }
 
@@ -274,6 +304,15 @@ mod tests {
             Api::OpenAiResponses
         );
         assert_eq!(Provider::Openai.api_for(&p, "/v1/embeddings"), Api::Generic);
+        // ChatGPT backend (Codex signed in with ChatGPT).
+        assert_eq!(
+            Provider::Openai.api_for(&p, "/backend-api/codex/responses"),
+            Api::OpenAiResponses
+        );
+        assert_eq!(
+            Provider::Openai.api_for(&p, "/backend-api/codex/analytics-events/events"),
+            Api::Generic
+        );
     }
 
     #[test]

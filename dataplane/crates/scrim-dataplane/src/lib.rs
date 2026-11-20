@@ -10,12 +10,22 @@
 //!
 //! Module seams for the feature work:
 //!
-//! - [`engine`]: redactor, guard, restorer and injector read the current
-//!   snapshot through [`engine::Engine`].
-//! - [`listeners`]: the listeners bound from the snapshot's listener list.
-//!   Tool-proxy and forward-proxy listeners serve `scrim-toolproxy`; its audit
-//!   events and captures reach the control plane through [`audit`] and
-//!   [`captures`]. Base-URL and transparent listeners are still to come.
+//! - [`snapshot`]: one control-plane snapshot becomes the redaction core
+//!   (`scrim-redact`), the LLM proxy's engine and routes (`scrim-llm`) and the
+//!   tool proxy's credentials (`scrim-toolproxy`), built off the request path
+//!   and published together by [`engine::Shared::apply`].
+//! - [`engine`]: the engines and the state they share; the traffic path reads
+//!   the snapshot in force through [`engine::Engine`].
+//! - [`listeners`]: base-URL listeners (TCP and Unix socket) serve the LLM
+//!   proxy; tool-proxy and forward-proxy listeners serve the HTTPS tool proxy,
+//!   which hands provider hosts to the LLM proxy. Transparent listeners are
+//!   still to come.
+//! - [`policy`]: forwarding, injection and restore decisions from the
+//!   snapshot's decision table and restore settings (`scrim-policy`), asking
+//!   the control plane where a rule says so; [`identity`]: who a request is
+//!   from, as far as its transport tells.
+//! - [`audit`] and [`captures`]: audit events of both proxies and tool-proxy
+//!   captures reach the control plane over the Events and Captures streams.
 //!
 //! The process exits when the control plane's end of the socket closes, so a
 //! dead control plane never leaves a data plane serving traffic.
@@ -26,9 +36,12 @@ pub mod captures;
 pub mod engine;
 pub mod events;
 pub mod harden;
+pub mod identity;
 pub mod inherit;
 pub mod listeners;
+pub mod policy;
 pub mod server;
+pub mod settings;
 pub mod snapshot;
 
 /// The data plane build version reported in Hello, Status and `--version`.

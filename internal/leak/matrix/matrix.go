@@ -24,6 +24,7 @@ package matrix
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	fp "github.com/heliopsy/scrim/internal/testing/fakeprovider"
 )
@@ -163,11 +164,11 @@ func Filter(rows []Row, prefixes ...string) []Row {
 // Markdown renders the catalogue as a table for the documentation.
 func Markdown() string {
 	var b []byte
-	b = append(b, "| Transform | Representative command | Expected | Note |\n|---|---|---|---|\n"...)
+	b = append(b, "| Transform | Representative command | Expected | Note |\n| --- | --- | --- | --- |\n"...)
 	for _, t := range Transforms {
 		b = append(b, fmt.Sprintf("| `%s` | `%s` | %s | %s |\n", t.ID, escapePipe(t.Command), t.Expect, escapePipe(t.Note))...)
 	}
-	b = append(b, "\n| Placement | Where | Expected | Note |\n|---|---|---|---|\n"...)
+	b = append(b, "\n| Placement | Where | Expected | Note |\n| --- | --- | --- | --- |\n"...)
 	for _, p := range Placements {
 		var apis []string
 		for _, api := range fp.APIs {
@@ -178,7 +179,9 @@ func Markdown() string {
 		sort.Strings(apis)
 		b = append(b, fmt.Sprintf("| `%s` | %s (%v) | %s | %s |\n", p.ID, escapePipe(p.Desc), apis, p.Expect, escapePipe(p.Note))...)
 	}
-	return string(b)
+	// An empty note is one space between the pipes, as markdownlint's compact
+	// table style (MD060) wants.
+	return strings.ReplaceAll(string(b), "|  |", "| |")
 }
 
 func escapePipe(s string) string {

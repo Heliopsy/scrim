@@ -18,10 +18,11 @@
 // would misread bumps PROTOCOL_VERSION; both sides and their tests change in
 // the same commit.
 //
-// Secrets: ValueEntry.value, PlaceholderKey.key and CaptureRequest.value are
-// the only fields that hold secret material. Generated debug printers for those messages are
-// replaced by redacting ones on both sides; neither may be logged, echoed in
-// an error or copied into an event.
+// Secrets: ValueEntry.value, PlaceholderKey.key, CaptureRequest.value and
+// CaCertificate.key_pem are the only fields that hold secret material.
+// Generated debug printers for those messages are replaced by redacting ones
+// on both sides; neither may be logged, echoed in an error or copied into an
+// event.
 syntax = "proto3";
 
 package scrim.dataplane.v1;
@@ -109,6 +110,103 @@ message Snapshot {
   RedactionSettings redaction = 8;
   // capture_rules apply to tool-proxy responses.
   repeated CaptureRule capture_rules = 9;
+  // restore is the restore policy for placeholders in responses (redaction
+  // spec "Resolution follows tool policy", "Tool aliases", "Display modes",
+  // "Share and reveal"; dataplane/crates/scrim-policy/README.md). Absent,
+  // nothing is restored: every placeholder reaches the agent unresolved.
+  RestoreSettings restore = 10;
+  // tool_proxy_ca is the interception CA the control plane holds (design
+  // D5). Exactly one entry is current: the tool proxy signs leaves with it.
+  // A second, non-current entry is the previous generation during a
+  // rotation's overlap: clients may still trust only it, so leaves are
+  // served with a cross certificate until it leaves the snapshot. Empty
+  // means the data plane keeps the CA it has (generating an ephemeral one
+  // when it has none).
+  repeated CaCertificate tool_proxy_ca = 11;
+}
+
+// CaCertificate is one generation of the tool-proxy CA.
+message CaCertificate {
+  // cert_pem is the self-signed CA certificate, PEM. Public.
+  string cert_pem = 1;
+  // key_pem is the CA's PKCS#8 private key, PEM. Secret: never logged,
+  // wiped on both sides after use.
+  bytes key_pem = 2;
+  // current marks the generation leaves are signed with.
+  bool current = 3;
+}
+
+// DisplayMode decides placeholders in text the agent displays (assistant
+// text and refusals). Tool-call arguments follow the tool roles either way.
+enum DisplayMode {
+  // DISPLAY_MODE_UNSPECIFIED is treated as PLACEHOLDERS, the safer mode.
+  DISPLAY_MODE_UNSPECIFIED = 0;
+  // DISPLAY_MODE_VALUES resolves display values in displayed text.
+  DISPLAY_MODE_VALUES = 1;
+  // DISPLAY_MODE_PLACEHOLDERS keeps placeholders in displayed text, for
+  // example while screen sharing.
+  DISPLAY_MODE_PLACEHOLDERS = 2;
+}
+
+// ToolRole is what a tool does with its arguments, which decides what may be
+// restored into them. Credentials are never restored, whatever the role.
+enum ToolRole {
+  // TOOL_ROLE_UNSPECIFIED is treated as NONE.
+  TOOL_ROLE_UNSPECIFIED = 0;
+  // TOOL_ROLE_NONE: nothing is restored (unknown tools).
+  TOOL_ROLE_NONE = 1;
+  // TOOL_ROLE_READ: reads files or directories; display values are restored.
+  TOOL_ROLE_READ = 2;
+  // TOOL_ROLE_SEARCH: searches files; display values are restored.
+  TOOL_ROLE_SEARCH = 3;
+  // TOOL_ROLE_SHELL: runs a shell command; display values are restored into
+  // the command only where escaping keeps them data (redaction spec
+  // "Context-aware escaping").
+  TOOL_ROLE_SHELL = 4;
+  // TOOL_ROLE_EDIT: changes part of an existing file; a value is restored
+  // only where the call shows it is already in that file.
+  TOOL_ROLE_EDIT = 5;
+  // TOOL_ROLE_WRITE: writes whole files; nothing is restored.
+  TOOL_ROLE_WRITE = 6;
+  // TOOL_ROLE_NETWORK: can reach the network; nothing is restored.
+  TOOL_ROLE_NETWORK = 7;
+}
+
+// ToolAlias gives a tool name a role, adding to or overriding the built-in
+// tool table.
+message ToolAlias {
+  // name is the tool name exactly as the model calls it.
+  string name = 1;
+  ToolRole role = 2;
+  // command_field is the argument holding the command for SHELL: a string is
+  // a shell script, an array of strings an argv. Empty means `command`. When
+  // the tool's input is not a JSON object, the whole input is the script.
+  string command_field = 3;
+  // old_fields and new_fields name the arguments holding replaced and
+  // replacement text for EDIT, at any depth. Empty means `old_string` and
+  // `old_str`, and `new_string` and `new_str`. Inputs in apply_patch format
+  // (`*** Begin Patch`) are recognised without them.
+  repeated string old_fields = 4;
+  repeated string new_fields = 5;
+}
+
+message RestoreSettings {
+  DisplayMode display_mode = 1;
+  // tools are tool aliases; a name listed twice rejects the snapshot.
+  repeated ToolAlias tools = 2;
+  // builtin_tools_disabled ignores the built-in tool table, so only `tools`
+  // have roles.
+  bool builtin_tools_disabled = 3;
+  // extra_shell_data_commands adds commands that a SHELL restore may feed
+  // values to, beyond the built-in list of commands that take no code and
+  // run nothing. Weakening: a listed command that interprets an argument as
+  // code turns a restored value into code.
+  repeated string extra_shell_data_commands = 4;
+  // reveal_credential_refs are glob patterns over ValueEntry.ref of
+  // credentials `scrim reveal` may resolve locally. Empty means reveal never
+  // resolves credentials. Weakening. Restore into responses never resolves
+  // credentials, whatever this holds.
+  repeated string reveal_credential_refs = 5;
 }
 
 // ValueClass decides how a value is restored (D5).
@@ -213,8 +311,14 @@ message Policy {
   // is set, `rules`, `engine` and `compiled` are empty.
   repeated TableRule table = 7;
   // table_format is the version of the table semantics; a data plane that
-  // does not implement it rejects the snapshot. Currently 1.
+  // does not implement it rejects the snapshot. Currently 1. A policy with
+  // no table, rules, engine or compiled program may leave it 0: it is an
+  // empty table of the current format (default_effect and break_glass only).
   uint32 table_format = 8;
+  // ask_timeout_millis bounds how long the data plane holds an operation
+  // that went to the control plane (AskRequest) before it denies it. 0 means
+  // 120000, the default of `approvals.timeout`.
+  uint64 ask_timeout_millis = 9;
 }
 
 // TableRule is one rule in disjunctive normal form: it matches when any
@@ -303,6 +407,19 @@ message Route {
   repeated string hosts = 4;
   // path_prefix selects the route on a base-URL listener.
   string path_prefix = 5;
+  // chain, when set, sends the redacted request to another proxy (for
+  // example a context-compression proxy) in place of `upstream`.
+  RouteChain chain = 6;
+}
+
+// RouteChain is a chained upstream that receives requests after redaction.
+message RouteChain {
+  // url is the chained proxy's base URL (`http` or `https`).
+  string url = 1;
+  // direct_on_unavailable sends the redacted request straight to the
+  // route's upstream when the chained proxy cannot be reached. False refuses
+  // the request instead.
+  bool direct_on_unavailable = 2;
 }
 
 enum ListenerKind {
@@ -416,6 +533,43 @@ message AskRequest {
   string reason = 5;
   // deadline_unix_nano is when the data plane denies without an answer.
   int64 deadline_unix_nano = 6;
+  // caller is what the transport told the data plane about who sent the
+  // request. When it is set, the agent fields of `request` are empty: the
+  // data plane cannot map it to an identity, and the control plane resolves
+  // it before it evaluates the rules.
+  AskCaller caller = 7;
+}
+
+// AskCaller is the transport identity of a request the data plane asks
+// about. The data plane holds no session tokens and verifies none; the
+// control plane decides what each part is worth.
+message AskCaller {
+  // session_id is the scrim session the request names: the user name of
+  // `Proxy-Authorization: Basic` on the forward proxy, or the
+  // `x-scrim-session` header on a base-URL listener. A claim, not verified.
+  string session_id = 1;
+  // unix_peer is set when the request came over a Unix socket listener;
+  // peer_uid, peer_gid and peer_pid are the kernel's peer credentials then.
+  bool unix_peer = 2;
+  uint32 peer_uid = 3;
+  uint32 peer_gid = 4;
+  // peer_pid is 0 when the platform does not report it.
+  int32 peer_pid = 5;
+  // session_proof shows that the request carried the session's token, not
+  // just its id (design D14). The client sends the token as the password of
+  // `Proxy-Authorization: Basic <session_id>:<token>` or as the value of
+  // `x-scrim-session` on a base-URL listener. The data plane never logs or
+  // forwards it: it keeps only the verifier
+  //   v = SHA-256("scrim session token v1\0" || secret)
+  // where secret is the part of `scrim_st_<id>_<secret>` after the id, and
+  // sends
+  //   HMAC-SHA256(key = v, "scrim session proof v1\0" || session_id || "\0"
+  //               || id (8 bytes, big-endian) || deadline_unix_nano (8 bytes, big-endian))
+  // The control plane recomputes it from the hash it stores. The proof is
+  // bound to this one ask and reveals neither the token nor v, so it is not
+  // a secret field. Empty when the request named a session without its
+  // token: such a caller is not verified and is evaluated as unknown.
+  bytes session_proof = 6;
 }
 
 message AskAnswer {
@@ -425,8 +579,9 @@ message AskAnswer {
   Effect effect = 3;
   string reason = 4;
   // grant_id and grant_expires_unix_nano describe the grant an approval
-  // created, so the data plane can let matching requests through until it
-  // expires without asking again.
+  // created, for audit only. The data plane does not cache grants: the
+  // control plane reads them on every use, so a revoked or used-up grant
+  // takes effect on the next request (design D7).
   string grant_id = 5;
   int64 grant_expires_unix_nano = 6;
 }
@@ -450,6 +605,30 @@ message StatusResponse {
   string ca_trust_bundle_pem = 9;
   // tool_proxy is present once the tool proxy is built.
   ToolProxyStatus tool_proxy = 10;
+  // redaction describes the value dictionary in force; absent before the
+  // first snapshot.
+  RedactionStatus redaction = 11;
+  // policy_engine names how the data plane takes restore and injection
+  // decisions, for example `standin/v1` (no rule table evaluation; display
+  // values restored in text only, credentials never) or `table/v1` (the
+  // decision table of format 1, scrim-policy).
+  string policy_engine = 12;
+}
+
+// RedactionStatus reports counts and references, never values.
+message RedactionStatus {
+  // engine is the matcher in use: `aho-corasick` or `hash-window`.
+  string engine = 1;
+  // patterns is how many encoded variants are compiled.
+  uint32 patterns = 2;
+  // short_values counts values below the minimum length, matched only
+  // whole.
+  uint32 short_values = 3;
+  // unprotected_refs are references whose values are below the floor and
+  // are not redacted.
+  repeated string unprotected_refs = 4;
+  // duplicates counts entries whose value another entry already holds.
+  uint32 duplicates = 5;
 }
 
 message ToolProxyStatus {
@@ -494,4 +673,5 @@ message ListenerStatus {
   bool bound = 3;
   // error says why the listener is not bound.
   string error = 4;
+  ListenerKind kind = 5;
 }

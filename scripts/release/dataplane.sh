@@ -22,16 +22,20 @@
 
 [ $# -eq 2 ] || die "usage: $0 PLATFORM OUT"
 platform=$1 out=$2
+case "$out" in /*) ;; *) out=$PWD/$out ;; esac
 target=$(rust_target "$platform")
 manifest="$ROOT/$SCRIM_DATAPLANE_MANIFEST"
 [ -f "$manifest" ] || die "no data plane crate at $SCRIM_DATAPLANE_MANIFEST"
 
+crate_dir=$(dirname "$manifest")
 if command -v rustup >/dev/null; then
-  # Inside the crate so a rust-toolchain.toml there selects the toolchain.
-  # rustup no longer installs a missing pinned toolchain on first use everywhere.
+  # Inside the crate so its rust-toolchain.toml selects the toolchain. rustup
+  # no longer installs a missing pinned toolchain on first use, and
+  # `rustup show active-toolchain` succeeds for one that is not installed, so
+  # install it outright; that is a no-op when it is already there.
   (
-    cd "$(dirname "$manifest")"
-    rustup show active-toolchain >/dev/null 2>&1 || rustup toolchain install
+    cd "$crate_dir"
+    rustup toolchain install
     rustup target add "$target" >/dev/null
   )
 fi
@@ -53,6 +57,12 @@ export CARGO_INCREMENTAL=0
 # protocol handshake report the release version.
 export SCRIM_BUILD_VERSION=$SCRIM_VERSION SCRIM_BUILD_COMMIT=$SCRIM_COMMIT
 
+# Every cargo call runs from the crate directory: rustup picks the toolchain
+# from the working directory, not from --manifest-path, so a call from the
+# repository root would use the runner's default toolchain, or fail on a
+# runner that has none.
+cd "$crate_dir"
+
 build=(build)
 if [ "${SCRIM_RELEASE_NO_AUDITABLE:-}" = 1 ]; then
   log "cargo-auditable skipped: this is not a release build"
@@ -63,6 +73,7 @@ else
 fi
 
 log "data plane $SCRIM_VERSION for $platform ($target)"
+cargo --version >&2
 cargo "${build[@]}" --release --locked \
   --manifest-path "$manifest" \
   --package "$SCRIM_DATAPLANE_PACKAGE" \
