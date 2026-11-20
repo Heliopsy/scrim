@@ -1,8 +1,9 @@
-<p align="center">
-  <img src="scrim.svg" alt="scrim" width="96" height="96">
-</p>
-
-<h1 align="center">scrim</h1>
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/scrim-dark.svg">
+    <img src="scrim.svg" alt="scrim" height="80">
+  </picture>
+</h1>
 
 <p align="center">
   Keeps secret values away from LLM providers while your AI agents keep working.
@@ -73,7 +74,27 @@ flowchart LR
   cp -- "dictionary and policy snapshot" --> dp
   cp -- "ask" --> approvers
   approvers -- "approve or deny" --> cp
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef cplane fill:#d8b4fe,stroke:#7e22ce,stroke-width:1.5px,color:#3b0764
+  classDef store fill:#fcd34d,stroke:#b45309,stroke-width:1.5px,color:#451a03
+  classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  classDef human fill:#86efac,stroke:#15803d,stroke-width:1.5px,color:#052e16
+  classDef zone fill:#94a3b81a,stroke:#64748b,stroke-width:1px,stroke-dasharray:4 3
+  classDef dpzone fill:#6366f11f,stroke:#6366f1,stroke-width:1.5px
+  class agent agent
+  class red,guard,rest,tp dplane
+  class cp cplane
+  class stores store
+  class provider,toolapis ext
+  class approvers human
+  class scrim zone
+  class dp dpzone
+  linkStyle 6,9,10 stroke:#d97706,stroke-width:2.5px
 ```
+
+Colours: blue is the agent, indigo the scrim data plane, purple the control plane, amber the secret
+stores, green people and notifiers, grey the provider and tool APIs. Amber edges carry real secret values.
 
 1. The control plane loads the secrets your configuration marks for redaction from the stores you
    already run and pushes them to the data plane. Values live in memory only.
