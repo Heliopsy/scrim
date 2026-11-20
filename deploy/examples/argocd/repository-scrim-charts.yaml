@@ -1,0 +1,19 @@
+# Registers scrim's public OCI chart repository with Argo CD, so Applications
+# can use repoURL ghcr.io/heliopsy/charts with chart: scrim. It holds no
+# credential: the charts are public.
+#
+# Argo CD does not check the chart's cosign signature. Check it yourself when
+# you move targetRevision (docs/kubernetes.md, Install); the Kyverno policy in
+# deploy/examples/kyverno checks every scrim image at admission.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: repository-scrim-charts
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  name: scrim-charts
+  type: helm
+  url: ghcr.io/heliopsy/charts
+  enableOCI: "true"

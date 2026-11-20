@@ -1,0 +1,24 @@
+# ~/.config/scrim/config.yaml for one developer machine.
+#
+# Secrets come from scrim's own environment here, so the example works without
+# a secret store. Each variable to redact is listed by name: a redact target
+# ending in /* loads a folder of a store, and environment variables have no
+# folders. For real use point a store at OpenBao, Infisical or Vaultwarden
+# (docs/stores) and redact a folder of it instead.
+apiVersion: scrim.dev/v1
+kind: Config
+
+stores:
+  local:
+    kind: env
+    prefix: SCRIM_SECRET_
+    redact:
+      - local://SCRIM_SECRET_GITHUB_TOKEN
+
+catalog:
+  entries:
+    github:
+      ref: local://SCRIM_SECRET_GITHUB_TOKEN
+      hosts: [api.github.com]
+      placeholder: SCRIM_GITHUB_TOKEN
+      inject: ["header:Authorization"]

@@ -37,7 +37,23 @@ flowchart LR
   scrim -- "approval request, no values" --> approvers
   approvers -- "signed decision link" --> scrim
   operator -- "admin socket, config files" --> scrim
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef store fill:#fcd34d,stroke:#b45309,stroke-width:1.5px,color:#451a03
+  classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  classDef human fill:#86efac,stroke:#15803d,stroke-width:1.5px,color:#052e16
+  class agent agent
+  class operator,approvers human
+  class scrim dplane
+  class provider,toolapis ext
+  class stores store
+  linkStyle 3,5 stroke:#d97706,stroke-width:2.5px
 ```
+
+Colours, the same in every diagram on this page: blue is the agent, indigo the scrim data plane,
+purple the control plane, amber the secret stores and state backends, green people and notifiers,
+grey providers, tool APIs and other outside systems, teal OS and cluster enforcement, red a refused
+or fail-closed path. Amber edges and amber blocks carry real secret values; red blocks are refusals.
 
 The agent talks to scrim instead of to the provider and the tool APIs directly. The provider only
 ever sees placeholders. Tool APIs see the real credential, and only the hosts a credential is bound
@@ -124,6 +140,25 @@ flowchart TB
   operator --> admin --> approval
   approver --> links --> approval
   prom --> metrics --> audit
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef cplane fill:#d8b4fe,stroke:#7e22ce,stroke-width:1.5px,color:#3b0764
+  classDef store fill:#fcd34d,stroke:#b45309,stroke-width:1.5px,color:#451a03
+  classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  classDef human fill:#86efac,stroke:#15803d,stroke-width:1.5px,color:#052e16
+  classDef zone fill:#94a3b81a,stroke:#64748b,stroke-width:1px,stroke-dasharray:4 3
+  classDef dpzone fill:#6366f11f,stroke:#6366f1,stroke-width:1.5px
+  classDef cpzone fill:#a855f71a,stroke:#9333ea,stroke-width:1.5px
+  class agent agent
+  class operator,approver human
+  class prom ext
+  class cli,app,config,stores,catalog,policy,gate,approval,identity,agenttools,builder,sup,audit,api,admin,entry,links,metrics cplane
+  class state store
+  class server,llm,redact,tp,dppolicy,base,fwd,tpl dplane
+  class cp cpzone
+  class dp dpzone
+  class listen zone
+  linkStyle 9,12,18 stroke:#d97706,stroke-width:2.5px
 ```
 
 Each half is a set of packages or crates with one job. In the control plane, `app` builds every
@@ -150,33 +185,47 @@ agent API, entry page, decision-link and metrics listeners. The data plane decid
 ```mermaid
 sequenceDiagram
   autonumber
+  box rgba(14,165,233,0.14) Agent
   participant A as Agent
+  end
+  box rgba(99,102,241,0.16) scrim data plane
   participant L as Base URL listener
   participant C as Provider codec
   participant R as Redactor
   participant G as Independent guard
-  participant P as LLM provider API
   participant S as Restorer
   participant T as Restore policy
+  end
+  box rgba(100,116,139,0.16) Provider
+  participant P as LLM provider API
+  end
 
   A->>L: POST /anthropic/v1/messages
-  alt no snapshot applied or redaction not ready
-    L-->>A: 503 with Retry-After, nothing sent
+  rect rgba(239,68,68,0.14)
+    alt no snapshot applied or redaction not ready
+      L-->>A: 503 with Retry-After, nothing sent
+    end
   end
   L->>C: route by path prefix
   C->>R: raw request bytes and field plan
   R->>R: match known values and encoded variants, unknown fields redacted
-  alt malformed, ambiguous or redactor error
-    R-->>A: 422, nothing sent
+  rect rgba(239,68,68,0.14)
+    alt malformed, ambiguous or redactor error
+      R-->>A: 422, nothing sent
+    end
   end
   R->>G: redacted bytes
   G->>G: scan exact outgoing bytes, decode extra transforms
-  alt guard finds a value it cannot repair, or errors
-    G-->>A: 422, nothing sent
+  rect rgba(239,68,68,0.14)
+    alt guard finds a value it cannot repair, or errors
+      G-->>A: 422, nothing sent
+    end
   end
   G->>P: placeholders only
-  alt provider or chained upstream unreachable
-    P-->>A: 502
+  rect rgba(239,68,68,0.14)
+    alt provider or chained upstream unreachable
+      P-->>A: 502
+    end
   end
   P-->>S: streamed response, SSE events
   loop each content block delta
@@ -214,41 +263,59 @@ deny or ask rules on `op == "restore"` keep the placeholder. The control plane f
 ```mermaid
 sequenceDiagram
   autonumber
+  box rgba(14,165,233,0.14) Agent
   participant A as Agent tool, curl
+  end
+  box rgba(99,102,241,0.16) scrim data plane
   participant F as Forward proxy
   participant X as Tool proxy
+  end
+  box rgba(168,85,247,0.14) scrim control plane
   participant D as Control plane
+  end
+  box rgba(100,116,139,0.16) Outside hosts
   participant U as Tool API
   participant O as Other host
+  end
 
   A->>F: CONNECT api.github.com:443
   F->>X: TLS terminated with a leaf from scrim's CA
   X->>X: Host, authority and SNI must match the CONNECT target
-  alt mismatch
-    X-->>A: 421 misdirected_request
+  rect rgba(239,68,68,0.14)
+    alt mismatch
+      X-->>A: 421 misdirected_request
+    end
   end
   X->>X: find every placeholder in URL, headers, cookies, body
   X->>X: check each one against its binding: host, method, path, location
-  alt credential not in memory, past the staleness limit, or a placeholder nothing resolves
-    X-->>A: 503 credential_unavailable
+  rect rgba(239,68,68,0.14)
+    alt credential not in memory, past the staleness limit, or a placeholder nothing resolves
+      X-->>A: 503 credential_unavailable
+    end
   end
   X->>X: substitute, encoded for where each value lands
-  X->>U: request with the real token
+  rect rgba(245,158,11,0.16)
+    X->>U: request with the real token
+  end
   U-->>X: response
-  opt a capture rule matches the response
-    X->>D: CaptureRequest with the new token
-    D->>D: write it to the store, redact it at once
-    D-->>X: placeholder, or error
-    Note over X: on error or timeout the field is withheld
+  rect rgba(245,158,11,0.16)
+    opt a capture rule matches the response
+      X->>D: CaptureRequest with the new token
+      D->>D: write it to the store, redact it at once
+      D-->>X: placeholder, or error
+      Note over X: on error or timeout the field is withheld
+    end
   end
   X->>X: redact known values in headers, trailers and body
   X-->>A: response with placeholders only
 
-  A->>F: CONNECT attacker.example:443, same placeholder
-  F->>X: TLS terminated
-  X->>X: placeholder is not bound to attacker.example
-  X-->>A: 403 unbound_destination, nothing sent upstream
-  Note over O: never contacted
+  rect rgba(239,68,68,0.14)
+    A->>F: CONNECT attacker.example:443, same placeholder
+    F->>X: TLS terminated
+    X->>X: placeholder is not bound to attacker.example
+    X-->>A: 403 unbound_destination, nothing sent upstream
+    Note over O: never contacted
+  end
 ```
 
 The agent runs the command the model wrote, placeholder and all. With `HTTPS_PROXY` set, the
@@ -274,19 +341,29 @@ the gate as `store.write`) and holds the CA, which it pushes in the snapshot.
 ```mermaid
 sequenceDiagram
   autonumber
+  box rgba(14,165,233,0.14) Agent
   participant A as Agent
+  end
+  box rgba(99,102,241,0.16) scrim data plane
   participant DP as Data plane, decision table
+  end
+  box rgba(168,85,247,0.14) scrim control plane
   participant SV as Supervisor
   participant GT as Gate
   participant GR as Grants
   participant AP as Approvals
+  end
+  box rgba(34,197,94,0.14) Humans and notifiers
   participant N as Notifier
   participant H as Human approver
+  end
 
   A->>DP: request that needs a secret
   DP->>DP: evaluate every rule: match, no match or unknown
   alt deny wins
-    DP-->>A: refused, audited
+    rect rgba(239,68,68,0.14)
+      DP-->>A: refused, audited
+    end
   else allow, no side effect
     DP-->>A: proceeds locally
   else ask, unknown, or allow with a grant ttl
@@ -308,7 +385,9 @@ sequenceDiagram
     end
     DP-->>A: proceed, or refuse
   end
-  Note over DP: no answer by the deadline denies
+  rect rgba(239,68,68,0.14)
+    Note over DP: no answer by the deadline denies
+  end
   A->>DP: retry after the deadline
   DP->>SV: ask again
   SV->>GT: Check finds the grant, allow
@@ -365,6 +444,18 @@ flowchart LR
   val -- "yes" --> build["build matcher and<br>tool proxy view off the hot path"]
   build --> swap["atomic swap"]
   swap -- "applied_version N+1" --> sup
+  classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef cplane fill:#d8b4fe,stroke:#7e22ce,stroke-width:1.5px,color:#3b0764
+  classDef store fill:#fcd34d,stroke:#b45309,stroke-width:1.5px,color:#451a03
+  classDef refused fill:#fca5a5,stroke:#b91c1c,stroke-width:1.5px,color:#450a0a
+  classDef cpzone fill:#a855f71a,stroke:#9333ea,stroke-width:1.5px
+  class st store
+  class ref,cat,pol,cfg,bg,b,sup cplane
+  class val,build,swap dplane
+  class keep refused
+  class sources cpzone
+  linkStyle 0,6,7 stroke:#d97706,stroke-width:2.5px
+  linkStyle 8 stroke:#dc2626,stroke-width:2px
 ```
 
 Every input that can change what the data plane does feeds one builder: the values the refresher
@@ -418,6 +509,23 @@ flowchart TB
   dpm -. "placeholders" .-> prov
   dpm -. "placeholders, restored display values" .-> ag
   cpm -. "names and references" .-> appr
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef cplane fill:#d8b4fe,stroke:#7e22ce,stroke-width:1.5px,color:#3b0764
+  classDef store fill:#fcd34d,stroke:#b45309,stroke-width:1.5px,color:#451a03
+  classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  classDef human fill:#86efac,stroke:#15803d,stroke-width:1.5px,color:#052e16
+  classDef zone fill:#94a3b81a,stroke:#64748b,stroke-width:1px,stroke-dasharray:4 3
+  classDef secretzone fill:#f59e0b1a,stroke:#d97706,stroke-width:1.5px
+  class stores,db store
+  class cpm cplane
+  class dpm dplane
+  class logs,aud,prov ext
+  class ag agent
+  class appr human
+  class values secretzone
+  class host,none zone
+  linkStyle 0,1 stroke:#d97706,stroke-width:2.5px
 ```
 
 Values live in three places: the stores, the control plane's memory and the data plane's memory.
@@ -478,6 +586,20 @@ flowchart TB
     kyv -.-> agentpod
     side -. "alternative to central" .-> agentpod
   end
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef cplane fill:#d8b4fe,stroke:#7e22ce,stroke-width:1.5px,color:#3b0764
+  classDef store fill:#fcd34d,stroke:#b45309,stroke-width:1.5px,color:#451a03
+  classDef human fill:#86efac,stroke:#15803d,stroke-width:1.5px,color:#052e16
+  classDef enforce fill:#5eead4,stroke:#0f766e,stroke-width:1.5px,color:#042f2e
+  classDef zone fill:#94a3b81a,stroke:#64748b,stroke-width:1px,stroke-dasharray:4 3
+  class sh human
+  class run,lcp,vcp cplane
+  class ldp,vdp,edge,kcp,side dplane
+  class lag,vag,kag agent
+  class lsq,pg store
+  class unit,nft,np,kyv enforce
+  class laptop,vm,k8s,agentpod,central zone
 ```
 
 On a laptop, `scrim run` makes sure a scrim is running for the user, mints a session token bound to

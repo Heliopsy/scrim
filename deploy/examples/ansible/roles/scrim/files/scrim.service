@@ -1,0 +1,76 @@
+# /etc/systemd/system/scrim.service
+#
+# scrim as a system service under its own user, for people who manage units
+# themselves. `scrim install --system` writes and records an equivalent unit;
+# use one or the other, not both.
+#
+# Files it expects:
+#   /usr/local/bin/scrim                       the release binary
+#   /etc/scrim/config.yaml                     config.yaml next to this file
+#   /etc/scrim/secrets/agents/                 one file per secret, owned by scrim, 0600
+#   /etc/sysusers.d/scrim.conf                 creates the scrim user (scrim.sysusers.conf)
+#
+# State (SQLite, placeholder key, CA) lives in /var/lib/scrim, the sockets in
+# /run/scrim. To read secrets from OpenBao instead of files, add the drop-in
+# scrim.service.d/openbao.conf and use config-openbao.yaml.
+
+[Unit]
+Description=scrim, keeps secret values away from LLM providers
+Documentation=https://github.com/Heliopsy/scrim/blob/main/docs/deploy/vm.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=scrim
+Group=scrim
+ExecStart=/usr/local/bin/scrim proxy --config /etc/scrim/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=30s
+
+# scrim derives its paths from the XDG variables: state in
+# $XDG_STATE_HOME/scrim, sockets in $XDG_RUNTIME_DIR/scrim.
+Environment=HOME=/var/lib/scrim
+Environment=XDG_STATE_HOME=/var/lib
+Environment=XDG_RUNTIME_DIR=/run
+Environment=XDG_CONFIG_HOME=/etc
+StateDirectory=scrim
+StateDirectoryMode=0700
+RuntimeDirectory=scrim
+RuntimeDirectoryMode=0750
+ConfigurationDirectory=scrim
+ConfigurationDirectoryMode=0755
+
+# The data plane locks its memory so values are never swapped.
+LimitMEMLOCK=infinity
+
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RemoveIPC=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

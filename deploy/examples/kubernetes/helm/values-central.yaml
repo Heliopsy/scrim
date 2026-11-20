@@ -1,0 +1,47 @@
+# Central mode, one replica: a scrim Deployment serves the agent pods in
+# `agents` through its Service. OpenBao is the store and scrim logs in to it
+# with its own service account (storeAuth), so no store credential exists in
+# the cluster. Kyverno configures pods labelled scrim.dev/inject: central, and
+# the NetworkPolicies keep them on scrim and DNS.
+#
+# The OpenBao role `scrim` binds the service account scrim-proxy in namespace
+# scrim with audience openbao (docs/stores/openbao.md, Kubernetes auth). Every
+# redact target must match at least one secret on the first load, or scrim
+# refuses to start.
+#
+#   helm --kube-context <ctx> install scrim oci://ghcr.io/heliopsy/charts/scrim \
+#     --version <version> -n scrim --create-namespace -f values-central.yaml
+#
+# For several replicas on PostgreSQL, metrics and alerts, start from the
+# chart's examples/production.yaml instead.
+storeAuth:
+  serviceAccountToken:
+    enabled: true
+    audience: openbao
+config:
+  stores:
+    bao:
+      kind: openbao
+      address: https://bao.example.com:8200
+      auth:
+        method: kubernetes
+        kubernetes: {role: scrim, token-file: /var/run/secrets/scrim/store-token}
+      redact: ["bao://kv/agents/*"]
+  catalog:
+    entries:
+      github:
+        ref: bao://kv/agents/github#token
+        hosts: [api.github.com]
+        placeholder: SCRIM_GITHUB_TOKEN
+        inject: ["header:Authorization"]
+agents:
+  namespaces: [agents]
+kyverno:
+  enabled: true
+networkPolicy:
+  enabled: true
+  scrimEgress:
+    # Providers and GitHub over HTTPS, OpenBao on its own port.
+    - ports:
+        - {port: 443, protocol: TCP}
+        - {port: 8200, protocol: TCP}

@@ -1,0 +1,11 @@
+---
+- name: Restart scrim
+  ansible.builtin.systemd_service:
+    name: scrim.service
+    state: restarted
+    daemon_reload: true
+
+- name: Reload scrim
+  ansible.builtin.systemd_service:
+    name: scrim.service
+    state: reloaded

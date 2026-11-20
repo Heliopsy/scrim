@@ -1,0 +1,23 @@
+# Flux checks the signature of the scrim image it is about to roll out: this
+# source is Ready only while cosign verifies the tag against the keyless
+# identity of the release workflow, and a failed verification raises a Flux
+# alert. Admission (deploy/examples/kyverno/verify-scrim-images.yaml) is what
+# refuses an unsigned image; this source makes the failure visible in Flux.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: scrim-image
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: oci://ghcr.io/heliopsy/scrim
+  ref:
+    semver: ">=0.1.0 <1.0.0"
+  layerSelector:
+    mediaType: application/vnd.oci.image.layer.v1.tar+gzip
+    operation: copy
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: ^https://token\.actions\.githubusercontent\.com$
+        subject: ^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(heads/main|tags/v.+)$

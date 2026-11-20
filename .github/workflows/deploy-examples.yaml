@@ -1,0 +1,73 @@
+name: Deployment examples
+
+# Checks every file under deploy/examples, which docs/deploy shows, with the
+# tools scripts/deploy-examples/tools.env pins by version and sha256, then runs
+# the container examples for real, all against the scrim image built from this
+# commit. GitHub-hosted: the checks need podman, systemd-analyze and quadlet,
+# which the ho-z10 pods do not have. No secret, no OIDC token, read-only token.
+on:
+  pull_request:
+    paths:
+      - deploy/**
+      - docs/deploy/**
+      - scripts/deploy-examples/**
+      - justfile
+      - .github/workflows/deploy-examples.yaml
+      - release-please-config.json
+  push:
+    branches: [main]
+    paths:
+      - deploy/**
+      - docs/deploy/**
+      - scripts/deploy-examples/**
+      - justfile
+      - .github/workflows/deploy-examples.yaml
+      - release-please-config.json
+
+permissions: read-all
+
+concurrency:
+  group: deploy-examples-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Check deployment examples
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-just
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Set up rustup
+        run: scripts/ci-setup-rust.sh
+      - name: Install musl tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends musl-tools
+      - run: podman version && systemd-analyze --version | head -1 && shellcheck --version | head -2
+      # The release recipe from this commit's source, as in the chart-kind job
+      # of ci.yaml: the examples are checked against the scrim they ship with.
+      - name: Build the scrim image
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/target
+        run: echo "SCRIM_EXAMPLES_IMAGE=$(scripts/deploy-examples/image.sh)" >> "$GITHUB_ENV"
+      - name: Static checks
+        run: just deploy-examples-check
+      # Starts the podman run, kube play, compose and raw Deployment examples
+      # and sends each a canary request to api.anthropic.com with an invalid
+      # key; Anthropic answers 401 and the capture must hold the placeholder.
+      - name: Container examples, for real
+        if: success() || failure()
+        run: just deploy-examples-smoke
+      - name: Remove leftover containers
+        if: always()
+        run: |
+          podman ps -aq --filter name=scrim-examples- | xargs -r podman rm -f -v
+          podman pod ps -q --filter name=scrim-examples- | xargs -r podman pod rm -f
+          podman volume ls -q --filter name=scrim-examples- | xargs -r podman volume rm -f
+          podman rmi -f "${SCRIM_EXAMPLES_IMAGE:-none}" >/dev/null 2>&1 || true
