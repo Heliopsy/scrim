@@ -59,6 +59,61 @@ pub struct Snapshot {
     /// capture_rules apply to tool-proxy responses.
     #[prost(message, repeated, tag = "9")]
     pub capture_rules: ::prost::alloc::vec::Vec<CaptureRule>,
+    /// restore is the restore policy for placeholders in responses (redaction
+    /// spec "Resolution follows tool policy", "Tool aliases", "Display modes",
+    /// "Share and reveal"; docs/restore.md). Absent, nothing is restored: every
+    /// placeholder reaches the agent unresolved.
+    #[prost(message, optional, tag = "10")]
+    pub restore: ::core::option::Option<RestoreSettings>,
+}
+/// ToolAlias gives a tool name a role, adding to or overriding the built-in
+/// tool table.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ToolAlias {
+    /// name is the tool name exactly as the model calls it.
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(enumeration = "ToolRole", tag = "2")]
+    pub role: i32,
+    /// command_field is the argument holding the command for SHELL: a string is
+    /// a shell script, an array of strings an argv. Empty means `command`. When
+    /// the tool's input is not a JSON object, the whole input is the script.
+    #[prost(string, tag = "3")]
+    pub command_field: ::prost::alloc::string::String,
+    /// old_fields and new_fields name the arguments holding replaced and
+    /// replacement text for EDIT, at any depth. Empty means `old_string` and
+    /// `old_str`, and `new_string` and `new_str`. Inputs in apply_patch format
+    /// (`*** Begin Patch`) are recognised without them.
+    #[prost(string, repeated, tag = "4")]
+    pub old_fields: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "5")]
+    pub new_fields: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RestoreSettings {
+    #[prost(enumeration = "DisplayMode", tag = "1")]
+    pub display_mode: i32,
+    /// tools are tool aliases; a name listed twice rejects the snapshot.
+    #[prost(message, repeated, tag = "2")]
+    pub tools: ::prost::alloc::vec::Vec<ToolAlias>,
+    /// builtin_tools_disabled ignores the built-in tool table, so only `tools`
+    /// have roles.
+    #[prost(bool, tag = "3")]
+    pub builtin_tools_disabled: bool,
+    /// extra_shell_data_commands adds commands that a SHELL restore may feed
+    /// values to, beyond the built-in list of commands that take no code and
+    /// run nothing. Weakening: a listed command that interprets an argument as
+    /// code turns a restored value into code.
+    #[prost(string, repeated, tag = "4")]
+    pub extra_shell_data_commands: ::prost::alloc::vec::Vec<
+        ::prost::alloc::string::String,
+    >,
+    /// reveal_credential_refs are glob patterns over ValueEntry.ref of
+    /// credentials `scrim reveal` may resolve locally. Empty means reveal never
+    /// resolves credentials. Weakening. Restore into responses never resolves
+    /// credentials, whatever this holds.
+    #[prost(string, repeated, tag = "5")]
+    pub reveal_credential_refs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 #[prost(skip_debug)]
@@ -621,6 +676,98 @@ impl ProtocolVersion {
         match value {
             "PROTOCOL_VERSION_UNSPECIFIED" => Some(Self::Unspecified),
             "PROTOCOL_VERSION_CURRENT" => Some(Self::Current),
+            _ => None,
+        }
+    }
+}
+/// DisplayMode decides placeholders in text the agent displays (assistant
+/// text and refusals). Tool-call arguments follow the tool roles either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DisplayMode {
+    /// DISPLAY_MODE_UNSPECIFIED is treated as PLACEHOLDERS, the safer mode.
+    Unspecified = 0,
+    /// DISPLAY_MODE_VALUES resolves display values in displayed text.
+    Values = 1,
+    /// DISPLAY_MODE_PLACEHOLDERS keeps placeholders in displayed text, for
+    /// example while screen sharing.
+    Placeholders = 2,
+}
+impl DisplayMode {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "DISPLAY_MODE_UNSPECIFIED",
+            Self::Values => "DISPLAY_MODE_VALUES",
+            Self::Placeholders => "DISPLAY_MODE_PLACEHOLDERS",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DISPLAY_MODE_UNSPECIFIED" => Some(Self::Unspecified),
+            "DISPLAY_MODE_VALUES" => Some(Self::Values),
+            "DISPLAY_MODE_PLACEHOLDERS" => Some(Self::Placeholders),
+            _ => None,
+        }
+    }
+}
+/// ToolRole is what a tool does with its arguments, which decides what may be
+/// restored into them. Credentials are never restored, whatever the role.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ToolRole {
+    /// TOOL_ROLE_UNSPECIFIED is treated as NONE.
+    Unspecified = 0,
+    /// TOOL_ROLE_NONE: nothing is restored (unknown tools).
+    None = 1,
+    /// TOOL_ROLE_READ: reads files or directories; display values are restored.
+    Read = 2,
+    /// TOOL_ROLE_SEARCH: searches files; display values are restored.
+    Search = 3,
+    /// TOOL_ROLE_SHELL: runs a shell command; display values are restored into
+    /// the command only where escaping keeps them data (redaction spec
+    /// "Context-aware escaping").
+    Shell = 4,
+    /// TOOL_ROLE_EDIT: changes part of an existing file; a value is restored
+    /// only where the call shows it is already in that file.
+    Edit = 5,
+    /// TOOL_ROLE_WRITE: writes whole files; nothing is restored.
+    Write = 6,
+    /// TOOL_ROLE_NETWORK: can reach the network; nothing is restored.
+    Network = 7,
+}
+impl ToolRole {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "TOOL_ROLE_UNSPECIFIED",
+            Self::None => "TOOL_ROLE_NONE",
+            Self::Read => "TOOL_ROLE_READ",
+            Self::Search => "TOOL_ROLE_SEARCH",
+            Self::Shell => "TOOL_ROLE_SHELL",
+            Self::Edit => "TOOL_ROLE_EDIT",
+            Self::Write => "TOOL_ROLE_WRITE",
+            Self::Network => "TOOL_ROLE_NETWORK",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "TOOL_ROLE_UNSPECIFIED" => Some(Self::Unspecified),
+            "TOOL_ROLE_NONE" => Some(Self::None),
+            "TOOL_ROLE_READ" => Some(Self::Read),
+            "TOOL_ROLE_SEARCH" => Some(Self::Search),
+            "TOOL_ROLE_SHELL" => Some(Self::Shell),
+            "TOOL_ROLE_EDIT" => Some(Self::Edit),
+            "TOOL_ROLE_WRITE" => Some(Self::Write),
+            "TOOL_ROLE_NETWORK" => Some(Self::Network),
             _ => None,
         }
     }

@@ -109,6 +109,84 @@ message Snapshot {
   RedactionSettings redaction = 8;
   // capture_rules apply to tool-proxy responses.
   repeated CaptureRule capture_rules = 9;
+  // restore is the restore policy for placeholders in responses (redaction
+  // spec "Resolution follows tool policy", "Tool aliases", "Display modes",
+  // "Share and reveal"; docs/restore.md). Absent, nothing is restored: every
+  // placeholder reaches the agent unresolved.
+  RestoreSettings restore = 10;
+}
+
+// DisplayMode decides placeholders in text the agent displays (assistant
+// text and refusals). Tool-call arguments follow the tool roles either way.
+enum DisplayMode {
+  // DISPLAY_MODE_UNSPECIFIED is treated as PLACEHOLDERS, the safer mode.
+  DISPLAY_MODE_UNSPECIFIED = 0;
+  // DISPLAY_MODE_VALUES resolves display values in displayed text.
+  DISPLAY_MODE_VALUES = 1;
+  // DISPLAY_MODE_PLACEHOLDERS keeps placeholders in displayed text, for
+  // example while screen sharing.
+  DISPLAY_MODE_PLACEHOLDERS = 2;
+}
+
+// ToolRole is what a tool does with its arguments, which decides what may be
+// restored into them. Credentials are never restored, whatever the role.
+enum ToolRole {
+  // TOOL_ROLE_UNSPECIFIED is treated as NONE.
+  TOOL_ROLE_UNSPECIFIED = 0;
+  // TOOL_ROLE_NONE: nothing is restored (unknown tools).
+  TOOL_ROLE_NONE = 1;
+  // TOOL_ROLE_READ: reads files or directories; display values are restored.
+  TOOL_ROLE_READ = 2;
+  // TOOL_ROLE_SEARCH: searches files; display values are restored.
+  TOOL_ROLE_SEARCH = 3;
+  // TOOL_ROLE_SHELL: runs a shell command; display values are restored into
+  // the command only where escaping keeps them data (redaction spec
+  // "Context-aware escaping").
+  TOOL_ROLE_SHELL = 4;
+  // TOOL_ROLE_EDIT: changes part of an existing file; a value is restored
+  // only where the call shows it is already in that file.
+  TOOL_ROLE_EDIT = 5;
+  // TOOL_ROLE_WRITE: writes whole files; nothing is restored.
+  TOOL_ROLE_WRITE = 6;
+  // TOOL_ROLE_NETWORK: can reach the network; nothing is restored.
+  TOOL_ROLE_NETWORK = 7;
+}
+
+// ToolAlias gives a tool name a role, adding to or overriding the built-in
+// tool table.
+message ToolAlias {
+  // name is the tool name exactly as the model calls it.
+  string name = 1;
+  ToolRole role = 2;
+  // command_field is the argument holding the command for SHELL: a string is
+  // a shell script, an array of strings an argv. Empty means `command`. When
+  // the tool's input is not a JSON object, the whole input is the script.
+  string command_field = 3;
+  // old_fields and new_fields name the arguments holding replaced and
+  // replacement text for EDIT, at any depth. Empty means `old_string` and
+  // `old_str`, and `new_string` and `new_str`. Inputs in apply_patch format
+  // (`*** Begin Patch`) are recognised without them.
+  repeated string old_fields = 4;
+  repeated string new_fields = 5;
+}
+
+message RestoreSettings {
+  DisplayMode display_mode = 1;
+  // tools are tool aliases; a name listed twice rejects the snapshot.
+  repeated ToolAlias tools = 2;
+  // builtin_tools_disabled ignores the built-in tool table, so only `tools`
+  // have roles.
+  bool builtin_tools_disabled = 3;
+  // extra_shell_data_commands adds commands that a SHELL restore may feed
+  // values to, beyond the built-in list of commands that take no code and
+  // run nothing. Weakening: a listed command that interprets an argument as
+  // code turns a restored value into code.
+  repeated string extra_shell_data_commands = 4;
+  // reveal_credential_refs are glob patterns over ValueEntry.ref of
+  // credentials `scrim reveal` may resolve locally. Empty means reveal never
+  // resolves credentials. Weakening. Restore into responses never resolves
+  // credentials, whatever this holds.
+  repeated string reveal_credential_refs = 5;
 }
 
 // ValueClass decides how a value is restored (D5).
