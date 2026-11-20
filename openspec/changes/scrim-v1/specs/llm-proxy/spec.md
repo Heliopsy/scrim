@@ -128,7 +128,7 @@ SHALL be exempt. Response headers SHALL reach the agent as sent, with no placeho
 #### Scenario: Secret in a custom header
 
 - **WHEN** an agent's request carries a known secret in a custom header such as `X-Debug-Context`, raw, quoted or base64-encoded
-- **THEN** the provider receives that header with the secret replaced by a placeholder
+- **THEN** the provider receives that header with the secret replaced by the placeholder's percent form and nothing but visible ASCII in the value
 
 #### Scenario: Percent-encoded secret in the query string
 

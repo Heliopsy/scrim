@@ -120,6 +120,24 @@ U+27E7, at most 79 bytes.
 - **WHEN** a placeholder appears unquoted in a shell word, a JSON string or a YAML plain scalar
 - **THEN** it needs no escaping and contains no whitespace or shell metacharacter
 
+### Requirement: Percent-form placeholders
+
+Where only ASCII may go (an HTTP request header value or request target), a placeholder SHALL be
+written in its percent form `%E2%9F%A6scrim:<slug>:<vv><tag>%E2%9F%A7`, at most 91 bytes: the two
+brackets percent-encoded, either hex case accepted, nothing else changed. The percent form SHALL
+name the same entry: it SHALL resolve wherever the placeholder resolves, the redactor and guard
+SHALL treat it as that placeholder, and a value restored in its place SHALL be percent-encoded.
+
+#### Scenario: Placeholder in a request header
+
+- **WHEN** a known value in a request header value is replaced
+- **THEN** the header carries the placeholder's percent form, holds only visible ASCII (an RFC 9110 field-value without obs-text), is accepted by a provider front end that rejects obs-text, and resolves to the same entry as the placeholder
+
+#### Scenario: Percent-form placeholder restored
+
+- **WHEN** a model's tool call carries a display value's placeholder in percent form and the tool policy restores it
+- **THEN** the tool receives the value percent-encoded in its place
+
 ### Requirement: Placeholder fields
 
 The slug SHALL be the reference alias in `[a-z0-9-]`, 1 to 48 bytes, not starting or ending with
