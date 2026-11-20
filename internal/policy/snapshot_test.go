@@ -437,3 +437,27 @@ func TestSnapshotProtoRoundTrip(t *testing.T) {
 		t.Fatal("unspecified operator accepted")
 	}
 }
+
+// TestSpecDataPlaneScenarios pins the spec scenarios of "Data-plane
+// decisions equal control-plane decisions".
+func TestSpecDataPlaneScenarios(t *testing.T) {
+	rs := mustCompile(t, Config{Rules: []RuleSpec{
+		{Name: "night-writes", Decision: "deny", When: `op == "store.write" && now.getHours() < 6`},
+		{Name: "inject", Decision: "allow", When: `op == "inject"`},
+		{Name: "writes", Decision: "allow", When: `op == "store.write"`},
+	}})
+	s := rs.Snapshot(1, false)
+	agent := Agent{ID: "a", Kind: IdentitySession}
+	if r := s.Evaluate(Request{Agent: agent, Action: ActionInject}); r.Outcome != OutcomeAllow || r.Rule != "inject" {
+		t.Fatalf("injection: %+v", r)
+	}
+	r := s.Evaluate(Request{Agent: agent, Action: ActionWrite})
+	if r.Outcome != OutcomeControlPlane || r.Ask != AskResidual || r.Rule != "night-writes" {
+		t.Fatalf("write: %+v", r)
+	}
+	night := rs.Evaluate(Request{Agent: agent, Action: ActionWrite, Time: time.Date(2026, 1, 1, 3, 0, 0, 0, time.UTC)})
+	day := rs.Evaluate(Request{Agent: agent, Action: ActionWrite, Time: time.Date(2026, 1, 1, 13, 0, 0, 0, time.UTC)})
+	if night.Effect != Deny || day.Effect != Allow {
+		t.Fatalf("control plane: night %+v day %+v", night, day)
+	}
+}
