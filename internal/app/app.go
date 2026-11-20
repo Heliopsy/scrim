@@ -46,6 +46,9 @@ type App struct {
 	// Instruments are the shared scrim metrics; Tracing the tracer.
 	Instruments *obs.Instruments
 	Tracing     *obs.Tracing
+	// PolicyParts are the rule set, break-glass, grants, approvals and the
+	// gate behind Policy.
+	PolicyParts *Policy
 
 	stop context.CancelFunc
 }
@@ -107,6 +110,10 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 	if err := a.State.Migrate(ctx); err != nil {
 		_ = a.State.Close()
 		return nil, fmt.Errorf("state: migrate: %w", err)
+	}
+	if err := a.initPolicy(ctx, cfg); err != nil {
+		_ = a.State.Close()
+		return nil, fmt.Errorf("policy: %w", err)
 	}
 	a.Health.Live("process", func(context.Context) error { return nil })
 	a.Health.Ready("state", a.State.Health)

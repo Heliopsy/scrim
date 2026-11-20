@@ -61,11 +61,11 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 7. Policy, approvals and grants
 
-- [ ] 7.1 Rule language and evaluation (allow, deny, ask, default); verify: rule table tests and a compiled snapshot used by the data plane
-- [ ] 7.2 Approval flow with timeout deny and single-use signed decision links; verify: replayed or expired links are refused
-- [ ] 7.3 ntfy notifier with action buttons and terminal `scrim approve`; verify: end-to-end approve and deny against a local ntfy in podman
-- [ ] 7.4 JIT grants (ttl, max ttl, scope, use count, revoke); verify: expiry and revocation take effect on the next request
-- [ ] 7.5 Break-glass deny-all switch; verify: every path refuses while it is set
+- [x] 7.1 Rule language and evaluation (allow, deny, ask, default); verify: rule table tests and a compiled snapshot used by the data plane
+- [x] 7.2 Approval flow with timeout deny and single-use signed decision links; verify: replayed or expired links are refused
+- [x] 7.3 ntfy notifier with action buttons and terminal `scrim approve`; verify: end-to-end approve and deny against a local ntfy in podman
+- [x] 7.4 JIT grants (ttl, max ttl, scope, use count, revoke); verify: expiry and revocation take effect on the next request
+- [x] 7.5 Break-glass deny-all switch; verify: every path refuses while it is set
 
 ## 8. Identity and agent tools
 

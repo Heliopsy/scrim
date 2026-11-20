@@ -37,6 +37,43 @@ default SHALL be deny.
 - **WHEN** one rule allows and another denies the same request
 - **THEN** the request is denied
 
+### Requirement: Rule errors only tighten decisions
+
+When a rule cannot be evaluated for a request (for example it reads an agent label the agent does
+not have), the system SHALL treat a deny or ask rule as matching and an allow rule as not matching,
+and SHALL record the error with the decision.
+
+#### Scenario: Allow rule reads a missing label
+
+- **WHEN** the only rule allows agents whose label `team` is `infra` and an agent without a `team`
+  label makes a request
+- **THEN** the default decision applies and the decision records the rule error
+
+#### Scenario: Deny rule reads a missing label
+
+- **WHEN** a rule denies agents whose label `team` is not `infra` and an agent without a `team`
+  label makes a request
+- **THEN** the request is denied
+
+### Requirement: Data-plane decisions equal control-plane decisions
+
+The data plane SHALL decide a request locally only when its decision and deciding rule are certain
+to equal the control plane's full evaluation, and SHALL send every other request to the control
+plane. A rule part the data plane cannot evaluate SHALL cause a control-plane call only when it could
+change the outcome. While break-glass deny-all is engaged the data plane SHALL deny without
+evaluating rules.
+
+#### Scenario: Time-based rule does not slow unrelated requests
+
+- **WHEN** a deny rule applies only to `store.write` at night and an agent sends an injection that a
+  simple allow rule covers
+- **THEN** the data plane allows it without calling the control plane
+
+#### Scenario: Time-based rule could decide
+
+- **WHEN** the same night-time deny rule exists and an agent makes a `store.write`
+- **THEN** the data plane asks the control plane, which evaluates the time and decides
+
 ### Requirement: Invalid rules fail closed
 
 The system SHALL validate rules when configuration loads. A configuration with an invalid rule SHALL
@@ -99,16 +136,41 @@ single-use token with an expiry. A replayed, forged, expired or mismatched token
 - **WHEN** a decision token issued for approval A is submitted for approval B
 - **THEN** it is rejected
 
+#### Scenario: Opening a link does not decide
+
+- **WHEN** a decision link is opened with GET, for example by a link preview
+- **THEN** a confirmation page is shown and the approval stays pending until the page is submitted
+
+#### Scenario: Expired link
+
+- **WHEN** a decision link is used after its approval's timeout
+- **THEN** it is rejected and the approval is expired
+
 ### Requirement: Generic webhook protocol
 
 The system SHALL offer a webhook notifier that posts a signed approval request to a configured URL and
 accepts the decision either in the response or later through a signed callback or poll, within the
-approval timeout.
+approval timeout. The request and response format SHALL be compatible with nono's approval webhook
+protocol v1 (submit-then-poll). A decision received through the webhook SHALL settle the approval
+through the same single-use token check as any other decision link.
 
 #### Scenario: External approver decides later
 
 - **WHEN** the webhook receiver acknowledges and posts a signed decision a minute later
 - **THEN** the pending approval is settled by that decision
+
+#### Scenario: Receiver answers with an error
+
+- **WHEN** the webhook receiver answers a poll with an error status or a redirect
+- **THEN** the approval is not settled by it and stays pending until another notifier decides or it
+  expires as denied
+
+#### Scenario: Approval service shared with nono
+
+- **WHEN** the webhook URL points at an approval service implementing nono's approval webhook
+  protocol v1
+- **THEN** it receives the request as an `endpoint` approval with the destination host, method and
+  path, and its granted or denied answer settles the approval
 
 ### Requirement: Just-in-time grants
 
@@ -130,12 +192,23 @@ use count, and SHALL let matching operations through without a new approval unti
 
 The system SHALL enforce a configurable maximum grant duration per rule, SHALL let an operator revoke
 a grant at once, and SHALL stop honouring an expired or revoked grant on every replica within a
-bounded, documented delay.
+bounded, documented delay. With a shared state backend that delay SHALL be zero: grants are read on
+every use, so expiry and revocation take effect on the next request.
 
 #### Scenario: Revoked grant on another replica
 
 - **WHEN** an operator revokes a grant on one replica
 - **THEN** requests reaching any other replica stop using it within the documented delay
+
+#### Scenario: Approver asks for too long
+
+- **WHEN** an approver approves with a duration longer than the rule's maximum
+- **THEN** the grant is created with the maximum and the result says it was capped
+
+#### Scenario: Grant expires between two requests
+
+- **WHEN** a grant expires after one request and before the next
+- **THEN** the next request is evaluated as if no grant existed
 
 ### Requirement: Durability of approvals and grants
 
@@ -201,3 +274,13 @@ need an explicit operator action.
 - **WHEN** an operator engages deny-all
 - **THEN** all pending approvals are denied, grants stop being honoured, and provider redaction keeps
   working
+
+#### Scenario: Restart while engaged
+
+- **WHEN** scrim restarts with a durable state backend while deny-all is engaged
+- **THEN** deny-all is still engaged until an operator releases it
+
+#### Scenario: Engaged in configuration
+
+- **WHEN** `policy.deny-all` is set in configuration and an operator runs `scrim deny-all off`
+- **THEN** the command is refused and names the setting
