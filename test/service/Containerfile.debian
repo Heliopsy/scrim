@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Disposable systemd host for test/service/vm-test.sh: Debian with systemd as
+# PID 1, logind for lingering user sessions and the system trust store tools.
+# Not shipped; built and removed by the test.
+FROM docker.io/library/debian:trixie-slim
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      systemd systemd-sysv dbus dbus-user-session libpam-systemd \
+      ca-certificates curl jq passwd procps \
+ && apt-get clean && rm -rf /var/lib/apt/lists/* \
+ && useradd --create-home --uid 1000 --shell /bin/bash alice \
+ && useradd --create-home --uid 1001 --shell /bin/bash bob
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

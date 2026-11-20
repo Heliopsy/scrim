@@ -128,6 +128,13 @@ func (c *Client) Version(ctx context.Context) (VersionInfo, error) {
 	return out, c.do(ctx, http.MethodGet, "/version", nil, nil, "", &out)
 }
 
+// Endpoints returns where the daemon behind the socket offers its
+// listeners, and whether it is ready.
+func (c *Client) Endpoints(ctx context.Context) (Endpoints, error) {
+	var out Endpoints
+	return out, c.do(ctx, http.MethodGet, "/endpoints", nil, nil, "", &out)
+}
+
 // WhoAmI returns the caller's identity as the server sees it.
 func (c *Client) WhoAmI(ctx context.Context) (identity.Identity, error) {
 	var out identity.Identity

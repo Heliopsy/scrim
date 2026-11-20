@@ -50,6 +50,7 @@ import (
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/dataplane"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
+	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/placeholder"
 	"github.com/heliopsy/scrim/internal/secret"
@@ -328,6 +329,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		return nil, err
 	}
 	d.addrs.AgentAPI, d.addrs.EntryPage = d.runtime.Socket, d.runtime.EntryURL
+	d.runtime.SetEndpoints(d.agentEndpoints)
 	// Asks name their caller by transport; the gate verifies sessions and
 	// maps peers with the agent API's resolver. Set before anything runs.
 	pp.Gate.Callers = d.runtime.Resolver
@@ -693,6 +695,19 @@ func (d *Daemon) Info() Info {
 		}
 	}
 	return in
+}
+
+// agentEndpoints is what the agent API tells callers that did not start
+// this daemon and cannot reach the admin API (agents of other users when
+// scrim runs as a system service). Public material only.
+func (d *Daemon) agentEndpoints() localapi.Endpoints {
+	in := d.Info()
+	ep := localapi.Endpoints{Ready: in.Ready, Problems: in.Problems, BaseURL: in.Addrs.BaseURL,
+		ForwardProxy: in.Addrs.ForwardProxy, Bypass: in.Bypass}
+	if d.trust != nil {
+		ep.CAPEM = d.trust()
+	}
+	return ep
 }
 
 // WaitReady blocks until the daemon is ready, it stops, or ctx ends.

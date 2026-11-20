@@ -49,7 +49,8 @@ func agentClient(e *Env) (*localapi.Client, error) {
 	}
 	path := agentapi.Socket.Get(cfg)
 	if path == "" {
-		path = localapi.DefaultSocketPath()
+		// This user's daemon, or the system service when only it runs.
+		path = localapi.ClientSocketPath()
 	}
 	var tok secret.Value
 	for _, kv := range e.Environ {

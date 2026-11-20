@@ -55,6 +55,18 @@ func WriteHuman(w io.Writer, r Report) error {
 		}
 	}
 
+	if sv := r.Service; sv != nil {
+		p.section("Service")
+		kind := sv.Mode + " service"
+		if sv.Mode == "quadlet" {
+			kind = "rootless Quadlet container"
+			if sv.System {
+				kind = "system Quadlet container"
+			}
+		}
+		p.line("  %s: %s (%s, manifest %s)", sv.Unit, sv.Active, kind, sv.Manifest)
+	}
+
 	p.section("Interception")
 	if len(r.Interception) == 0 {
 		p.line("  none active")

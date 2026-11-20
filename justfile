@@ -156,6 +156,12 @@ e2e-ntfy port="":
     for _ in $(seq 50); do curl -fsS "http://127.0.0.1:$port/v1/health" >/dev/null 2>&1 && break; sleep 0.2; done
     SCRIM_TEST_NTFY_URL="http://127.0.0.1:$port" go test -race -count=1 -run TestEndToEndAgainstNtfy -v ./internal/notify/ntfy/
 
+# VM test of `scrim install` and `scrim uninstall` in a disposable systemd host under rootless
+# podman (test/service/vm-test.sh). SCRIM_SVC_BIN names a binary with the data plane embedded;
+# without it `just build` runs first.
+service-vm-test:
+    test/service/vm-test.sh
+
 clean:
     rm -rf bin/ dist/ {{embed}}
     cd dataplane && cargo clean
