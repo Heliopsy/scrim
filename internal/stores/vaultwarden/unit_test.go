@@ -151,7 +151,7 @@ func TestVaultIndex(t *testing.T) {
 	f := newFixture(t)
 	f.folder(t, "f1", "Agents")
 	f.folder(t, "f2", "Personal")
-	f.login(t, "c1", "f1", "GitHub", map[string]string{"password": "pw-value", "token": "tok-value", "scrim.hosts": "api.github.com", "password ": "x"})
+	f.login(t, "c1", "f1", "GitHub", map[string]string{"password": "pw-value", "token": "tok-value", "scrim.hosts": "api.github.com", "password ": "x"}) //nolint:gocritic // the trailing space is the case under test
 	f.login(t, "c2", "f1", "Dup", map[string]string{"password": "a"})
 	f.login(t, "c3", "f1", "Dup", map[string]string{"password": "b"})
 	f.login(t, "c4", "f2", "Bank", map[string]string{"password": "c"})

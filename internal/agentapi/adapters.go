@@ -88,7 +88,7 @@ func (p Policy) Decide(ctx context.Context, id identity.Identity, op agenttools.
 	if op.Ref != "" {
 		r, err := resolveRef(op.Ref, op.Store)
 		if err != nil {
-			return agenttools.Decision{Effect: agenttools.EffectDeny, Rule: "invalid-ref", Reason: "the reference is not valid"}, nil
+			return agenttools.Decision{Effect: agenttools.EffectDeny, Rule: "invalid-ref", Reason: "the reference is not valid"}, nil //nolint:nilerr // an invalid reference is a deny decision, not an error
 		}
 		req.Ref, req.Store = r, r.Scheme
 	}
@@ -315,7 +315,7 @@ func (a Approvals) now() time.Time {
 func (a Approvals) Request(ctx context.Context, id identity.Identity, req agenttools.GrantRequest) (agenttools.GrantResult, error) {
 	r, err := stores.ParseRef(req.Ref)
 	if err != nil {
-		return agenttools.GrantResult{Status: agenttools.StatusDenied, Reason: "the reference is not valid"}, nil
+		return agenttools.GrantResult{Status: agenttools.StatusDenied, Reason: "the reference is not valid"}, nil //nolint:nilerr // an invalid reference is a denied request, not an error
 	}
 	now := a.now()
 	preq := policy.Request{Agent: Agent(id), Action: policy.ActionGrant, Ref: r, Store: r.Scheme,
