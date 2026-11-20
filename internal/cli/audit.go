@@ -92,4 +92,3 @@ func auditLog(e *Env) *cobra.Command {
 	fl.IntVar(&f.Limit, "limit", auditlog.DefaultLimit, "maximum entries")
 	return c
 }
-

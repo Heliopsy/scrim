@@ -175,3 +175,11 @@ func (d *DB) rebind(q string) string {
 	}
 	return b.String()
 }
+
+// Instrument sets the scrubber and the transaction observer of a DB opened
+// through the backend registry, whose opener cannot take them. Call it
+// before the first transaction.
+func (d *DB) Instrument(sc interface{ Scrub(string) string }, observe func(kind string, d time.Duration)) {
+	d.cfg.Scrubber = sc
+	d.cfg.Observe = observe
+}

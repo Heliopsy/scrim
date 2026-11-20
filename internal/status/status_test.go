@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/heliopsy/scrim/internal/config"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -44,6 +46,10 @@ func (f fakeRuntime) Profile() string             { return f.profile }
 func (f fakeRuntime) InterceptionModes() []string { return f.modes }
 func (f fakeRuntime) Providers() []Provider       { return f.prov }
 func (f fakeRuntime) Protections() []Protection   { return f.prot }
+
+type fakeConfig config.Status
+
+func (f fakeConfig) Status() config.Status { return config.Status(f) }
 
 type fakeStores []Store
 
@@ -87,8 +93,10 @@ func fixtures() map[string]Sources {
 				prov:    []Provider{{Name: "anthropic", Upstream: "https://api.anthropic.com"}},
 				prot:    protections(true),
 			},
-			Stores:    fakeStores{{Name: "bao", Kind: "openbao", Reachable: true, LastRefresh: refreshed, Values: 42}},
-			Weakening: fakeWeak{},
+			Stores: fakeStores{{Name: "bao", Kind: "openbao", Reachable: true, LastRefresh: refreshed, Values: 42}},
+			Config: fakeConfig{Version: 3, Profile: "laptop", Files: []string{"/home/u/.config/scrim/config.yaml"},
+				LoadedAt: refreshed, Weakened: []config.WeakenedSetting{},
+				LastReload: &config.ReloadResult{At: refreshed, Trigger: "file", Applied: true, Version: 3}},
 			DataPlane: fakeDP{Running: true, PID: 4242, Version: "0.1.0", Uptime: 3*time.Hour + 2*time.Minute, Healthy: true},
 			State:     fakeState{Backend: "sqlite", Location: "/home/u/.local/state/scrim/state.db", SchemaVersion: 1, Healthy: true},
 			Audit:     fakeAudit{{Name: "db", Policy: "block"}},
@@ -116,6 +124,11 @@ func fixtures() map[string]Sources {
 				{Key: "redaction.allow-unknown-fields", Value: "true", Source: "file /etc/scrim/scrim.yaml",
 					Description: "Forwards unknown provider request fields without redaction."},
 			},
+			Config: fakeConfig{Version: 2, Profile: "server", Files: []string{"/etc/scrim/scrim.yaml"}, LoadedAt: refreshed,
+				PendingRestart: []string{"state.backend"},
+				Warnings:       []string{"stores.vw.token (file /etc/scrim/scrim.yaml): literal secret in the config file"},
+				LastReload: &config.ReloadResult{At: refreshed, Trigger: "SIGHUP", Applied: false, Version: 2,
+					Problems: []string{"policy.default: maybe is not one of allow, ask, deny"}}},
 			DataPlane: fakeDP{Running: false, Detail: "exited with signal 9 at 09:31:02, restarting"},
 			State: fakeState{Backend: "postgres", Location: "postgres://scrim@db.internal/scrim", SchemaVersion: 1,
 				Healthy: false, Detail: "connection refused"},
@@ -125,6 +138,16 @@ func fixtures() map[string]Sources {
 			},
 		},
 		"empty": {Version: "0.1.0"},
+		// Weakened settings taken from the configuration manager.
+		"config-weakened": {
+			Version: "0.1.0",
+			Config: fakeConfig{Version: 1, Profile: "ci", LoadedAt: refreshed, Weakened: []config.WeakenedSetting{{
+				Key: "policy.default", Value: "allow", Source: "env:SCRIM_POLICY_DEFAULT",
+				Description: "Decision when no rule matches.",
+			}}},
+			DataPlane: fakeDP{Running: true, PID: 7, Healthy: true},
+			State:     fakeState{Backend: "memory", Healthy: true},
+		},
 	}
 }
 
@@ -182,7 +205,7 @@ func TestDegradedDerivation(t *testing.T) {
 	for _, c := range r.Degraded {
 		got[c.Name] = true
 	}
-	for _, want := range []string{"data-plane", "state:postgres", "store:vw", "store:inf", "audit:kafka", "protection:redaction"} {
+	for _, want := range []string{"data-plane", "state:postgres", "store:vw", "store:inf", "audit:kafka", "protection:redaction", "config"} {
 		if !got[want] {
 			t.Errorf("degraded lacks %s: %v", want, r.Degraded)
 		}
@@ -252,5 +275,12 @@ func TestStateLocationCheck(t *testing.T) {
 	_ = os.Chmod(db, 0o600)
 	if fs := StateLocationCheck(db).Run(context.Background()); len(fs) != 0 {
 		t.Fatalf("private perms: %+v", fs)
+	}
+}
+
+func TestWeakenedFromConfigManager(t *testing.T) {
+	r := Collect(context.Background(), fixtures()["config-weakened"])
+	if len(r.Weakened) != 1 || r.Weakened[0].Key != "policy.default" || r.Profile != "ci" {
+		t.Fatalf("report = %+v", r)
 	}
 }

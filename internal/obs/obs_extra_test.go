@@ -232,12 +232,12 @@ func dumpSpans(exp *tracetest.InMemoryExporter) string {
 	for _, s := range exp.GetSpans() {
 		b.WriteString(s.Name + "\n" + s.Status.Description + "\n")
 		for _, a := range s.Attributes {
-			b.WriteString(string(a.Key) + "=" + a.Value.Emit() + "\n")
+			b.WriteString(string(a.Key) + "=" + a.Value.String() + "\n")
 		}
 		for _, e := range s.Events {
 			b.WriteString(e.Name + "\n")
 			for _, a := range e.Attributes {
-				b.WriteString(string(a.Key) + "=" + a.Value.Emit() + "\n")
+				b.WriteString(string(a.Key) + "=" + a.Value.String() + "\n")
 			}
 		}
 	}

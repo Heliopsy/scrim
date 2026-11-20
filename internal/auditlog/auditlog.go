@@ -167,9 +167,9 @@ func WriteHuman(w io.Writer, p Page) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tTIME\tACTION\tAGENT\tREF\tTARGET\tDECISION\tOUTCOME\tRULE")
+	_, _ = fmt.Fprintln(tw, "ID\tTIME\tACTION\tAGENT\tREF\tTARGET\tDECISION\tOUTCOME\tRULE")
 	for _, r := range p.Entries {
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Time.Format(time.RFC3339), r.Action,
+		_, _ = fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Time.Format(time.RFC3339), r.Action,
 			dash(r.Agent), dash(r.Ref), dash(r.Target), r.Decision, dash(r.Outcome), dash(r.Rule))
 	}
 	if err := tw.Flush(); err != nil {

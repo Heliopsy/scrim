@@ -20,8 +20,6 @@ import (
 	"fmt"
 	"io/fs"
 	"net/url"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -86,42 +84,16 @@ var (
 
 func init() {
 	state.RegisterBackend(Name, func(ctx context.Context, cfg *config.Config) (state.Store, error) {
-		dsn, err := ResolveDSN(DSNSetting.Get(cfg))
-		if err != nil {
-			return nil, err
+		dsn, ok := cfg.Secret(DSNSetting)
+		if !ok {
+			return nil, errors.New("state: state.backend is postgres but state.postgres.dsn is not set or not resolved")
 		}
-		defer dsn.Wipe()
+		// The Config owns dsn and wipes it when it is replaced.
 		return Open(ctx, dsn, Options{
 			MaxConns:       MaxConnsSetting.Get(cfg),
 			ConnectTimeout: ConnectTimeoutSetting.Get(cfg),
 		})
 	})
-}
-
-// ResolveDSN reads the connection string a state.postgres.dsn reference
-// names. It understands env:NAME and file:/path; the full reference resolver
-// of the configuration package replaces it once wired.
-func ResolveDSN(ref config.SecretRef) (secret.Value, error) {
-	r := strings.TrimSpace(string(ref))
-	switch {
-	case r == "":
-		return secret.Value{}, errors.New("state: state.postgres.dsn is not set")
-	case strings.HasPrefix(r, "env:"):
-		v, ok := os.LookupEnv(strings.TrimPrefix(r, "env:"))
-		if !ok || v == "" {
-			return secret.Value{}, fmt.Errorf("state: state.postgres.dsn names %s, which is not set", r)
-		}
-		return secret.FromString(v), nil
-	case strings.HasPrefix(r, "file:"):
-		b, err := os.ReadFile(strings.TrimPrefix(r, "file:")) // #nosec G304 -- operator-configured path
-		if err != nil {
-			return secret.Value{}, fmt.Errorf("state: reading state.postgres.dsn from %s: %w", r, err)
-		}
-		trimmed := []byte(strings.TrimSpace(string(b)))
-		secret.WipeBytes(b)
-		return secret.Adopt(trimmed), nil
-	}
-	return secret.Value{}, fmt.Errorf("state: state.postgres.dsn must be a reference (env:NAME or file:/path), not a literal")
 }
 
 // Options configures Open.

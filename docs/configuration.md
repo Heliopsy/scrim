@@ -220,6 +220,13 @@ is out of date.
 | [`policy.default`](#policydefault) | string | `deny` | hot |
 | [`profile`](#profile) | string | `local` | hot |
 | [`state.backend`](#statebackend) | string | `memory` | restart required |
+| [`state.postgres.connect-timeout`](#statepostgresconnect-timeout) | duration | `15s` | restart required |
+| [`state.postgres.dsn`](#statepostgresdsn) | secret-ref | empty | restart required |
+| [`state.postgres.max-conns`](#statepostgresmax-conns) | int | `16` | restart required |
+| [`state.sqlite.allow-network-filesystem`](#statesqliteallow-network-filesystem) | bool | `false` | restart required |
+| [`state.sqlite.path`](#statesqlitepath) | string | `""` | restart required |
+| [`tracing.endpoint`](#tracingendpoint) | string | `""` | restart required |
+| [`tracing.sample-ratio`](#tracingsample-ratio) | float | `1` | restart required |
 
 ### config
 
@@ -279,7 +286,7 @@ Minimum level of log records.
 
 #### `metrics.listen`
 
-Address of the metrics and health endpoint (Prometheus format at /metrics, /livez, /readyz). Empty disables it; bind to loopback unless scraped remotely.
+Address of the metrics and health endpoint (Prometheus format at /metrics, /healthz or /livez, /readyz). Empty disables it; bind to loopback unless scraped remotely.
 
 | | |
 |---|---|
@@ -334,5 +341,92 @@ State backend for approvals, grants, sessions and audit metadata. memory writes 
 | Flag | `--state-backend` |
 | Reload | restart required |
 | Values | `memory`, `sqlite`, `postgres` |
+
+#### `state.postgres.connect-timeout`
+
+How long start-up waits for PostgreSQL to answer before failing.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `15s` |
+| Environment | `SCRIM_STATE_POSTGRES_CONNECT_TIMEOUT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `state.postgres.dsn`
+
+Reference to the PostgreSQL connection string (postgres://user:pass@host/db?sslmode=verify-full), for example env:SCRIM_PG_DSN or file:/run/secrets/scrim-dsn. It holds a password, so it is a reference.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; a literal is warned about) |
+| Default | empty |
+| Environment | `SCRIM_STATE_POSTGRES_DSN` |
+| Flag | none |
+| Reload | restart required |
+
+#### `state.postgres.max-conns`
+
+Maximum connections in the PostgreSQL pool.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `16` |
+| Environment | `SCRIM_STATE_POSTGRES_MAX_CONNS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `state.sqlite.allow-network-filesystem`
+
+Allows the SQLite state file on a network or shared filesystem (NFS, SMB, sshfs), where file locking is unreliable and the database can be corrupted. Use the postgres backend instead.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_STATE_SQLITE_ALLOW_NETWORK_FILESYSTEM` |
+| Flag | none |
+| Reload | restart required |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `state.sqlite.path`
+
+SQLite state file. Empty means $XDG_STATE_HOME/scrim/state.db (~/.local/state/scrim/state.db).
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_STATE_SQLITE_PATH` |
+| Flag | `--state-sqlite-path` |
+| Reload | restart required |
+
+### tracing
+
+#### `tracing.endpoint`
+
+OTLP/HTTP collector URL for traces, for example http://127.0.0.1:4318. Empty disables export; incoming W3C trace context is still propagated.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_TRACING_ENDPOINT` |
+| Flag | `--tracing-endpoint` |
+| Reload | restart required |
+
+#### `tracing.sample-ratio`
+
+Fraction of new root traces sampled, 0 to 1. A sampled incoming parent is always followed.
+
+| | |
+|---|---|
+| Type | float |
+| Default | `1` |
+| Environment | `SCRIM_TRACING_SAMPLE_RATIO` |
+| Flag | none |
+| Reload | restart required |
 
 <!-- END GENERATED SETTINGS REFERENCE -->

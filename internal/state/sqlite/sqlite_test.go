@@ -5,9 +5,9 @@ package sqlite_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
-	"database/sql"
 	"errors"
 	"fmt"
 	"os"

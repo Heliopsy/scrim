@@ -16,6 +16,8 @@ import (
 	"context"
 	"sort"
 	"time"
+
+	"github.com/heliopsy/scrim/internal/config"
 )
 
 // Protection is one safeguard and whether it is active.
@@ -99,6 +101,9 @@ type Report struct {
 	DataPlane    DataPlane    `json:"data_plane"`
 	Degraded     []Component  `json:"degraded"`
 	Weakened     []Weakened   `json:"weakened_protections"`
+	// Config is the configuration manager's view: files, version, last
+	// reload and settings waiting for a restart.
+	Config *config.Status `json:"config,omitempty"`
 }
 
 // OK reports whether nothing is degraded and nothing weakened.
@@ -138,6 +143,11 @@ type RuntimeSource interface {
 	Protections() []Protection
 }
 
+// ConfigSource is the configuration manager.
+type ConfigSource interface {
+	Status() config.Status
+}
+
 // Sources is everything [Collect] reads. A nil source contributes nothing,
 // except that a nil DataPlane or State is reported as unknown and degraded:
 // status never claims health it could not check.
@@ -149,6 +159,9 @@ type Sources struct {
 	DataPlane DataPlaneSource
 	State     StateSource
 	Audit     AuditSource
+	// Config, when set, supplies the profile and, unless Weakening is
+	// set, the weakened settings.
+	Config ConfigSource
 }
 
 // Collect gathers a report and derives the degraded list.
@@ -171,6 +184,18 @@ func Collect(ctx context.Context, src Sources) Report {
 	}
 	if src.Stores != nil {
 		r.Stores = append(r.Stores, src.Stores.StoreHealth(ctx)...)
+	}
+	if src.Config != nil {
+		cs := src.Config.Status()
+		r.Config = &cs
+		if r.Profile == "" {
+			r.Profile = cs.Profile
+		}
+		if src.Weakening == nil {
+			for _, w := range cs.Weakened {
+				r.Weakened = append(r.Weakened, Weakened(w))
+			}
+		}
 	}
 	if src.Weakening != nil {
 		r.Weakened = append(r.Weakened, src.Weakening.Weakened()...)
@@ -218,6 +243,9 @@ func derive(r Report) []Component {
 		if a.Degraded {
 			out = append(out, Component{Name: "audit:" + a.Name, Reason: orDefault(a.Detail, "degraded")})
 		}
+	}
+	if r.Config != nil && r.Config.LastReload != nil && !r.Config.LastReload.Applied {
+		out = append(out, Component{Name: "config", Reason: "last reload rejected; the previous configuration stays in effect"})
 	}
 	for _, p := range r.Protections {
 		if !p.Active {

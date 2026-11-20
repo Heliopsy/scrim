@@ -131,7 +131,7 @@
       "properties": {
         "listen": {
           "default": "",
-          "description": "Address of the metrics and health endpoint (Prometheus format at /metrics, /livez, /readyz). Empty disables it; bind to loopback unless scraped remotely.",
+          "description": "Address of the metrics and health endpoint (Prometheus format at /metrics, /healthz or /livez, /readyz). Empty disables it; bind to loopback unless scraped remotely.",
           "type": "string",
           "x-scrim-env": "SCRIM_METRICS_LISTEN",
           "x-scrim-flag": "--metrics-listen",
@@ -188,6 +188,86 @@
           "type": "string",
           "x-scrim-env": "SCRIM_STATE_BACKEND",
           "x-scrim-flag": "--state-backend",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "postgres": {
+          "additionalProperties": false,
+          "properties": {
+            "connect-timeout": {
+              "default": "15s",
+              "description": "How long start-up waits for PostgreSQL to answer before failing.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_STATE_POSTGRES_CONNECT_TIMEOUT",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "dsn": {
+              "default": "",
+              "description": "Reference to the PostgreSQL connection string (postgres://user:pass@host/db?sslmode=verify-full), for example env:SCRIM_PG_DSN or file:/run/secrets/scrim-dsn. It holds a password, so it is a reference.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_STATE_POSTGRES_DSN",
+              "x-scrim-restart-required": true,
+              "x-scrim-secret-ref": true,
+              "x-scrim-weakening": false
+            },
+            "max-conns": {
+              "default": 16,
+              "description": "Maximum connections in the PostgreSQL pool.",
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer",
+              "x-scrim-env": "SCRIM_STATE_POSTGRES_MAX_CONNS",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
+        "sqlite": {
+          "additionalProperties": false,
+          "properties": {
+            "allow-network-filesystem": {
+              "default": false,
+              "description": "Allows the SQLite state file on a network or shared filesystem (NFS, SMB, sshfs), where file locking is unreliable and the database can be corrupted. Use the postgres backend instead.",
+              "type": "boolean",
+              "x-scrim-env": "SCRIM_STATE_SQLITE_ALLOW_NETWORK_FILESYSTEM",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": true
+            },
+            "path": {
+              "default": "",
+              "description": "SQLite state file. Empty means $XDG_STATE_HOME/scrim/state.db (~/.local/state/scrim/state.db).",
+              "type": "string",
+              "x-scrim-env": "SCRIM_STATE_SQLITE_PATH",
+              "x-scrim-flag": "--state-sqlite-path",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "tracing": {
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "default": "",
+          "description": "OTLP/HTTP collector URL for traces, for example http://127.0.0.1:4318. Empty disables export; incoming W3C trace context is still propagated.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_TRACING_ENDPOINT",
+          "x-scrim-flag": "--tracing-endpoint",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "sample-ratio": {
+          "default": 1,
+          "description": "Fraction of new root traces sampled, 0 to 1. A sampled incoming parent is always followed.",
+          "type": "number",
+          "x-scrim-env": "SCRIM_TRACING_SAMPLE_RATIO",
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         }

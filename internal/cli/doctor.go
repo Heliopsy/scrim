@@ -65,4 +65,3 @@ func (Commands) Doctor(e *Env) *cobra.Command {
 	c.Flags().DurationVar(&timeout, "timeout", 10*time.Second, "time limit for each check")
 	return c
 }
-

@@ -44,10 +44,10 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 5. State, audit and observability
 
-- [ ] 5.1 Memory, SQLite and PostgreSQL state backends behind one interface, migrations; verify: the same contract suite passes on all three, PostgreSQL in podman
-- [ ] 5.2 Audit log (metadata only) written with the state change it records; verify: a failure between the two writes leaves neither
-- [ ] 5.3 Structured logs, metrics, traces and health endpoints with a secret-free type for values; verify: a test that seeds known values and greps every log, metric and trace output for them
-- [ ] 5.4 `scrim status` and `scrim doctor`; verify: reports active protections, interception mode, degraded stores and weakened settings in fixture setups
+- [x] 5.1 Memory, SQLite and PostgreSQL state backends behind one interface, migrations; verify: the same contract suite passes on all three, PostgreSQL in podman
+- [x] 5.2 Audit log (metadata only) written with the state change it records; verify: a failure between the two writes leaves neither
+- [x] 5.3 Structured logs, metrics, traces and health endpoints with a secret-free type for values; verify: a test that seeds known values and greps every log, metric and trace output for them
+- [x] 5.4 `scrim status` and `scrim doctor`; verify: reports active protections, interception mode, degraded stores and weakened settings in fixture setups
 
 ## 6. OpenBao and Infisical adapters
 

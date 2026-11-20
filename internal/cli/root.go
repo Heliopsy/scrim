@@ -79,11 +79,10 @@ func (e *Env) App(ctx context.Context) (*app.App, error) {
 	if e.app != nil {
 		return e.app, nil
 	}
-	cfg, err := e.Config()
-	if err != nil {
+	if _, err := e.Config(); err != nil {
 		return nil, err
 	}
-	a, err := app.New(ctx, cfg, e.Stderr)
+	a, err := app.New(ctx, e.ConfigOptions(), e.Stderr)
 	if err != nil {
 		return nil, err
 	}

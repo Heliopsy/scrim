@@ -1,0 +1,6 @@
+[pass] data-plane: ok
+[pass] state: ok
+[warn] weakened-settings: policy.default is set (env:SCRIM_POLICY_DEFAULT): Decision when no rule matches.
+       fix: unset policy.default unless you accept the weaker protection
+
+all checks passed, 1 warning(s)

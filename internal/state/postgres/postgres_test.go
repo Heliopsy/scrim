@@ -8,8 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -328,22 +326,23 @@ func TestOpenErrorsHoldNoPassword(t *testing.T) {
 	}
 }
 
-func TestResolveDSN(t *testing.T) {
-	t.Setenv("SCRIM_TEST_DSN_REF", "postgres://u:p@h/db")
-	v, err := postgres.ResolveDSN("env:SCRIM_TEST_DSN_REF")
-	if err != nil || v.Len() == 0 {
-		t.Fatalf("env ref: %v", err)
+func TestOpenByName(t *testing.T) {
+	dsn := freshDSN(t)
+	dir := t.TempDir()
+	cfg, err := config.Build(config.Options{Registry: config.Default, SystemDir: dir, Environ: []string{
+		"HOME=" + dir, "XDG_CONFIG_HOME=" + dir,
+		"SCRIM_STATE_BACKEND=postgres", "SCRIM_STATE_POSTGRES_DSN=env:SCRIM_TEST_DSN_REF", "SCRIM_TEST_DSN_REF=" + dsn,
+	}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	f := filepath.Join(t.TempDir(), "dsn")
-	_ = os.WriteFile(f, []byte("postgres://u:p@h/db\n"), 0o600)
-	if v, err := postgres.ResolveDSN(config.SecretRef("file:" + f)); err != nil || v.Len() != len("postgres://u:p@h/db") {
-		t.Fatalf("file ref: %v", err)
+	s, err := state.Open(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, bad := range []config.SecretRef{"", "postgres://u:p@h/db", "env:SCRIM_TEST_UNSET_VAR"} {
-		_, err := postgres.ResolveDSN(bad)
-		if err == nil || strings.Contains(err.Error(), "u:p@h") {
-			t.Errorf("ResolveDSN(%q) = %v", bad, err)
-		}
+	defer func() { _ = s.Close() }()
+	if s.Backend() != postgres.Name {
+		t.Fatalf("backend = %s", s.Backend())
 	}
 }
 

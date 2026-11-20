@@ -83,10 +83,11 @@ func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) 
 	if err != nil {
 		return status.Sources{}, nil, err
 	}
-	src := status.Sources{
-		Version:   version.String(),
-		Weakening: status.ConfigWeakening{Config: cfg},
+	m, err := config.NewManager(e.ConfigOptions(), nil)
+	if err != nil {
+		return status.Sources{}, nil, err
 	}
+	src := status.Sources{Version: version.String(), Config: m}
 	st, closeFn := openStateForStatus(ctx, cfg)
 	src.State = st
 	src.Audit = status.DBAuditSink{State: st}

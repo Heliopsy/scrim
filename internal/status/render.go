@@ -34,6 +34,27 @@ func WriteHuman(w io.Writer, r Report) error {
 		p.line("overall: DEGRADED (%d degraded, %d weakened)", len(r.Degraded), len(r.Weakened))
 	}
 
+	if c := r.Config; c != nil {
+		p.section("Configuration")
+		files := "none"
+		if len(c.Files) > 0 {
+			files = strings.Join(c.Files, ", ")
+		}
+		p.line("  version %d, loaded %s, files: %s", c.Version, when(c.LoadedAt), files)
+		if lr := c.LastReload; lr != nil {
+			p.line("  last reload %s (%s): %s", when(lr.At), lr.Trigger, onOff(lr.Applied, "applied", "REJECTED"))
+			for _, pr := range lr.Problems {
+				p.line("    %s", pr)
+			}
+		}
+		for _, k := range c.PendingRestart {
+			p.line("  pending restart: %s", k)
+		}
+		for _, w := range c.Warnings {
+			p.line("  warning: %s", w)
+		}
+	}
+
 	p.section("Interception")
 	if len(r.Interception) == 0 {
 		p.line("  none active")
@@ -45,14 +66,14 @@ func WriteHuman(w io.Writer, r Report) error {
 	p.section("Protections")
 	p.table(len(r.Protections), func(tw io.Writer) {
 		for _, pr := range r.Protections {
-			fmt.Fprintf(tw, "  %s\t%s\t%s\n", pr.Name, onOff(pr.Active, "active", "INACTIVE"), pr.Detail)
+			_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\n", pr.Name, onOff(pr.Active, "active", "INACTIVE"), pr.Detail)
 		}
 	})
 
 	p.section("Providers")
 	p.table(len(r.Providers), func(tw io.Writer) {
 		for _, pv := range r.Providers {
-			fmt.Fprintf(tw, "  %s\t%s\n", pv.Name, pv.Upstream)
+			_, _ = fmt.Fprintf(tw, "  %s\t%s\n", pv.Name, pv.Upstream)
 		}
 	})
 
@@ -66,7 +87,7 @@ func WriteHuman(w io.Writer, r Report) error {
 			case s.Degraded:
 				state = "DEGRADED"
 			}
-			fmt.Fprintf(tw, "  %s\t%s\t%s\t%d values\trefreshed %s\t%s\n",
+			_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%d values\trefreshed %s\t%s\n",
 				s.Name, s.Kind, state, s.Values, when(s.LastRefresh), s.Reason)
 		}
 	})
@@ -84,7 +105,7 @@ func WriteHuman(w io.Writer, r Report) error {
 	p.section("Audit sinks")
 	p.table(len(r.Audit), func(tw io.Writer) {
 		for _, a := range r.Audit {
-			fmt.Fprintf(tw, "  %s\tpolicy %s\t%s\t%d dropped\t%s\n",
+			_, _ = fmt.Fprintf(tw, "  %s\tpolicy %s\t%s\t%d dropped\t%s\n",
 				a.Name, a.Policy, onOff(!a.Degraded, "ok", "DEGRADED"), a.Dropped, a.Detail)
 		}
 	})

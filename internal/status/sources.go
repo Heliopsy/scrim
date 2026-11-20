@@ -6,25 +6,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/stores"
 )
-
-// ConfigWeakening lists cfg's weakening settings that are in effect.
-type ConfigWeakening struct{ Config *config.Config }
-
-// Weakened implements [WeakeningSource].
-func (c ConfigWeakening) Weakened() []Weakened {
-	var out []Weakened
-	for _, e := range c.Config.Weakened() {
-		out = append(out, Weakened{
-			Key: e.Setting.Key, Value: config.FormatValue(e.Value), Source: e.Source.String(),
-			Description: e.Setting.Description,
-		})
-	}
-	return out
-}
 
 // Locator is implemented by backends that can say where their data lives
 // without credentials.

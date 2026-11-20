@@ -64,5 +64,20 @@
     "healthy": true
   },
   "degraded": [],
-  "weakened_protections": []
+  "weakened_protections": [],
+  "config": {
+    "version": 3,
+    "profile": "laptop",
+    "files": [
+      "/home/u/.config/scrim/config.yaml"
+    ],
+    "loadedAt": "2026-11-20T09:30:00Z",
+    "weakened": [],
+    "lastReload": {
+      "at": "2026-11-20T09:30:00Z",
+      "trigger": "file",
+      "applied": true,
+      "version": 3
+    }
+  }
 }

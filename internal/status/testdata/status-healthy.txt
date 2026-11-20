@@ -2,6 +2,10 @@ scrim 0.1.0
 profile: laptop
 overall: ok
 
+Configuration
+  version 3, loaded 2026-11-20T09:30:00Z, files: /home/u/.config/scrim/config.yaml
+  last reload 2026-11-20T09:30:00Z (file): applied
+
 Interception
   base-url
   wrapper
