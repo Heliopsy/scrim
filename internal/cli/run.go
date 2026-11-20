@@ -24,9 +24,10 @@ import (
 // so any other code is the agent's.
 const ExitRunRefused = 125
 
-// runDaemon returns the scrim that serves scrim run. Tests replace it.
-var runDaemon = func(_ context.Context, _ *Env) (agentrun.Daemon, error) {
-	return agentrun.Unavailable{Reason: "this build has no scrim daemon to start or reuse (scrim proxy, tasks.md 3.x and 13.2)"}, nil
+// runDaemon returns the scrim that serves scrim run: the daemon behind
+// admin.url, or one started in this process for the run. Tests replace it.
+var runDaemon = func(_ context.Context, e *Env) (agentrun.Daemon, error) {
+	return runDaemonFor(e), nil
 }
 
 // Run runs an agent with its traffic through scrim.

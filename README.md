@@ -290,7 +290,8 @@ Start the proxy with capture mode on and run a session that reads a secret:
 scrim proxy --capture
 ```
 
-Each request is written to the capture directory byte for byte as it left for the provider. Search
+Each request is written to the capture directory (`$XDG_STATE_HOME/scrim/capture`, or the
+directory you pass as `--capture DIR`) byte for byte as it left for the provider. Search
 it for the secret value: it is absent, and its placeholder is there instead. To run the whole leak
 suite against your setup, see [docs/leak-assurance.md](docs/leak-assurance.md).
 

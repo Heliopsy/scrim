@@ -6,7 +6,7 @@ use std::fmt;
 
 use zeroize::Zeroize;
 
-use crate::v1::{CaptureRequest, PlaceholderKey, ValueEntry};
+use crate::v1::{CaCertificate, CaptureRequest, PlaceholderKey, ValueEntry};
 
 /// What `Debug` prints in place of secret bytes.
 pub const REDACTED: &str = "[scrim:redacted]";
@@ -62,6 +62,22 @@ impl fmt::Debug for CaptureRequest {
     }
 }
 
+impl fmt::Debug for CaCertificate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CaCertificate")
+            .field("cert_pem", &self.cert_pem)
+            .field("key_pem", &Redacted(self.key_pem.len()))
+            .field("current", &self.current)
+            .finish()
+    }
+}
+
+impl Drop for CaCertificate {
+    fn drop(&mut self) {
+        self.key_pem.zeroize();
+    }
+}
+
 impl Drop for CaptureRequest {
     fn drop(&mut self) {
         self.value.zeroize();
@@ -97,6 +113,11 @@ mod tests {
         let mut snap = Snapshot::default();
         snap.values.push(entry);
         snap.placeholder_keys.push(key);
+
+        let mut ca = crate::v1::CaCertificate::default();
+        ca.cert_pem = "-----BEGIN CERTIFICATE-----".into();
+        ca.key_pem.clone_from(&secret);
+        snap.tool_proxy_ca.push(ca);
 
         let mut capture = crate::v1::CaptureRequest::default();
         capture.value.clone_from(&secret);

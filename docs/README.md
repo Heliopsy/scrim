@@ -15,6 +15,7 @@ to start. The behaviour contract, with every requirement and scenario, is the Op
 | Page | Covers |
 | --- | --- |
 | [install.md](install.md) | Release archives, signature and provenance checks, container images, reproducible builds |
+| [running.md](running.md) | `scrim proxy`: the daemon, its listeners and sockets, snapshots, capture mode, shutdown, a systemd unit |
 | [configuration.md](configuration.md) | Config files, `SCRIM_*` environment variables, flags, precedence, profiles, reload and every setting |
 
 ## Secrets
@@ -27,6 +28,7 @@ to start. The behaviour contract, with every requirement and scenario, is the Op
 | [stores/vaultwarden.md](stores/vaultwarden.md) | Vaultwarden and Bitwarden-compatible servers, client-side decryption |
 | [stores/local.md](stores/local.md) | Environment variables and files |
 | [catalog.md](catalog.md) | Logical names, host bindings, declared placeholders, profiles and bulk mapping |
+| [ca.md](ca.md) | The tool proxy's interception CA: where it lives, rotation, export, per-user trust install and uninstall |
 
 ## Agents
 

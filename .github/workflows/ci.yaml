@@ -117,8 +117,8 @@ jobs:
           save-if: false
       - run: cargo build --locked -p scrim-dataplane
         working-directory: dataplane
-      - name: Launch the real data plane from Go
-        run: go test -race -count=1 -run TestRealDataPlane -v ./internal/dataplane/
+      - name: Launch the real data plane from Go, the daemon end to end and scrim run
+        run: go test -race -count=1 -run 'TestRealDataPlane|TestEndToEndRealDataPlane|TestRunPrintEnvWithRealDaemon' -v ./internal/dataplane/ ./internal/daemon/ ./internal/cli/
         env:
           SCRIM_TEST_DATAPLANE: ${{ github.workspace }}/dataplane/target/debug/scrim-dataplane
 

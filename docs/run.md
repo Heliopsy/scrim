@@ -202,8 +202,19 @@ set
   is not installed. `TestCodexThroughScrimRun` does the same with the Codex CLI, whose tools sit
   behind one code-mode `exec` tool, so it has its own small Responses model: the script runs
   `exec_command` on the file, then `tools.mcp__scrim__secrets_list`.
-- Until the daemon is wired in, these tests stand a verbatim redactor in for scrim's data plane:
-  they test the wrapper, not the redactor.
+- These tests stand a verbatim redactor in for scrim's data plane: they test the wrapper, not the
+  redactor. `TestRunPrintEnvWithRealDaemon` (in `internal/cli`, with `SCRIM_TEST_DATAPLANE`) runs
+  `scrim run --print-env` against a daemon started in process with the real data plane, and
+  `TestEndToEndRealDataPlane` (in `internal/daemon`) checks what the provider receives through it.
+
+## Which scrim serves the run
+
+`scrim run` asks the daemon behind `admin.url` first ([running.md](running.md)). When one runs,
+the agent uses it and it keeps running after the agent exits. When none does, `scrim run` starts
+one in its own process for the session, waits until its data plane is ready, logs it to
+`$XDG_STATE_HOME/scrim/run-daemon.log` and stops it when the agent exits. With the SQLite state
+backend only one of them can hold the state file, so a second concurrent `scrim run` without a
+`scrim proxy` reuses the first run's daemon while it lives.
 
 ## Limitations
 
@@ -211,16 +222,17 @@ set
   stop an agent that ignores them; the transparent, managed-settings and Kubernetes modes enforce.
 - Claude Code on Bedrock, Vertex or Foundry is refused until scrim serves those APIs (tasks.md 11.4).
 - Codex with a custom `model_provider` in its configuration talks to that provider's own base URL,
-  which `scrim run` does not change. Codex signed in with a ChatGPT account uses the ChatGPT backend,
-  which scrim does not serve; use an API key.
+  which `scrim run` does not change. Codex signed in with a ChatGPT account calls the Responses
+  API on `chatgpt.com` through the forward proxy, which routes it to the LLM proxy
+  (`proxy.upstream.chatgpt`); other ChatGPT backend paths are forwarded with the whole body redacted.
 - `scrim run` replaces an inherited corporate `HTTPS_PROXY` instead of chaining scrim's forward
   proxy to it.
 - Bulk catalog entries (`prefix` with `template`) need a store listing and are not exported as
   placeholders by `scrim run` yet; entries from configuration and catalog files are.
-- The session token in the agent's environment is not yet added to the redaction set, so an agent
-  that prints its environment can send the token to the model. It is useless off the machine and
-  outside the session's process tree.
-- Codex's ChatGPT backend, update checks and plugin downloads (`chatgpt.com`, `github.com`) go
-  through the forward proxy as tool traffic.
+- The session token is added to the redaction set when it is minted, so an agent that prints its
+  environment does not send it to the model. Tokens of the `scrim_st_` shape minted by another scrim
+  are not matched by a pattern rule yet.
+- Codex's update checks and plugin downloads (`github.com`) go through the forward proxy as tool
+  traffic.
 - Runtimes with their own trust stores that read none of the variables above (Java, for one) do not
   trust scrim's CA inside the session.

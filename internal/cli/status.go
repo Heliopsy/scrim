@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/daemon"
 	"github.com/heliopsy/scrim/internal/dataplane"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/state/sqlite"
@@ -76,9 +77,10 @@ func (o *outputFlags) format() (string, error) {
 // statusSources gathers what this process can see: the effective
 // configuration, the state backend and the configured stores. A SQLite file
 // held by a running scrim is reported as in use, not as a failure. The data
-// plane is checked by starting it once (dataplane.Probe). Interception modes
-// and protections are reported by the running daemon; until the admin API
-// serves them they show as not reported, never as healthy.
+// plane is checked by starting it once (dataplane.Probe), unless a daemon
+// answers on the admin API: then interception modes, protections, providers
+// and the data plane come from it. Without a daemon they show as not
+// reported, never as healthy.
 func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) {
 	cfg, err := e.Config()
 	if err != nil {
@@ -93,6 +95,13 @@ func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) 
 		Path:    dataplane.PathSetting.Get(cfg),
 		Options: dataplane.StartOptions{Mlock: dataplane.MlockSetting.Get(cfg)},
 		Timeout: dataplane.StartTimeout.Get(cfg),
+	}
+	// A running daemon reports what it actually serves: interception modes
+	// from its bound listeners and open sessions, protections, providers
+	// and its data plane. Without one, the data plane is probed once.
+	if info, err := daemon.Connect(ctx, cfg); err == nil {
+		src.Runtime = info.StatusRuntime()
+		src.DataPlane = staticDataPlane(info.StatusDataPlane())
 	}
 	st, closeFn := openStateForStatus(ctx, cfg)
 	src.State = st
@@ -119,6 +128,13 @@ func openStateForStatus(ctx context.Context, cfg *config.Config) (status.StateOf
 		return status.StateOf{Name: name, Err: err}, func() {}
 	}
 	return status.StateOf{Store: s}, func() { _ = s.Close() }
+}
+
+// staticDataPlane is a data plane status already collected.
+type staticDataPlane status.DataPlane
+
+func (s staticDataPlane) DataPlaneStatus(context.Context) status.DataPlane {
+	return status.DataPlane(s)
 }
 
 // writeOut writes v as JSON or through human.

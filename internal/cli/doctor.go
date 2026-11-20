@@ -45,10 +45,7 @@ func (Commands) Doctor(e *Env) *cobra.Command {
 			r := status.Collect(cmd.Context(), src)
 			checks := status.ReportChecks(r)
 			if state.BackendSetting.Get(cfg) == sqlite.Name {
-				path := sqlite.PathSetting.Get(cfg)
-				if path == "" {
-					path, _ = sqlite.DefaultPath()
-				}
+				path, _ := sqlite.PathFor(cfg)
 				checks = append(checks, status.StateLocationCheck(path))
 			}
 			d := status.Diagnose(cmd.Context(), timeout, checks...)

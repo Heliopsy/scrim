@@ -122,8 +122,22 @@ refused; the audit entry (action `tool.auth`) records why:
 - A process of the same user with `sessions:mint` can revoke any session of that user
   (`DELETE /v1/sessions/{id}`).
 
-Sessions are kept in memory: restarting the control plane ends every session, which is the safe
-direction. Persisting them in the state backend for multi-replica deployments is later work.
+### Where sessions are kept
+
+Sessions are rows in the [state backend](state-and-observability.md#state-backends), next to
+grants and approvals. A row holds the session ID, agent, name, user, the root process (PID, parent
+and start time), scopes, labels, times and why it ended; of the token it holds only the hash.
+Creating and revoking a session each write an audit entry and an event, `session.created` and
+`session.revoked`, with the session ID, agent, user, name and reason, never the hash.
+
+- With `sqlite` or `postgres`, sessions survive a control plane restart: a `scrim run` started
+  before the restart keeps working after it, and a revoked session stays revoked. With
+  `postgres`, every replica sees the same sessions.
+- With `memory`, a restart ends every session, which is the safe direction.
+
+The token is bound to the root process's PID and start time, so after a reboot (new start times) no
+old session matches any process and every old token is refused as `outside the session's process
+tree`.
 
 ## What this does not protect against
 

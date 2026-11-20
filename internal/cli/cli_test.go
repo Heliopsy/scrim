@@ -57,18 +57,6 @@ func TestVersion(t *testing.T) {
 	}
 }
 
-func TestStubsSayNotImplemented(t *testing.T) {
-	for _, name := range []string{"proxy"} {
-		e, _, errb := newEnv()
-		if code := Run(context.Background(), e, []string{name, "--anything"}); code != 1 {
-			t.Errorf("%s: exit %d, want 1", name, code)
-		}
-		if !strings.Contains(errb.String(), "not implemented yet") || !strings.Contains(errb.String(), "scrim "+name) {
-			t.Errorf("%s: stderr %q", name, errb.String())
-		}
-	}
-}
-
 func TestGlobalFlagsAndEnv(t *testing.T) {
 	e, _, _ := newEnv("SCRIM_LOG_LEVEL=warn")
 	root := NewRoot(e)
