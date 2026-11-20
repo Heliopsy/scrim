@@ -81,8 +81,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 9.1 Per-tool restore policy, tool aliases, display modes, `scrim share` and `scrim reveal`; verify: policy tests per tool role, including none for unknown and network-capable tools (data plane: `scrim-policy` `RestoreEngine`, settings in `Snapshot.restore`, wired into the data plane with shell and edit tool calls restored escaped; the CLI commands and the control plane filling `Snapshot.restore` follow)
 - [x] 9.2 Context-aware escaping and no restore where output becomes code; verify: injection test suite and an escaping fuzzer that executes commands with zero code execution (`scrim-policy` `escape`, `tests/escape_exec.rs` runs commands under `unshare -rn`)
 - [ ] 9.3 `scrim run -- <agent>` wrapper for Claude Code and Codex; verify: real agent CLIs complete a task through scrim against a fake model
-- [ ] 9.4 Bypass matrix as a regression gate; verify: every transform is blocked, withheld or redacted
-- [ ] 9.5 `scrim audit` harness with leak checker stricter than the redactor and cache-hit reporting; verify: CI runs it with zero leaks
+- [x] 9.4 Bypass matrix as a regression gate; verify: every transform is blocked, withheld or redacted
+- [x] 9.5 `scrim audit` harness with leak checker stricter than the redactor and cache-hit reporting; verify: CI runs it with zero leaks
 - [ ] 9.6 User documentation for M1 (install, run, configure, verify with capture, limitations); verify: every documented command is exercised by a docs test
 
 ## 10. Credential injection
@@ -143,6 +143,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 13.2 Forward proxy listener; verify: an agent with HTTPS_PROXY set is redacted
 - [ ] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
 - [ ] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
+- [ ] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
 
 ## 14. Large deployments
 

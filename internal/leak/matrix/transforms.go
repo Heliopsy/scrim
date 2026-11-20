@@ -261,9 +261,9 @@ var Transforms = []Transform{
 
 	// The bypass matrix proper (leak-assurance spec): one-command transforms
 	// that must be contained by the redactor, the guard or a refusal.
-	{ID: "upper", Command: "tr a-z A-Z < .env", Expect: Guard, Apply: strings.ToUpper},
-	{ID: "lower", Command: "tr A-Z a-z < .env", Expect: Guard, Apply: strings.ToLower},
-	{ID: "swapcase", Command: "python3 -c 'print(v.swapcase())'", Expect: Guard, Apply: func(v string) string {
+	{ID: "upper", Command: "tr a-z A-Z < .env", Expect: Guard, Note: "guard: case-insensitive match", Apply: strings.ToUpper},
+	{ID: "lower", Command: "tr A-Z a-z < .env", Expect: Guard, Note: "guard: case-insensitive match", Apply: strings.ToLower},
+	{ID: "swapcase", Command: "python3 -c 'print(v.swapcase())'", Expect: Guard, Note: "guard: case-insensitive match", Apply: func(v string) string {
 		return mapRunes(v, func(r rune) rune {
 			switch {
 			case r >= 'a' && r <= 'z':
@@ -274,13 +274,13 @@ var Transforms = []Transform{
 			return r
 		})
 	}},
-	{ID: "sql-upper", Command: "SELECT UPPER(token) FROM creds", Expect: Guard, Apply: func(v string) string { return "| " + strings.ToUpper(v) + " |" }},
-	{ID: "reversed", Command: "rev .env", Expect: Guard, Apply: func(v string) string {
+	{ID: "sql-upper", Command: "SELECT UPPER(token) FROM creds", Expect: Guard, Note: "guard: case-insensitive match", Apply: func(v string) string { return "| " + strings.ToUpper(v) + " |" }},
+	{ID: "reversed", Command: "rev .env", Expect: Guard, Note: "guard decodes: reversed form indexed (rev is a common shell tool), and reversed fragments catch rev per line", Apply: func(v string) string {
 		b := []byte(v)
 		slices.Reverse(b)
 		return string(b)
 	}},
-	{ID: "rot13", Command: "tr 'A-Za-z' 'N-ZA-Mn-za-m' < .env", Expect: Guard, Apply: func(v string) string {
+	{ID: "rot13", Command: "tr 'A-Za-z' 'N-ZA-Mn-za-m' < .env", Expect: Guard, Note: "guard decodes: rot13 form indexed (one tr command, no runtime cost)", Apply: func(v string) string {
 		return mapRunes(v, func(r rune) rune {
 			switch {
 			case r >= 'a' && r <= 'z':
@@ -291,7 +291,7 @@ var Transforms = []Transform{
 			return r
 		})
 	}},
-	{ID: "rot47", Command: "tr '!-~' 'P-~!-O' < .env", Expect: Guard, Apply: func(v string) string {
+	{ID: "rot47", Command: "tr '!-~' 'P-~!-O' < .env", Expect: Guard, Note: "guard decodes: rot47 form indexed (one tr command, no runtime cost)", Apply: func(v string) string {
 		return mapRunes(v, func(r rune) rune {
 			if r >= '!' && r <= '~' {
 				return '!' + (r-'!'+47)%94
@@ -299,46 +299,46 @@ var Transforms = []Transform{
 			return r
 		})
 	}},
-	{ID: "hex-upper", Command: "SELECT HEX(token) FROM creds", Expect: Guard, Apply: func(v string) string { return strings.ToUpper(hex.EncodeToString([]byte(v))) }},
-	{ID: "hex-wrapped", Command: "xxd -p .env", Expect: Guard, Apply: func(v string) string { return wrap(hex.EncodeToString([]byte(v)), 60) }},
-	{ID: "sql-hex-0x", Command: "SELECT CONCAT('0x', HEX(token))", Expect: Guard, Apply: func(v string) string { return "0x" + strings.ToUpper(hex.EncodeToString([]byte(v))) }},
-	{ID: "sql-hex-literal", Command: "pg_dump with bytea hex literals", Expect: Guard, Apply: func(v string) string { return "X'" + hex.EncodeToString([]byte(v)) + "'" }},
-	{ID: "xxd-dump", Command: "xxd .env", Expect: Guard, Apply: xxdDump},
-	{ID: "hexdump-canonical", Command: "hexdump -C .env", Expect: Guard, Apply: hexdumpC},
-	{ID: "od-hex-bytes", Command: "od -An -tx1 .env", Expect: Guard, Apply: func(v string) string { return " " + eachByte(v, "%02x", " ") }},
-	{ID: "od-chars", Command: "od -c .env", Expect: Guard, Apply: odC},
-	{ID: "decimal-bytes", Command: "od -An -tu1 .env", Expect: Guard, Apply: func(v string) string { return eachByte(v, "%d", " ") }},
-	{ID: "python-byte-list", Command: "python3 -c 'print(list(v.encode()))'", Expect: Guard, Apply: func(v string) string { return "[" + eachByte(v, "%d", ", ") + "]" }},
-	{ID: "c-hex-escapes", Command: "printf '%s' \"$TOKEN\" | xxd -i | ...", Expect: Guard, Apply: func(v string) string { return eachByte(v, `\x%02x`, "") }},
-	{ID: "octal-escapes", Command: "printf '%s' \"$TOKEN\" | od -b | ...", Expect: Guard, Apply: func(v string) string { return eachByte(v, `\%03o`, "") }},
-	{ID: "unicode-escapes", Command: "node -e 'console.log(escapeAll(v))'", Expect: Guard, Apply: func(v string) string { return eachByte(v, `\u%04x`, "") }},
+	{ID: "hex-upper", Command: "SELECT HEX(token) FROM creds", Expect: Guard, Note: "guard: hex view, any case", Apply: func(v string) string { return strings.ToUpper(hex.EncodeToString([]byte(v))) }},
+	{ID: "hex-wrapped", Command: "xxd -p .env", Expect: Guard, Note: "guard decodes: dump view joins hex lines (xxd -p wraps at 60 columns)", Apply: func(v string) string { return wrap(hex.EncodeToString([]byte(v)), 60) }},
+	{ID: "sql-hex-0x", Command: "SELECT CONCAT('0x', HEX(token))", Expect: Guard, Note: "guard: hex view", Apply: func(v string) string { return "0x" + strings.ToUpper(hex.EncodeToString([]byte(v))) }},
+	{ID: "sql-hex-literal", Command: "pg_dump with bytea hex literals", Expect: Guard, Note: "guard: hex view", Apply: func(v string) string { return "X'" + hex.EncodeToString([]byte(v)) + "'" }},
+	{ID: "xxd-dump", Command: "xxd .env", Expect: Guard, Note: "guard decodes: dump view joins hex groups across lines and covers the ASCII column", Apply: xxdDump},
+	{ID: "hexdump-canonical", Command: "hexdump -C .env", Expect: Guard, Note: "guard decodes: dump view joins hex bytes across lines and covers the |ASCII| column", Apply: hexdumpC},
+	{ID: "od-hex-bytes", Command: "od -An -tx1 .env", Expect: Guard, Note: "guard decodes: dump view (od -An -tx1, with or without offsets)", Apply: func(v string) string { return " " + eachByte(v, "%02x", " ") }},
+	{ID: "od-chars", Command: "od -c .env", Expect: Guard, Note: "guard decodes: od -c cells, and spaced characters on one line", Apply: odC},
+	{ID: "decimal-bytes", Command: "od -An -tu1 .env", Expect: Guard, Note: "guard decodes: separated decimal bytes (od -tu1)", Apply: func(v string) string { return eachByte(v, "%d", " ") }},
+	{ID: "python-byte-list", Command: "python3 -c 'print(list(v.encode()))'", Expect: Guard, Note: "guard decodes: separated decimal bytes", Apply: func(v string) string { return "[" + eachByte(v, "%d", ", ") + "]" }},
+	{ID: "c-hex-escapes", Command: "printf '%s' \"$TOKEN\" | xxd -i | ...", Expect: Guard, Note: "guard decodes: runs of \\xNN escapes", Apply: func(v string) string { return eachByte(v, `\x%02x`, "") }},
+	{ID: "octal-escapes", Command: "printf '%s' \"$TOKEN\" | od -b | ...", Expect: Guard, Note: "guard decodes: runs of \\NNN escapes", Apply: func(v string) string { return eachByte(v, `\%03o`, "") }},
+	{ID: "unicode-escapes", Command: "node -e 'console.log(escapeAll(v))'", Expect: Guard, Note: "guard: JSON view of the inner string", Apply: func(v string) string { return eachByte(v, `\u%04x`, "") }},
 	{ID: "json-escape-all", Command: "client escaping every character as \\uXXXX", Expect: Guard, Body: EscapeAll, Note: "same JSON value: the provider decodes it to the plain value", Apply: func(v string) string { return v }},
-	{ID: "url-every-byte", Command: "printf '%s' \"$TOKEN\" | od -An -tx1 | tr ' ' %", Expect: Guard, Apply: func(v string) string { return percentAll(v, true) }},
-	{ID: "url-every-byte-lower", Command: "curl --data-urlencode style, lower-case hex", Expect: Guard, Apply: func(v string) string { return percentAll(v, false) }},
-	{ID: "url-double", Command: "url-encode twice", Expect: Guard, Apply: func(v string) string { return url.QueryEscape(percentAll(v, true)) }},
-	{ID: "html-entities", Command: "python3 -c 'print(\"\".join(f\"&#{ord(c)};\" for c in v))'", Expect: Guard, Apply: func(v string) string { return eachByte(v, "&#%d;", "") }},
-	{ID: "html-hex-entities", Command: "html entity encoder, hex form", Expect: Guard, Apply: func(v string) string { return eachByte(v, "&#x%x;", "") }},
-	{ID: "base64-mime-wrapped", Command: "base64 .env (wraps at 76 columns)", Expect: Guard, Apply: func(v string) string {
+	{ID: "url-every-byte", Command: "printf '%s' \"$TOKEN\" | od -An -tx1 | tr ' ' %", Expect: Guard, Note: "guard: percent-decoded view", Apply: func(v string) string { return percentAll(v, true) }},
+	{ID: "url-every-byte-lower", Command: "curl --data-urlencode style, lower-case hex", Expect: Guard, Note: "guard: percent-decoded view", Apply: func(v string) string { return percentAll(v, false) }},
+	{ID: "url-double", Command: "url-encode twice", Expect: Guard, Note: "guard decodes: runs of %25NN escapes", Apply: func(v string) string { return url.QueryEscape(percentAll(v, true)) }},
+	{ID: "html-entities", Command: "python3 -c 'print(\"\".join(f\"&#{ord(c)};\" for c in v))'", Expect: Guard, Note: "guard decodes: runs of &#NN; entities", Apply: func(v string) string { return eachByte(v, "&#%d;", "") }},
+	{ID: "html-hex-entities", Command: "html entity encoder, hex form", Expect: Guard, Note: "guard decodes: runs of &#xNN; entities", Apply: func(v string) string { return eachByte(v, "&#x%x;", "") }},
+	{ID: "base64-mime-wrapped", Command: "base64 .env (wraps at 76 columns)", Expect: Guard, Note: "guard: base64 runs continue across line breaks", Apply: func(v string) string {
 		return wrap(base64.StdEncoding.EncodeToString([]byte(mimeContext+v+"\n")), 76)
 	}},
-	{ID: "base64-double", Command: "base64 -w0 .env | base64 -w0", Expect: Guard, Apply: func(v string) string {
+	{ID: "base64-double", Command: "base64 -w0 .env | base64 -w0", Expect: Guard, Note: "guard decodes: inner base64 forms indexed, found in the base64 view", Apply: func(v string) string {
 		return base64.StdEncoding.EncodeToString([]byte(base64.StdEncoding.EncodeToString([]byte(v))))
 	}},
-	{ID: "base32", Command: "base32 -w0 .env", Expect: Guard, Apply: func(v string) string { return base32.StdEncoding.EncodeToString([]byte(v)) }},
-	{ID: "base32hex", Command: "basenc --base32hex -w0", Expect: Guard, Apply: func(v string) string { return base32.HexEncoding.EncodeToString([]byte(v)) }},
-	{ID: "one-char-per-line", Command: "fold -w1 .env", Expect: Guard, Apply: func(v string) string { return eachRune(v, "\n") }},
-	{ID: "spaced-letters", Command: "sed 's/./& /g' .env", Expect: Guard, Apply: func(v string) string { return eachRune(v, " ") }},
-	{ID: "comma-separated", Command: "python3 -c 'print(\",\".join(v))'", Expect: Guard, Apply: func(v string) string { return eachRune(v, ",") }},
-	{ID: "dash-separated", Command: "sed 's/./&-/g' .env", Expect: Guard, Apply: func(v string) string { return eachRune(v, "-") }},
-	{ID: "python-char-list", Command: "python3 -c 'print(list(v))'", Expect: Guard, Apply: pyRepr},
-	{ID: "zero-width-interleaved", Command: "sed 's/./&\\u200b/g'", Expect: Guard, Apply: func(v string) string { return eachRune(v, "\u200b") }},
-	{ID: "truncated-prefix", Command: "head -c 75% of the value", Expect: Guard, Note: "values at or above the minimum length; shorter fragments are a documented limitation", Apply: truncate(0.75, false)},
-	{ID: "truncated-suffix", Command: "tail -c 75% of the value", Expect: Guard, Apply: truncate(0.75, true)},
-	{ID: "truncated-half", Command: "cut -c1-half", Expect: Guard, Apply: truncate(0.5, false)},
-	{ID: "sql-substring", Command: "SELECT SUBSTRING(token, 9, 24) FROM creds", Expect: Guard, Apply: middle},
+	{ID: "base32", Command: "base32 -w0 .env", Expect: Guard, Note: "guard decodes: base32 view at every alignment (base32 is a coreutils tool)", Apply: func(v string) string { return base32.StdEncoding.EncodeToString([]byte(v)) }},
+	{ID: "base32hex", Command: "basenc --base32hex -w0", Expect: Guard, Note: "guard decodes: base32hex view at every alignment", Apply: func(v string) string { return base32.HexEncoding.EncodeToString([]byte(v)) }},
+	{ID: "one-char-per-line", Command: "fold -w1 .env", Expect: Guard, Note: "guard decodes: separated characters (fold -w1)", Apply: func(v string) string { return eachRune(v, "\n") }},
+	{ID: "spaced-letters", Command: "sed 's/./& /g' .env", Expect: Guard, Note: "guard decodes: separated characters (sed, tr)", Apply: func(v string) string { return eachRune(v, " ") }},
+	{ID: "comma-separated", Command: "python3 -c 'print(\",\".join(v))'", Expect: Guard, Note: "guard decodes: separated characters", Apply: func(v string) string { return eachRune(v, ",") }},
+	{ID: "dash-separated", Command: "sed 's/./&-/g' .env", Expect: Guard, Note: "guard decodes: separated characters", Apply: func(v string) string { return eachRune(v, "-") }},
+	{ID: "python-char-list", Command: "python3 -c 'print(list(v))'", Expect: Guard, Note: "guard decodes: quoted characters separated by commas", Apply: pyRepr},
+	{ID: "zero-width-interleaved", Command: "sed 's/./&\\u200b/g'", Expect: Guard, Note: "guard decodes: zero-width characters are separators", Apply: func(v string) string { return eachRune(v, "\u200b") }},
+	{ID: "truncated-prefix", Command: "head -c 75% of the value", Expect: Guard, Note: "guard decodes: fragments of at least half the value (8 to 24 bytes); shorter fragments are a documented limitation", Apply: truncate(0.75, false)},
+	{ID: "truncated-suffix", Command: "tail -c 75% of the value", Expect: Guard, Note: "guard decodes: fragments of at least half the value (8 to 24 bytes)", Apply: truncate(0.75, true)},
+	{ID: "truncated-half", Command: "cut -c1-half", Expect: Guard, Note: "guard decodes: fragments of at least half the value (8 to 24 bytes)", Apply: truncate(0.5, false)},
+	{ID: "sql-substring", Command: "SELECT SUBSTRING(token, 9, 24) FROM creds", Expect: Guard, Note: "guard decodes: fragments of at least half the value (8 to 24 bytes)", Apply: middle},
 
 	// Documented limitations: run and reported, not gated.
-	{ID: "homoglyphs", Command: "substitute Cyrillic look-alike letters", Expect: Limitation, Note: "limitation: look-alike Unicode substitution is not matched", Apply: func(v string) string {
+	{ID: "homoglyphs", Command: "substitute Cyrillic look-alike letters", Expect: Limitation, Note: "limitation: look-alike Unicode substitution is not matched (unbounded confusable tables, no shell tool produces it)", Apply: func(v string) string {
 		return mapRunes(v, func(r rune) rune {
 			if h, ok := homoglyphs[r]; ok {
 				return h
@@ -346,7 +346,7 @@ var Transforms = []Transform{
 			return r
 		})
 	}},
-	{ID: "fullwidth", Command: "convert to fullwidth forms", Expect: Limitation, Note: "limitation: look-alike Unicode substitution is not matched", Apply: func(v string) string {
+	{ID: "fullwidth", Command: "convert to fullwidth forms", Expect: Limitation, Note: "limitation: look-alike Unicode substitution is not matched (no shell tool produces it)", Apply: func(v string) string {
 		return mapRunes(v, func(r rune) rune {
 			if r >= '!' && r <= '~' {
 				return r + 0xfee0
@@ -354,10 +354,10 @@ var Transforms = []Transform{
 			return r
 		})
 	}},
-	{ID: "nato-spelling", Command: "spell the value in the NATO alphabet", Expect: Limitation, Note: "limitation: spelled-out values are not matched", Apply: spell},
-	{ID: "gzip-base64", Command: "gzip -c .env | base64 -w0", Expect: Limitation, Note: "limitation: compressed content is not decompressed", Apply: gzipB64},
-	{ID: "ascii85", Command: "python3 -c 'base64.a85encode(v, adobe=True)'", Expect: Limitation, Note: "limitation: base85 family encodings are not matched", Apply: a85},
-	{ID: "base85", Command: "python3 -c 'base64.b85encode(v)'", Expect: Limitation, Note: "limitation: base85 family encodings are not matched", Apply: b85},
+	{ID: "nato-spelling", Command: "spell the value in the NATO alphabet", Expect: Limitation, Note: "limitation: spelled-out values are not matched (any language or alphabet, unbounded)", Apply: spell},
+	{ID: "gzip-base64", Command: "gzip -c .env | base64 -w0", Expect: Limitation, Note: "limitation: compressed content is not decompressed (unbounded work per byte)", Apply: gzipB64},
+	{ID: "ascii85", Command: "python3 -c 'base64.a85encode(v, adobe=True)'", Expect: Limitation, Note: "limitation: base85 family encodings are not matched (alphabet covers most printable text, runs cannot be delimited cheaply)", Apply: a85},
+	{ID: "base85", Command: "python3 -c 'base64.b85encode(v)'", Expect: Limitation, Note: "limitation: base85 family encodings are not matched (alphabet covers most printable text, runs cannot be delimited cheaply)", Apply: b85},
 }
 
 // TransformByID returns the transform with the given ID.

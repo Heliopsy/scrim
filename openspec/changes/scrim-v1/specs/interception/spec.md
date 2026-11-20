@@ -244,9 +244,19 @@ traffic.
 
 ### Requirement: CA trust installation
 
-scrim SHALL install its public CA certificate for the system trust store and for runtimes that use
-their own (Node.js, Python, OpenSSL-based tools, Java) when a mode needs TLS interception, and SHALL
-remove it on uninstall.
+scrim SHALL make its public CA certificate trusted wherever a mode needs TLS interception, scoped
+to the processes that mode covers, and SHALL remove every trust change it made on uninstall.
+
+#### Scenario: Wrapper trusts the CA for the agent only
+
+- **WHEN** an agent is started with `scrim run`
+- **THEN** the agent and the tools it starts trust scrim's CA through the session bundle
+- **AND** no trust store outside the session directory is changed
+
+#### Scenario: Modes that cover processes scrim does not start
+
+- **WHEN** transparent or DNS mode is installed
+- **THEN** the CA is also installed into the system trust store and the Java truststore
 
 #### Scenario: Node-based agent
 
