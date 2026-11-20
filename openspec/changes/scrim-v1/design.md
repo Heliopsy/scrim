@@ -195,9 +195,9 @@ expiry, revocation and use counts take effect on the next request on every repli
 backend), then raises an approval. Decisions come back through single-use links: an HMAC-SHA256
 token over approval ID, action, expiry and notifier, signed with `approvals.signing-key` (shared by
 replicas, rotatable by key ID). An approval leaves pending once, so the first decision settles it
-and every later token is refused. A waiting operation re-reads its approval every
-`approvals.poll-interval`, which bounds how long a decision recorded on another replica takes to
-release it.
+and every later token is refused. A waiting operation is woken by the `approval.decided`
+event (D9) and re-reads its approval every `approvals.poll-interval` as well, which bounds how long a
+decision recorded on another replica takes to release it when no event arrives.
 
 **Notifiers only deliver.** ntfy buttons post to the decision links. The generic webhook speaks
 nono's approval webhook v1 (submit, then poll) so one approval service can serve nono and scrim; a
@@ -206,8 +206,8 @@ leaves the approval to expire. The terminal path is `scrim approve` / `scrim den
 API.
 
 **Break-glass** state is the newest `breakglass.engaged` or `breakglass.released` audit entry, so it
-is durable with the backend, shared between replicas (each re-reads it every
-`policy.deny-all-refresh`) and cannot change without an audit entry. While it is set the snapshot
+is durable with the backend, shared between replicas (each re-reads it on the `breakglass.changed`
+event and every `policy.deny-all-refresh`) and cannot change without an audit entry. While it is set the snapshot
 carries `break_glass`, the engine denies, grants are not honoured, approvals cannot be created or
 approved, and pending ones are denied.
 
@@ -230,6 +230,16 @@ file, not a service, and the local default. Events (local, Postgres notify, Valk
 rate limits (local, Valkey) and audit sinks (database, OTLP, Loki, Kafka) are independent choices
 so a large deployment can scale each separately. No backend ever stores a secret value or a
 placeholder-to-value mapping; values live in process memory only, wiped after use.
+
+**Events follow the outbox; the backend only wakes the reader.** Every event backend delivers by
+reading the outbox by increasing ID (`EventsAfter`) from the newest event at start-up, never from a
+message stream of its own, so ordering and exactly-once delivery come from the outbox and a lost
+notification costs latency, not an event. The `postgres` backend sends `NOTIFY` in the outbox
+transaction and listens on a dedicated connection; it reads the outbox on every notification, on
+every (re)connection and, while disconnected, every `events.poll-interval`. Grants and sessions need
+no event: they are read on every use. The polling loops of D7 stay as the fallback bound.
+`deployment.replicas` makes the replica count explicit, so a multi-replica deployment on `local`
+events or unshared state fails at start-up instead of running with replicas that disagree.
 
 ### D10. One configuration contract
 

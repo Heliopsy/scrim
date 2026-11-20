@@ -234,7 +234,10 @@ is out of date.
 | [`dataplane.push-debounce`](#dataplanepush-debounce) | duration | `200ms` | hot |
 | [`dataplane.restart-max-backoff`](#dataplanerestart-max-backoff) | duration | `30s` | hot |
 | [`dataplane.start-timeout`](#dataplanestart-timeout) | duration | `10s` | hot |
+| [`deployment.replicas`](#deploymentreplicas) | int | `1` | restart required |
 | [`entry.listen`](#entrylisten) | string | `127.0.0.1:0` | restart required |
+| [`events.backend`](#eventsbackend) | string | `local` | restart required |
+| [`events.poll-interval`](#eventspoll-interval) | duration | `1s` | restart required |
 | [`grants.default-ttl`](#grantsdefault-ttl) | duration | `30m0s` | hot |
 | [`grants.max-ttl`](#grantsmax-ttl) | duration | `8h0m0s` | hot |
 | [`identity.kubernetes.agents`](#identitykubernetesagents) | map | `{}` | restart required |
@@ -436,7 +439,7 @@ TCP address that serves only the decision-link endpoint, for approvals.public-ur
 
 #### `approvals.poll-interval`
 
-How often a waiting operation re-reads its approval from the state backend; bounds how long a decision recorded elsewhere takes to release it.
+How often a waiting operation re-reads its approval from the state backend; bounds how long a decision recorded on another replica takes to release it when no event announces it (events.backend).
 
 | | |
 |---|---|
@@ -645,6 +648,20 @@ How long the data plane may take to start and answer the handshake.
 | Flag | none |
 | Reload | hot |
 
+### deployment
+
+#### `deployment.replicas`
+
+How many control plane replicas share this configuration and state. More than 1 needs a shared state backend (state.backend postgres) and a shared events backend (events.backend postgres); start-up fails otherwise.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `1` |
+| Environment | `SCRIM_DEPLOYMENT_REPLICAS` |
+| Flag | none |
+| Reload | restart required |
+
 ### entry
 
 #### `entry.listen`
@@ -656,6 +673,33 @@ Loopback address of the page where a human enters a value for secret_ask_human. 
 | Type | string |
 | Default | `127.0.0.1:0` |
 | Environment | `SCRIM_ENTRY_LISTEN` |
+| Flag | none |
+| Reload | restart required |
+
+### events
+
+#### `events.backend`
+
+How replicas learn about state changes made elsewhere (approval decisions, grant and session changes, break-glass, configuration reloads). local reads the outbox every events.poll-interval and serves one process; postgres adds LISTEN/NOTIFY on the state database (needs state.backend postgres) and is required when deployment.replicas is more than 1.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `local` |
+| Environment | `SCRIM_EVENTS_BACKEND` |
+| Flag | `--events-backend` |
+| Reload | restart required |
+| Values | `local`, `postgres` |
+
+#### `events.poll-interval`
+
+How often the outbox is read when nothing announces new events: always with events.backend local, and while the postgres listener is disconnected. It bounds how long a change made on another replica takes to arrive then.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `1s` |
+| Environment | `SCRIM_EVENTS_POLL_INTERVAL` |
 | Flag | none |
 | Reload | restart required |
 
@@ -1016,7 +1060,7 @@ Break-glass: deny every injection, grant and approval while redaction continues.
 
 #### `policy.deny-all-refresh`
 
-How often each replica re-reads the deny-all state from the state backend; the bound on how long a change on one replica takes to reach the others.
+How often each replica re-reads the deny-all state from the state backend; the bound on how long a change on one replica takes to reach the others when no event announces it (events.backend).
 
 | | |
 |---|---|

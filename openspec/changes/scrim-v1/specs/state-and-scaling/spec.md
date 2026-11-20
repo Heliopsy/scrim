@@ -98,12 +98,31 @@ without shared lookup state.
 ### Requirement: Consistent approvals and grants across replicas
 
 With a shared backend, an approval decision or grant change SHALL take effect on every replica within
-a documented bound, and a revoked grant SHALL never be honoured after that bound.
+a documented bound, and a revoked grant SHALL never be honoured after that bound. Grants and sessions
+SHALL be read from the state backend on every use, so a revocation SHALL be refused on the next
+request on every replica; neither half SHALL cache an allow answer or a grant between requests.
 
 #### Scenario: Revoke on one replica
 
 - **WHEN** an operator revokes a grant through replica A
-- **THEN** replica B refuses requests relying on that grant within the documented bound
+- **THEN** replica B refuses the next request relying on that grant
+
+#### Scenario: Revoke a session on one replica
+
+- **WHEN** an operator revokes a `scrim run` session through replica A
+- **THEN** replica B refuses the session token on its next request
+
+### Requirement: Decisions reach the waiting replica by event
+
+With `events.backend: postgres`, a decision recorded on one replica SHALL release the operation held
+for it on another replica as soon as the `approval.decided` event is delivered, without waiting for
+`approvals.poll-interval`.
+
+#### Scenario: Decision on another replica
+
+- **WHEN** a request is held for approval on replica B and the approval is decided on replica A
+- **THEN** replica B releases the request within the event delivery bound, well before
+  `approvals.poll-interval`
 
 #### Scenario: Last use of a grant through two replicas
 
@@ -136,13 +155,58 @@ or the request SHALL be denied if no replica holds it.
 ### Requirement: Selectable event backend
 
 scrim SHALL distribute internal events (decisions, grant changes, store refreshes, config reloads)
-through `events.backend`: `local`, `postgres` (listen/notify), `valkey` or `nats`. Multi-replica
-deployments SHALL reject `local` at start-up.
+through `events.backend`: `local`, `postgres` (listen/notify), `valkey` or `nats`. `local` SHALL read
+the outbox every `events.poll-interval` and at once after a commit made by the same process. `postgres`
+SHALL send a notification inside the transaction that writes the outbox, SHALL listen on a dedicated
+connection, and SHALL require `state.backend: postgres`.
+
+#### Scenario: Break-glass reaches another replica
+
+- **WHEN** `events.backend` is `postgres` and an operator engages break-glass through replica A
+- **THEN** replica B denies, pushes a snapshot with break-glass set to its data plane and denies its
+  pending approvals, without waiting for `policy.deny-all-refresh`
+
+### Requirement: Replica count is declared
+
+The number of replicas SHALL be declared by `deployment.replicas`. With more than one, start-up SHALL
+reject `local` events and a state backend that is not shared (`memory`, `sqlite`), naming the setting.
 
 #### Scenario: Multiple replicas with local events
 
 - **WHEN** scrim is configured with more than one replica and `events.backend: local`
 - **THEN** start-up fails with an error naming `events.backend`
+
+#### Scenario: Multiple replicas with unshared state
+
+- **WHEN** scrim is configured with more than one replica, `events.backend: postgres` and
+  `state.backend: sqlite`
+- **THEN** start-up fails with an error naming `state.backend`
+
+### Requirement: No event lost when the listener drops
+
+Every events backend SHALL deliver by following the outbox from the newest event at start-up, and
+notifications SHALL be wake-ups only. A replica SHALL read the outbox from the last event it delivered
+after every listener (re)connection and on every notification, SHALL poll the outbox every
+`events.poll-interval` while the listener is down, and SHALL reconnect with bounded, jittered
+backoff. Each event SHALL be delivered to a replica's subscribers once, in ID order.
+
+#### Scenario: Event committed while the listener is down
+
+- **WHEN** a replica's listening connection is terminated and another replica commits an event
+  before it reconnects
+- **THEN** the event is delivered once the listener reconnects, even though its notification was lost
+
+### Requirement: Replicas detect configuration drift
+
+Each replica SHALL record a `config.reloaded` audit entry and event when it starts serving and after
+each reload, whose subject is a digest of its effective configuration that reveals no setting value.
+A replica that receives a different digest from a peer SHALL log a warning naming both digests.
+
+#### Scenario: Replicas with different configurations
+
+- **WHEN** replica B starts with a configuration different from replica A's
+- **THEN** replica A logs a warning with both configuration digests
+- **AND** neither the audit entry nor the event contains a setting value
 
 ### Requirement: Selectable rate-limit backend
 

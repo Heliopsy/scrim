@@ -8,8 +8,10 @@
 // at start-up under a session advisory lock, so they never race. Outbox
 // writes take a transaction advisory lock, which makes event IDs commit in
 // increasing order and lets every replica tail the outbox by ID without
-// missing an event that committed late: a grant revocation made through one
-// replica is seen by all others on their next poll.
+// missing an event that committed late. The same transaction queues a NOTIFY
+// on [EventsChannel], which PostgreSQL delivers to every listening session
+// when it commits: the events backend uses it to read the outbox at once
+// instead of on its next poll.
 package postgres
 
 import (
@@ -22,6 +24,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -41,6 +44,15 @@ const (
 	migrateLockKey int64 = 0x7363_7269_6d00_0001 // "scrim" 1
 	eventsLockKey  int64 = 0x7363_7269_6d00_0002 // "scrim" 2
 )
+
+// EventsChannel is the LISTEN/NOTIFY channel every outbox write notifies.
+// The notification carries no payload: it is a wake-up, the outbox is what
+// a listener reads.
+const EventsChannel = "scrim_events"
+
+// ListenerApplicationName is the application_name of the connection
+// [Store.Listen] opens, so an operator can tell it from pool connections.
+const ListenerApplicationName = "scrim-events"
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -170,7 +182,10 @@ func Open(ctx context.Context, dsn secret.Value, o Options) (*Store, error) {
 		Writer:   db,
 		IsUnique: isUnique,
 		BeforeEmit: func(ctx context.Context, tx *sql.Tx) error {
-			_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, eventsLockKey)
+			// NOTIFY is delivered on commit and dropped on rollback; within
+			// one transaction PostgreSQL folds identical notifications into
+			// one.
+			_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1), pg_notify($2, '')`, eventsLockKey, EventsChannel)
 			return err
 		},
 		Scrubber: o.Scrubber,
@@ -185,6 +200,27 @@ func (s *Store) Location() string { return s.location }
 
 // Pool returns the pgx pool, for LISTEN/NOTIFY event backends.
 func (s *Store) Pool() *pgxpool.Pool { return s.pool }
+
+// Listen opens a dedicated connection, outside the pool, that listens on
+// [EventsChannel]. The caller waits on it with WaitForNotification and
+// closes it. Errors never carry connection parameters.
+func (s *Store) Listen(ctx context.Context) (*pgx.Conn, error) {
+	cc := s.pool.Config().ConnConfig.Copy()
+	cc.RuntimeParams["application_name"] = ListenerApplicationName
+	conn, err := pgx.ConnectConfig(ctx, cc)
+	if err != nil {
+		return nil, fmt.Errorf("state: postgres at %s: listener: %w", s.location, scrubConnErr(err))
+	}
+	if _, err := conn.Exec(ctx, "LISTEN "+EventsChannel); err != nil {
+		_ = conn.Close(context.WithoutCancel(ctx))
+		return nil, fmt.Errorf("state: postgres at %s: LISTEN: %w", s.location, scrubConnErr(err))
+	}
+	return conn, nil
+}
+
+// ScrubError is scrubConnErr for errors from a connection opened by
+// [Store.Listen].
+func ScrubError(err error) error { return scrubConnErr(err) }
 
 // Migrate implements [state.Store]. Replicas serialise on an advisory lock.
 func (s *Store) Migrate(ctx context.Context) error {

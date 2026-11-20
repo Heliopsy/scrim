@@ -633,6 +633,18 @@ func (t *Tx) EventsAfter(ctx context.Context, after int64, n int) ([]state.Event
 	})
 }
 
+// LastEventID implements [state.Tx].
+func (t *Tx) LastEventID(ctx context.Context) (int64, error) {
+	if err := t.begin("LastEventID", false); err != nil {
+		return 0, err
+	}
+	var id sql.NullInt64
+	if err := t.row(ctx, `SELECT MAX(id) FROM events`).Scan(&id); err != nil {
+		return 0, t.db.mapErr(err, "last event id")
+	}
+	return id.Int64, nil
+}
+
 // insertID runs an INSERT and returns the new row's integer id. SQLite and
 // PostgreSQL both support RETURNING.
 func (t *Tx) insertID(ctx context.Context, op, q string, args ...any) (int64, error) {
