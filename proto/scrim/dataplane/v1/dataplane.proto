@@ -18,8 +18,8 @@
 // would misread bumps PROTOCOL_VERSION; both sides and their tests change in
 // the same commit.
 //
-// Secrets: ValueEntry.value and PlaceholderKey.key are the only fields that
-// hold secret material. Generated debug printers for those messages are
+// Secrets: ValueEntry.value, PlaceholderKey.key and CaptureRequest.value are
+// the only fields that hold secret material. Generated debug printers for those messages are
 // replaced by redacting ones on both sides; neither may be logged, echoed in
 // an error or copied into an event.
 syntax = "proto3";
@@ -57,6 +57,14 @@ service DataPlane {
 
   // Status reports readiness and what is applied, for health and scrim status.
   rpc Status(StatusRequest) returns (StatusResponse);
+
+  // Captures carries values a tool-proxy capture rule took from a response
+  // (a token an API just issued). The control plane opens the call once; the
+  // data plane sends a CaptureRequest and the control plane writes the value
+  // to its store and answers with the placeholder the agent sees. A request
+  // with no answer by its deadline, an error answer, or no attached control
+  // plane withholds the field from the agent.
+  rpc Captures(stream CaptureResult) returns (stream CaptureRequest);
 }
 
 message HelloRequest {
@@ -349,6 +357,8 @@ enum EventKind {
   EVENT_KIND_RESTORE = 6;        // a placeholder resolved into a tool argument
   EVENT_KIND_DETECTOR_HIT = 7;   // a fallback detector matched
   EVENT_KIND_ERROR = 8;          // a request failed closed
+  EVENT_KIND_CAPTURE = 9;        // a capture rule stored a response value
+  EVENT_KIND_INTERCEPTION_REFUSED = 10;  // a client refused scrim's certificate
 }
 
 // Event is metadata only: it names references and placeholders, never a
@@ -435,6 +445,47 @@ message StatusResponse {
   bool dumpable = 6;
   repeated ListenerStatus listeners = 7;
   string data_plane_version = 8;
+  // ca_trust_bundle_pem holds the certificates of the tool-proxy CA that
+  // clients must trust, PEM encoded; during a rotation both CAs. Public.
+  string ca_trust_bundle_pem = 9;
+  // tool_proxy is present once the tool proxy is built.
+  ToolProxyStatus tool_proxy = 10;
+}
+
+message ToolProxyStatus {
+  // ready is true when a snapshot is applied and its redactor is ready.
+  bool ready = 1;
+  uint64 snapshot_version = 2;
+  // unsupported_destinations maps destinations whose clients refused the
+  // interception certificate to the TLS error.
+  map<string, string> unsupported_destinations = 3;
+  uint32 cached_leaves = 4;
+}
+
+message CaptureRequest {
+  uint32 protocol = 1;
+  // id is unique per data plane process; the result echoes it.
+  uint64 id = 2;
+  // rule names the capture rule that matched.
+  string rule = 3;
+  // ref is the store reference to write.
+  string ref = 4;
+  // destination is `scheme://host:port` the value came from.
+  string destination = 5;
+  // value is the captured secret. Never logged; wiped after the write.
+  bytes value = 6;
+  // deadline_unix_nano is when the data plane withholds the field instead.
+  int64 deadline_unix_nano = 7;
+}
+
+message CaptureResult {
+  uint32 protocol = 1;
+  uint64 id = 2;
+  // placeholder is what the agent sees in place of the value. Empty with
+  // error set when the write failed.
+  string placeholder = 3;
+  // error says why the value was not stored, without the value.
+  string error = 4;
 }
 
 message ListenerStatus {

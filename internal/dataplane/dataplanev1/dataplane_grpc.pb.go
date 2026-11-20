@@ -18,8 +18,8 @@
 // would misread bumps PROTOCOL_VERSION; both sides and their tests change in
 // the same commit.
 //
-// Secrets: ValueEntry.value and PlaceholderKey.key are the only fields that
-// hold secret material. Generated debug printers for those messages are
+// Secrets: ValueEntry.value, PlaceholderKey.key and CaptureRequest.value are
+// the only fields that hold secret material. Generated debug printers for those messages are
 // replaced by redacting ones on both sides; neither may be logged, echoed in
 // an error or copied into an event.
 
@@ -49,6 +49,7 @@ const (
 	DataPlane_Events_FullMethodName        = "/scrim.dataplane.v1.DataPlane/Events"
 	DataPlane_Asks_FullMethodName          = "/scrim.dataplane.v1.DataPlane/Asks"
 	DataPlane_Status_FullMethodName        = "/scrim.dataplane.v1.DataPlane/Status"
+	DataPlane_Captures_FullMethodName      = "/scrim.dataplane.v1.DataPlane/Captures"
 )
 
 // DataPlaneClient is the client API for DataPlane service.
@@ -72,6 +73,13 @@ type DataPlaneClient interface {
 	Asks(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AskAnswer, AskRequest], error)
 	// Status reports readiness and what is applied, for health and scrim status.
 	Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error)
+	// Captures carries values a tool-proxy capture rule took from a response
+	// (a token an API just issued). The control plane opens the call once; the
+	// data plane sends a CaptureRequest and the control plane writes the value
+	// to its store and answers with the placeholder the agent sees. A request
+	// with no answer by its deadline, an error answer, or no attached control
+	// plane withholds the field from the agent.
+	Captures(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CaptureResult, CaptureRequest], error)
 }
 
 type dataPlaneClient struct {
@@ -144,6 +152,19 @@ func (c *dataPlaneClient) Status(ctx context.Context, in *StatusRequest, opts ..
 	return out, nil
 }
 
+func (c *dataPlaneClient) Captures(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CaptureResult, CaptureRequest], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &DataPlane_ServiceDesc.Streams[2], DataPlane_Captures_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[CaptureResult, CaptureRequest]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DataPlane_CapturesClient = grpc.BidiStreamingClient[CaptureResult, CaptureRequest]
+
 // DataPlaneServer is the server API for DataPlane service.
 // All implementations must embed UnimplementedDataPlaneServer
 // for forward compatibility.
@@ -165,6 +186,13 @@ type DataPlaneServer interface {
 	Asks(grpc.BidiStreamingServer[AskAnswer, AskRequest]) error
 	// Status reports readiness and what is applied, for health and scrim status.
 	Status(context.Context, *StatusRequest) (*StatusResponse, error)
+	// Captures carries values a tool-proxy capture rule took from a response
+	// (a token an API just issued). The control plane opens the call once; the
+	// data plane sends a CaptureRequest and the control plane writes the value
+	// to its store and answers with the placeholder the agent sees. A request
+	// with no answer by its deadline, an error answer, or no attached control
+	// plane withholds the field from the agent.
+	Captures(grpc.BidiStreamingServer[CaptureResult, CaptureRequest]) error
 	mustEmbedUnimplementedDataPlaneServer()
 }
 
@@ -189,6 +217,9 @@ func (UnimplementedDataPlaneServer) Asks(grpc.BidiStreamingServer[AskAnswer, Ask
 }
 func (UnimplementedDataPlaneServer) Status(context.Context, *StatusRequest) (*StatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Status not implemented")
+}
+func (UnimplementedDataPlaneServer) Captures(grpc.BidiStreamingServer[CaptureResult, CaptureRequest]) error {
+	return status.Error(codes.Unimplemented, "method Captures not implemented")
 }
 func (UnimplementedDataPlaneServer) mustEmbedUnimplementedDataPlaneServer() {}
 func (UnimplementedDataPlaneServer) testEmbeddedByValue()                   {}
@@ -283,6 +314,13 @@ func _DataPlane_Status_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DataPlane_Captures_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(DataPlaneServer).Captures(&grpc.GenericServerStream[CaptureResult, CaptureRequest]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DataPlane_CapturesServer = grpc.BidiStreamingServer[CaptureResult, CaptureRequest]
+
 // DataPlane_ServiceDesc is the grpc.ServiceDesc for DataPlane service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -312,6 +350,12 @@ var DataPlane_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "Asks",
 			Handler:       _DataPlane_Asks_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "Captures",
+			Handler:       _DataPlane_Captures_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
