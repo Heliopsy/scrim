@@ -436,7 +436,7 @@ veil's per-tool policy.
 ## Documentation
 
 | Page | Covers |
-|---|---|
+| --- | --- |
 | [docs/install.md](docs/install.md) | Release archives, signature and provenance checks, images, reproducible builds |
 | [docs/configuration.md](docs/configuration.md) | Config files, environment, flags, precedence, reload and every setting |
 | [docs/stores/README.md](docs/stores/README.md) | Store adapters, capabilities, freshness and outages |
