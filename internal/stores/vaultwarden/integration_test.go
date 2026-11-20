@@ -15,6 +15,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/secret"
+	"github.com/heliopsy/scrim/internal/status"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/storetest"
 	"github.com/heliopsy/scrim/internal/stores/vaultwarden"
@@ -291,6 +292,10 @@ func TestVaultwarden(t *testing.T) {
 		if len(advice) == 0 || !strings.Contains(advice[0], "1 items outside the configured scope") {
 			t.Fatalf("advice: %v", advice)
 		}
+		d := status.Diagnose(ctx, 10*time.Second, a.DoctorChecks()...)
+		if d.Warned != 1 || d.Failed != 0 || !strings.Contains(d.Findings[0].Message, "dedicated agent account") {
+			t.Fatalf("doctor: %+v", d)
+		}
 	})
 
 	t.Run("Locked", func(t *testing.T) {
@@ -312,6 +317,9 @@ func TestVaultwarden(t *testing.T) {
 			}
 			if _, err := a.Read(ctx, stores.MustParseRef("vw://Agents/X")); !errors.Is(err, stores.ErrLocked) {
 				t.Errorf("%s unlock key: Read = %v, want ErrLocked", name, err)
+			}
+			if d := status.Diagnose(ctx, 10*time.Second, a.DoctorChecks()...); d.Failed != 1 {
+				t.Errorf("%s unlock key: doctor did not fail: %+v", name, d)
 			}
 			_ = a.Close()
 		}
