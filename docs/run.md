@@ -225,6 +225,9 @@ backend only one of them can hold the state file, so a second concurrent `scrim 
   which `scrim run` does not change. Codex signed in with a ChatGPT account calls the Responses
   API on `chatgpt.com` through the forward proxy, which routes it to the LLM proxy
   (`proxy.upstream.chatgpt`); other ChatGPT backend paths are forwarded with the whole body redacted.
+- Codex tries the Responses API over WebSocket first. scrim cannot redact WebSocket frames, so the
+  LLM proxy refuses the handshake at once with `501 upgrade_unsupported` and Codex falls back to
+  HTTPS requests without waiting.
 - `scrim run` replaces an inherited corporate `HTTPS_PROXY` instead of chaining scrim's forward
   proxy to it.
 - Bulk catalog entries (`prefix` with `template`) need a store listing and are not exported as

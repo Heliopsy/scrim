@@ -36,6 +36,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 3.6 Latency budget gate; verify: CI fails when p99 per request or per chunk exceeds the configured budget on the reference fixtures
 - [x] 3.7 Request target and headers redacted and guarded like the body, only `authorization` and `x-api-key` passed through; verify: the leak gate's `header` and `query` rows are redacted for every transform the guard decodes, and an end-to-end request with secrets in a custom header and a percent-encoded query parameter reaches the fake provider with placeholders only
 - [x] 3.8 Placeholders in header values leave in percent form (`%E2%9F%A6...%E2%9F%A7`), which resolves, restores percent-encoded and is read by the guard; verify: a header redacted or guard-repaired holds only visible ASCII and a fake provider that rejects obs-text accepts it
+- [x] 3.9 WebSocket and other protocol upgrades refused with 501 `upgrade_unsupported` before anything else; verify: a handshake by base URL or through the forward proxy is refused in under 100 ms and the fake provider receives nothing
 
 ## 4. Configuration
 

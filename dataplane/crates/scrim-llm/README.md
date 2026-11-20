@@ -93,6 +93,7 @@ OpenAI). 422 is the redaction-failed status.
 | `chain_unavailable`, `upstream_unavailable` | 502 |
 | `capture_failed` | 500 |
 | `policy_denied` (the request gate refused it) | 403 |
+| `upgrade_unsupported` (WebSocket or other protocol upgrade, refused before anything else) | 501 |
 
 ## Use
 

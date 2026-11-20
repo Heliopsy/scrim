@@ -259,6 +259,24 @@ with `policy_denied` when a rule denies the request or its approval is denied or
 - **WHEN** a deny rule matches `op == "llm.forward"` for the request's provider
 - **THEN** the agent receives status 403 with `x-scrim-error: policy_denied` and the provider receives nothing
 
+### Requirement: Protocol upgrades are refused
+
+The LLM proxy SHALL refuse a request asking for a protocol upgrade (an `Upgrade` header or
+`Connection: upgrade`, for example a WebSocket handshake for the Responses API) with status 501
+and `upgrade_unsupported`, before reading the body, loading values or asking the request gate,
+because the upgraded stream cannot be redacted. Nothing SHALL be sent upstream. Clients with an
+HTTPS fallback, such as Codex, then fall back at once.
+
+#### Scenario: Codex opens a Responses WebSocket
+
+- **WHEN** an agent sends a WebSocket handshake to a provider route, by base URL or through the forward proxy
+- **THEN** it receives status 501 with `x-scrim-error: upgrade_unsupported` within 100 ms and the provider receives nothing
+
+#### Scenario: Upgrade before values load
+
+- **WHEN** a WebSocket handshake arrives before the known values have loaded
+- **THEN** it is refused with `upgrade_unsupported`, not `not_ready`
+
 ### Requirement: Streaming without whole buffering
 
 The proxy SHALL relay streamed responses incrementally. It SHALL hold back no more bytes than needed

@@ -82,6 +82,23 @@ async fn world(fx: &scrim_llm::testing::Fixture, response: Scripted) -> World {
 }
 
 async fn via_connect(w: &World, host: &str, path: &str, body: String) -> (u16, Bytes) {
+    let req = http::Request::post(path)
+        .header("host", host)
+        .header("content-type", "application/json")
+        .header("x-api-key", "agent-own-key")
+        .body(Full::new(Bytes::from(body)))
+        .unwrap();
+    let (status, _, body, _) = send_via_connect(w, host, req).await;
+    (status, body)
+}
+
+/// Opens a CONNECT tunnel to `host`, speaks TLS with the interception CA and sends `req`.
+/// Also returns how long the request took to answer, tunnel and handshake excluded.
+async fn send_via_connect(
+    w: &World,
+    host: &str,
+    req: http::Request<Full<Bytes>>,
+) -> (u16, http::HeaderMap, Bytes, std::time::Duration) {
     let mut tcp = tokio::net::TcpStream::connect(w.proxy_addr).await.unwrap();
     tcp.write_all(format!("CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n\r\n").as_bytes())
         .await
@@ -121,15 +138,17 @@ async fn via_connect(w: &World, host: &str, path: &str, body: String) -> (u16, B
         .await
         .unwrap();
     tokio::spawn(conn);
-    let req = http::Request::post(path)
-        .header("host", host)
-        .header("content-type", "application/json")
-        .header("x-api-key", "agent-own-key")
-        .body(Full::new(Bytes::from(body)))
-        .unwrap();
+    let t = std::time::Instant::now();
     let resp = send.send_request(req).await.unwrap();
+    let took = t.elapsed();
     let status = resp.status().as_u16();
-    (status, resp.into_body().collect().await.unwrap().to_bytes())
+    let headers = resp.headers().clone();
+    (
+        status,
+        headers,
+        resp.into_body().collect().await.unwrap().to_bytes(),
+        took,
+    )
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -152,6 +171,28 @@ async fn provider_host_through_connect_is_redacted_and_restored() {
     assert_eq!(got[0].headers["x-api-key"], "agent-own-key");
     let v: serde_json::Value = serde_json::from_slice(&resp).unwrap();
     assert_eq!(v["content"][0]["text"], format!("pw {}", fx.value("s0")));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn websocket_upgrade_on_a_provider_host_is_refused_at_once() {
+    let fx = fixture();
+    let w = world(&fx, Scripted::json(200, "{}")).await;
+    let req = http::Request::get("/v1/responses")
+        .header("host", "api.openai.com")
+        .header("connection", "Upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-version", "13")
+        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let (status, headers, _, took) = send_via_connect(&w, "api.openai.com", req).await;
+    assert_eq!(status, 501);
+    assert_eq!(headers[scrim_llm::ERROR_HEADER], "upgrade_unsupported");
+    assert!(
+        took < std::time::Duration::from_millis(100),
+        "refused after {took:?}"
+    );
+    assert!(w.upstream.received().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
