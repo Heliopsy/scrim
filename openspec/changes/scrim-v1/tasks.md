@@ -24,6 +24,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 2.4 Independent guard over exact outgoing bytes (separate code from 2.2), repair or withhold; verify: a value the redactor is made to miss is caught by the guard in tests
 - [x] 2.5 Fallback detectors (pattern rules, entropy), configurable; verify: rule fixtures and false-positive corpus thresholds
 - [ ] 2.6 Fuzz targets for matcher, variants and guard; verify: fuzzing runs in CI for a fixed budget with zero findings
+- [x] 2.7 Nested JSON (JSON text in JSON strings) to `redaction.json_depth` in the variants and the guard, and no restore of a value escaping changes inside a quoted part of tool-call arguments; verify: OpenAI Chat tool-call arguments and a three-level tool result redacted by the real engine, the guard alone catches every style mix to the depth
 
 ## 3. Anthropic Messages proxy (M0 exit)
 
