@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# cargo-fuzz targets for scrim-redact. Not a workspace member: needs nightly and libFuzzer.
+#   cd dataplane/crates/scrim-redact/fuzz && cargo +nightly fuzz run <target> -- -max_total_time=300
+
+[package]
+name = "scrim-redact-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+scrim-redact = { path = ".." }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "engines"
+path = "fuzz_targets/engines.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "variants"
+path = "fuzz_targets/variants.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "guard"
+path = "fuzz_targets/guard.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "restore"
+path = "fuzz_targets/restore.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,299 @@
+//! Benchmarks mirroring `bench/redact-bench`: secret sets of 10, 1,000 and 10,000 values with all
+//! variants, request bodies of 100 KB, 1 MB and 4 MB with and without hits, and streamed
+//! restoration per chunk.
+//!
+//! Fixtures come from `testdata/fixtures.rs` (a port of the Go generator). Set
+//! `SCRIM_REDACT_GOFIX=<dir>` to load the Go generator's output instead (`secrets-N.json`,
+//! `body-*.json`) for a byte-identical comparison with the redact-bench results.
+//!
+//! Besides criterion's throughput numbers, the `latency` group prints p50/p99/max of redact plus
+//! guard per request, and the `restore` group prints p99 per chunk, the two budgets of the
+//! performance spec.
+#![allow(
+    missing_docs,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    // The latency report is the point of this bench.
+    clippy::print_stderr
+)]
+
+#[path = "../testdata/fixtures.rs"]
+mod fixtures;
+
+use std::hint::black_box;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use scrim_redact::*;
+
+const SETS: [usize; 3] = [10, 1000, 10_000];
+const SIZES: [(&str, usize); 3] = [("100k", 100_000), ("1m", 1_000_000), ("4m", 4_000_000)];
+
+fn gofix() -> Option<String> {
+    std::env::var("SCRIM_REDACT_GOFIX").ok()
+}
+
+fn secrets(n: usize) -> Vec<String> {
+    match gofix() {
+        Some(d) => {
+            let v: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(format!("{d}/secrets-{n}.json")).unwrap())
+                    .unwrap();
+            v["secrets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_string())
+                .collect()
+        }
+        None => fixtures::gen_secrets(20_261_120 + n as u64, n),
+    }
+}
+
+fn body(size: (&str, usize), set: &[String], hits: bool, n: usize) -> Vec<u8> {
+    match gofix() {
+        Some(d) if hits => std::fs::read(format!("{d}/body-{}-s{n}.json", size.0)).unwrap(),
+        Some(d) => std::fs::read(format!("{d}/body-{}-clean.json", size.0)).unwrap(),
+        None if hits => fixtures::gen_body(size.1 as u64 + n as u64, size.1, set).0,
+        None => fixtures::gen_body(size.1 as u64, size.1, &[]).0,
+    }
+}
+
+fn snapshot(set: &[String], engine: EngineChoice, class: ValueClass) -> Snapshot {
+    let kr = Arc::new(Keyring::new(PlaceholderKey::new(1, &[0x5a; 32]).unwrap()));
+    let entries = set
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            Entry::new(
+                i as u64,
+                RefSlug::new("secret").unwrap(),
+                class,
+                SecretValue::from_slice(s.as_bytes()),
+            )
+        })
+        .collect();
+    Snapshot::build(
+        entries,
+        kr,
+        &Config {
+            engine,
+            ..Config::default()
+        },
+    )
+    .unwrap()
+}
+
+fn engines(n: usize) -> Vec<(&'static str, EngineChoice)> {
+    let mut v = vec![("auto", EngineChoice::Auto)];
+    if n <= 1000 {
+        v.push(("ac", EngineChoice::Fixed(EngineKind::AhoCorasick)));
+        v.push(("hw", EngineChoice::Fixed(EngineKind::HashWindow)));
+    }
+    v
+}
+
+fn bench_redact(c: &mut Criterion) {
+    let mut g = c.benchmark_group("redact");
+    g.warm_up_time(Duration::from_millis(300))
+        .measurement_time(Duration::from_secs(2))
+        .sample_size(20);
+    for n in SETS {
+        let set = secrets(n);
+        for (ename, e) in engines(n) {
+            let snap = snapshot(&set, e, ValueClass::Credential);
+            for size in SIZES {
+                for hits in [true, false] {
+                    let b = body(size, &set, hits, n);
+                    let mut out = Vec::with_capacity(b.len() * 2);
+                    g.throughput(Throughput::Bytes(b.len() as u64));
+                    let id = format!(
+                        "engine={ename}/set={n}/size={}/{}",
+                        size.0,
+                        if hits { "hits" } else { "clean" }
+                    );
+                    g.bench_function(BenchmarkId::from_parameter(id), |bn| {
+                        bn.iter(|| {
+                            black_box(snap.redactor().redact(black_box(&b), &mut out).unwrap())
+                        });
+                    });
+                }
+            }
+        }
+    }
+    g.finish();
+}
+
+fn bench_protect(c: &mut Criterion) {
+    let mut g = c.benchmark_group("protect");
+    g.warm_up_time(Duration::from_millis(300))
+        .measurement_time(Duration::from_secs(2))
+        .sample_size(20);
+    for n in SETS {
+        let set = secrets(n);
+        let snap = snapshot(&set, EngineChoice::Auto, ValueClass::Credential);
+        for size in SIZES {
+            for hits in [true, false] {
+                let b = body(size, &set, hits, n);
+                let mut ws = Workspace::new();
+                g.throughput(Throughput::Bytes(b.len() as u64));
+                let id = format!(
+                    "set={n}/size={}/{}",
+                    size.0,
+                    if hits { "hits" } else { "clean" }
+                );
+                g.bench_function(BenchmarkId::from_parameter(id), |bn| {
+                    bn.iter(|| {
+                        black_box(snap.protect(black_box(&b), &mut ws).unwrap().bytes.len())
+                    });
+                });
+            }
+        }
+    }
+    g.finish();
+}
+
+fn percentiles(mut v: Vec<Duration>) -> (Duration, Duration, Duration) {
+    v.sort_unstable();
+    let at = |q: f64| v[((v.len() as f64 * q) as usize).min(v.len() - 1)];
+    (at(0.5), at(0.99), *v.last().unwrap())
+}
+
+/// The latency budget: redact + guard on 1 MB bodies, p99 over many requests.
+fn latency(_c: &mut Criterion) {
+    let runs: usize = std::env::var("SCRIM_REDACT_LATENCY_RUNS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(300);
+    if runs == 0 {
+        return;
+    }
+    eprintln!("\nlatency: redact+guard per 1 MB request, {runs} runs each (p50 / p99 / max)");
+    for n in SETS {
+        let set = secrets(n);
+        let snap = snapshot(&set, EngineChoice::Auto, ValueClass::Credential);
+        for hits in [true, false] {
+            let b = body(SIZES[1], &set, hits, n);
+            let mut ws = Workspace::new();
+            let mut out = Vec::new();
+            for _ in 0..10 {
+                snap.protect(&b, &mut ws).unwrap();
+            }
+            let (mut t, mut tr) = (Vec::with_capacity(runs), Vec::with_capacity(runs));
+            for _ in 0..runs {
+                let s = Instant::now();
+                black_box(snap.protect(black_box(&b), &mut ws).unwrap().bytes.len());
+                t.push(s.elapsed());
+                let s = Instant::now();
+                black_box(snap.redactor().redact(black_box(&b), &mut out).unwrap());
+                tr.push(s.elapsed());
+            }
+            let (p50, p99, max) = percentiles(t);
+            let (r50, r99, _) = percentiles(tr);
+            eprintln!(
+                "  set={n:>5} {:<5} engine={:?}: protect {p50:>9.2?} / {p99:>9.2?} / {max:>9.2?}   redact only {r50:>9.2?} / {r99:>9.2?}",
+                if hits { "hits" } else { "clean" },
+                snap.report().engine
+            );
+        }
+    }
+}
+
+/// Snapshot build time per set size.
+fn build(c: &mut Criterion) {
+    let mut g = c.benchmark_group("build");
+    g.warm_up_time(Duration::from_millis(100))
+        .measurement_time(Duration::from_secs(3))
+        .sample_size(10);
+    for n in SETS {
+        let set = secrets(n);
+        g.bench_function(BenchmarkId::from_parameter(format!("set={n}")), |bn| {
+            bn.iter(|| {
+                black_box(
+                    snapshot(&set, EngineChoice::Auto, ValueClass::Credential)
+                        .report()
+                        .patterns,
+                )
+            });
+        });
+    }
+    g.finish();
+}
+
+/// Restoring a stream: decoded text deltas of realistic chunk sizes with placeholders every
+/// ~600 bytes, secret set of 1,000.
+fn restore(c: &mut Criterion) {
+    let set = secrets(1000);
+    let kr = Arc::new(Keyring::new(PlaceholderKey::new(1, &[0x5a; 32]).unwrap()));
+    let snap = snapshot(&set, EngineChoice::Auto, ValueClass::Display);
+    let slug = RefSlug::new("secret").unwrap();
+    let phs: Vec<String> = set
+        .iter()
+        .take(200)
+        .map(|s| placeholder_for(kr.current(), &slug, s.as_bytes()))
+        .collect();
+    let mut g = c.benchmark_group("restore");
+    g.warm_up_time(Duration::from_millis(300))
+        .measurement_time(Duration::from_secs(3))
+        .sample_size(20);
+    for (name, size) in [("2k", 40_000usize), ("20k", 400_000)] {
+        let text = fixtures::gen_stream_text(5, size, &phs, 600);
+        let mut chunks = Vec::new();
+        let mut at = 0;
+        for n in fixtures::gen_chunks(6, text.len()) {
+            if at >= text.len() {
+                break;
+            }
+            let mut end = (at + n).min(text.len());
+            while !text.is_char_boundary(end) {
+                end += 1;
+            }
+            chunks.push(&text[at..end]);
+            at = end;
+        }
+        let mut out = String::with_capacity(text.len() * 2);
+        g.throughput(Throughput::Bytes(text.len() as u64));
+        g.bench_function(
+            BenchmarkId::from_parameter(format!("stream={name}/chunks={}", chunks.len())),
+            |bn| {
+                bn.iter(|| {
+                    out.clear();
+                    let mut b = BlockRestorer::new();
+                    for ch in &chunks {
+                        b.push(snap.resolver(), &RestoreDisplay, ch, &mut out);
+                    }
+                    b.finish(&mut out);
+                    black_box(out.len())
+                });
+            },
+        );
+        let mut t = Vec::with_capacity(chunks.len() * 5);
+        for _ in 0..5 {
+            out.clear();
+            let mut b = BlockRestorer::new();
+            for ch in &chunks {
+                let s = Instant::now();
+                b.push(snap.resolver(), &RestoreDisplay, ch, &mut out);
+                t.push(s.elapsed());
+            }
+        }
+        let (p50, p99, max) = percentiles(t);
+        eprintln!(
+            "restore stream={name}: per chunk p50 {p50:.2?} p99 {p99:.2?} max {max:.2?} ({} chunks)",
+            chunks.len()
+        );
+    }
+    g.finish();
+}
+
+criterion_group!(
+    benches,
+    latency,
+    bench_redact,
+    bench_protect,
+    restore,
+    build
+);
+criterion_main!(benches);
