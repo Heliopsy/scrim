@@ -32,7 +32,8 @@ request body.
 | `policy.deny-all-refresh` | `1s` | How often each replica re-reads the break-glass state. |
 | `admin.url` | empty | Where `scrim approve` and friends reach the admin API: `unix:/path` or `http(s)://host:port`. Empty means `unix:$XDG_RUNTIME_DIR/scrim/admin.sock`. |
 
-Each key is also an environment variable (`SCRIM_APPROVALS_TIMEOUT`) and, where marked in
+The full list is in [configuration.md](configuration.md). Each key is also an environment variable
+(`SCRIM_APPROVALS_TIMEOUT`) and, where marked in
 `scrim config show`, a flag (`--approvals-timeout`).
 
 ## Decision links
