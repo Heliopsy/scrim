@@ -4,6 +4,12 @@ User documentation for scrim. The [project README](../README.md) explains what s
 to start. The behaviour contract, with every requirement and scenario, is the OpenSpec change in
 [`openspec/changes/scrim-v1`](../openspec/changes/scrim-v1/).
 
+## Design
+
+| Page | Covers |
+| --- | --- |
+| [architecture.md](architecture.md) | Components, the data plane boundary, request, tool, approval and snapshot flows, trust boundaries and deployments, with diagrams |
+
 ## Getting started
 
 | Page | Covers |
