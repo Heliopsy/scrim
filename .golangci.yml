@@ -1,0 +1,46 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - forbidigo
+    - gocritic
+    - misspell
+    - nilerr
+    - revive
+    - unconvert
+    - usestdlibvars
+    - wastedassign
+
+  settings:
+    forbidigo:
+      forbid:
+        - pattern: '^fmt\.Print(f|ln)?$'
+          msg: "write to the command's writer, not stdout directly"
+        - pattern: '^log\.(Print|Fatal|Panic)(f|ln)?$'
+          msg: "use the slog logger from internal/obs, which scrubs values"
+      analyze-types: true
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+
+  exclusions:
+    generated: strict
+    rules:
+      - path: _test\.go
+        linters: [forbidigo, bodyclose]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/heliopsy/scrim
