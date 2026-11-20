@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -28,6 +29,9 @@ func (Commands) Policy(e *Env) *cobra.Command {
 			}
 			if pc.Default == "" {
 				pc.Default = policy.DefaultEffect.Get(cfg)
+			}
+			if pc, err = policy.WithBuiltins(cfg, pc); err != nil {
+				return nil, err
 			}
 		} else if pc, err = policy.FromConfig(cfg); err != nil {
 			return nil, err
@@ -54,8 +58,14 @@ func (Commands) Policy(e *Env) *cobra.Command {
 					local++
 				}
 			}
-			_, err = fmt.Fprintf(e.Stdout, "ok: %d rules, default %s, %d decided entirely in the data plane\n",
-				len(snap.Rules), snap.Default, local)
+			builtin := 0
+			for _, r := range snap.Rules {
+				if strings.HasPrefix(r.Name, policy.BuiltinPrefix) {
+					builtin++
+				}
+			}
+			_, err = fmt.Fprintf(e.Stdout, "ok: %d rules (%d built-in), default %s, %d decided entirely in the data plane\n",
+				len(snap.Rules), builtin, snap.Default, local)
 			return err
 		},
 	}

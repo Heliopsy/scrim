@@ -82,7 +82,10 @@ pub use credential::{
     Location, Locations, MIN_DECLARED_PLACEHOLDER_LEN, Placeholder, PlaceholderKind,
     ValidationError,
 };
-pub use decide::{ClientInfo, InjectionDecision, InjectionPolicy, InjectionRequest, is_session_id};
+pub use decide::{
+    ClientInfo, InjectionDecision, InjectionPolicy, InjectionRequest, SessionVerifier,
+    is_session_id, parse_session_token,
+};
 pub use engine::{RequestSigner, Snapshot, ToolProxyConfig};
 pub use error::{ErrorCode, Refusal};
 pub use host::{Destination, HostPattern, HostPatternError, Scheme};

@@ -96,11 +96,23 @@ since redaction applies to them whatever the rules say.
 - **WHEN** break-glass deny-all is engaged
 - **THEN** provider requests are still redacted and forwarded, and no placeholder is restored or credential injected
 
+#### Scenario: Control plane answers a provider ask
+
+- **WHEN** the data plane asks about a provider request because a residual deny rule could match, and the control plane's full evaluation finds no rule matches
+- **THEN** the control plane answers allow, since the default does not refuse provider requests
+
 ### Requirement: Asks are bounded
 
 An operation the data plane sends to the control plane SHALL be held at most for the approval
 timeout the snapshot carries, and SHALL be denied when no allow answer arrives in time or the
-control plane's ask stream is not connected.
+control plane's ask stream is not connected. The snapshot SHALL carry `approvals.timeout`, or the
+longest per-rule approval timeout when a rule sets a longer one; each approval SHALL still expire
+at its own rule's timeout.
+
+#### Scenario: Rule with a longer approval timeout
+
+- **WHEN** `approvals.timeout` is 2m and an ask rule sets `approval.timeout: 10m`
+- **THEN** the snapshot's ask timeout is 10m, and an approval raised by another rule still expires after 2m
 
 #### Scenario: Ask stream down
 

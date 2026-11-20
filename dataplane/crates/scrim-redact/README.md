@@ -97,7 +97,10 @@ one thread produces; `redact` and `redact_with` stay on the calling thread.
 **Placeholders (`placeholder.rs`).** `⟦scrim:<slug>:<vv><tag>⟧`, slug `[a-z0-9-]{1,48}`, `vv` the
 key version in two hex digits, `tag` the first 8 bytes of
 `HMAC-SHA256(key, "scrim-placeholder-v1\0" || value)` in hex. At most 79 bytes. Inert in JSON,
-shell words, YAML and Markdown. The resolver indexes the tags of every retained key, so
+shell words, YAML and Markdown. The percent form `%E2%9F%A6scrim:<slug>:<vv><tag>%E2%9F%A7` (at
+most 91 bytes) is the ASCII spelling for header values and URLs; parsing, resolution, the
+restorer and `next_placeholder` accept both, and a value restored for a percent-form placeholder
+is percent-encoded. The resolver indexes the tags of every retained key, so
 placeholders from before a rotation keep resolving; acceptance compares tag and slug in constant
 time.
 

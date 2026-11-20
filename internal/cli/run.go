@@ -135,7 +135,7 @@ func writePlan(w io.Writer, p *agentrun.Plan, format string) error {
 	}
 	for _, v := range p.Set {
 		kv := v.Name + "=" + v.Value
-		if v.Secret {
+		if v.Secret && v.Value == "" {
 			kv = v.Name + "=<secret>"
 		}
 		_, _ = fmt.Fprintf(w, "  %-*s  # %s\n", width, kv, v.Why)

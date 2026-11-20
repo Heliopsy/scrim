@@ -65,8 +65,8 @@ func Parse(data []byte, asJSON bool) (Config, error) {
 	return c, nil
 }
 
-// FromConfig loads the rules named by policy.rules-file and fills an empty
-// default from policy.default.
+// FromConfig loads the rules named by policy.rules-file, appends the built-in
+// rules ([WithBuiltins]) and fills an empty default from policy.default.
 func FromConfig(cfg *config.Config) (Config, error) {
 	var c Config
 	if p := RulesFile.Get(cfg); p != "" {
@@ -78,5 +78,5 @@ func FromConfig(cfg *config.Config) (Config, error) {
 	if c.Default == "" {
 		c.Default = DefaultEffect.Get(cfg)
 	}
-	return c, nil
+	return WithBuiltins(cfg, c)
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/heliopsy/scrim/internal/config"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
 	"github.com/heliopsy/scrim/internal/placeholder"
+	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/refresh"
@@ -149,6 +150,22 @@ restore:
 		if a.GetName() == "run_shell" && (a.GetRole() != pb.ToolRole_TOOL_ROLE_SHELL || a.GetCommandField() != "cmd") ||
 			a.GetName() == "patch" && (a.GetRole() != pb.ToolRole_TOOL_ROLE_EDIT || strings.Join(a.GetOldFields(), ",") != "before") {
 			t.Fatalf("alias = %v", a)
+		}
+	}
+	hosts := map[string]string{}
+	for _, rt := range s.GetRoutes() {
+		for _, h := range rt.GetHosts() {
+			hosts[h] = rt.GetName() + " " + rt.GetProvider() + " " + rt.GetUpstream()
+		}
+	}
+	for h, want := range map[string]string{
+		"api.anthropic.com": "anthropic anthropic https://api.anthropic.com",
+		"api.openai.com":    "openai openai https://api.openai.com",
+		"chatgpt.com":       "chatgpt openai https://chatgpt.com",
+		"ab.chatgpt.com":    "chatgpt-ab openai https://ab.chatgpt.com",
+	} {
+		if hosts[h] != want {
+			t.Fatalf("host %s routed to %q, want %q", h, hosts[h], want)
 		}
 	}
 	r := s.GetRoutes()[0]
@@ -328,5 +345,21 @@ func TestRestoreAliasValidation(t *testing.T) {
 		if _, err := config.Build(config.Options{Registry: config.Default, ConfigPaths: []string{p}, Environ: []string{}}); err == nil {
 			t.Errorf("accepted %q", body)
 		}
+	}
+}
+
+func TestAskTimeoutMillis(t *testing.T) {
+	cfg := policy.Config{Rules: []policy.RuleSpec{
+		{Name: "a", Decision: "ask", Approval: policy.ApprovalSettings{Timeout: policy.Duration(10 * time.Minute)}},
+		{Name: "b", Decision: "ask", Approval: policy.ApprovalSettings{Timeout: policy.Duration(time.Second)}},
+	}}
+	if got := askTimeoutMillis(2*time.Minute, cfg); got != 600_000 {
+		t.Errorf("longest rule timeout: %d", got)
+	}
+	if got := askTimeoutMillis(2*time.Minute, policy.Config{}); got != 120_000 {
+		t.Errorf("approvals.timeout: %d", got)
+	}
+	if got := askTimeoutMillis(0, policy.Config{}); got != 1 {
+		t.Errorf("zero must not mean the data plane default: %d", got)
 	}
 }

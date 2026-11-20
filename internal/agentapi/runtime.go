@@ -47,6 +47,9 @@ type Runtime struct {
 	EntryURL string
 	Service  *agenttools.Service
 	Sessions *identity.Manager
+	// Resolver identifies callers by peer credentials and session tokens,
+	// the same way for the local API and for data plane asks.
+	Resolver *identity.Resolver
 
 	api   *localapi.Server
 	page  *entrypage.Page
@@ -135,9 +138,10 @@ func New(a *app.App, o Options) (*Runtime, error) {
 		_ = entryLn.Close()
 		return nil, err
 	}
-	api := &localapi.Server{Resolver: identity.Resolver{Peers: peers, Sessions: mgr}, Sessions: mgr, Tools: svc,
+	resolver := &identity.Resolver{Peers: peers, Sessions: mgr}
+	api := &localapi.Server{Resolver: *resolver, Sessions: mgr, Tools: svc,
 		Auditor: auditor, Logger: a.Log, ServerVersion: version.Version}
-	return &Runtime{Socket: path, EntryURL: links.Base(), Service: svc, Sessions: mgr,
+	return &Runtime{Socket: path, EntryURL: links.Base(), Service: svc, Sessions: mgr, Resolver: resolver,
 		api: api, page: page, sock: sockLn, entry: entryLn}, nil
 }
 

@@ -55,8 +55,12 @@ func testAgent(mode string) int {
 		time.Sleep(time.Minute)
 		return 0
 	case "env":
+		tok := os.Getenv(localapi.EnvToken)
 		for _, kv := range os.Environ() {
 			k, v, _ := strings.Cut(kv, "=")
+			if tok != "" && k != localapi.EnvToken {
+				v = strings.ReplaceAll(v, tok, TokenMarker)
+			}
 			if k == localapi.EnvToken {
 				v = fmt.Sprintf("<%d bytes>", len(v))
 			}

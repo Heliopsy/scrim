@@ -24,7 +24,8 @@ Spec: `openspec/changes/scrim-v1/specs/llm-proxy`, plus the base-URL and forward
   responses can be restored.
 - **Request head** (`head`). Every other header value, every path segment and every query key and
   value is redacted on its raw bytes and again percent-decoded (`+` as a space in the query), and
-  re-encoded where it changed. The guard checks the exact request line and header block plus the
+  re-encoded where it changed. Placeholders in header values leave in percent form
+  (`%E2%9F%A6scrim:...%E2%9F%A7`), so values stay visible ASCII. The guard checks the exact request line and header block plus the
   decoded target; a value it cannot repair in place (a header name) refuses the request. Response
   headers are returned as sent, nothing restored in them.
 - **Request side.** The codec parses the body with a strict span scanner (no re-serialisation) and
@@ -92,6 +93,7 @@ OpenAI). 422 is the redaction-failed status.
 | `chain_unavailable`, `upstream_unavailable` | 502 |
 | `capture_failed` | 500 |
 | `policy_denied` (the request gate refused it) | 403 |
+| `upgrade_unsupported` (WebSocket or other protocol upgrade, refused before anything else) | 501 |
 
 ## Use
 

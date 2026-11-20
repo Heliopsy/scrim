@@ -2,8 +2,9 @@
 //!
 //! The proxy decodes each streamed delta string of a content block, passes the text through a
 //! [`BlockRestorer`] (one per content block), and re-encodes what comes out. The restorer holds
-//! back at most [`MAX_PLACEHOLDER_LEN`]` - 1` bytes: the tail of the text that could still become
-//! a placeholder. Everything before it is emitted at once.
+//! back at most [`MAX_PERCENT_PLACEHOLDER_LEN`]` - 1` bytes: the tail of the text that could
+//! still become a placeholder (either form). Everything before it is emitted at once. A
+//! percent-form placeholder is restored percent-encoded, since it sat in percent-encoded text.
 //!
 //! What is restored is decided by a [`RestorePolicy`] the proxy supplies per tool call. Values
 //! classed [`ValueClass::Credential`] are never offered to the policy and never restored by this
@@ -16,7 +17,8 @@ use std::sync::Arc;
 use subtle::ConstantTimeEq;
 
 use crate::placeholder::{
-    LEAD, MAX_PLACEHOLDER_LEN, Parse, ParsedPlaceholder, find_placeholders, parse,
+    LEAD, MAX_PERCENT_PLACEHOLDER_LEN, PCT_LEAD, Parse, ParsedPlaceholder, find_placeholders,
+    parse, percent_encode_into,
 };
 use crate::secret::{EntryMeta, SecretValue, ValueClass};
 
@@ -112,7 +114,9 @@ impl Resolver {
         &self.entries
     }
 
-    /// Resolves one complete placeholder (exactly its bytes, nothing around it).
+    /// Resolves one complete placeholder (exactly its bytes, nothing around it), in either form.
+    /// The value is returned as stored; a caller replacing a percent-form placeholder
+    /// percent-encodes it.
     pub fn resolve(&self, placeholder: &[u8]) -> Option<Resolved<'_>> {
         match parse(placeholder) {
             Parse::Complete(p) if p.len == placeholder.len() => self.resolve_parsed(&p),
@@ -143,9 +147,9 @@ impl Resolver {
     /// redactor and the guard leave it alone. A placeholder-shaped string that does not resolve
     /// gives no protection to what it contains.
     pub fn covering(&self, bytes: &[u8], a: usize, b: usize) -> Option<(usize, usize)> {
-        let lo = a.saturating_sub(MAX_PLACEHOLDER_LEN);
+        let lo = a.saturating_sub(MAX_PERCENT_PLACEHOLDER_LEN);
         let hi = (a + 1).min(bytes.len());
-        for p in memchr::memrchr_iter(LEAD, &bytes[lo..hi]) {
+        for p in memchr::memrchr2_iter(LEAD, PCT_LEAD, &bytes[lo..hi]) {
             let p = lo + p;
             if let Parse::Complete(ph) = parse(&bytes[p..]) {
                 if p + ph.len >= b && self.resolve_parsed(&ph).is_some() {
@@ -158,7 +162,8 @@ impl Resolver {
     }
 
     /// Copies `input` to `out` with every placeholder whose entry `allow` accepts replaced by its
-    /// value. Unknown or refused placeholders are copied unchanged. Returns the number replaced.
+    /// value (percent-encoded for a percent-form placeholder). Unknown or refused placeholders
+    /// are copied unchanged. Returns the number replaced.
     ///
     /// This sees credentials. It is the primitive for credential injection at the network edge
     /// (the tool proxy calls it with a predicate that checks the destination binding) and for the
@@ -176,7 +181,11 @@ impl Resolver {
                 && allow(r.meta)
             {
                 out.extend_from_slice(&input[pos..at]);
-                out.extend_from_slice(r.expose());
+                if p.percent {
+                    percent_encode_into(out, r.expose());
+                } else {
+                    out.extend_from_slice(r.expose());
+                }
                 pos = at + p.len;
                 n += 1;
             }
@@ -201,7 +210,7 @@ pub struct RestoreStats {
 /// Feed every decoded delta of the block to [`BlockRestorer::push`] in order and call
 /// [`BlockRestorer::finish`] when the block ends. The concatenated output equals restoring the
 /// whole text at once, whatever the chunk boundaries. Memory is bounded by
-/// [`MAX_PLACEHOLDER_LEN`] bytes per block.
+/// [`MAX_PERCENT_PLACEHOLDER_LEN`] bytes per block.
 #[derive(Default)]
 pub struct BlockRestorer {
     held: String,
@@ -221,7 +230,7 @@ impl BlockRestorer {
         Self::default()
     }
 
-    /// Bytes currently held back (never more than `MAX_PLACEHOLDER_LEN - 1`).
+    /// Bytes currently held back (never more than `MAX_PERCENT_PLACEHOLDER_LEN - 1`).
     pub fn held_len(&self) -> usize {
         self.held.len()
     }
@@ -268,7 +277,7 @@ fn process(
     let mut st = RestoreStats::default();
     let mut pos = 0;
     let mut i = 0;
-    while let Some(off) = memchr::memchr(LEAD, &b[i..]) {
+    while let Some(off) = memchr::memchr2(LEAD, PCT_LEAD, &b[i..]) {
         let at = i + off;
         match parse(&b[at..]) {
             Parse::Complete(p) => {
@@ -282,7 +291,15 @@ fn process(
                 });
                 if let Some(v) = restored {
                     out.push_str(&text[pos..at]);
-                    out.push_str(v);
+                    if p.percent {
+                        let mut enc = Vec::with_capacity(v.len() * 3);
+                        percent_encode_into(&mut enc, v.as_bytes());
+                        // Percent-encoding yields ASCII only.
+                        out.push_str(std::str::from_utf8(&enc).unwrap_or_default());
+                        zeroize::Zeroize::zeroize(&mut enc);
+                    } else {
+                        out.push_str(v);
+                    }
                     st.restored += 1;
                 } else {
                     out.push_str(&text[pos..end]);
@@ -312,4 +329,4 @@ pub fn restore_text(
     process(resolver, policy, text, out, true).0
 }
 
-const _: () = assert!(MAX_PLACEHOLDER_LEN < 128);
+const _: () = assert!(MAX_PERCENT_PLACEHOLDER_LEN < 128);
