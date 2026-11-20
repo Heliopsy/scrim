@@ -76,9 +76,13 @@ type Options struct {
 	MinPartial      int
 	PartialFraction float64
 	MaxPartial      int
-	// Driver selects the agent: "synthetic" (default). Real agent CLIs are
-	// driven through `scrim run`, which is not available yet.
+	// Driver selects the agent for the scenarios: "synthetic" (default), a
+	// built-in agent for every API, or "claude", which runs Claude Code
+	// with an empty HOME against the proxy. The matrix always sends its
+	// requests directly.
 	Driver string
+	// AgentBin overrides the agent CLI binary.
+	AgentBin string
 	// Progress, when set, receives one line per finished case.
 	Progress io.Writer
 }
@@ -90,8 +94,15 @@ var ErrGate = errors.New("leak gate failed")
 // report) when leaks or unexpected outcomes were found, and another error
 // when the run could not complete.
 func Run(ctx context.Context, o Options) (*Report, error) {
-	if o.Driver != "" && o.Driver != "synthetic" {
-		return nil, fmt.Errorf("driver %q needs `scrim run` (tasks.md 9.3), which is not available yet; use --driver synthetic", o.Driver)
+	switch o.Driver {
+	case "", "synthetic", "claude":
+	case "codex":
+		return nil, errors.New("driver codex is not implemented yet; use synthetic or claude")
+	default:
+		return nil, fmt.Errorf("unknown driver %q (synthetic, claude)", o.Driver)
+	}
+	if o.Driver == "" {
+		o.Driver = "synthetic"
 	}
 	if len(o.Suites) == 0 {
 		o.Suites = []string{SuiteMatrix, SuiteScenarios}
@@ -124,14 +135,14 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 	}
 	up := &http.Server{Handler: fake, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = up.Serve(ln) }()
-	defer up.Close()
+	defer func() { _ = up.Close() }()
 	upURL := "http://" + ln.Addr().String()
 
 	proxyURL := o.Proxy
 	switch o.Proxy {
 	case BuiltinPassThrough, BuiltinNaive:
 		u, _ := url.Parse(upURL)
-		var h http.Handler = stub.PassThrough(u)
+		h := stub.PassThrough(u)
 		if o.Proxy == BuiltinNaive {
 			h = stub.Naive(u, seeds)
 		}
@@ -165,7 +176,7 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 		Started:  time.Now().UTC(),
 		Proxy:    o.Proxy,
 		Upstream: upURL,
-		Driver:   "synthetic",
+		Driver:   o.Driver,
 		Checker:  CheckerSettings{MinPartial: checker.MinPartial, PartialFraction: checker.PartialFraction, MaxPartial: checker.MaxPartial},
 	}
 	for _, s := range seeds {
@@ -200,16 +211,27 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 			}
 			rep.Matrix = &MatrixReport{Totals: matrix.Tally(results), Results: results}
 		case SuiteScenarios:
-			scs, err := scenario.Corpus()
-			if err != nil {
-				return nil, err
-			}
-			sr := &scenario.Runner{Target: target, Fake: fake, Checker: checker}
-			results := sr.RunAll(ctx, scs, o.APIs, seeds, func(r scenario.Result) {
+			report := func(r scenario.Result) {
 				if !r.Pass {
 					progress("FAIL scenario %s/%s stream=%v leaks=%d cache=%d/%d deterministic=%v %s", r.Scenario, r.API, r.Stream, len(r.Findings), r.CacheHits, r.CacheTurns, r.Deterministic, r.Error)
 				}
-			})
+			}
+			var results []scenario.Result
+			if o.Driver == "claude" {
+				d := scenario.ClaudeDriver{Bin: o.AgentBin}
+				for _, s := range scenario.AgentSessions {
+					r := d.Run(ctx, target, fake, checker, s, seeds)
+					report(r)
+					results = append(results, r)
+				}
+			} else {
+				scs, err := scenario.Corpus()
+				if err != nil {
+					return nil, err
+				}
+				sr := &scenario.Runner{Target: target, Fake: fake, Checker: checker}
+				results = sr.RunAll(ctx, scs, o.APIs, seeds, report)
+			}
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}

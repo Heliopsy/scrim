@@ -331,7 +331,7 @@ var Transforms = []Transform{
 	{ID: "comma-separated", Command: "python3 -c 'print(\",\".join(v))'", Expect: Guard, Apply: func(v string) string { return eachRune(v, ",") }},
 	{ID: "dash-separated", Command: "sed 's/./&-/g' .env", Expect: Guard, Apply: func(v string) string { return eachRune(v, "-") }},
 	{ID: "python-char-list", Command: "python3 -c 'print(list(v))'", Expect: Guard, Apply: pyRepr},
-	{ID: "zero-width-interleaved", Command: "sed 's/./&\\u200b/g'", Expect: Guard, Apply: func(v string) string { return eachRune(v, "​") }},
+	{ID: "zero-width-interleaved", Command: "sed 's/./&\\u200b/g'", Expect: Guard, Apply: func(v string) string { return eachRune(v, "\u200b") }},
 	{ID: "truncated-prefix", Command: "head -c 75% of the value", Expect: Guard, Note: "values at or above the minimum length; shorter fragments are a documented limitation", Apply: truncate(0.75, false)},
 	{ID: "truncated-suffix", Command: "tail -c 75% of the value", Expect: Guard, Apply: truncate(0.75, true)},
 	{ID: "truncated-half", Command: "cut -c1-half", Expect: Guard, Apply: truncate(0.5, false)},

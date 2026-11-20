@@ -159,15 +159,23 @@ func (r *Report) WriteText(w io.Writer) {
 	if sc := r.Scenarios; sc != nil {
 		p("")
 		c := sc.Cache
-		p("scenarios: %d sessions, cache hit rate %.1f%% (%d/%d turns), %d/%d deterministic on replay",
-			c.Sessions, 100*c.HitRate, c.Hits, c.Turns, c.Deterministic, c.Sessions)
+		replay := ""
+		if c.Sessions > 0 {
+			replay = fmt.Sprintf(", %d/%d replayed sessions byte-identical", c.Deterministic, c.Sessions)
+		}
+		p("scenarios: %d sessions, cache hit rate %.1f%% (%d/%d turns fully cached)%s",
+			len(sc.Results), 100*c.HitRate, c.Hits, c.Turns, replay)
 		for _, res := range sc.Results {
 			status := "ok  "
 			if !res.Pass {
 				status = "FAIL"
 			}
-			p("  %s %-16s %-17s stream=%-5v requests=%d leaks=%d cache=%d/%d deterministic=%v restored=%d %s",
-				status, res.Scenario, res.API, res.Stream, res.Requests, len(res.Findings), res.CacheHits, res.CacheTurns, res.Deterministic, res.Restored, res.Error)
+			replay := "n/a"
+			if res.Driver == "synthetic" {
+				replay = fmt.Sprint(res.Deterministic)
+			}
+			p("  %s %-16s %-17s stream=%-5v requests=%d leaks=%d cache=%d/%d identical-replay=%s restored=%d %s",
+				status, res.Scenario, res.API, res.Stream, res.Requests, len(res.Findings), res.CacheHits, res.CacheTurns, replay, res.Restored, res.Error)
 			if !res.Pass {
 				for i, f := range res.Findings {
 					if i == 3 {

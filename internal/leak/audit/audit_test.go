@@ -77,7 +77,7 @@ func TestSeedsInAndNaiveRedactsRaw(t *testing.T) {
 }
 
 func TestBadOptions(t *testing.T) {
-	for _, o := range []Options{{}, {Proxy: BuiltinNaive, Driver: "claude"}, {Proxy: BuiltinNaive, Suites: []string{"nope"}}} {
+	for _, o := range []Options{{}, {Proxy: BuiltinNaive, Driver: "codex"}, {Proxy: BuiltinNaive, Suites: []string{"nope"}}} {
 		if _, err := Run(context.Background(), o); err == nil || errors.Is(err, ErrGate) {
 			t.Errorf("%+v: err %v", o, err)
 		}

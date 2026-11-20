@@ -58,10 +58,10 @@ func Naive(upstream *url.URL, seeds []leak.Seed) http.Handler {
 		}
 		back = append(back, pair{[]byte(ph), jsonForm})
 	}
-	rp := httputil.NewSingleHostReverseProxy(upstream)
-	director := rp.Director
-	rp.Director = func(r *http.Request) {
-		director(r)
+	rp := &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) {
+		pr.SetURL(upstream)
+		pr.Out.Host = pr.In.Host
+		r := pr.Out
 		if r.Body == nil {
 			return
 		}
@@ -76,7 +76,7 @@ func Naive(upstream *url.URL, seeds []leak.Seed) http.Handler {
 		r.Body = io.NopCloser(bytes.NewReader(b))
 		r.ContentLength = int64(len(b))
 		r.Header.Set("Content-Length", strconv.Itoa(len(b)))
-	}
+	}}
 	rp.ModifyResponse = func(resp *http.Response) error {
 		b, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()

@@ -4,8 +4,10 @@ package matrix_test
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -181,4 +183,25 @@ func TestRowsAreUniqueAndBuildable(t *testing.T) {
 	}
 	sum := matrix.Summary(rows)
 	t.Logf("rows=%d by expectation=%v", len(rows), sum)
+}
+
+// docs/leak-assurance.md embeds the catalogue; regenerate it with
+// `scrim audit run --list-matrix` when the catalogue changes.
+func TestDocsMatchCatalogue(t *testing.T) {
+	b, err := os.ReadFile("../../../docs/leak-assurance.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(b)
+	start := strings.Index(doc, "<!-- matrix:begin -->\n")
+	end := strings.Index(doc, "<!-- matrix:end -->")
+	if start < 0 || end < start {
+		t.Fatal("matrix markers missing from docs/leak-assurance.md")
+	}
+	if got := doc[start+len("<!-- matrix:begin -->\n") : end]; got != matrix.Markdown() {
+		t.Fatal("docs/leak-assurance.md matrix table is stale: replace it with the output of `scrim audit run --list-matrix`")
+	}
+	if n := len(matrix.Rows()); !strings.Contains(doc, fmt.Sprintf("%d rows", n)) {
+		t.Errorf("docs/leak-assurance.md does not state the row count %d", n)
+	}
 }

@@ -13,7 +13,10 @@ import (
 
 // Result is the outcome of one scenario on one API.
 type Result struct {
-	Scenario string         `json:"scenario"`
+	Scenario string `json:"scenario"`
+	// Driver is the agent that played the session: "synthetic" or the
+	// agent CLI's name.
+	Driver   string         `json:"driver"`
 	API      fp.API         `json:"api"`
 	Stream   bool           `json:"stream"`
 	Requests int            `json:"requests"`
@@ -26,7 +29,8 @@ type Result struct {
 	CachedBytes    int     `json:"cached_bytes"`
 	CacheHitRate   float64 `json:"cache_hit_rate"`
 	// Deterministic is true when replaying the session produced
-	// byte-identical requests.
+	// byte-identical requests. Only the synthetic driver replays; real agent
+	// CLIs add timestamps and counters of their own.
 	Deterministic bool `json:"deterministic"`
 	// Restored counts tool calls in which the agent received a real value.
 	Restored int    `json:"restored_tool_calls"`
@@ -44,7 +48,7 @@ type Runner struct {
 
 // Run plays a scenario twice on one API and checks what the fake received.
 func (r *Runner) Run(ctx context.Context, sc Scenario, api fp.API, stream bool, seeds []leak.Seed) Result {
-	res := Result{Scenario: sc.Name, API: api, Stream: stream}
+	res := Result{Scenario: sc.Name, Driver: "synthetic", API: api, Stream: stream}
 	r.Fake.Reset()
 	r.Fake.SetResponder(fp.Script(sc.script()))
 	defer r.Fake.SetResponder(nil)
@@ -73,19 +77,7 @@ func (r *Runner) Run(ctx context.Context, sc Scenario, api fp.API, stream bool, 
 		res.Findings = append(res.Findings, checker.Check(e.Capture)...)
 	}
 
-	for i := 1; i < len(ex1); i++ {
-		res.CacheTurns++
-		want := ex1[i-1].PromptBytes
-		got := min(ex1[i].CachedBytes, want)
-		res.CacheableBytes += want
-		res.CachedBytes += got
-		if got >= want {
-			res.CacheHits++
-		}
-	}
-	if res.CacheableBytes > 0 {
-		res.CacheHitRate = float64(res.CachedBytes) / float64(res.CacheableBytes)
-	}
+	measureCache(&res, ex1)
 
 	res.Deterministic = len(ex1) == len(ex2) && len(ex1) > 0
 	for i := 0; res.Deterministic && i < len(ex1); i++ {
@@ -124,8 +116,10 @@ type CacheSummary struct {
 	CacheableBytes int     `json:"cacheable_bytes"`
 	CachedBytes    int     `json:"cached_bytes"`
 	HitRate        float64 `json:"hit_rate"`
-	Deterministic  int     `json:"deterministic_sessions"`
-	Sessions       int     `json:"sessions"`
+	// Deterministic counts replayed sessions with byte-identical requests,
+	// out of Sessions replayed.
+	Deterministic int `json:"deterministic_sessions"`
+	Sessions      int `json:"replayed_sessions"`
 }
 
 // Cache aggregates cache figures over results.
@@ -136,9 +130,11 @@ func Cache(results []Result) CacheSummary {
 		c.Hits += r.CacheHits
 		c.CacheableBytes += r.CacheableBytes
 		c.CachedBytes += r.CachedBytes
-		c.Sessions++
-		if r.Deterministic {
-			c.Deterministic++
+		if r.Driver == "synthetic" {
+			c.Sessions++
+			if r.Deterministic {
+				c.Deterministic++
+			}
 		}
 	}
 	if c.CacheableBytes > 0 {

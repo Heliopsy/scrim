@@ -512,7 +512,7 @@ var spelledWords = func() map[string]string {
 // "capital" or "uppercase", back into characters.
 func decodeSpelled(s string) []decoded {
 	words := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r == '-')
+		return (r < 'a' || r > 'z') && r != '-'
 	})
 	var out []decoded
 	var cur strings.Builder

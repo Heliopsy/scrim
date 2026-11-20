@@ -504,11 +504,11 @@ func (s *Server) cache(api API, model string, body []byte) (total, cached int) {
 		var arr []json.RawMessage
 		if json.Unmarshal(v, &arr) == nil {
 			for _, e := range arr {
-				blocks = append(blocks, prefix+string(e))
+				blocks = append(blocks, prefix+canonicalBlock(e))
 			}
 			return
 		}
-		blocks = append(blocks, prefix+string(v))
+		blocks = append(blocks, prefix+canonicalBlock(v))
 	}
 	switch api {
 	case Anthropic:
@@ -550,4 +550,40 @@ func (s *Server) cache(api API, model string, body []byte) (total, cached int) {
 func StableID(prefix, content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return prefix + hex.EncodeToString(sum[:12])
+}
+
+// canonicalBlock drops cache_control markers, which move between turns and
+// are not part of the cached content. Every block is re-encoded the same way
+// so a block with a marker compares equal to the same block without one, as
+// it does at a real provider. Byte-level instability is still caught by the
+// replay check, which compares raw bodies.
+func canonicalBlock(b json.RawMessage) string {
+	var v any
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	if dec.Decode(&v) != nil {
+		return string(b)
+	}
+	var strip func(any) any
+	strip = func(v any) any {
+		switch t := v.(type) {
+		case map[string]any:
+			delete(t, "cache_control")
+			for k, e := range t {
+				t[k] = strip(e)
+			}
+		case []any:
+			for i, e := range t {
+				t[i] = strip(e)
+			}
+		}
+		return v
+	}
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(strip(v)); err != nil {
+		return string(b)
+	}
+	return strings.TrimSuffix(out.String(), "\n")
 }

@@ -21,7 +21,7 @@ func post(t *testing.T, url, body string) (int, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, b
 }
@@ -148,7 +148,7 @@ func TestErrorsAndControl(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 429 || resp.Header.Get("Retry-After") == "" || !strings.Contains(string(b), `"rate_limit_error"`) {
 		t.Errorf("rate limit: %d %s", resp.StatusCode, b)
 	}
@@ -158,7 +158,7 @@ func TestErrorsAndControl(t *testing.T) {
 	resp, _ = http.Get(srv.URL + "/_fake/exchanges")
 	var ex []Exchange
 	_ = json.NewDecoder(resp.Body).Decode(&ex)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if len(ex) != 3 || ex[1].Header.Get("X-Api-Key") != "k" || string(ex[1].Body) != `{"model":"m"}` {
 		t.Errorf("exchanges over HTTP: %+v", ex)
 	}

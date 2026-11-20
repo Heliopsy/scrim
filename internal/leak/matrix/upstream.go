@@ -47,7 +47,7 @@ func (r RemoteUpstream) Reset(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("reset: status %d", resp.StatusCode)
@@ -65,7 +65,7 @@ func (r RemoteUpstream) Exchanges(ctx context.Context) ([]fp.Exchange, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("exchanges: status %d", resp.StatusCode)
 	}

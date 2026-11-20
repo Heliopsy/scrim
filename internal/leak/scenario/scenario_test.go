@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -127,5 +129,36 @@ func TestUnstableProxyBreaksCache(t *testing.T) {
 	res := r.Run(context.Background(), scs[0], fp.Anthropic, false, leak.GenerateSet())
 	if res.Deterministic || res.CacheHits == res.CacheTurns || res.Pass {
 		t.Fatalf("unstable proxy not reported: %+v", res)
+	}
+}
+
+// Claude Code itself, through the pass-through stand-in: every session leaks
+// and Claude Code's own turns keep the prompt cache. Runs only when
+// SCRIM_LEAK_CLAUDE=1 and claude is installed, because it starts the real CLI.
+func TestClaudeDriverPassThrough(t *testing.T) {
+	if os.Getenv("SCRIM_LEAK_CLAUDE") != "1" {
+		t.Skip("set SCRIM_LEAK_CLAUDE=1 to drive the real Claude Code CLI")
+	}
+	if _, err := exec.LookPath("claude"); err != nil {
+		t.Skip("claude not installed")
+	}
+	fake := fp.New(fp.Options{})
+	up := httptest.NewServer(fake)
+	t.Cleanup(up.Close)
+	u, _ := url.Parse(up.URL)
+	px := httptest.NewServer(stub.PassThrough(u))
+	t.Cleanup(px.Close)
+	seeds := leak.GenerateSet()
+	for _, s := range scenario.AgentSessions {
+		res := scenario.ClaudeDriver{}.Run(context.Background(), matrix.Target{BaseURL: px.URL}, fake, leak.NewChecker(nil), s, seeds)
+		if res.Error != "" {
+			t.Fatalf("%s: %s", s.Name, res.Error)
+		}
+		if len(res.Findings) == 0 || res.Pass {
+			t.Errorf("%s: pass-through not reported as a leak", s.Name)
+		}
+		if res.CacheTurns == 0 || res.CacheHits != res.CacheTurns {
+			t.Errorf("%s: cache %d/%d", s.Name, res.CacheHits, res.CacheTurns)
+		}
 	}
 }
