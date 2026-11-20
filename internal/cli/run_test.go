@@ -41,7 +41,8 @@ func runScrim(environ []string, args ...string) result {
 func runEnv(t *testing.T, extra ...string) []string {
 	t.Helper()
 	home := t.TempDir()
-	return append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "XDG_CONFIG_HOME=" + home, "XDG_RUNTIME_DIR=" + home}, extra...)
+	return append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "XDG_CONFIG_HOME=" + home + "/.config",
+		"XDG_STATE_HOME=" + home + "/.local/state", "XDG_CACHE_HOME=" + home + "/.cache", "XDG_RUNTIME_DIR=" + home + "/run"}, extra...)
 }
 
 func TestRunPrintEnv(t *testing.T) {

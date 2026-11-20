@@ -64,8 +64,9 @@ type Options struct {
 	// AllowUnredacted starts the agent without scrim when scrim cannot
 	// serve it (weakening; run.allow-unredacted-start).
 	AllowUnredacted bool
-	// RuntimeDir holds session directories; empty is
-	// $XDG_RUNTIME_DIR/scrim/run or a per-user temporary directory.
+	// RuntimeDir holds session directories; empty is the agent
+	// environment's $XDG_RUNTIME_DIR/scrim/run or a per-user temporary
+	// directory.
 	RuntimeDir string
 	// Signals, when set, replaces the process's signal subscription; tests
 	// feed it.
@@ -193,7 +194,7 @@ func (p *Prepared) build(ctx context.Context, ep Endpoints) error {
 	o := p.opts
 	dir := "<session-dir>"
 	if !o.dry() {
-		d, err := sessionDir(o.RuntimeDir, p.Session.ID)
+		d, err := sessionDir(o.RuntimeDir, envMap(o.environ())["XDG_RUNTIME_DIR"], p.Session.ID)
 		if err != nil {
 			return refused("creating the session directory failed: %v", err)
 		}
@@ -343,10 +344,11 @@ func PrintEnv(ctx context.Context, o Options) (*Plan, error) {
 	return p.Plan, nil
 }
 
-// sessionDir creates the per-session directory, mode 0700.
-func sessionDir(root, id string) (string, error) {
+// sessionDir creates the per-session directory, mode 0700, under root or
+// the agent's XDG_RUNTIME_DIR.
+func sessionDir(root, xdg, id string) (string, error) {
 	if root == "" {
-		if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
+		if xdg != "" {
 			root = filepath.Join(xdg, "scrim", "run")
 		} else {
 			root = filepath.Join(os.TempDir(), fmt.Sprintf("scrim-%d", os.Getuid()), "run")

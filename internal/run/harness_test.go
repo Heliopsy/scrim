@@ -270,6 +270,20 @@ func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(
 // provider settings from the developer's shell.
 func baseEnv(t *testing.T, extra ...string) []string {
 	t.Helper()
+	return append(isolatedEnv(t), extra...)
+}
+
+// isolatedEnv keeps a child, and any scrim it starts, away from the real
+// home, config, state, cache and runtime directories.
+func isolatedEnv(t *testing.T) []string {
+	t.Helper()
 	home := t.TempDir()
-	return append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "XDG_CONFIG_HOME=" + home + "/.config"}, extra...)
+	return []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + home,
+		"XDG_CONFIG_HOME=" + home + "/.config",
+		"XDG_STATE_HOME=" + home + "/.local/state",
+		"XDG_CACHE_HOME=" + home + "/.cache",
+		"XDG_RUNTIME_DIR=" + home + "/run",
+	}
 }

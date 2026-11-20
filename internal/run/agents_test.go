@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -38,14 +37,7 @@ func buildScrim(t *testing.T) string {
 // the stand-in proxy passes through to the fake model.
 func agentEnv(t *testing.T, extra ...string) []string {
 	t.Helper()
-	home := t.TempDir()
-	return append([]string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + home,
-		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
-		"XDG_RUNTIME_DIR=" + home,
-		"TERM=dumb",
-	}, extra...)
+	return append(isolatedEnv(t), append([]string{"TERM=dumb"}, extra...)...)
 }
 
 // toolRoundTrip asks for one shell command, then one MCP tool call, then
