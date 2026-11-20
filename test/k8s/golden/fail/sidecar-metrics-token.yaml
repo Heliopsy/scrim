@@ -1,0 +1,3 @@
+# expect: sidecar mode with metrics needs secrets.existing.metrics
+metrics: {enabled: true}
+sidecar: {enabled: true, egressGuard: {image: registry.example.com/nft:1}}

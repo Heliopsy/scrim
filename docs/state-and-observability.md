@@ -41,12 +41,66 @@ through the admin API instead.
 - Replicas starting together migrate once, under an advisory lock.
 - Events are written to the outbox under a transaction advisory lock, so event IDs become visible
   in commit order. A replica tailing the outbox by ID never misses an event that committed late,
-  for example a grant revocation made through another replica.
+  for example a grant revocation made through another replica. The same transaction sends a
+  `NOTIFY` for `events.backend: postgres` ([Replicas and events](#replicas-and-events)).
 - A grant's last use is a single conditional `UPDATE`: two replicas cannot both take it.
 - Sessions are shared: a `scrim run` token minted through one replica is accepted by every other,
   and revoking an agent's sessions is one conditional `UPDATE`.
 - Audit IDs are unique and increasing per transaction but, unlike event IDs, not guaranteed to be
   visible in commit order. Page the audit log with `--before`, not as a live tail.
+
+## Replicas and events
+
+Several control plane replicas can share one PostgreSQL database. Each replica follows the event
+outbox (rows written in the same transaction as the change they announce) by increasing ID, from
+the newest event when it starts, and acts on what other replicas did:
+
+| Event | What a replica does |
+| --- | --- |
+| `approval.decided` | releases the requests it holds for that approval at once |
+| `breakglass.changed` | re-reads the deny-all state, pushes a snapshot to its data plane and denies its pending approvals |
+| `config.reloaded` | logs a warning when a peer announces a configuration digest different from its own |
+| `grant.changed`, `session.revoked` | nothing: grants and sessions are read from the database on every request, so a revocation made on one replica is refused on every replica's next request |
+
+The data plane keeps no allow answer and no grant between requests: every operation that needs one
+asks the control plane again, so it adds nothing to these bounds.
+
+`events.backend` decides how a replica learns that there is something new in the outbox:
+
+| `events.backend` | How | Replicas |
+| --- | --- | --- |
+| `local` (default) | reads the outbox every `events.poll-interval` (1 s), and at once after a commit made by this process | one |
+| `postgres` | every outbox write sends a `NOTIFY` on the channel `scrim_events`, delivered on commit to a dedicated `LISTEN` connection (`application_name` `scrim-events`, outside the pool) on every replica | any; needs `state.backend: postgres` |
+
+A notification carries nothing; the outbox is the record. A replica reads the outbox from the last
+event it delivered when it starts, after every listener (re)connection and on every notification,
+so each event is delivered once and in order, and a notification lost with a connection loses no
+event. While the listener is connected the outbox is also read once a minute as a safety net.
+
+`deployment.replicas` (default 1) states how many replicas share the configuration; the Helm chart
+sets it. With more than 1, start-up fails when `events.backend` is `local` or `state.backend` is
+`memory` or `sqlite`, naming the setting to change.
+
+Bounds on how long a change made on one replica takes to act on another:
+
+| Situation | Bound |
+| --- | --- |
+| `postgres`, listener connected | the commit plus one round trip; tens of milliseconds on a local network |
+| `postgres`, listener down | `events.poll-interval` while it reconnects (backoff 250 ms doubling to 30 s), then everything missed is read on reconnect |
+| `local`, one replica | at once for changes the process made itself, otherwise `events.poll-interval` |
+| no event read at all | `approvals.poll-interval` for a held request and `policy.deny-all-refresh` for break-glass, which every replica still polls |
+
+When the listener's connection drops, the replica logs a warning, sets `scrim_events_listener_up` to
+0, polls the outbox every `events.poll-interval` and reconnects with jittered backoff; it also
+checks an idle connection every 30 s, so one that died silently is noticed. `scrim_events_last_id`
+is the newest event a replica delivered and `scrim_events_delivered_total{kind}` counts deliveries;
+replicas whose `scrim_events_last_id` stays apart are not reading the outbox.
+
+Each replica records `config.reloaded` (an audit entry and an event) when it starts serving and
+after each reload. Its subject is `sha256:` and 16 hex digits over every setting's key and effective
+value, with secret-ref settings in their reference form: it identifies a configuration without
+revealing any of it. A replica that sees a peer announce another digest logs `replicas run different
+configurations` once per digest; during a rolling update that is expected.
 
 ### Migrations
 
@@ -93,29 +147,17 @@ value was loaded), and the finished line is scrubbed again.
 
 ## Metrics and health
 
-`metrics.listen` (empty disables) serves:
+The health endpoints are served on `metrics.listen` (default `127.0.0.1:9792`) whenever metrics
+are enabled (`metrics.enabled`, `scrim proxy --metrics`) or `metrics.listen` is set explicitly:
 
 | Path | Meaning |
 | --- | --- |
 | `/healthz`, `/livez` | the process answers |
 | `/readyz` | scrim can redact safely; failing checks are named, 503 otherwise |
-| `/metrics` | Prometheus text format, scrubbed as a whole |
+| `metrics.path` (`/metrics`) | Prometheus text format, scrubbed as a whole; only while `metrics.enabled` |
 
-| Metric | Labels |
-| --- | --- |
-| `scrim_redaction_replacements_total` | provider, rule, agent |
-| `scrim_guard_repairs_total` | provider, rule, agent |
-| `scrim_guard_refusals_total` | provider, agent |
-| `scrim_detector_fallback_hits_total` | provider, rule, agent |
-| `scrim_proxy_added_latency_seconds` | provider, stage (redaction, guard, resolution) |
-| `scrim_proxy_chunk_added_latency_seconds` | provider, stage |
-| `scrim_store_up`, `scrim_store_degraded`, `scrim_store_values_loaded`, `scrim_store_last_refresh_timestamp_seconds` | store |
-| `scrim_approval_outcomes_total` | rule, notifier, outcome |
-| `scrim_approval_wait_seconds` | rule, notifier |
-| `scrim_audit_delivered_total`, `scrim_audit_dropped_total` | sink |
-| `scrim_state_up` | backend |
-| `scrim_state_transaction_seconds` | backend, kind (view, update) |
-| `scrim_config_weakened_settings` | setting |
+Every metric, the data plane's included, its labels, the alert rules with their runbooks, the
+dashboard and the security of the endpoint are in [monitoring.md](monitoring.md).
 
 ## Traces
 

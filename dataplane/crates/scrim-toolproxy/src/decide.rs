@@ -33,6 +33,9 @@ pub struct ClientInfo {
     /// The verifier of the session token sent as the password, when the password is a session
     /// token of the named session. The token itself is wiped as soon as it is hashed.
     pub verifier: Option<SessionVerifier>,
+    /// A Kubernetes service account token sent as the password of the user [`KUBERNETES_USER`]
+    /// (`HTTPS_PROXY=http://k8s:<token>@host:port`), held for the control plane to verify.
+    pub kubernetes_token: Option<KubernetesToken>,
 }
 
 impl ClientInfo {
@@ -54,7 +57,7 @@ impl ClientInfo {
             Some(i) => (&decoded[..i], Some(&decoded[i + 1..])),
             None => (&decoded[..], None),
         };
-        if !is_session_id(user) {
+        if !is_session_id(user) || user == KUBERNETES_USER.as_bytes() {
             return None;
         }
         let user = String::from_utf8_lossy(user).into_owned();
@@ -64,6 +67,68 @@ impl ClientInfo {
             .map(|(_, v)| v);
         Some((user, verifier))
     }
+
+    /// The Kubernetes service account token in `headers`: the password of
+    /// `Proxy-Authorization: Basic k8s:<token>`, when it is shaped like a JWT.
+    pub fn kubernetes_from(headers: &HeaderMap) -> Option<KubernetesToken> {
+        let v = headers.get(header::PROXY_AUTHORIZATION)?.as_bytes();
+        if v.len() <= 6 || !v[..6].eq_ignore_ascii_case(b"basic ") {
+            return None;
+        }
+        let decoded = zeroize::Zeroizing::new(STANDARD.decode(v[6..].trim_ascii()).ok()?);
+        let i = decoded.iter().position(|b| *b == b':')?;
+        if &decoded[..i] != KUBERNETES_USER.as_bytes() {
+            return None;
+        }
+        parse_kubernetes_token(&decoded[i + 1..])
+    }
+}
+
+/// The proxy user name that marks the password as a Kubernetes service account token.
+pub const KUBERNETES_USER: &str = "k8s";
+
+/// The longest Kubernetes token accepted; projected tokens are around a kilobyte.
+const KUBERNETES_TOKEN_MAX: usize = 16 * 1024;
+
+/// A Kubernetes service account token (a JWT) a request carried, kept only until the control
+/// plane has verified it in an ask (`AskCaller.kubernetes_token`, design D14). Zeroed on drop;
+/// `Debug` never shows it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct KubernetesToken(zeroize::Zeroizing<Vec<u8>>);
+
+impl KubernetesToken {
+    /// The token bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for KubernetesToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("KubernetesToken(..)")
+    }
+}
+
+/// A Kubernetes service account token, when `tok` is shaped like a signed JWT: three non-empty
+/// base64url segments, the first starting `eyJ` (a JSON object), at most 16 KiB. The signature
+/// and claims are verified by the control plane, not here.
+pub fn parse_kubernetes_token(tok: &[u8]) -> Option<KubernetesToken> {
+    let tok = tok.trim_ascii();
+    if tok.len() > KUBERNETES_TOKEN_MAX || !tok.starts_with(b"eyJ") {
+        return None;
+    }
+    let mut parts = 0;
+    for seg in tok.split(|b| *b == b'.') {
+        if seg.is_empty()
+            || !seg
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        {
+            return None;
+        }
+        parts += 1;
+    }
+    (parts == 3).then(|| KubernetesToken(zeroize::Zeroizing::new(tok.to_vec())))
 }
 
 /// Whether `s` is a plain session id: 1 to 128 of `A-Za-z0-9._-`.
@@ -184,6 +249,35 @@ mod tests {
         }
         h.insert(header::PROXY_AUTHORIZATION, "Bearer x".parse().unwrap());
         assert_eq!(ClientInfo::session_from(&h), None);
+    }
+
+    #[test]
+    fn kubernetes_token_password() {
+        let jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJlLWJ5dGVz";
+        let mut h = HeaderMap::new();
+        let basic = |s: &str| format!("Basic {}", STANDARD.encode(s)).parse().unwrap();
+        h.insert(header::PROXY_AUTHORIZATION, basic(&format!("k8s:{jwt}")));
+        let t = ClientInfo::kubernetes_from(&h).unwrap();
+        assert_eq!(t.as_bytes(), jwt.as_bytes());
+        assert!(!format!("{t:?}").contains("eyJ"));
+        // The k8s user is never a session.
+        assert_eq!(ClientInfo::credentials_from(&h), None);
+        // Another user name, or a password that is not a JWT, is no Kubernetes token.
+        h.insert(header::PROXY_AUTHORIZATION, basic(&format!("sess:{jwt}")));
+        assert!(ClientInfo::kubernetes_from(&h).is_none());
+        for bad in [
+            "k8s:",
+            "k8s:not-a-jwt",
+            "k8s:eyJa.b",
+            "k8s:eyJa..c",
+            "k8s:eyJa.b.c.d",
+            "k8s:eyJa.b c.d",
+        ] {
+            h.insert(header::PROXY_AUTHORIZATION, basic(bad));
+            assert!(ClientInfo::kubernetes_from(&h).is_none(), "{bad}");
+        }
+        let long = format!("eyJ{}.a.b", "a".repeat(17 * 1024));
+        assert!(parse_kubernetes_token(long.as_bytes()).is_none());
     }
 
     #[test]

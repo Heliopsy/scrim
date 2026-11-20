@@ -60,6 +60,55 @@ forwarded with an incomplete redaction set.
 - **THEN** the request is refused with an error saying redaction is not ready
 - **AND** nothing is forwarded to the provider
 
+### Requirement: Redact targets name secrets, folders or globs
+
+A redact target SHALL be one secret, every secret under a folder (`<folder>/*`), or a glob: a
+target ending in `*` right after part of a name, matching every secret whose path starts with the
+text before the `*`. A `*` anywhere else SHALL be refused at configuration time, so a pattern is
+never read as a literal secret name. A glob SHALL be accepted only on a store that declares glob
+listing (env and file).
+
+#### Scenario: Name-prefix glob on the env store
+
+- **WHEN** an env store with `prefix: SCRIM_SECRET_` has `redact: [local://SCRIM_SECRET_*]` and `SCRIM_SECRET_X` is set
+- **THEN** the value of `SCRIM_SECRET_X` is loaded into the redaction set and redacted from provider requests
+- **AND** variables outside the prefix, such as `SCRIM_SECRETX` or `HOME`, are not loaded
+
+#### Scenario: Glob on a store that cannot expand it
+
+- **WHEN** an OpenBao store has `redact: [bao://kv/app-*]`
+- **THEN** `scrim config validate` and start-up fail with an error naming the target and saying the store does not match names by a trailing `*`
+
+### Requirement: Empty redact targets refuse start-up
+
+Every redact target SHALL report how many values it holds. A target that holds no value after the
+store's first successful load SHALL keep the store not ready and fail start-up with an error naming
+the target, unless the weakening setting `redaction.allow-empty-targets` is on. An unreachable store
+is an outage, not an empty target, and keeps the not-ready behaviour.
+
+#### Scenario: A target that matches nothing
+
+- **WHEN** a store has `redact: [env://SCRIM_SECRET_NOTHING_*]` and no variable matches
+- **THEN** start-up fails with an error naming `env://SCRIM_SECRET_NOTHING_*` and the setting that allows it
+- **AND** no provider request is forwarded
+
+#### Scenario: Empty target explicitly allowed
+
+- **WHEN** the same configuration runs with `redaction.allow-empty-targets: true`
+- **THEN** scrim starts and logs a warning for the weakening setting
+- **AND** `scrim status` lists the setting under weakened protections and the store as degraded with the target at 0 values
+
+### Requirement: Status never claims redaction for an empty target
+
+`scrim status` and `scrim doctor` SHALL show the value count of every redact target, and SHALL NOT
+report redaction as active, or a store as healthy, while one of its targets holds 0 values.
+
+#### Scenario: Status with an empty target
+
+- **WHEN** a daemon runs with an empty target allowed by `redaction.allow-empty-targets`
+- **THEN** `scrim status` shows the target at 0 values, the store as degraded and the redaction protection as inactive, naming the target
+- **AND** `scrim doctor` warns that the target protects nothing
+
 ### Requirement: Values are held in memory only
 
 The system SHALL keep secret values only in process memory. Values SHALL NOT be written to the state
@@ -83,6 +132,7 @@ refreshed redaction set SHALL take effect for new requests without a restart.
 - **THEN** within one refresh interval plus jitter, both the new value and the previous value are
   redacted
 - **AND** the previous value stays in the redaction set for a configurable retention period
+- **AND** only the new value is injectable, and the data plane accepts the snapshot that carries both
 
 #### Scenario: Refreshes are spread out
 
@@ -124,6 +174,11 @@ a stale value past its configured staleness limit, or the placeholder itself tow
   staleness limit, and an outbound request needs it
 - **THEN** the request is refused with an error naming the reference
 - **AND** the value is still redacted
+
+#### Scenario: Placeholder of a value that has not loaded
+
+- **WHEN** a store has not delivered a catalog credential yet and a tool request toward its bound host carries its placeholder
+- **THEN** the request is refused with `credential_unavailable` and the placeholder is not forwarded as text
 
 ### Requirement: Agents see names, never values
 
@@ -256,6 +311,75 @@ update and patch without read.
 - **AND** scrim reports it as write-only and does not try to load it into the redaction set from the
   store, keeping only the value it just wrote
 
+### Requirement: Store login with the pod's Kubernetes service account
+
+When scrim runs in Kubernetes, the OpenBao adapter (`auth.method: kubernetes`) and the Infisical
+adapter (`auth.method: kubernetes-auth`) SHALL log in with the service account token of scrim's own
+pod, so that no static store credential exists in the cluster for scrim. A static credential (token,
+role ID, secret ID, client ID or client secret) configured alongside one of these methods SHALL be
+refused at validation. A refused login SHALL be reported as a permission error naming the store.
+
+#### Scenario: No static store credential in the cluster
+
+- **WHEN** scrim is deployed in a cluster with OpenBao Kubernetes auth bound to its service account
+  name, namespace and audience
+- **THEN** scrim reads and writes secrets with the token it obtains at login
+- **AND** the scrim configuration and the cluster hold no OpenBao token, role ID or secret ID
+
+#### Scenario: Static credential left in the configuration
+
+- **WHEN** a store uses `auth.method: kubernetes` and the configuration also sets `secret-id`
+- **THEN** validation fails naming the option, without echoing its value
+
+#### Scenario: Wrong role
+
+- **WHEN** the configured OpenBao role does not exist or is not bound to scrim's service account
+- **THEN** the store reports a permission error naming the store
+- **AND** no service account token or session token appears in the error
+
+### Requirement: Service account token read at every login
+
+The adapters SHALL read the configured service account token file again at every login, never only
+at start-up, and SHALL hold its content only as a secret value that is wiped once the login request
+is sent. Neither the service account token nor the session token a login issues SHALL appear in any
+error, log, audit entry or test output.
+
+#### Scenario: Rotated service account token
+
+- **WHEN** the kubelet rotates the projected token in the token file and scrim next logs in
+- **THEN** the login presents the new token, not the one read at start-up
+
+#### Scenario: Unreadable token file
+
+- **WHEN** the token file is missing or empty at login
+- **THEN** the store reports a permission error naming the option and the file
+- **AND** the store is not contacted
+
+### Requirement: Store login tokens are renewed before they expire
+
+The OpenBao adapter SHALL renew a renewable login token with renew-self at two thirds of its TTL,
+and SHALL log in again instead when the token is not renewable, when renewal fails or is refused, or
+when a renewal is capped by the max TTL. The Infisical adapter SHALL log in again before the access
+token's `expiresIn` runs out. Both SHALL log in again once when the store refuses a token as expired
+or revoked, and report a second refusal as a permission error.
+
+#### Scenario: OpenBao token renewed
+
+- **WHEN** two thirds of a renewable login token's TTL have passed
+- **THEN** scrim renews the token with renew-self and keeps using it
+
+#### Scenario: Renewal refused
+
+- **WHEN** renew-self fails, or comes back capped by the token's max TTL and that lease is used up
+- **THEN** scrim logs in again instead of renewing, with Kubernetes auth presenting a freshly read
+  service account token
+
+#### Scenario: Revoked token
+
+- **WHEN** the store refuses scrim's session token on a read
+- **THEN** scrim logs in once and retries the read
+- **AND** a second refusal is reported as a permission error
+
 ### Requirement: OpenBao control groups for configured paths
 
 The system SHALL support OpenBao control groups on configured paths: when a read or write is held by a
@@ -284,7 +408,7 @@ keyring. Several instances of one adapter SHALL be configurable side by side und
 ### Requirement: Adapters declare their capabilities
 
 Every adapter SHALL declare which operations it supports (read, list, watch, write, generate, dynamic
-credentials). An operation the target store does not support SHALL be refused with an error naming
+credentials, glob listing). An operation the target store does not support SHALL be refused with an error naming
 the store and the operation, before any partial write, and `scrim doctor` SHALL show the capability
 matrix of every configured store.
 

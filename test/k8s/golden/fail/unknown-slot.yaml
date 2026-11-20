@@ -1,0 +1,2 @@
+# expect: secrets.existing.redis: no such slot
+secrets: {existing: {redis: x}}

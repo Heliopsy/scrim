@@ -4,9 +4,9 @@
 # scripts/release/tools.sh DIR TOOL...
 #
 # Installs release tools into DIR/bin at the versions release.env pins. TOOL is
-# cosign, syft or cargo-auditable.
+# cosign, syft, helm or cargo-auditable.
 #
-# cosign and syft are GitHub release assets for linux/amd64 and are refused
+# cosign, syft and helm are release assets for linux/amd64 and are refused
 # unless their sha256 is the pinned one. cargo-auditable is built from crates.io
 # with --locked, so its dependency tree is the one its Cargo.lock records and
 # every crate is checked against the registry index checksum.
@@ -42,6 +42,11 @@ for tool in "$@"; do
         "$SYFT_LINUX_AMD64_SHA256" "$dir/syft.tar.gz"
       tar -xzf "$dir/syft.tar.gz" -C "$dir/bin" syft
       rm -f "$dir/syft.tar.gz"
+      ;;
+    helm)
+      fetch "https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz" "$HELM_LINUX_AMD64_SHA256" "$dir/helm.tar.gz"
+      tar -xzf "$dir/helm.tar.gz" -C "$dir/bin" --strip-components=1 linux-amd64/helm
+      rm -f "$dir/helm.tar.gz"
       ;;
     cargo-auditable)
       # From dataplane/, so rustup takes the toolchain rust-toolchain.toml pins

@@ -51,6 +51,7 @@ const (
 	DataPlane_Asks_FullMethodName          = "/scrim.dataplane.v1.DataPlane/Asks"
 	DataPlane_Status_FullMethodName        = "/scrim.dataplane.v1.DataPlane/Status"
 	DataPlane_Captures_FullMethodName      = "/scrim.dataplane.v1.DataPlane/Captures"
+	DataPlane_Metrics_FullMethodName       = "/scrim.dataplane.v1.DataPlane/Metrics"
 )
 
 // DataPlaneClient is the client API for DataPlane service.
@@ -81,6 +82,13 @@ type DataPlaneClient interface {
 	// with no answer by its deadline, an error answer, or no attached control
 	// plane withholds the field from the agent.
 	Captures(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CaptureResult, CaptureRequest], error)
+	// Metrics returns the data plane's own counters and histograms, which it
+	// aggregates locally (atomics, fixed buckets) off the request path. The
+	// control plane calls it once per scrape of its metrics endpoint and
+	// exposes the families next to its own. A data plane started without
+	// metrics answers with enabled false and no families; one older than this
+	// call answers UNIMPLEMENTED, which the control plane treats the same way.
+	Metrics(ctx context.Context, in *MetricsRequest, opts ...grpc.CallOption) (*MetricsResponse, error)
 }
 
 type dataPlaneClient struct {
@@ -166,6 +174,16 @@ func (c *dataPlaneClient) Captures(ctx context.Context, opts ...grpc.CallOption)
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type DataPlane_CapturesClient = grpc.BidiStreamingClient[CaptureResult, CaptureRequest]
 
+func (c *dataPlaneClient) Metrics(ctx context.Context, in *MetricsRequest, opts ...grpc.CallOption) (*MetricsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MetricsResponse)
+	err := c.cc.Invoke(ctx, DataPlane_Metrics_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DataPlaneServer is the server API for DataPlane service.
 // All implementations must embed UnimplementedDataPlaneServer
 // for forward compatibility.
@@ -194,6 +212,13 @@ type DataPlaneServer interface {
 	// with no answer by its deadline, an error answer, or no attached control
 	// plane withholds the field from the agent.
 	Captures(grpc.BidiStreamingServer[CaptureResult, CaptureRequest]) error
+	// Metrics returns the data plane's own counters and histograms, which it
+	// aggregates locally (atomics, fixed buckets) off the request path. The
+	// control plane calls it once per scrape of its metrics endpoint and
+	// exposes the families next to its own. A data plane started without
+	// metrics answers with enabled false and no families; one older than this
+	// call answers UNIMPLEMENTED, which the control plane treats the same way.
+	Metrics(context.Context, *MetricsRequest) (*MetricsResponse, error)
 	mustEmbedUnimplementedDataPlaneServer()
 }
 
@@ -221,6 +246,9 @@ func (UnimplementedDataPlaneServer) Status(context.Context, *StatusRequest) (*St
 }
 func (UnimplementedDataPlaneServer) Captures(grpc.BidiStreamingServer[CaptureResult, CaptureRequest]) error {
 	return status.Error(codes.Unimplemented, "method Captures not implemented")
+}
+func (UnimplementedDataPlaneServer) Metrics(context.Context, *MetricsRequest) (*MetricsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Metrics not implemented")
 }
 func (UnimplementedDataPlaneServer) mustEmbedUnimplementedDataPlaneServer() {}
 func (UnimplementedDataPlaneServer) testEmbeddedByValue()                   {}
@@ -322,6 +350,24 @@ func _DataPlane_Captures_Handler(srv interface{}, stream grpc.ServerStream) erro
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type DataPlane_CapturesServer = grpc.BidiStreamingServer[CaptureResult, CaptureRequest]
 
+func _DataPlane_Metrics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MetricsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DataPlaneServer).Metrics(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DataPlane_Metrics_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DataPlaneServer).Metrics(ctx, req.(*MetricsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DataPlane_ServiceDesc is the grpc.ServiceDesc for DataPlane service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -340,6 +386,10 @@ var DataPlane_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Status",
 			Handler:    _DataPlane_Status_Handler,
+		},
+		{
+			MethodName: "Metrics",
+			Handler:    _DataPlane_Metrics_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

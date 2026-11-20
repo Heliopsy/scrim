@@ -66,6 +66,14 @@ service DataPlane {
   // with no answer by its deadline, an error answer, or no attached control
   // plane withholds the field from the agent.
   rpc Captures(stream CaptureResult) returns (stream CaptureRequest);
+
+  // Metrics returns the data plane's own counters and histograms, which it
+  // aggregates locally (atomics, fixed buckets) off the request path. The
+  // control plane calls it once per scrape of its metrics endpoint and
+  // exposes the families next to its own. A data plane started without
+  // metrics answers with enabled false and no families; one older than this
+  // call answers UNIMPLEMENTED, which the control plane treats the same way.
+  rpc Metrics(MetricsRequest) returns (MetricsResponse);
 }
 
 message HelloRequest {
@@ -123,6 +131,15 @@ message Snapshot {
   // means the data plane keeps the CA it has (generating an ephemeral one
   // when it has none).
   repeated CaCertificate tool_proxy_ca = 11;
+  // unavailable are catalog credentials bound to hosts whose value the
+  // stores have not delivered yet (a store still loading, a read that
+  // failed): ref, name, slug, bindings and declared placeholders, never a
+  // value (`value` is empty). The tool proxy treats their placeholders as
+  // credentials without a value and refuses a request that carries one
+  // toward their bound hosts with `credential_unavailable` instead of
+  // forwarding it as text. The redaction core ignores them. An entry whose
+  // reference or name also has a value in `values` is ignored.
+  repeated ValueEntry unavailable = 12;
 }
 
 // CaCertificate is one generation of the tool-proxy CA.
@@ -570,6 +587,16 @@ message AskCaller {
   // a secret field. Empty when the request named a session without its
   // token: such a caller is not verified and is evaluated as unknown.
   bytes session_proof = 6;
+  // kubernetes_token is the projected Kubernetes service account token the
+  // request carried instead of a session (design D14, "Kubernetes service
+  // account tokens"): the password of `Proxy-Authorization: Basic k8s:<token>`
+  // on the forward proxy, or a JWT as the value of `x-scrim-session` on a
+  // base-URL listener. The control plane must see the token itself to verify
+  // it (TokenReview), so unlike a session token it travels in the ask. It is
+  // a secret field: redacted in Debug and zeroed on drop in scrim-proto,
+  // wiped by the control plane after verification, never logged and never
+  // forwarded. Empty when the request carried no such token.
+  bytes kubernetes_token = 7;
 }
 
 message AskAnswer {
@@ -674,4 +701,49 @@ message ListenerStatus {
   // error says why the listener is not bound.
   string error = 4;
   ListenerKind kind = 5;
+}
+
+message MetricsRequest {
+  uint32 protocol = 1;
+}
+
+// MetricsResponse carries metric families in Prometheus' data model. Names
+// start with `scrim_dataplane_`; label values are route names, provider
+// codecs, refusal codes and other enumerations, never a reference, a
+// placeholder or a value.
+message MetricsResponse {
+  uint32 protocol = 1;
+  // enabled is false when the data plane was started without metrics.
+  bool enabled = 2;
+  repeated MetricFamily families = 3;
+}
+
+enum MetricType {
+  METRIC_TYPE_UNSPECIFIED = 0;
+  METRIC_TYPE_COUNTER = 1;
+  METRIC_TYPE_GAUGE = 2;
+  METRIC_TYPE_HISTOGRAM = 3;
+}
+
+message MetricFamily {
+  string name = 1;
+  string help = 2;
+  MetricType type = 3;
+  repeated string label_names = 4;
+  // bucket_bounds are the histogram upper bounds in base units, ascending,
+  // without +Inf.
+  repeated double bucket_bounds = 5;
+  repeated MetricSample samples = 6;
+}
+
+message MetricSample {
+  // label_values match MetricFamily.label_names by position.
+  repeated string label_values = 1;
+  // value is the counter or gauge value.
+  double value = 2;
+  // bucket_counts are cumulative counts per bucket bound (histograms).
+  repeated uint64 bucket_counts = 3;
+  // count and sum are the histogram's observation count and sum.
+  uint64 count = 4;
+  double sum = 5;
 }

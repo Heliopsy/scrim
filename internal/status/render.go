@@ -55,6 +55,18 @@ func WriteHuman(w io.Writer, r Report) error {
 		}
 	}
 
+	if sv := r.Service; sv != nil {
+		p.section("Service")
+		kind := sv.Mode + " service"
+		if sv.Mode == "quadlet" {
+			kind = "rootless Quadlet container"
+			if sv.System {
+				kind = "system Quadlet container"
+			}
+		}
+		p.line("  %s: %s (%s, manifest %s)", sv.Unit, sv.Active, kind, sv.Manifest)
+	}
+
 	p.section("Interception")
 	if len(r.Interception) == 0 {
 		p.line("  none active")
@@ -89,6 +101,9 @@ func WriteHuman(w io.Writer, r Report) error {
 			}
 			_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%d values\trefreshed %s\t%s\n",
 				s.Name, s.Kind, state, s.Values, when(s.LastRefresh), s.Reason)
+			for _, t := range s.Targets {
+				_, _ = fmt.Fprintf(tw, "    redact %s\t\t%s\t%d values\t\t\n", t.Target, onOff(t.Values > 0, "ok", "EMPTY"), t.Values)
+			}
 		}
 	})
 

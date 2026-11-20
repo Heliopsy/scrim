@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/heliopsy/scrim/internal/agentapi"
+	"github.com/heliopsy/scrim/internal/agentstore"
 	"github.com/heliopsy/scrim/internal/app"
 	"github.com/heliopsy/scrim/internal/approval"
 	"github.com/heliopsy/scrim/internal/ca"
@@ -50,9 +51,12 @@ import (
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/dataplane"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
+	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/placeholder"
+	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/secret"
+	"github.com/heliopsy/scrim/internal/status"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/refresh"
 	"github.com/heliopsy/scrim/internal/version"
@@ -126,6 +130,9 @@ type Info struct {
 	DataPlane *DataPlaneInfo `json:"data_plane,omitempty"`
 	// Runtime is what the daemon protects right now.
 	Runtime Runtime `json:"runtime"`
+	// Stores is every store's freshness and the values each redact target
+	// holds.
+	Stores []status.Store `json:"stores"`
 }
 
 // DataPlaneInfo summarises the data plane's status. Counts and references,
@@ -154,24 +161,29 @@ func dataPlaneInfo(st *pb.StatusResponse) *DataPlaneInfo {
 
 // Daemon is a running control plane.
 type Daemon struct {
-	app      *app.App
-	sup      *dataplane.Supervisor
-	builder  *SnapshotBuilder
-	catalog  *catalog.Manager
-	runtime  *agentapi.Runtime
-	tokens   *sessionTokens
-	pusher   *pusher
-	log      *slog.Logger
-	started  time.Time
-	capture  string
-	infoPath string
-	trust    func() string
+	app     *app.App
+	sup     *dataplane.Supervisor
+	builder *SnapshotBuilder
+	catalog *catalog.Manager
+	runtime *agentapi.Runtime
+	tokens  *sessionTokens
+	// kubeTokens are the service account tokens scrim verified, redacted
+	// until they expire.
+	kubeTokens *sessionTokens
+	pusher     *pusher
+	log        *slog.Logger
+	started    time.Time
+	capture    string
+	infoPath   string
+	trust      func() string
 
 	mu        sync.Mutex
 	addrs     Addrs
 	dpReady   atomic.Bool
 	dpProblem string
 	dpStatus  *pb.StatusResponse
+
+	control *controlMetrics
 
 	cancel  context.CancelFunc
 	servers []*http.Server
@@ -260,6 +272,9 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	}
 	d.cleanup = append(d.cleanup, d.catalog.Close)
 
+	// ownCA is the daemon's own CA, whose generations are fresh copies the
+	// metrics collector may wipe.
+	var ownCA func() []CAGeneration
 	if o.CA == nil {
 		m, err := ca.Open(ctx, cfg, obs.WithComponent(a.Log, "ca"))
 		if err != nil {
@@ -268,17 +283,36 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		}
 		d.cleanup = append(d.cleanup, m.Close)
 		o.CA, o.CARun = caGenerations(m), m.Run
+		ownCA = o.CA
 		d.trust = m.TrustBundlePEM
 	}
 
-	d.tokens = newSessionTokens(func() { d.pusher.Trigger() })
+	d.tokens = newSessionTokens(sessionTokenStore, func() { d.pusher.Trigger() })
 	d.cleanup = append(d.cleanup, d.tokens.close)
+	d.kubeTokens = newSessionTokens(kubeTokenStore, func() { d.pusher.Trigger() })
+	d.cleanup = append(d.cleanup, d.kubeTokens.close)
 	values := make([]ValueSource, 0, len(a.Refreshers)+1)
 	for _, r := range a.Refreshers {
 		values = append(values, r)
 	}
-	values = append(values, d.tokens)
+	values = append(values, d.tokens, d.kubeTokens)
 	pp := a.PolicyParts
+	// Per-agent store identity: the gate checks it on every use of a
+	// governed store's secrets, and the snapshot sends those uses to the
+	// control plane.
+	access, err := agentstore.New(agentstore.Options{
+		Login: agentstore.Login.Get(cfg), Credentials: agentstore.Credentials.Get(cfg), Lookup: a.Stores.Lookup,
+		Resolve: func(ctx context.Context, ref config.SecretRef) (secret.Value, error) {
+			return a.Config.Current().ResolveRef(ctx, ref)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	governed := access.Governed()
+	if len(governed) > 0 {
+		pp.Gate.StoreAccess = access
+	}
 	d.builder = &SnapshotBuilder{
 		Config:    a.Config.Current,
 		Values:    values,
@@ -289,6 +323,9 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 			ver, _ := pp.Rules.Health()
 			rs := pp.Rules.RuleSet()
 			snap := rs.Snapshot(ver, pp.BreakGlass.Active())
+			if len(governed) > 0 {
+				snap.Rules = append([]policy.SnapshotRule{policy.StoreIdentityRule(governed)}, snap.Rules...)
+			}
 			p := snap.Proto()
 			p.AskTimeoutMillis = askTimeoutMillis(approval.Timeout.Get(a.Config.Current()), rs.Config())
 			return p
@@ -315,6 +352,11 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	d.sup.OnEvents = sink.record
 	cw := &captureWriter{gate: pp.Gate, refreshers: d.refresherFor, placeholder: d.builder.Placeholder, state: a.State, log: d.log}
 	d.sup.OnCapture = cw.capture
+	if obs.MetricsEnabled.Get(cfg) {
+		// The data plane aggregates its own metrics only when asked to.
+		d.sup.Options.ExtraEnv = append(d.sup.Options.ExtraEnv, "SCRIM_DP_METRICS=1")
+		d.wireMetrics(a, ownCA)
+	}
 
 	d.pusher = newPusher(d.sup, func() time.Duration { return PushDebounce.Get(a.Config.Current()) }, d.log)
 	d.subscribe(runCtx)
@@ -323,11 +365,13 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	if notices == nil {
 		notices = logw
 	}
-	d.runtime, err = agentapi.New(a, agentapi.Options{Stderr: notices, Placeholders: placeholders{d.builder}, OnMint: d.tokens.add})
+	d.runtime, err = agentapi.New(a, agentapi.Options{Stderr: notices, Placeholders: placeholders{d.builder}, OnMint: d.tokens.add,
+		OnKubeToken: d.kubeTokens.addKube})
 	if err != nil {
 		return nil, err
 	}
 	d.addrs.AgentAPI, d.addrs.EntryPage = d.runtime.Socket, d.runtime.EntryURL
+	d.runtime.SetEndpoints(d.agentEndpoints)
 	// Asks name their caller by transport; the gate verifies sessions and
 	// maps peers with the agent API's resolver. Set before anything runs.
 	pp.Gate.Callers = d.runtime.Resolver
@@ -340,6 +384,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 
 	// Everything is bound: start the loops.
 	a.Start(runCtx)
+	d.watchFirstLoads(runCtx)
 	d.goRun("policy", func() error { a.RunPolicy(runCtx); return nil })
 	d.goRun("catalog", func() error { return ignoreCanceled(d.catalog.Run(runCtx)) })
 	d.goRun("agent API", func() error { return ignoreCanceled(d.runtime.Serve(runCtx)) })
@@ -477,7 +522,7 @@ func (d *Daemon) refresherFor(ref stores.Ref) (*refresh.Refresher, error) {
 
 // listenControl binds the admin, decision and metrics listeners.
 func (d *Daemon) listenControl(cfg *config.Config) error {
-	a, pp := d.app, d.app.PolicyParts
+	pp := d.app.PolicyParts
 	tok, _ := cfg.Secret(AdminToken)
 	adm, err := listenAdmin(approval.AdminURL.Get(cfg), tok)
 	if err != nil {
@@ -502,14 +547,48 @@ func (d *Daemon) listenControl(cfg *config.Config) error {
 		d.addrs.Decision = ln.Addr().String()
 		d.serve("decision", ln, dm, nil)
 	}
-	if addr := obs.MetricsListen.Get(cfg); addr != "" {
-		ln, err := net.Listen("tcp", addr)
-		if err != nil {
-			return fmt.Errorf("metrics.listen: %w", err)
-		}
-		d.addrs.Metrics = ln.Addr().String()
-		d.serve("metrics", ln, obs.Mux(a.Health, a.Metrics), nil)
+	return d.listenMetrics(cfg)
+}
+
+// listenMetrics binds metrics.listen. With metrics.enabled it serves the
+// health endpoints and metrics.path; with metrics.enabled false and
+// metrics.listen set explicitly, the health endpoints only (as before the
+// feature flag existed); otherwise nothing.
+func (d *Daemon) listenMetrics(cfg *config.Config) error {
+	a := d.app
+	enabled := obs.MetricsEnabled.Get(cfg)
+	addr := obs.MetricsListen.Get(cfg)
+	explicit := false
+	if e, ok := cfg.Entry(obs.MetricsListen.Name()); ok {
+		explicit = e.Source.Kind != config.SourceDefault
 	}
+	switch {
+	case enabled && addr == "":
+		return errors.New("metrics.enabled is true but metrics.listen is empty: set an address such as " + obs.DefaultMetricsListen)
+	case !enabled && (!explicit || addr == ""):
+		return nil
+	}
+	var mux *http.ServeMux
+	if enabled {
+		tok, _ := cfg.Secret(obs.MetricsToken)
+		if err := obs.CheckMetricsAuth(addr, tok, obs.MetricsAllowUnauthenticatedRemote.Get(cfg)); err != nil {
+			return err
+		}
+		mux = obs.Mux(a.Health, a.Metrics, obs.MuxOptions{Path: obs.MetricsPath.Get(cfg), Token: tok})
+	} else {
+		mux = obs.Mux(a.Health, nil, obs.MuxOptions{})
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("metrics.listen: %w", err)
+	}
+	d.addrs.Metrics = ln.Addr().String()
+	if enabled {
+		d.log.Info("metrics enabled", "listen", d.addrs.Metrics, "path", obs.MetricsPath.Get(cfg))
+	} else {
+		d.log.Info("metrics.enabled is false: metrics.listen serves the health endpoints only", "listen", d.addrs.Metrics)
+	}
+	d.serve("metrics", ln, mux, nil)
 	return nil
 }
 
@@ -643,7 +722,7 @@ func (d *Daemon) sweepSessions(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		if d.tokens.prune() {
+		if a, b := d.tokens.prune(), d.kubeTokens.prune(); a || b {
 			d.pusher.Trigger()
 		}
 		if gone, err := d.runtime.Sessions.Sweep(ctx); err != nil {
@@ -684,6 +763,7 @@ func (d *Daemon) Info() Info {
 	in.DataPlane = dataPlaneInfo(d.dpStatus)
 	d.mu.Unlock()
 	in.Runtime = d.runtimeInfo(ctx, in.Ready)
+	in.Stores = d.storeStatus()
 	for k, v := range rep.Checks {
 		if v != "ok" {
 			if in.Problems == nil {
@@ -693,6 +773,19 @@ func (d *Daemon) Info() Info {
 		}
 	}
 	return in
+}
+
+// agentEndpoints is what the agent API tells callers that did not start
+// this daemon and cannot reach the admin API (agents of other users when
+// scrim runs as a system service). Public material only.
+func (d *Daemon) agentEndpoints() localapi.Endpoints {
+	in := d.Info()
+	ep := localapi.Endpoints{Ready: in.Ready, Problems: in.Problems, BaseURL: in.Addrs.BaseURL,
+		ForwardProxy: in.Addrs.ForwardProxy, Bypass: in.Bypass}
+	if d.trust != nil {
+		ep.CAPEM = d.trust()
+	}
+	return ep
 }
 
 // WaitReady blocks until the daemon is ready, it stops, or ctx ends.

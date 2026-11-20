@@ -1,0 +1,89 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- /*
+Central scrim: ServiceAccount, Deployment, Service, PDB and HPA from
+chart.std.component (templates/_component.tpl). The Deployment, Service, PDB
+and HPA keep the release's full name (agents reach
+http://<fullname>.<namespace>.svc); the ServiceAccount is "<fullname>-proxy".
+*/ -}}
+{{- if .Values.central.enabled }}
+{{- $v := include "scrim.central" . | fromJson -}}
+{{- $name := include "scrim.fullname" . -}}
+{{- $m := .Values.metrics -}}
+{{- $mounts := list
+      (dict "name" "config" "mountPath" "/etc/scrim/config" "readOnly" true)
+      (dict "name" "ca" "mountPath" "/etc/scrim/ca" "readOnly" true)
+      (dict "name" "placeholder-keys" "mountPath" "/etc/scrim/placeholder" "readOnly" true)
+      (dict "name" "state" "mountPath" "/var/lib/scrim")
+      (dict "name" "run" "mountPath" "/run/scrim")
+      (dict "name" "tmp" "mountPath" "/tmp") -}}
+{{- $vols := list
+      (dict "name" "config" "configMap" (dict "name" (printf "%s-config" $name)))
+      (dict "name" "ca" "secret" (dict "secretName" (include "scrim.caSecretName" .) "defaultMode" 0440 "items" (list (dict "key" "tls.crt" "path" "tls.crt") (dict "key" "tls.key" "path" "tls.key"))))
+      (dict "name" "placeholder-keys" "secret" (dict "secretName" (include "scrim.keysSecretName" .) "defaultMode" 0440))
+      (dict "name" "state" "emptyDir" dict)
+      (dict "name" "run" "emptyDir" (dict "medium" "Memory" "sizeLimit" "64Mi"))
+      (dict "name" "tmp" "emptyDir" (dict "sizeLimit" "64Mi")) -}}
+{{- if .Values.existingConfigMap -}}
+  {{- $mounts = append $mounts (dict "name" "user-config" "mountPath" "/etc/scrim/user" "readOnly" true) -}}
+  {{- $vols = append $vols (dict "name" "user-config" "configMap" (dict "name" .Values.existingConfigMap "items" (list (dict "key" "config.yaml" "path" "config.yaml")))) -}}
+{{- end -}}
+{{- if .Values.upstreamCA.configMap -}}
+  {{- $mounts = append $mounts (dict "name" "upstream-ca" "mountPath" "/etc/scrim/upstream-ca" "readOnly" true) -}}
+  {{- $vols = append $vols (dict "name" "upstream-ca" "configMap" (dict "name" .Values.upstreamCA.configMap)) -}}
+{{- end -}}
+{{- /* Secret slots: the setting references /run/secrets/scrim/<slot>/<key>. */ -}}
+{{- $slots := list -}}
+{{- if .Values.postgres.enabled }}{{ $slots = append $slots (list "postgres" "dsn") }}{{ end -}}
+{{- if .Values.admin.tcp.enabled }}{{ $slots = append $slots (list "admin" "token") }}{{ end -}}
+{{- if and $m.enabled (not $m.allowUnauthenticatedRemote) }}{{ $slots = append $slots (list "metrics" "token") }}{{ end -}}
+{{- range $slots -}}
+  {{- $slot := index . 0 -}}
+  {{- $key := include "chart.secretKey" (list $ $slot (index . 1)) -}}
+  {{- $mounts = append $mounts (dict "name" (printf "%s-secret" $slot) "mountPath" (printf "/run/secrets/scrim/%s" $slot) "readOnly" true) -}}
+  {{- $vols = append $vols (dict "name" (printf "%s-secret" $slot) "secret" (dict "secretName" (include "chart.secretName" (list $ $slot)) "defaultMode" 0440 "items" (list (dict "key" $key "path" $key)))) -}}
+{{- end -}}
+{{- with .Values.storeAuth.serviceAccountToken -}}
+{{- if .enabled -}}
+  {{- $mounts = append $mounts (dict "name" "store-token" "mountPath" (dir .path) "readOnly" true) -}}
+  {{- $vols = append $vols (dict "name" "store-token" "projected" (dict "defaultMode" 0440 "sources" (list (dict "serviceAccountToken" (dict "audience" .audience "expirationSeconds" (int .expirationSeconds) "path" (base .path)))))) -}}
+{{- end -}}
+{{- end -}}
+{{- range .Values.secretMounts -}}
+  {{- $mounts = append $mounts (dict "name" (printf "secret-%s" .name) "mountPath" (printf "/run/secrets/scrim/%s" .name) "readOnly" true) -}}
+  {{- $sec := dict "secretName" .secretName "defaultMode" 0440 -}}
+  {{- with .items }}{{ $_ := set $sec "items" . }}{{ end -}}
+  {{- $vols = append $vols (dict "name" (printf "secret-%s" .name) "secret" $sec) -}}
+{{- end -}}
+{{- $ports := list
+      (dict "name" "llm" "containerPort" 9790 "protocol" "TCP")
+      (dict "name" "forward" "containerPort" 9791 "protocol" "TCP")
+      (dict "name" "health" "containerPort" (int $m.port) "protocol" "TCP") -}}
+{{- $svcPorts := list
+      (dict "name" "llm" "port" (int $v.service.llmPort) "targetPort" "llm" "protocol" "TCP" "appProtocol" "http")
+      (dict "name" "forward" "port" (int $v.service.forwardPort) "targetPort" "forward" "protocol" "TCP") -}}
+{{- if $m.enabled -}}
+  {{- $svcPorts = append $svcPorts (dict "name" "metrics" "port" (int $m.port) "targetPort" "health" "protocol" "TCP" "appProtocol" "http") -}}
+{{- end -}}
+{{- if .Values.admin.tcp.enabled -}}
+  {{- $ports = append $ports (dict "name" "admin" "containerPort" (int .Values.admin.tcp.port) "protocol" "TCP") -}}
+  {{- $svcPorts = append $svcPorts (dict "name" "admin" "port" (int .Values.admin.tcp.port) "targetPort" "admin" "protocol" "TCP" "appProtocol" "http") -}}
+{{- end -}}
+{{- $cfg := ternary "/etc/scrim/user/config.yaml" "/etc/scrim/config/config.yaml" (not (empty .Values.existingConfigMap)) -}}
+{{- $env := list
+      (dict "name" "SCRIM_CONFIG" "value" (printf "%s:/etc/scrim/config/chart.yaml" $cfg))
+      (dict "name" "XDG_RUNTIME_DIR" "value" "/run/scrim") -}}
+{{- $main := include "chart.std.container" (dict "root" . "values" $v "name" "scrim" "image" .Values.image
+      "args" (list "proxy") "env" $env "ports" $ports "volumeMounts" $mounts "probes" true) | fromYaml -}}
+{{- $ann := dict "checksum/config" (include (print $.Template.BasePath "/config.yaml") . | sha256sum) -}}
+{{- /* TokenReview needs scrim's own API token. */ -}}
+{{- $automount := or $v.serviceAccount.automount .Values.identity.kubernetes.enabled -}}
+{{- $_ := set $v "serviceAccount" (mustMergeOverwrite (deepCopy $v.serviceAccount) (dict "automount" $automount)) -}}
+{{- $extra := list -}}
+{{- $a := $v.autoscaling -}}
+{{- if and $a.enabled $a.connections.enabled -}}
+  {{- $extra = append $extra (dict "type" "Pods" "pods" (dict "metric" (dict "name" $a.connections.metricName) "target" (dict "type" "AverageValue" "averageValue" (toString $a.connections.targetAverageValue)))) -}}
+{{- end -}}
+{{- include "chart.std.component" (dict "root" . "comp" "proxy" "values" $v "name" $name
+      "containers" (list $main) "volumes" $vols "podAnnotations" $ann "automount" $automount
+      "ports" $svcPorts "extraMetrics" $extra) }}
+{{- end }}

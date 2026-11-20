@@ -1,0 +1,2 @@
+# expect: sidecar.egressGuard.image is required
+sidecar: {enabled: true}

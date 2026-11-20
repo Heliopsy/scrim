@@ -31,6 +31,14 @@
     "api": {
       "additionalProperties": false,
       "properties": {
+        "group": {
+          "default": "",
+          "description": "Group (name or ID) the API socket belongs to, so members can connect with api.permissions 0660. scrim must be a member. Empty keeps the group of the process.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_API_GROUP",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
         "permissions": {
           "default": "0600",
           "description": "Permission bits of the API socket, octal. Widen (for example 0660) only to let agents running as other local users connect; their identity still comes from peer credentials.",
@@ -71,7 +79,7 @@
         },
         "poll-interval": {
           "default": "1s",
-          "description": "How often a waiting operation re-reads its approval from the state backend; bounds how long a decision recorded elsewhere takes to release it.",
+          "description": "How often a waiting operation re-reads its approval from the state backend; bounds how long a decision recorded on another replica takes to release it when no event announces it (events.backend).",
           "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
           "type": "string",
           "x-scrim-env": "SCRIM_APPROVALS_POLL_INTERVAL",
@@ -256,6 +264,30 @@
           "x-scrim-env": "SCRIM_DATAPLANE_START_TIMEOUT",
           "x-scrim-restart-required": false,
           "x-scrim-weakening": false
+        },
+        "upstream-ca-file": {
+          "default": "",
+          "description": "PEM bundle of extra root certificates the data plane trusts for upstream TLS, in the LLM proxy and the tool proxy (private API hosts, a corporate TLS-inspecting proxy). The system roots stay trusted. A file that is set but unreadable, or holds no certificate, stops the data plane from starting. Empty means the system roots only.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_DATAPLANE_UPSTREAM_CA_FILE",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "deployment": {
+      "additionalProperties": false,
+      "properties": {
+        "replicas": {
+          "default": 1,
+          "description": "How many control plane replicas share this configuration and state. More than 1 needs a shared state backend (state.backend postgres) and a shared events backend (events.backend postgres); start-up fails otherwise.",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "type": "integer",
+          "x-scrim-env": "SCRIM_DEPLOYMENT_REPLICAS",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
         }
       },
       "type": "object"
@@ -268,6 +300,34 @@
           "description": "Loopback address of the page where a human enters a value for secret_ask_human. Port 0 picks a free port.",
           "type": "string",
           "x-scrim-env": "SCRIM_ENTRY_LISTEN",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "events": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "default": "local",
+          "description": "How replicas learn about state changes made elsewhere (approval decisions, grant and session changes, break-glass, configuration reloads). local reads the outbox every events.poll-interval and serves one process; postgres adds LISTEN/NOTIFY on the state database (needs state.backend postgres) and is required when deployment.replicas is more than 1.",
+          "enum": [
+            "local",
+            "postgres"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_EVENTS_BACKEND",
+          "x-scrim-flag": "--events-backend",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "poll-interval": {
+          "default": "1s",
+          "description": "How often the outbox is read when nothing announces new events: always with events.backend local, and while the postgres listener is disconnected. It bounds how long a change made on another replica takes to arrive then.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EVENTS_POLL_INTERVAL",
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         }
@@ -301,6 +361,84 @@
     "identity": {
       "additionalProperties": false,
       "properties": {
+        "kubernetes": {
+          "additionalProperties": false,
+          "properties": {
+            "agents": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Agents by service account: agent name to space-separated selectors sa:NAMESPACE/NAME (globs allowed), scope:SCOPE, label:K=V. A service account no rule maps is the agent NAMESPACE/NAME, or unknown with identity.kubernetes.unmapped: unknown.",
+              "type": "object",
+              "x-scrim-env": "SCRIM_IDENTITY_KUBERNETES_AGENTS",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "api-server": {
+              "default": "",
+              "description": "Base URL of the Kubernetes API server for TokenReview. Empty uses the in-cluster address (KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT).",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_KUBERNETES_API_SERVER",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "audience": {
+              "default": "scrim",
+              "description": "Audience an agent's projected service account token must carry. Tokens for any other audience, such as a pod's default API token, are refused.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_KUBERNETES_AUDIENCE",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "ca-file": {
+              "default": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+              "description": "CA bundle that verifies the API server.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_KUBERNETES_CA_FILE",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "cache-ttl": {
+              "default": "1m0s",
+              "description": "How long a verified token is trusted before the cluster is asked again, capped at the token's expiry. A deleted pod or service account is refused within this bound.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_KUBERNETES_CACHE_TTL",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "enabled": {
+              "default": false,
+              "description": "Identify in-cluster callers by projected service account tokens, verified with the TokenReview API. Pods send the token as the password of the proxy user k8s or as the value of x-scrim-session. On in the k8s profile.",
+              "type": "boolean",
+              "x-scrim-env": "SCRIM_IDENTITY_KUBERNETES_ENABLED",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "token-file": {
+              "default": "/var/run/secrets/kubernetes.io/serviceaccount/token",
+              "description": "scrim's own service account token, which authorises TokenReview calls (RBAC: create tokenreviews, for example by binding system:auth-delegator). Re-read on every call, since the kubelet rotates it.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_KUBERNETES_TOKEN_FILE",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "unmapped": {
+              "default": "derive",
+              "description": "What a verified service account no identity.kubernetes.agents rule maps becomes: derive names the agent NAMESPACE/NAME, unknown treats it as an unknown caller.",
+              "enum": [
+                "derive",
+                "unknown"
+              ],
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_KUBERNETES_UNMAPPED",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
         "peers": {
           "additionalProperties": {
             "type": "string"
@@ -309,6 +447,28 @@
           "description": "Agents by local user or group: agent name to space-separated selectors uid:N, user:NAME, gid:N, group:NAME, scope:SCOPE, label:K=V. Empty maps the user scrim runs as to one agent named after it.",
           "type": "object",
           "x-scrim-env": "SCRIM_IDENTITY_PEERS",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "store-credentials": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Static per-agent store credentials: `<store>/<agent>` to a reference (env:, file:, cred: or a store reference) of a store token held for that agent. The fallback for agents without Kubernetes passthrough; a store listed here refuses agents that have none.",
+          "type": "object",
+          "x-scrim-env": "SCRIM_IDENTITY_STORE_CREDENTIALS",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "store-login": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Per-agent store login, by store instance: `kubernetes role:<template> [mount:<path>]` logs in to the store (OpenBao Kubernetes auth) with the calling pod's own service account token at the role the template names; {namespace}, {service_account} and {agent} are replaced. A store listed here refuses agents that have no usable identity of their own.",
+          "type": "object",
+          "x-scrim-env": "SCRIM_IDENTITY_STORE_LOGIN",
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         }
@@ -412,12 +572,52 @@
     "metrics": {
       "additionalProperties": false,
       "properties": {
+        "allow-unauthenticated-remote": {
+          "default": false,
+          "description": "Serve metrics.path on a non-loopback metrics.listen without metrics.auth.token, for a network policy or mesh that already restricts who connects. Anyone who can reach the port reads the metrics.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_METRICS_ALLOW_UNAUTHENTICATED_REMOTE",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": true
+        },
+        "auth": {
+          "additionalProperties": false,
+          "properties": {
+            "token": {
+              "default": "",
+              "description": "Reference to a bearer token (at least 16 bytes) a scraper must present on metrics.path. Required when metrics.listen is not a loopback address, unless metrics.allow-unauthenticated-remote is set. The health endpoints never need it.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_METRICS_AUTH_TOKEN",
+              "x-scrim-restart-required": true,
+              "x-scrim-secret-ref": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Serve Prometheus metrics (control plane and data plane) at metrics.path on metrics.listen. Off: nothing is measured on the request path and no metrics listener is bound.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_METRICS_ENABLED",
+          "x-scrim-flag": "--metrics-enabled",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
         "listen": {
-          "default": "",
-          "description": "Address of the metrics and health endpoint (Prometheus format at /metrics, /healthz or /livez, /readyz). Empty disables it; bind to loopback unless scraped remotely.",
+          "default": "127.0.0.1:9792",
+          "description": "Address of the metrics and health endpoint (/healthz or /livez, /readyz, and metrics.path while metrics.enabled). Used when metrics.enabled is true; set explicitly with metrics.enabled false it serves the health endpoints only. Bind to loopback unless scraped remotely.",
           "type": "string",
           "x-scrim-env": "SCRIM_METRICS_LISTEN",
           "x-scrim-flag": "--metrics-listen",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "path": {
+          "default": "/metrics",
+          "description": "Path of the Prometheus endpoint on metrics.listen.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_METRICS_PATH",
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         }
@@ -572,7 +772,7 @@
         },
         "deny-all-refresh": {
           "default": "1s",
-          "description": "How often each replica re-reads the deny-all state from the state backend; the bound on how long a change on one replica takes to reach the others.",
+          "description": "How often each replica re-reads the deny-all state from the state backend; the bound on how long a change on one replica takes to reach the others when no event announces it (events.backend).",
           "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
           "type": "string",
           "x-scrim-env": "SCRIM_POLICY_DENY_ALL_REFRESH",
@@ -613,7 +813,7 @@
           "properties": {
             "dir": {
               "default": "",
-              "description": "Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture DIR` sets it.",
+              "description": "Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture=DIR` sets it.",
               "type": "string",
               "x-scrim-env": "SCRIM_PROXY_CAPTURE_DIR",
               "x-scrim-flag": "--proxy-capture-dir",
@@ -729,6 +929,14 @@
     "redaction": {
       "additionalProperties": false,
       "properties": {
+        "allow-empty-targets": {
+          "default": false,
+          "description": "Start even when a store's redact target matches no secret on the first load. Off, such a target stops start-up with an error naming it, since it usually means a misspelt name or pattern and redaction would protect nothing. On, the store starts and status reports the target as degraded with 0 values.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_REDACTION_ALLOW_EMPTY_TARGETS",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": true
+        },
         "min-value-length": {
           "default": 8,
           "description": "Shortest value matched in free text; shorter values are matched only in exact and encoded forms.",

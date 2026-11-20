@@ -1,0 +1,21 @@
+# Operator-supplied CA and placeholder keys, a user ConfigMap, upstream CA.
+ca:
+  existingSecret: scrim-ca-tls
+  certificate: |
+    -----BEGIN CERTIFICATE-----
+    MIIBfakeFAKEfakeFAKE
+    -----END CERTIFICATE-----
+  extraTrustedCerts: |
+    -----BEGIN CERTIFICATE-----
+    MIIBinternalINTERNAL
+    -----END CERTIFICATE-----
+placeholderKeys:
+  existingSecret: scrim-keys
+  keys:
+    - {name: k2, version: 2, key: placeholder-02}
+    - {name: k1, version: 1, key: placeholder-01}
+existingConfigMap: my-scrim-config
+upstreamCA:
+  configMap: corp-roots
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000

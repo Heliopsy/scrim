@@ -1,0 +1,2 @@
+# expect: postgres.enabled needs the DSN in the Secret slot postgres
+postgres: {enabled: true}

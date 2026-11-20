@@ -3,6 +3,7 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"errors"
 )
@@ -12,6 +13,8 @@ import (
 type Resolver struct {
 	Peers    *PeerMap
 	Sessions *Manager
+	// Kubernetes verifies service account tokens; nil refuses them.
+	Kubernetes *KubeResolver
 }
 
 // Resolve returns the caller's identity.
@@ -25,6 +28,13 @@ func (r Resolver) Resolve(ctx context.Context, peer Peer, token []byte) (Identit
 		id, _ := r.Peers.Lookup(peer)
 		return id, nil
 	}
+	if LooksLikeKubernetesToken(token) {
+		id, err := r.Kubernetes.Resolve(ctx, token)
+		if err == nil && id.Known() {
+			id.Peer = peer
+		}
+		return id, err
+	}
 	if r.Sessions == nil {
 		return Identity{}, &RefusedError{Reason: RefusedUnknown}
 	}
@@ -36,4 +46,10 @@ func IsRefused(err error) (*RefusedError, bool) {
 	var re *RefusedError
 	ok := errors.As(err, &re)
 	return re, ok
+}
+
+// LooksLikeKubernetesToken reports whether tok is shaped like a JWT, the
+// form of a Kubernetes service account token, rather than a session token.
+func LooksLikeKubernetesToken(tok []byte) bool {
+	return bytes.HasPrefix(bytes.TrimSpace(tok), []byte("eyJ")) && bytes.Count(tok, []byte(".")) == 2
 }

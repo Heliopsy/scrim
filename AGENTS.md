@@ -108,9 +108,10 @@ an emulator in podman. State backends follow the same shape with `state.Register
 - Adding a field is compatible. Removing, renumbering or changing the meaning of a field, or
   adding a call an older peer would get wrong, bumps `PROTOCOL_VERSION_CURRENT`, and both sides
   and their tests change in the same commit.
-- `ValueEntry.value`, `PlaceholderKey.key`, `CaptureRequest.value` and `CaCertificate.key_pem` are
-  the only secret fields. Keep it that way: a new secret field needs a redacting `Debug` in
-  `scrim-proto` and a wipe in `internal/dataplane`.
+- `ValueEntry.value`, `PlaceholderKey.key`, `CaptureRequest.value`, `CaCertificate.key_pem` and
+  `AskCaller.kubernetes_token` are the only secret fields. Keep it that way: a new secret field
+  needs a redacting `Debug` in `scrim-proto` and a wipe in `internal/dataplane` (the control plane
+  wipes `kubernetes_token` in `gate.Answer`).
 
 ## Configuration
 
@@ -156,6 +157,10 @@ an emulator in podman. State backends follow the same shape with `state.Register
   write`.
 - Release tools are pinned in `scripts/release/release.env`, downloads checked by sha256. Bump a
   tool by changing its version and checksum together.
+- The Helm chart is packaged at the release version (`scripts/release/chart.sh`), pushed to
+  `oci://ghcr.io/heliopsy/charts/scrim` after the images, signed keyless with the same identity,
+  SBOM and provenance attested; its job gets `packages`, `id-token` and `attestations` and builds no
+  code. The chart's own gate is `deploy/helm/scrim/ci/verify.sh` (`just helm-test`).
 - release-please creates the tag with `GITHUB_TOKEN`, which starts no workflow, so its workflow
   must dispatch the release: `gh workflow run release.yaml -f tag=vX.Y.Z`. A hand-pushed `v*` tag
   builds on its own.

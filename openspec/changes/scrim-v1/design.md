@@ -195,9 +195,9 @@ expiry, revocation and use counts take effect on the next request on every repli
 backend), then raises an approval. Decisions come back through single-use links: an HMAC-SHA256
 token over approval ID, action, expiry and notifier, signed with `approvals.signing-key` (shared by
 replicas, rotatable by key ID). An approval leaves pending once, so the first decision settles it
-and every later token is refused. A waiting operation re-reads its approval every
-`approvals.poll-interval`, which bounds how long a decision recorded on another replica takes to
-release it.
+and every later token is refused. A waiting operation is woken by the `approval.decided`
+event (D9) and re-reads its approval every `approvals.poll-interval` as well, which bounds how long a
+decision recorded on another replica takes to release it when no event arrives.
 
 **Notifiers only deliver.** ntfy buttons post to the decision links. The generic webhook speaks
 nono's approval webhook v1 (submit, then poll) so one approval service can serve nono and scrim; a
@@ -206,8 +206,8 @@ leaves the approval to expire. The terminal path is `scrim approve` / `scrim den
 API.
 
 **Break-glass** state is the newest `breakglass.engaged` or `breakglass.released` audit entry, so it
-is durable with the backend, shared between replicas (each re-reads it every
-`policy.deny-all-refresh`) and cannot change without an audit entry. While it is set the snapshot
+is durable with the backend, shared between replicas (each re-reads it on the `breakglass.changed`
+event and every `policy.deny-all-refresh`) and cannot change without an audit entry. While it is set the snapshot
 carries `break_glass`, the engine denies, grants are not honoured, approvals cannot be created or
 approved, and pending ones are denied.
 
@@ -230,6 +230,16 @@ file, not a service, and the local default. Events (local, Postgres notify, Valk
 rate limits (local, Valkey) and audit sinks (database, OTLP, Loki, Kafka) are independent choices
 so a large deployment can scale each separately. No backend ever stores a secret value or a
 placeholder-to-value mapping; values live in process memory only, wiped after use.
+
+**Events follow the outbox; the backend only wakes the reader.** Every event backend delivers by
+reading the outbox by increasing ID (`EventsAfter`) from the newest event at start-up, never from a
+message stream of its own, so ordering and exactly-once delivery come from the outbox and a lost
+notification costs latency, not an event. The `postgres` backend sends `NOTIFY` in the outbox
+transaction and listens on a dedicated connection; it reads the outbox on every notification, on
+every (re)connection and, while disconnected, every `events.poll-interval`. Grants and sessions need
+no event: they are read on every use. The polling loops of D7 stay as the fallback bound.
+`deployment.replicas` makes the replica count explicit, so a multi-replica deployment on `local`
+events or unshared state fails at start-up instead of running with replicas that disagree.
 
 ### D10. One configuration contract
 
@@ -261,6 +271,17 @@ versioned snapshots (value dictionary, placeholder keys, compiled policy, routes
 data plane acknowledges the version it applied. The data plane streams audit events in batches and
 sends "ask" decisions, the only call that waits, and only for requests a rule sends to a human.
 Every message carries the protocol version; a mismatch refuses to start.
+
+Metrics follow the same rule. With `metrics.enabled` the data plane aggregates its own counters and
+fixed-bucket histograms in process (atomics only on the request path, one route lookup per request)
+and the control plane reads them with the `Metrics` call once per Prometheus scrape, then serves
+them next to its own on its one endpoint, scrubbed with the rest. A separate loopback `/metrics` on
+the data plane was rejected: it would be a second listener in the process that holds the values, a
+second port to authenticate and scrape, and a second place to scrub. Pull per scrape keeps the cost
+off the hot path (nothing is formatted or sent between scrapes) and needs no new stream. The call
+is additive: an older data plane answers UNIMPLEMENTED, which the control plane reads as "no data
+plane metrics", so the protocol stays 1. Labels are bounded by construction (routes, codecs, codes,
+enumerations, a cap per series set) and checked again by the control plane against an allowlist.
 
 ### D13. Matching stays near constant speed as the secret set grows
 
@@ -301,6 +322,35 @@ its user whose tree it is in, else its `identity.peers` mapping. Over TCP the pr
 be checked, so a same-user process that reads the token from an agent's environment can act as
 that session there; the agent API and Unix sockets still enforce the tree. The data plane gets no
 session or peer map, so every rule on the agent of a request that names a session costs one ask.
+
+**Kubernetes service account tokens.** A pod identifies itself with a projected service account
+token for scrim's audience, sent where a session token goes: the password of the proxy user
+`k8s` (`HTTPS_PROXY=http://k8s:<token>@...`) or the value of `x-scrim-session`. The per-ask proof
+cannot cover it: the control plane holds no hash of a token the cluster minted, and must see the
+token itself to verify it with TokenReview. Two ways were considered:
+
+- **Exchange first.** The pod would trade its token for a scrim session at an agent API endpoint
+  and then use the session as above. That keeps the token out of asks, but needs a client in every
+  pod that logs in, renews before the hourly rotation and rewrites what the agent sends, which an
+  agent configured by environment (`ANTHROPIC_CUSTOM_HEADERS`) cannot do.
+- **The token in the ask.** Chosen. The data plane keeps the token in a zeroed type with a
+  redacting `Debug` for the request (for a forward-proxy tunnel, the tunnel) and sends it in
+  `AskCaller.kubernetes_token`, an additive secret field (protocol stays 1) with a redacting
+  `Debug` and a zeroing `Drop` in scrim-proto. The control plane verifies it with TokenReview for
+  scrim's audience, caches a verified token by its SHA-256 until the token expires or
+  `identity.kubernetes.cache-ttl` passes, and wipes the bytes when the ask is answered. The token
+  goes nowhere but the API server that issued it, is never logged, audited or forwarded, and is
+  good only toward scrim (its audience), so the exposure is the control plane process, which holds
+  the store credentials anyway.
+
+A refused token is unknown, never the peer mapping, like a refused session. The identity is
+`<namespace>/<service account>` or an `identity.kubernetes.agents` name, kind `k8s`, with the
+namespace, service account and pod as labels. When a store checks each agent's own identity
+(`identity.store-login`, `identity.store-credentials`), the control plane adds a residual rule in
+front of the snapshot so every injection or restore of that store's secrets is asked about, and
+after scrim's rules allow it asks the store, as the agent, whether it may read the path (OpenBao
+`sys/capabilities-self`, after a Kubernetes login with the pod's own token for passthrough). The
+value is still loaded with scrim's identity, so redaction never depends on the agent's.
 
 ## Risks / Trade-offs
 

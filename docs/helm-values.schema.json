@@ -1,0 +1,1858 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "scrim chart values",
+  "type": "object",
+  "properties": {
+    "nameOverride": {
+      "type": "string",
+      "description": "Overrides the chart name in resource names."
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "description": "Overrides the full resource name prefix (default: release name, plus \"-scrim\" unless it already contains it)."
+    },
+    "namespaceOverride": {
+      "type": "string",
+      "description": "Namespace for every object in the release namespace (default: the release namespace). Agent namespace objects go to agents.namespaces."
+    },
+    "commonLabels": {
+      "type": "object",
+      "description": "Labels added to every object, next to global.commonLabels (global wins on the same key).",
+      "additionalProperties": true
+    },
+    "commonAnnotations": {
+      "type": "object",
+      "description": "Annotations added to every object the chart renders (merged over global.commonAnnotations).",
+      "additionalProperties": true
+    },
+    "global": {
+      "type": "object",
+      "description": "Settings every pod the chart renders inherits (central scrim, helm test pods): registry mirror, pull secrets, security defaults, scheduling, extension hooks. A component's own value wins. The in-pod scrim of sidecar mode is injected by Kyverno and takes only sidecar.* values.",
+      "properties": {
+        "imageRegistry": {
+          "type": "string",
+          "description": "Registry that replaces the registry of every image (a mirror). Empty keeps each image's own."
+        },
+        "imagePullSecrets": {
+          "type": "array",
+          "description": "Pull secrets added to every pod. Names (strings) or {name: x}.",
+          "items": {
+            "type": [
+              "string",
+              "object"
+            ]
+          }
+        },
+        "clusterDomain": {
+          "type": "string",
+          "description": "Kubernetes cluster DNS domain, used in the Service addresses agents get."
+        },
+        "commonLabels": {
+          "type": "object",
+          "description": "Labels added to every object.",
+          "additionalProperties": true
+        },
+        "commonAnnotations": {
+          "type": "object",
+          "description": "Annotations added to every object.",
+          "additionalProperties": true
+        },
+        "priorityClassName": {
+          "type": "string",
+          "description": "Default priorityClassName for every pod (a component's own wins)."
+        },
+        "nodeSelector": {
+          "type": "object",
+          "description": "Default nodeSelector for every pod (a component's own wins).",
+          "additionalProperties": true
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Default tolerations for every pod (a component's own wins).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "affinity": {
+          "type": "object",
+          "description": "Default affinity for every pod (a component's own wins; tpl).",
+          "additionalProperties": true
+        },
+        "topologySpreadConstraints": {
+          "type": "array",
+          "description": "Default topologySpreadConstraints for every pod (a component's own wins; tpl).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "lifecycle": {
+          "type": "object",
+          "description": "Default lifecycle hooks (postStart, preStop) of every main container (a component's own wins; tpl).",
+          "additionalProperties": true
+        },
+        "dnsPolicy": {
+          "type": "string",
+          "description": "Default dnsPolicy of every pod (\"\" leaves it to Kubernetes, ClusterFirst; a component's own wins).",
+          "enum": [
+            "",
+            "ClusterFirst",
+            "ClusterFirstWithHostNet",
+            "Default",
+            "None"
+          ]
+        },
+        "dnsConfig": {
+          "type": "object",
+          "description": "Default dnsConfig of every pod (nameservers, searches, options; a component's own wins; tpl).",
+          "additionalProperties": true
+        },
+        "hostAliases": {
+          "type": "array",
+          "description": "Default hostAliases of every pod (extra /etc/hosts entries; a component's own wins; tpl).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "runtimeClassName": {
+          "type": "string",
+          "description": "Default runtimeClassName of every pod (a component's own wins)."
+        },
+        "shareProcessNamespace": {
+          "description": "Default shareProcessNamespace of every pod (null renders nothing; a component's own wins).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "enableServiceLinks": {
+          "description": "Default enableServiceLinks of every pod (null renders nothing; a component's own wins). central sets false.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "ha": {
+          "type": "object",
+          "description": "High availability preset (templates/_ha.tpl) for central scrim.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Run central scrim with ha.replicas, a PDB (minAvailable 1), preferred pod anti-affinity on kubernetes.io/hostname and, with zoneSpread, a zone topology spread. A higher replicaCount and central's own pdb, affinity and topologySpreadConstraints win. More than one replica needs postgres.enabled."
+            },
+            "replicas": {
+              "type": "integer",
+              "description": "Replicas of central scrim under ha.enabled (at least 2).",
+              "minimum": 2
+            },
+            "zoneSpread": {
+              "type": "boolean",
+              "description": "Spread replicas across topology.kubernetes.io/zone (maxSkew 1, ScheduleAnyway)."
+            },
+            "exclude": {
+              "type": "array",
+              "description": "Components ha.enabled leaves alone (proxy).",
+              "items": {
+                "enum": [
+                  "proxy"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "podLabels": {
+          "type": "object",
+          "description": "Labels added to every pod, under each component's podLabels (the component wins on the same key; tpl).",
+          "additionalProperties": true
+        },
+        "podAnnotations": {
+          "type": "object",
+          "description": "Annotations added to every pod, under each component's podAnnotations (the component wins on the same key; tpl).",
+          "additionalProperties": true
+        },
+        "extraVolumes": {
+          "type": "array",
+          "description": "Volumes added to every pod the chart renders (tpl). A component's extraVolumes entry of the same name wins.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "extraVolumeMounts": {
+          "type": "array",
+          "description": "volumeMounts added to every main container (tpl). A mountPath the container already has wins.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "extraEnv": {
+          "type": "array",
+          "description": "Env vars added to every main container (EnvVar list, tpl). A name the container already sets wins. Never put secret values here; use valueFrom.secretKeyRef.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "extraEnvFrom": {
+          "type": "array",
+          "description": "envFrom sources added to every main container (tpl).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "secretLabels": {
+          "type": "object",
+          "description": "Labels on every Secret the chart renders (tpl).",
+          "additionalProperties": true
+        },
+        "secretAnnotations": {
+          "type": "object",
+          "description": "Annotations on every Secret the chart renders.",
+          "additionalProperties": true
+        },
+        "configMapLabels": {
+          "type": "object",
+          "description": "Labels on every ConfigMap the chart renders (tpl).",
+          "additionalProperties": true
+        },
+        "configMapAnnotations": {
+          "type": "object",
+          "description": "Annotations on every ConfigMap the chart renders.",
+          "additionalProperties": true
+        },
+        "replication": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "description": "none, reflector (reflector.v1.k8s.emberstack.com/*) or replicator (replicator.v1.mittwald.de/*).",
+              "enum": [
+                "none",
+                "reflector",
+                "replicator"
+              ]
+            },
+            "allowedNamespaces": {
+              "type": "array",
+              "description": "Namespaces (regex allowed) that may copy the object. Empty allows every namespace."
+            },
+            "autoNamespaces": {
+              "type": "array",
+              "description": "Namespaces the object is pushed into (reflection-auto-namespaces / replicate-to)."
+            },
+            "replicateFrom": {
+              "type": "string",
+              "description": "replicator only: \"<namespace>/<name>\" the object is filled from (replicate-from). Use it per object."
+            }
+          },
+          "additionalProperties": false
+        },
+        "extraSelectorLabels": {
+          "type": "object",
+          "description": "Extra selector labels on central scrim, its pods, Service and NetworkPolicy peers. SELECTORS ARE IMMUTABLE: set this on a fresh install only. Keys must not repeat commonLabels.",
+          "additionalProperties": true
+        },
+        "revisionHistoryLimit": {
+          "type": "integer",
+          "description": "revisionHistoryLimit of every Deployment.",
+          "minimum": 0
+        },
+        "podSecurityContext": {
+          "type": "object",
+          "description": "Pod securityContext every pod starts from; a component's podSecurityContext is merged over it.",
+          "properties": {
+            "runAsNonRoot": {
+              "type": "boolean"
+            },
+            "seccompProfile": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "containerSecurityContext": {
+          "type": "object",
+          "description": "Container securityContext every container starts from; a component's securityContext is merged over it.",
+          "properties": {
+            "allowPrivilegeEscalation": {
+              "type": "boolean"
+            },
+            "readOnlyRootFilesystem": {
+              "type": "boolean"
+            },
+            "runAsNonRoot": {
+              "type": "boolean"
+            },
+            "capabilities": {
+              "type": "object",
+              "properties": {
+                "drop": {
+                  "type": "array"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "image": {
+      "type": "object",
+      "description": "scrim image (control plane with the data plane embedded), for central scrim and sidecars.",
+      "properties": {
+        "registry": {
+          "type": "string",
+          "description": "Image registry."
+        },
+        "repository": {
+          "type": "string",
+          "description": "Image repository."
+        },
+        "tag": {
+          "type": "string",
+          "description": "Image tag. Empty with useAppVersion takes Chart.appVersion, which the release sets to the scrim version."
+        },
+        "useAppVersion": {
+          "type": "boolean",
+          "description": "Use Chart.appVersion as the tag when tag is empty."
+        },
+        "digest": {
+          "type": "string",
+          "description": "Image digest (sha256:...); pins the image, the tag stays readable.",
+          "pattern": "^(sha256:[0-9a-f]{64})?$"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "description": "Image pull policy.",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "config": {
+      "type": "object",
+      "description": "scrim configuration, the same file format as a `scrim` config file (apiVersion and kind are added). Secret-valued settings take references (env:, file:, cred:, a store reference), never literals; the chart refuses known credential fields that hold a literal. Settings the chart owns (listeners, sockets, state, events, identity, metrics, CA, placeholder keys) are set in a second file that wins. Every store needs `redact` targets that match at least one secret: a target that loads nothing stops start-up (redaction.allow-empty-targets weakens that).",
+      "additionalProperties": true
+    },
+    "existingConfigMap": {
+      "type": "string",
+      "description": "Name of an existing ConfigMap holding the scrim configuration under `config.yaml`, used instead of `config`."
+    },
+    "policyRules": {
+      "type": "object",
+      "description": "Policy rules file (YAML object with `default` and `rules`, see docs/policy.md). Empty means no rules file: built-in defaults apply.",
+      "additionalProperties": true
+    },
+    "secretMounts": {
+      "type": "array",
+      "description": "Secrets mounted read-only into scrim at /run/secrets/scrim/<name>/<key>, for `file:` references in `config`. Each item: {name, secretName, items (optional, as in a Secret volume)}.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "secretName"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+          },
+          "secretName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "log": {
+      "type": "object",
+      "description": "Log level and format of central scrim and sidecars.",
+      "properties": {
+        "level": {
+          "type": "string",
+          "description": "Log level: debug, info, warn or error.",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ]
+        },
+        "format": {
+          "type": "string",
+          "description": "Log format: json or text.",
+          "enum": [
+            "json",
+            "text"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "upstreamCA": {
+      "type": "object",
+      "description": "Upstream TLS trust for the data plane (LLM proxy and tool proxy), as dataplane.upstream-ca-file.",
+      "properties": {
+        "configMap": {
+          "type": "string",
+          "description": "ConfigMap in the release namespace with a PEM bundle of extra roots for upstream TLS (private tool hosts, corporate TLS inspection). System and Mozilla roots stay trusted."
+        },
+        "key": {
+          "type": "string",
+          "description": "Key of the bundle in that ConfigMap."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ca": {
+      "type": "object",
+      "description": "Interception CA: the tool proxy signs leaves for bound hosts with it; agents trust its certificate. The key never leaves scrim's pods.",
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Generate a CA with Helm on first install and keep it (Secret with helm.sh/resource-policy: keep, reused on upgrade through lookup). Ed25519, PKCS#8. Ignored when existingSecret is set."
+        },
+        "validityDays": {
+          "type": "integer",
+          "description": "Validity of a generated CA in days.",
+          "minimum": 1
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Existing kubernetes.io/tls Secret with the CA: `tls.crt` and a PKCS#8 `tls.key` (cert-manager: privateKey.encoding PKCS8). scrim never rotates it."
+        },
+        "certificate": {
+          "type": "string",
+          "description": "PEM certificate of existingSecret, published to agents. Empty reads it from the Secret with lookup at install time (not available to `helm template`)."
+        },
+        "extraTrustedCerts": {
+          "type": "string",
+          "description": "Extra PEM certificates appended to the agents' ca-bundle.pem (for cluster services agents reach outside the proxy)."
+        },
+        "configMapName": {
+          "type": "string",
+          "description": "Name of the ConfigMap with the public CA (scrim-ca.pem, ca-bundle.pem) in the release namespace and every agent namespace."
+        }
+      },
+      "additionalProperties": false
+    },
+    "placeholderKeys": {
+      "type": "object",
+      "description": "Placeholder keys: placeholders are an HMAC of the value, so every replica and sidecar must share them.",
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Generate a 64-byte key on first install and keep it (reused on upgrade through lookup). Ignored when existingSecret is set."
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Existing Secret holding the keys."
+        },
+        "keys": {
+          "type": "array",
+          "description": "Keys of existingSecret: list of {name, version, key} (key = data key in the Secret). The highest version is current.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "version",
+              "key"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "secrets": {
+      "type": "object",
+      "description": "Secret slots (templates/_helpers.tpl, \"Secrets\"): each credential the chart mounts is a slot whose Secret is a Secret you manage (existing), an ExternalSecret the chart renders (externalSecrets.data), or a Secret the chart generates (only the metrics token). Slots: admin (key token, for admin.tcp), metrics (key token, generated), postgres (key dsn). There is no way to put a credential value into values.",
+      "properties": {
+        "existing": {
+          "type": "object",
+          "description": "Existing Secrets by slot (slot -> Secret name, tpl). Nothing is rendered for those slots.",
+          "additionalProperties": true
+        },
+        "keys": {
+          "type": "object",
+          "description": "Key names by slot (slot -> logical key -> key in the Secret), for an existing Secret with other key names.",
+          "additionalProperties": true
+        },
+        "externalSecrets": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Render an ExternalSecret (external-secrets.io) for every slot listed in data."
+            },
+            "apiVersion": {
+              "type": "string",
+              "description": "ExternalSecret apiVersion."
+            },
+            "refreshInterval": {
+              "type": "string",
+              "description": "refreshInterval."
+            },
+            "secretStoreRef": {
+              "type": "object",
+              "description": "SecretStore or ClusterSecretStore the ExternalSecrets read from.",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            },
+            "data": {
+              "type": "object",
+              "description": "Remote references by slot and key (slot -> key -> remote key string, or a remoteRef object).",
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "postgres": {
+      "type": "object",
+      "description": "Shared state and events. Several replicas (the HPA, global.ha) need PostgreSQL: it renders state.backend postgres and events.backend postgres together. The DSN is the Secret slot postgres (key dsn).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Use PostgreSQL for state (approvals, grants, sessions) and for events between replicas (LISTEN/NOTIFY). Off: in-memory state in one replica; a restart loses approvals and grants."
+        },
+        "maxConns": {
+          "type": "integer",
+          "description": "Connection pool size per replica.",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "description": "Kubernetes identity (identity.kubernetes.*): agent pods present a projected service account token for `audience`, which scrim verifies with TokenReview. Per-agent store login (identity.store-login) goes in `config.identity`.",
+      "properties": {
+        "kubernetes": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Identify agent pods by their projected token. Renders the TokenReview RBAC, mounts scrim's own API token and gives agent pods the token, SCRIM_K8S_TOKEN_FILE and the scrim-exec launcher. Off: every agent pod is an unknown caller, which the built-in rules do not inject credentials for."
+            },
+            "audience": {
+              "type": "string",
+              "description": "Audience of the projected agent token (identity.kubernetes.audience); tokens with another audience, such as the pod's default API token, are refused."
+            },
+            "expirationSeconds": {
+              "type": "integer",
+              "description": "Lifetime of the projected agent token in seconds. The kubelet rotates the file, but scrim-exec reads it when the agent starts: an agent process that runs longer than this loses its identity (injection is refused) until it is restarted.",
+              "minimum": 600
+            },
+            "tokenPath": {
+              "type": "string",
+              "description": "Where the token is mounted in agent containers.",
+              "pattern": "^/"
+            },
+            "tokenReviewRBAC": {
+              "type": "boolean",
+              "description": "Create a ClusterRole that may only create TokenReviews and bind it to scrim's service account (central) and to the service accounts of agents.namespaces (sidecar)."
+            },
+            "agents": {
+              "type": "object",
+              "description": "Agents by service account (identity.kubernetes.agents): agent name to selectors `sa:NAMESPACE/NAME` (globs allowed), `scope:`, `label:K=V`.",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "unmapped": {
+              "type": "string",
+              "description": "What a service account no rule maps becomes: derive (NAMESPACE/NAME) or unknown.",
+              "enum": [
+                "derive",
+                "unknown"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "storeAuth": {
+      "type": "object",
+      "description": "Store authentication with scrim's own service account (OpenBao Kubernetes auth, Infisical kubernetes-auth), so no static store credential exists. Configure the store in `config.stores` with `auth.method: kubernetes` (OpenBao) or `kubernetes-auth` (Infisical) and `auth.kubernetes.token-file` set to `path`.",
+      "properties": {
+        "serviceAccountToken": {
+          "type": "object",
+          "description": "Mount a projected service account token for store login (central scrim and sidecars).",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "audience": {
+              "type": "string",
+              "description": "Audience the store expects (OpenBao: the role's audience, often \"vault\")."
+            },
+            "expirationSeconds": {
+              "type": "integer",
+              "description": "Lifetime in seconds. scrim reads the file again at every login.",
+              "minimum": 600
+            },
+            "path": {
+              "type": "string",
+              "description": "Mount path; reference it as `auth.kubernetes.token-file` in the store configuration.",
+              "pattern": "^/"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "central": {
+      "type": "object",
+      "description": "Central mode: a Deployment of `scrim proxy` serving agent pods over a Service, built with chart.std.component (templates/_component.tpl).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Deploy the central scrim."
+        },
+        "replicaCount": {
+          "type": "integer",
+          "description": "Replicas when autoscaling is off. More than one needs postgres.enabled.",
+          "minimum": 0
+        },
+        "strategy": {
+          "type": "object",
+          "description": "Deployment strategy.",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "rollingUpdate": {
+              "type": "object",
+              "properties": {
+                "maxSurge": {
+                  "type": "integer"
+                },
+                "maxUnavailable": {
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "resources": {
+          "type": "object",
+          "description": "Resources of the scrim container.",
+          "properties": {
+            "requests": {
+              "type": "object",
+              "properties": {
+                "cpu": {
+                  "type": "string"
+                },
+                "memory": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "memory": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "nodeSelector": {
+          "type": "object",
+          "description": "nodeSelector (empty: global.nodeSelector).",
+          "additionalProperties": true
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "tolerations (empty: global.tolerations).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "affinity": {
+          "type": "object",
+          "description": "affinity (empty: global.affinity; tpl).",
+          "additionalProperties": true
+        },
+        "topologySpreadConstraints": {
+          "type": "array",
+          "description": "topologySpreadConstraints (empty: global.topologySpreadConstraints; tpl).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "priorityClassName": {
+          "type": "string",
+          "description": "priorityClassName (empty: global.priorityClassName)."
+        },
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "description": "Grace period; scrim finishes in-flight requests for up to 15s on SIGTERM.",
+          "minimum": 0
+        },
+        "lifecycle": {
+          "type": "object",
+          "description": "lifecycle hooks (postStart, preStop) of the scrim container (empty: global.lifecycle; tpl).",
+          "additionalProperties": true
+        },
+        "dnsPolicy": {
+          "type": "string",
+          "description": "dnsPolicy (empty: global.dnsPolicy).",
+          "enum": [
+            "",
+            "ClusterFirst",
+            "ClusterFirstWithHostNet",
+            "Default",
+            "None"
+          ]
+        },
+        "dnsConfig": {
+          "type": "object",
+          "description": "dnsConfig (empty: global.dnsConfig; tpl).",
+          "additionalProperties": true
+        },
+        "hostAliases": {
+          "type": "array",
+          "description": "hostAliases (empty: global.hostAliases; tpl).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "runtimeClassName": {
+          "type": "string",
+          "description": "runtimeClassName (empty: global.runtimeClassName)."
+        },
+        "shareProcessNamespace": {
+          "description": "shareProcessNamespace (null: global.shareProcessNamespace).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "enableServiceLinks": {
+          "description": "enableServiceLinks. false keeps other Services' addresses out of scrim's environment.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "imagePullSecrets": {
+          "type": "array",
+          "description": "Pull secrets of central scrim, added to global.imagePullSecrets.",
+          "items": {
+            "type": [
+              "string",
+              "object"
+            ]
+          }
+        },
+        "podAnnotations": {
+          "type": "object",
+          "description": "Pod annotations, merged over global.podAnnotations (tpl).",
+          "additionalProperties": true
+        },
+        "podLabels": {
+          "type": "object",
+          "description": "Pod labels, merged over global.podLabels (tpl). Chart labels are never overridden.",
+          "additionalProperties": true
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations of the Deployment.",
+          "additionalProperties": true
+        },
+        "labels": {
+          "type": "object",
+          "description": "Labels of the Deployment. Chart labels are never overridden.",
+          "additionalProperties": true
+        },
+        "podSecurityContext": {
+          "type": "object",
+          "description": "Pod securityContext, merged over global.podSecurityContext.",
+          "properties": {
+            "runAsUser": {
+              "type": "integer"
+            },
+            "runAsGroup": {
+              "type": "integer"
+            },
+            "fsGroup": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": true
+        },
+        "securityContext": {
+          "type": "object",
+          "description": "Container securityContext, merged over global.containerSecurityContext.",
+          "additionalProperties": true
+        },
+        "serviceAccount": {
+          "type": "object",
+          "properties": {
+            "create": {
+              "type": "boolean",
+              "description": "Create a ServiceAccount \"<fullname>-proxy\"."
+            },
+            "name": {
+              "type": "string",
+              "description": "Name (empty: \"<fullname>-proxy\", or \"default\" when create is false)."
+            },
+            "automount": {
+              "type": "boolean",
+              "description": "Mount the API token even without identity.kubernetes (identity mounts it anyway, for TokenReview)."
+            },
+            "annotations": {
+              "type": "object",
+              "description": "ServiceAccount annotations (for cloud workload identity toward stores).",
+              "additionalProperties": true
+            },
+            "labels": {
+              "type": "object",
+              "description": "ServiceAccount labels.",
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "Service type. Keep ClusterIP: the listeners serve plain HTTP and the forward proxy.",
+              "enum": [
+                "ClusterIP",
+                "NodePort",
+                "LoadBalancer"
+              ]
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Service annotations.",
+              "additionalProperties": true
+            },
+            "labels": {
+              "type": "object",
+              "description": "Service labels.",
+              "additionalProperties": true
+            },
+            "llmPort": {
+              "type": "integer",
+              "description": "LLM base URL port (agents use http://<service>:<port>/anthropic and /openai/v1).",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "forwardPort": {
+              "type": "integer",
+              "description": "Forward proxy port (HTTPS_PROXY).",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          },
+          "additionalProperties": false
+        },
+        "startupProbe": {
+          "type": "object",
+          "description": "Startup probe ({enabled, ...probe spec}) on /livez.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "httpGet": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "port": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            },
+            "periodSeconds": {
+              "type": "integer"
+            },
+            "failureThreshold": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": true
+        },
+        "livenessProbe": {
+          "type": "object",
+          "description": "Liveness probe ({enabled, ...probe spec}) on /livez.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "httpGet": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "port": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            },
+            "periodSeconds": {
+              "type": "integer"
+            },
+            "timeoutSeconds": {
+              "type": "integer"
+            },
+            "failureThreshold": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": true
+        },
+        "readinessProbe": {
+          "type": "object",
+          "description": "Readiness probe ({enabled, ...probe spec}) on /readyz (the data plane holds a snapshot and every listener is bound).",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "httpGet": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "port": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            },
+            "periodSeconds": {
+              "type": "integer"
+            },
+            "timeoutSeconds": {
+              "type": "integer"
+            },
+            "failureThreshold": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": true
+        },
+        "pdb": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Render a PodDisruptionBudget."
+            },
+            "minAvailable": {
+              "description": "minAvailable (integer or percentage; default 1 when maxUnavailable is unset).",
+              "type": [
+                "integer",
+                "string",
+                "null"
+              ],
+              "minimum": 0,
+              "pattern": "^[0-9]+%$"
+            },
+            "maxUnavailable": {
+              "description": "maxUnavailable (integer or percentage; wins over minAvailable: set it to null to use minAvailable).",
+              "type": [
+                "integer",
+                "string",
+                "null"
+              ],
+              "minimum": 0,
+              "pattern": "^[0-9]+%$"
+            },
+            "labels": {
+              "type": "object",
+              "description": "PDB labels.",
+              "additionalProperties": true
+            },
+            "annotations": {
+              "type": "object",
+              "description": "PDB annotations.",
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "autoscaling": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Render a HorizontalPodAutoscaler (needs postgres.enabled; replicaCount is then left out of the Deployment)."
+            },
+            "minReplicas": {
+              "type": "integer",
+              "description": "Minimum replicas; below 2 fails the render."
+            },
+            "maxReplicas": {
+              "type": "integer",
+              "description": "Maximum replicas.",
+              "minimum": 1
+            },
+            "targetCPUUtilizationPercentage": {
+              "description": "Target average CPU utilisation in percent (null: no CPU metric).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "targetMemoryUtilizationPercentage": {
+              "description": "Target average memory utilisation in percent (null: no memory metric).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "connections": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Add the connections metric."
+                },
+                "metricName": {
+                  "type": "string",
+                  "description": "Metric name as the adapter exposes it."
+                },
+                "targetAverageValue": {
+                  "description": "Target average open connections per replica.",
+                  "type": [
+                    "string",
+                    "integer"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            "behavior": {
+              "type": "object",
+              "description": "HPA scaling behavior.",
+              "additionalProperties": true
+            },
+            "labels": {
+              "type": "object",
+              "description": "HPA labels.",
+              "additionalProperties": true
+            },
+            "annotations": {
+              "type": "object",
+              "description": "HPA annotations.",
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "extraArgs": {
+          "type": "array",
+          "description": "Extra arguments of the scrim container, after `proxy` (tpl).",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extraEnv": {
+          "type": "array",
+          "description": "Extra env vars of the scrim container (EnvVar list, tpl). Use valueFrom.secretKeyRef with `env:` references; never put secret values here.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "extraEnvFrom": {
+          "type": "array",
+          "description": "Extra envFrom sources of the scrim container (tpl).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "extraVolumes": {
+          "type": "array",
+          "description": "Extra volumes of the pod (tpl).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "extraVolumeMounts": {
+          "type": "array",
+          "description": "Extra volumeMounts of the scrim container (tpl).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "extraContainers": {
+          "type": "array",
+          "description": "Extra containers of the pod (tpl). They share the pod's network: anything they hold is next to scrim's values.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "extraInitContainers": {
+          "type": "array",
+          "description": "Init containers (tpl).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "networkPolicy": {
+          "type": "object",
+          "properties": {
+            "extraFrom": {
+              "type": "array",
+              "description": "Peers admitted on every port the chart's own ingress rules open (NetworkPolicy peers, tpl).",
+              "items": {
+                "type": "object"
+              }
+            },
+            "extraIngress": {
+              "type": "array",
+              "description": "Extra ingress rules (tpl).",
+              "items": {
+                "type": "object"
+              }
+            },
+            "extraEgress": {
+              "type": "array",
+              "description": "Extra egress rules (tpl), after networkPolicy.scrimEgress.",
+              "items": {
+                "type": "object"
+              }
+            },
+            "labels": {
+              "type": "object",
+              "description": "Labels of the NetworkPolicy.",
+              "additionalProperties": true
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Annotations of the NetworkPolicy.",
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "secretLabels": {
+          "type": "object",
+          "description": "Labels on central's Secrets (tpl).",
+          "additionalProperties": true
+        },
+        "secretAnnotations": {
+          "type": "object",
+          "description": "Annotations on central's Secrets.",
+          "additionalProperties": true
+        },
+        "configMapLabels": {
+          "type": "object",
+          "description": "Labels on central's ConfigMaps (tpl).",
+          "additionalProperties": true
+        },
+        "configMapAnnotations": {
+          "type": "object",
+          "description": "Annotations on central's ConfigMaps.",
+          "additionalProperties": true
+        },
+        "replication": {
+          "type": "object",
+          "description": "Replication of the Secret slots and ConfigMaps (global.replication keys), merged over global.replication.",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "admin": {
+      "type": "object",
+      "description": "Admin API over TCP, for operators outside the pod (`scrim approve` with `--admin-url`). Off: run `scrim approve` with kubectl exec in the scrim pod, against the Unix socket.",
+      "properties": {
+        "tcp": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Serve the admin API on a TCP port of the Service."
+            },
+            "port": {
+              "type": "integer",
+              "description": "Port.",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Metrics and health. The health endpoints (/livez, /readyz) are always served on the health port for the probes; `enabled` exposes /metrics on the Service and to Prometheus.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Expose metrics (Service port, monitors, NetworkPolicy scrape rule) and turn on scrim's metrics.enabled setting."
+        },
+        "port": {
+          "type": "integer",
+          "description": "Port of the metrics and health listener (metrics.listen on the pod IP).",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "path": {
+          "type": "string",
+          "description": "Metrics path (metrics.path).",
+          "pattern": "^/"
+        },
+        "allowUnauthenticatedRemote": {
+          "type": "boolean",
+          "description": "Serve metrics without a token (metrics.allow-unauthenticated-remote, a weakening scrim logs at start-up): anyone who reaches the port reads them. Pair it with networkPolicy. Off, scrapers present the bearer token of the Secret slot metrics (key token, generated unless secrets.existing.metrics or secrets.externalSecrets.data.metrics supply it)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "description": "prometheus-operator ServiceMonitor for central scrim (needs metrics.enabled).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Create a Prometheus Operator ServiceMonitor for central scrim (needs metrics.enabled)."
+        },
+        "labels": {
+          "type": "object",
+          "description": "Extra labels (for the Prometheus serviceMonitorSelector).",
+          "additionalProperties": true
+        },
+        "interval": {
+          "type": "string",
+          "description": "Scrape interval."
+        },
+        "scrapeTimeout": {
+          "type": "string",
+          "description": "Scrape timeout."
+        }
+      },
+      "additionalProperties": false
+    },
+    "podMonitor": {
+      "type": "object",
+      "description": "prometheus-operator PodMonitor per agent namespace for sidecars (needs metrics.enabled and sidecar.enabled).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Create a PodMonitor per agent namespace for sidecars (needs metrics.enabled and sidecar.enabled)."
+        },
+        "labels": {
+          "type": "object",
+          "description": "Extra labels.",
+          "additionalProperties": true
+        },
+        "interval": {
+          "type": "string",
+          "description": "Scrape interval."
+        }
+      },
+      "additionalProperties": false
+    },
+    "prometheusRule": {
+      "type": "object",
+      "description": "prometheus-operator PrometheusRule with the scrim alert rules.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Create a PrometheusRule from the chart's monitoring/scrim.rules.yaml (a copy of deploy/monitoring/rules/scrim.rules.yaml) plus `groups`."
+        },
+        "labels": {
+          "type": "object",
+          "description": "Extra labels.",
+          "additionalProperties": true
+        },
+        "groups": {
+          "type": "array",
+          "description": "Extra rule groups.",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "grafanaDashboard": {
+      "type": "object",
+      "description": "Grafana dashboard ConfigMap for the Grafana sidecar.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Create a ConfigMap with the dashboard JSON, labelled for the Grafana sidecar."
+        },
+        "labels": {
+          "type": "object",
+          "description": "Labels; the Grafana sidecar picks up grafana_dashboard: \"1\" by default.",
+          "properties": {
+            "grafana_dashboard": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations (for example grafana_folder).",
+          "additionalProperties": true
+        },
+        "json": {
+          "type": "string",
+          "description": "Dashboard JSON; empty uses the chart's monitoring/scrim-dashboard.json (a copy of deploy/monitoring/grafana/scrim-dashboard.json)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "agents": {
+      "type": "object",
+      "description": "Agent pods: which pods use scrim, and how.",
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "Label that marks agent pods. Value `central` uses the central Service, `sidecar` adds an in-pod scrim."
+        },
+        "namespaces": {
+          "type": "array",
+          "description": "Namespaces agent pods run in. The chart creates the public CA ConfigMap, the agent env ConfigMaps, NetworkPolicies and sidecar resources there before any pod starts.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "noProxy": {
+          "type": "array",
+          "description": "Extra NO_PROXY entries for agents (hosts reached without scrim; they also need a NetworkPolicy egress rule).",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extraEnv": {
+          "type": "array",
+          "description": "Extra environment variables for agent containers.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "trustPath": {
+          "type": "string",
+          "description": "Mount path of the CA files in agent containers.",
+          "pattern": "^/"
+        }
+      },
+      "additionalProperties": false
+    },
+    "kyverno": {
+      "type": "object",
+      "description": "Kyverno admission policy that configures labelled pods.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Install the ClusterPolicy (needs Kyverno 1.13 or later)."
+        },
+        "failurePolicy": {
+          "type": "string",
+          "description": "Refuse labelled pods when Kyverno cannot process them.",
+          "enum": [
+            "Fail",
+            "Ignore"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "networkPolicy": {
+      "type": "object",
+      "description": "NetworkPolicies of central scrim and of agent pods.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Create NetworkPolicies (needs a CNI that enforces them)."
+        },
+        "dns": {
+          "type": "object",
+          "description": "Pod and namespace selectors of the cluster DNS.",
+          "properties": {
+            "namespaceSelector": {
+              "type": "object",
+              "properties": {
+                "matchLabels": {
+                  "type": "object",
+                  "properties": {
+                    "kubernetes.io/metadata.name": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": true
+            },
+            "podSelector": {
+              "type": "object",
+              "properties": {
+                "matchLabels": {
+                  "type": "object",
+                  "properties": {
+                    "k8s-app": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "scrimEgress": {
+          "type": "array",
+          "description": "Egress rules of central scrim besides DNS (providers, stores, tool hosts, PostgreSQL). The default allows HTTPS anywhere.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "apiServerEgress": {
+          "type": "array",
+          "description": "Egress to the Kubernetes API server, for TokenReview (identity.kubernetes) from central scrim and sidecar pods. Policies see the API server's endpoint port, often 6443, not the Service port. Narrow it with `to` (the API server's addresses) where you can.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "sidecarEgress": {
+          "type": "array",
+          "description": "Egress rules of sidecar agent pods besides DNS (what the in-pod scrim must reach).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "prometheus": {
+          "type": "object",
+          "description": "Where Prometheus scrapes from (used when metrics.enabled).",
+          "properties": {
+            "namespaceSelector": {
+              "type": "object",
+              "properties": {
+                "matchLabels": {
+                  "type": "object",
+                  "properties": {
+                    "kubernetes.io/metadata.name": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": true
+            },
+            "podSelector": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "adminFrom": {
+          "type": "array",
+          "description": "Peers allowed to the admin TCP port (NetworkPolicy `from` entries).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "labels": {
+          "type": "object",
+          "description": "Labels on every NetworkPolicy the chart renders (tpl).",
+          "additionalProperties": true
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations on every NetworkPolicy the chart renders.",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "sidecar": {
+      "type": "object",
+      "description": "Sidecar mode: an in-pod `scrim proxy` on loopback for pods labelled `sidecar`.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Render the per-namespace sidecar resources and the sidecar injection rule."
+        },
+        "resources": {
+          "type": "object",
+          "description": "Resources of the sidecar.",
+          "properties": {
+            "requests": {
+              "type": "object",
+              "properties": {
+                "cpu": {
+                  "type": "string"
+                },
+                "memory": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "memory": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "securityContext": {
+          "type": "object",
+          "description": "Container security context of the sidecar (it runs as UID 65532; the egress guard lets only that UID out).",
+          "properties": {
+            "allowPrivilegeEscalation": {
+              "type": "boolean"
+            },
+            "readOnlyRootFilesystem": {
+              "type": "boolean"
+            },
+            "runAsNonRoot": {
+              "type": "boolean"
+            },
+            "runAsUser": {
+              "type": "integer"
+            },
+            "runAsGroup": {
+              "type": "integer"
+            },
+            "capabilities": {
+              "type": "object",
+              "properties": {
+                "drop": {
+                  "type": "array"
+                }
+              },
+              "additionalProperties": true
+            },
+            "seccompProfile": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "secretMounts": {
+          "type": "array",
+          "description": "Secrets (that must exist in every agent namespace) mounted into the sidecar, as secretMounts.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "secretName"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+              },
+              "secretName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "caSecretName": {
+          "type": "string",
+          "description": "Name of the CA Secret in agent namespaces. Created by the chart when ca.create is on; otherwise provide it in each namespace."
+        },
+        "keysSecretName": {
+          "type": "string",
+          "description": "Name of the placeholder key Secret in agent namespaces (same rule as caSecretName)."
+        },
+        "egressGuard": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Install the guard. Without it the agent can reach whatever the pod's NetworkPolicy allows."
+            },
+            "image": {
+              "type": "string",
+              "description": "Image with the `nft` binary and a shell, required when enabled."
+            },
+            "pullPolicy": {
+              "type": "string",
+              "description": "Pull policy.",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "tests": {
+      "type": "object",
+      "description": "helm test pods (templates/tests): they reach the central scrim's LLM and forward proxy listeners (and /readyz with metrics on) through its Service.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Render helm test pods."
+        },
+        "retries": {
+          "type": "integer",
+          "description": "Attempts, 5 seconds apart, before a test fails.",
+          "minimum": 1
+        },
+        "resources": {
+          "type": "object",
+          "description": "Resources of the test pods.",
+          "properties": {
+            "requests": {
+              "type": "object",
+              "properties": {
+                "cpu": {
+                  "type": "string"
+                },
+                "memory": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "memory": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "image": {
+          "type": "object",
+          "description": "Test image (curl).",
+          "properties": {
+            "registry": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "useAppVersion": {
+              "type": "boolean"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "podLabels": {
+          "type": "object",
+          "description": "Extra labels of the test pods, merged over global.podLabels (tpl).",
+          "additionalProperties": true
+        },
+        "podAnnotations": {
+          "type": "object",
+          "description": "Extra annotations of the test pods, merged over global.podAnnotations (tpl).",
+          "additionalProperties": true
+        },
+        "imagePullSecrets": {
+          "type": "array",
+          "description": "Pull secrets of the test pods, added to global.imagePullSecrets.",
+          "items": {
+            "type": [
+              "string",
+              "object"
+            ]
+          }
+        },
+        "nodeSelector": {
+          "type": "object",
+          "description": "nodeSelector (empty: global.nodeSelector).",
+          "additionalProperties": true
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "tolerations (empty: global.tolerations).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "affinity": {
+          "type": "object",
+          "description": "affinity (empty: global.affinity; tpl).",
+          "additionalProperties": true
+        },
+        "priorityClassName": {
+          "type": "string",
+          "description": "priorityClassName (empty: global.priorityClassName)."
+        },
+        "lifecycle": {
+          "type": "object",
+          "description": "lifecycle hooks (postStart, preStop) of the test container (empty: global.lifecycle; tpl).",
+          "additionalProperties": true
+        },
+        "dnsPolicy": {
+          "type": "string",
+          "description": "dnsPolicy (empty: global.dnsPolicy).",
+          "enum": [
+            "",
+            "ClusterFirst",
+            "ClusterFirstWithHostNet",
+            "Default",
+            "None"
+          ]
+        },
+        "dnsConfig": {
+          "type": "object",
+          "description": "dnsConfig (empty: global.dnsConfig; tpl).",
+          "additionalProperties": true
+        },
+        "hostAliases": {
+          "type": "array",
+          "description": "hostAliases (empty: global.hostAliases; tpl).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "runtimeClassName": {
+          "type": "string",
+          "description": "runtimeClassName (empty: global.runtimeClassName)."
+        },
+        "shareProcessNamespace": {
+          "description": "shareProcessNamespace (null: global.shareProcessNamespace).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "enableServiceLinks": {
+          "description": "enableServiceLinks (null: global.enableServiceLinks).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "podSecurityContext": {
+          "type": "object",
+          "description": "Test pod securityContext, merged over global.podSecurityContext (default user 100:101, the curl image's).",
+          "additionalProperties": true
+        },
+        "securityContext": {
+          "type": "object",
+          "description": "Test container securityContext, merged over global.containerSecurityContext.",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "objectMetadata": {
+      "type": "object",
+      "description": "Metadata of single objects, by \"<Kind>/<name>\" where name is the object name with or without the \"<fullname>-\" prefix (e.g. \"ConfigMap/config\", or \"Service/<fullname>\" for the objects named after the release): {labels, annotations, replication}. Wins over every other source; replication only applies to Secrets and ConfigMaps rendered through the shared helpers.",
+      "additionalProperties": true
+    },
+    "extraConfigMaps": {
+      "type": "object",
+      "description": "ConfigMaps the chart renders as \"<fullname>-<key>\": key -> {data (tpl), binaryData, labels, annotations, immutable, name, existingConfigMap, replication}. Reference them from central.extraVolumes or extraEnvFrom with include \"chart.extraConfigMapName\" (list $ \"<key>\").",
+      "additionalProperties": true
+    },
+    "extraObjects": {
+      "type": "array",
+      "description": "Arbitrary extra manifests: a list of objects or strings, each rendered through tpl. Credentials do not belong here either; an ExternalSecret does.",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "additionalProperties": false
+}

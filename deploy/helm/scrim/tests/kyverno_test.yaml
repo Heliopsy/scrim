@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: Kyverno injection (kyverno.yaml)
+templates:
+  - kyverno.yaml
+release:
+  name: rel
+  namespace: ns
+set:
+  kyverno.enabled: true
+  agents.namespaces: [agents]
+tests:
+  - it: refuses labelled pods outside the prepared namespaces and injects central pods
+    asserts:
+      - isKind: {of: ClusterPolicy}
+      - equal: {path: 'spec.rules[0].name', value: require-prepared-namespace}
+      - equal: {path: 'spec.rules[1].name', value: inject-central}
+      - contains:
+          path: 'spec.rules[1].mutate.patchStrategicMerge.spec.volumes'
+          content:
+            name: scrim-identity
+            projected:
+              defaultMode: 292
+              sources: [{serviceAccountToken: {audience: scrim, expirationSeconds: 3600, path: token}}]
+      - equal: {path: 'metadata.annotations["pod-policies.kyverno.io/autogen-controllers"]', value: none}
+  - it: renders nothing when off
+    set:
+      kyverno.enabled: false
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: injects the sidecar with the guard, the API token and the store token
+    set:
+      sidecar: {enabled: true, egressGuard: {image: nft:1}}
+      storeAuth.serviceAccountToken.enabled: true
+    asserts:
+      - equal: {path: 'spec.rules[2].name', value: inject-sidecar}
+      - equal: {path: 'spec.rules[2].mutate.patchStrategicMerge.spec.initContainers[0].name', value: scrim-egress-guard}
+      - equal: {path: 'spec.rules[2].mutate.patchStrategicMerge.spec.initContainers[0].securityContext.capabilities.add', value: [NET_ADMIN]}
+      - equal: {path: 'spec.rules[2].mutate.patchStrategicMerge.spec.initContainers[1].restartPolicy', value: Always}
+      - contains:
+          path: 'spec.rules[2].mutate.patchStrategicMerge.spec.initContainers[1].volumeMounts'
+          content: {name: scrim-kube-api, mountPath: /var/run/secrets/scrim/kube-api, readOnly: true}
+      - contains:
+          path: 'spec.rules[2].mutate.patchStrategicMerge.spec.initContainers[1].volumeMounts'
+          content: {name: scrim-store-token, mountPath: /var/run/secrets/scrim, readOnly: true}
+  - it: mounts the metrics token Secret into sidecars
+    set:
+      sidecar: {enabled: true, egressGuard: {image: nft:1}}
+      metrics.enabled: true
+      secrets.existing.metrics: scrim-metrics
+    asserts:
+      - contains:
+          path: 'spec.rules[2].mutate.patchStrategicMerge.spec.volumes'
+          content: {name: scrim-metrics-token, secret: {secretName: scrim-metrics, defaultMode: 292, items: [{key: token, path: token}]}}

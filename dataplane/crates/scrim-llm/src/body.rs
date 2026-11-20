@@ -3,6 +3,7 @@
 //! Response bodies: the streaming restorer and small helpers.
 
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll, ready};
 
 use bytes::Bytes;
@@ -11,6 +12,7 @@ use http_body_util::BodyExt;
 use http_body_util::combinators::UnsyncBoxBody;
 
 use crate::capture::BodyTee;
+use crate::metrics::RouteMetrics;
 use crate::stream::SseRestorer;
 
 /// Boxed error type of proxy bodies.
@@ -39,6 +41,7 @@ pub(crate) struct Restoring<B> {
     trailers: Option<http::HeaderMap>,
     done: bool,
     on_end: Option<OnEnd>,
+    metrics: Option<Arc<RouteMetrics>>,
 }
 
 impl<B> Restoring<B> {
@@ -57,13 +60,27 @@ impl<B> Restoring<B> {
             trailers: None,
             done: false,
             on_end,
+            metrics: None,
         }
+    }
+
+    /// Records the time restore adds to each chunk into `m`.
+    pub(crate) fn timed(mut self, m: Option<Arc<RouteMetrics>>) -> Self {
+        self.metrics = m;
+        self
     }
 
     fn process(&mut self, data: &[u8]) -> Vec<u8> {
         let mut out = Vec::with_capacity(data.len() + 64);
         match self.restorer.as_mut() {
-            Some(r) => r.push(data, &mut out),
+            Some(r) => match &self.metrics {
+                Some(m) => {
+                    let t = std::time::Instant::now();
+                    r.push(data, &mut out);
+                    m.chunk(t.elapsed());
+                }
+                None => r.push(data, &mut out),
+            },
             None => out.extend_from_slice(data),
         }
         out

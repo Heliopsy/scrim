@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: refusals in deployment.yaml
+templates:
+- deployment.yaml
+- config.yaml
+release:
+  name: rel
+  namespace: ns
+tests:
+- it: refuses an HPA with minReplicas below 2
+  set:
+    postgres.enabled: true
+    secrets.existing.postgres: pg
+    central.autoscaling:
+      enabled: true
+      minReplicas: 1
+  asserts:
+  - failedTemplate:
+      errorPattern: 'autoscaling.minReplicas is 1: an HPA needs at least 2'
+  template: deployment.yaml
+- it: refuses an HPA maxReplicas below minReplicas
+  set:
+    postgres.enabled: true
+    secrets.existing.postgres: pg
+    central.autoscaling:
+      enabled: true
+      minReplicas: 4
+      maxReplicas: 3
+  asserts:
+  - failedTemplate:
+      errorPattern: maxReplicas is below minReplicas
+  template: deployment.yaml
+- it: refuses an HPA without a metric
+  set:
+    postgres.enabled: true
+    secrets.existing.postgres: pg
+    central.autoscaling:
+      enabled: true
+      targetCPUUtilizationPercentage: null
+  asserts:
+  - failedTemplate:
+      errorPattern: autoscaling needs targetCPUUtilizationPercentage
+  template: deployment.yaml

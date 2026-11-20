@@ -59,6 +59,14 @@ for trust installation.
 - **WHEN** a client that trusts only the previous CA connects during the overlap period
 - **THEN** the handshake succeeds through a cross certificate, and fails once the overlap ends
 
+#### Scenario: Chain builders that match key identifiers
+
+- **WHEN** an OpenSSL-based client (curl, git, Python, Node.js) that trusts only the previous CA
+  connects during the overlap period
+- **THEN** the cross certificate's subject key identifier is the one the leaf's authority key
+  identifier names, its authority key identifier names the previous CA, and the client accepts the
+  chain
+
 #### Scenario: Restart during an overlap
 
 - **WHEN** scrim restarts while a rotation's overlap period is running
@@ -73,6 +81,24 @@ for trust installation.
 
 - **WHEN** the generated CA's key file is readable by group or others
 - **THEN** scrim refuses to use it and names the file, without printing its content
+
+### Requirement: Private upstream roots
+
+The data plane SHALL trust the system roots for upstream TLS, plus the roots of a PEM bundle named by
+`dataplane.upstream-ca-file`, in the LLM proxy and the tool proxy alike, for API hosts with a private
+CA and TLS-inspecting corporate proxies. A bundle that is set but unreadable, or holds no
+certificate, SHALL stop the data plane from starting rather than leave the trust silently missing.
+
+#### Scenario: Internal API host
+
+- **WHEN** a credential is bound to a host whose certificate is issued by a private CA named in
+  `dataplane.upstream-ca-file`
+- **THEN** the tool proxy verifies the host against that CA and injects the credential
+
+#### Scenario: Bundle missing
+
+- **WHEN** `dataplane.upstream-ca-file` names a file that does not exist
+- **THEN** the data plane does not start, so nothing is served
 
 ### Requirement: Pinned certificates fail closed
 
@@ -186,6 +212,29 @@ in the audit log without any value.
 - **WHEN** a request is refused because its placeholder is not bound to the destination
 - **THEN** the agent receives status 403 with code `unbound_destination` and the credential alias,
   and the audit entry names the alias and destination
+
+### Requirement: Unresolved placeholders are refused
+
+A request toward a host with bound credentials that carries a placeholder no credential with a
+value resolves (generated in any form the proxy reads, reference, or declared for a catalog
+credential not loaded yet) SHALL be refused with 503 `credential_unavailable`, audited, and SHALL
+send nothing upstream. Only the exact placeholder grammar SHALL count.
+
+#### Scenario: Store not loaded yet
+
+- **WHEN** a catalog credential bound to `api.acme.test` with placeholder `SCRIM_ACME_KEY` has no value yet and a tool sends `SCRIM_ACME_KEY` to `api.acme.test`
+- **THEN** the request is refused with 503 `credential_unavailable` and audited
+- **AND** nothing reaches `api.acme.test`, so the placeholder is never sent as text
+
+#### Scenario: Unknown generated or reference placeholder
+
+- **WHEN** a request toward a bound host carries `⟦scrim:<slug>:<code>⟧` (or its percent form) or `{{scrim:<ref>}}` that matches no credential with a value
+- **THEN** it is refused with 503 `credential_unavailable` and nothing is sent
+
+#### Scenario: Look-alike text passes
+
+- **WHEN** a request toward a bound host carries text such as `⟦scrim:acme⟧`, `{{scrim:not a ref}}` or the word scrim
+- **THEN** it is forwarded unchanged
 
 ### Requirement: Bodies too large to rewrite
 

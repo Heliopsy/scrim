@@ -1,0 +1,19 @@
+# Example scrape configuration for scrim. Merge it into your prometheus.yml, or
+# load it as is through `scrape_config_files` (see prometheus.yaml next to it).
+#
+# The rules ship in ../rules/scrim.rules.yaml. Load them from the main config:
+#
+#   rule_files:
+#     - /etc/prometheus/rules/scrim.rules.yaml
+scrape_configs:
+  - job_name: scrim
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - 127.0.0.1:9792
+    # metrics.listen defaults to loopback. On a non-loopback listener scrim
+    # requires a bearer token; keep it in a file Prometheus can read.
+    # authorization:
+    #   type: Bearer
+    #   credentials_file: /etc/prometheus/scrim-metrics-token

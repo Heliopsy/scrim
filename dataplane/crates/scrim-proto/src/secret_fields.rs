@@ -6,7 +6,7 @@ use std::fmt;
 
 use zeroize::Zeroize;
 
-use crate::v1::{CaCertificate, CaptureRequest, PlaceholderKey, ValueEntry};
+use crate::v1::{AskCaller, CaCertificate, CaptureRequest, PlaceholderKey, ValueEntry};
 
 /// What `Debug` prints in place of secret bytes.
 pub const REDACTED: &str = "[scrim:redacted]";
@@ -72,6 +72,26 @@ impl fmt::Debug for CaCertificate {
     }
 }
 
+impl fmt::Debug for AskCaller {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AskCaller")
+            .field("session_id", &self.session_id)
+            .field("unix_peer", &self.unix_peer)
+            .field("peer_uid", &self.peer_uid)
+            .field("peer_gid", &self.peer_gid)
+            .field("peer_pid", &self.peer_pid)
+            .field("session_proof", &self.session_proof)
+            .field("kubernetes_token", &Redacted(self.kubernetes_token.len()))
+            .finish()
+    }
+}
+
+impl Drop for AskCaller {
+    fn drop(&mut self) {
+        self.kubernetes_token.zeroize();
+    }
+}
+
 impl Drop for CaCertificate {
     fn drop(&mut self) {
         self.key_pem.zeroize();
@@ -121,7 +141,13 @@ mod tests {
 
         let mut capture = crate::v1::CaptureRequest::default();
         capture.value.clone_from(&secret);
-        let out = format!("{snap:?} {snap:#?} {capture:?}");
+        let mut caller = crate::v1::AskCaller::default();
+        caller.kubernetes_token.clone_from(&secret);
+        let ask = crate::v1::AskRequest {
+            caller: Some(caller),
+            ..Default::default()
+        };
+        let out = format!("{snap:?} {snap:#?} {capture:?} {ask:?} {ask:#?}");
         let as_text = String::from_utf8(secret.clone()).unwrap_or_default();
         assert!(!out.contains(&as_text), "debug output leaks: {out}");
         assert!(

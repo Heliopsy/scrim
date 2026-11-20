@@ -1,0 +1,4 @@
+# expect: config.stores.bao.token holds a literal
+config:
+  stores:
+    bao: {kind: openbao, address: https://bao.example.com, token: s.not-a-reference}

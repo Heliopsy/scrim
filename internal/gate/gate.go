@@ -57,8 +57,11 @@ type Gate struct {
 	// Callers resolves who sent a request the data plane asks about
 	// ([Gate.Answer]); nil evaluates every such caller as unknown.
 	Callers *identity.Resolver
-	Log     *slog.Logger
-	Now     func() time.Time
+	// StoreAccess, when set, checks that the caller's own store identity
+	// may use a secret scrim's rules allowed it to use ([Gate.Answer]).
+	StoreAccess StoreAccess
+	Log         *slog.Logger
+	Now         func() time.Time
 }
 
 // Status is the outcome of a check.
@@ -97,6 +100,11 @@ type Options struct {
 	// Attrs are added to the decision's audit entry (how the caller was
 	// identified, for example). Metadata only, never a value.
 	Attrs map[string]string
+	// Confirm, when set, runs after the rules allowed the operation and
+	// before it is audited; an error turns the allow into a deny (the
+	// store refusing the agent's own identity). Scrim's rules run first, so
+	// a request they deny never reaches the store.
+	Confirm func(context.Context) error
 }
 
 // Check decides req. It never returns an error: failures deny and are
@@ -104,6 +112,11 @@ type Options struct {
 // unaudited.
 func (g *Gate) Check(ctx context.Context, req policy.Request, o Options) Verdict {
 	v := g.check(ctx, req, o)
+	if v.Status == Allowed && o.Confirm != nil {
+		if err := o.Confirm(ctx); err != nil {
+			v = Verdict{Status: Denied, Rule: v.Rule, Reason: "refused by the agent's store identity: " + err.Error(), ApprovalID: v.ApprovalID}
+		}
+	}
 	if err := g.record(ctx, req, v, o); err != nil && v.Status != Denied {
 		g.logErr("decision could not be audited; refusing", err)
 		return Verdict{Status: Denied, Rule: v.Rule, Reason: "decision could not be audited", ApprovalID: v.ApprovalID}

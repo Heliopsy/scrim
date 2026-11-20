@@ -57,7 +57,8 @@ func isolated(t *testing.T, env ...string) config.Options {
 
 func TestSQLiteBackendWired(t *testing.T) {
 	var logs bytes.Buffer
-	a, err := app.New(context.Background(), isolated(t, "SCRIM_STATE_BACKEND=sqlite"), &logs)
+	// Metrics on: the test checks the state backend is instrumented.
+	a, err := app.New(context.Background(), isolated(t, "SCRIM_STATE_BACKEND=sqlite", "SCRIM_METRICS_ENABLED=true"), &logs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,5 +91,45 @@ func TestDataPlaneNeedsABinary(t *testing.T) {
 	defer func() { _ = a.Close() }()
 	if _, err := a.DataPlane(); err == nil {
 		t.Fatal("a missing data plane binary was accepted")
+	}
+}
+
+// TestReplicasNeedSharedBackends: more than one replica refuses to start on
+// local events or unshared state (specs/state-and-scaling "Multiple
+// replicas with local events").
+func TestReplicasNeedSharedBackends(t *testing.T) {
+	for env, want := range map[string]string{
+		"SCRIM_EVENTS_BACKEND=local":    "events.backend",
+		"SCRIM_EVENTS_BACKEND=postgres": "state.backend",
+	} {
+		var logs bytes.Buffer
+		a, err := app.New(context.Background(), isolated(t, "SCRIM_DEPLOYMENT_REPLICAS=2", env), &logs)
+		if err == nil {
+			_ = a.Close()
+			t.Fatalf("%s: started with two replicas", env)
+		}
+		if !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "deployment.replicas") {
+			t.Fatalf("%s: error %q does not name %s", env, err, want)
+		}
+	}
+}
+
+// TestConfigDigestIsValueFree: the digest follows the configuration and
+// holds nothing of it.
+func TestConfigDigestIsValueFree(t *testing.T) {
+	load := func(env ...string) *config.Config {
+		t.Helper()
+		cfg, err := config.Load(config.Default, config.EnvLayer(env))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	a, b := app.ConfigDigest(load()), app.ConfigDigest(load("SCRIM_APPROVALS_TIMEOUT=5m"))
+	if a == b || !strings.HasPrefix(a, "sha256:") || len(a) != len("sha256:")+16 {
+		t.Fatalf("digests %q %q", a, b)
+	}
+	if a != app.ConfigDigest(load()) {
+		t.Fatal("digest is not deterministic")
 	}
 }

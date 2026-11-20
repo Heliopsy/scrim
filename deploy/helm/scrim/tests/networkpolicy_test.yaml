@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: NetworkPolicies (networkpolicy.yaml)
+templates:
+  - networkpolicy.yaml
+release:
+  name: rel
+  namespace: ns
+set:
+  networkPolicy.enabled: true
+  agents.namespaces: [agents]
+tests:
+  - it: renders nothing when off
+    set:
+      networkPolicy.enabled: false
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: central admits labelled agents and the test pods, and egresses to DNS, the API server and HTTPS
+    documentSelector: {path: metadata.name, value: rel-scrim}
+    asserts:
+      - equal: {path: spec.policyTypes, value: [Ingress, Egress]}
+      - equal: {path: 'spec.ingress[0].from[0].podSelector.matchLabels["scrim.dev/inject"]', value: central}
+      - equal: {path: 'spec.ingress[1].from[0].podSelector.matchLabels["scrim.dev/helm-test"]', value: "true"}
+      - equal: {path: 'spec.egress[0].ports[0].port', value: 53}
+      - contains: {path: spec.egress, content: {ports: [{port: 443, protocol: TCP}, {port: 6443, protocol: TCP}]}}
+  - it: no API server egress with identity off
+    documentSelector: {path: metadata.name, value: rel-scrim}
+    set:
+      identity.kubernetes.enabled: false
+      tests.enabled: false
+    asserts:
+      - lengthEqual: {path: spec.egress, count: 2}
+      - lengthEqual: {path: spec.ingress, count: 1}
+  - it: extraFrom, extraIngress and extraEgress add to central's policy
+    documentSelector: {path: metadata.name, value: rel-scrim}
+    set:
+      central.networkPolicy:
+        extraFrom: [{namespaceSelector: {matchLabels: {team: ci}}}]
+        extraEgress: [{to: [{ipBlock: {cidr: 10.0.0.1/32}}]}]
+        labels: {policy: scrim}
+    asserts:
+      - contains: {path: spec.egress, content: {to: [{ipBlock: {cidr: 10.0.0.1/32}}]}}
+      - equal: {path: metadata.labels.policy, value: scrim}
+      - lengthEqual: {path: spec.ingress, count: 3}
+  - it: agent pods reach only scrim and DNS
+    documentSelector: {path: metadata.name, value: rel-scrim-agents-central}
+    asserts:
+      - equal: {path: metadata.namespace, value: agents}
+      - equal: {path: spec.policyTypes, value: [Egress]}
+      - lengthEqual: {path: spec.egress, count: 2}
+      - equal: {path: 'spec.egress[0].to[0].podSelector.matchLabels["app.kubernetes.io/name"]', value: rel-scrim-proxy}
+  - it: sidecar pods reach DNS, the API server and sidecarEgress
+    documentSelector: {path: metadata.name, value: rel-scrim-agents-sidecar}
+    set:
+      sidecar: {enabled: true, egressGuard: {image: nft:1}}
+    asserts:
+      - lengthEqual: {path: spec.egress, count: 3}

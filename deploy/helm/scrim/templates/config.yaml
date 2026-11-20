@@ -1,0 +1,62 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- if .Values.central.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  {{- include "chart.objectMeta" (dict "root" . "kind" "ConfigMap" "comp" "proxy" "name" (printf "%s-config" (include "scrim.fullname" .)) "values" .Values.central) | nindent 2 }}
+data:
+  {{- if not .Values.existingConfigMap }}
+  config.yaml: |
+    apiVersion: scrim.dev/v1
+    kind: Config
+    {{- with .Values.config }}
+    {{- toYaml (omit . "apiVersion" "kind") | nindent 4 }}
+    {{- end }}
+  {{- end }}
+  chart.yaml: |
+    # Settings the chart owns. This file comes last, so they win over config.yaml.
+    apiVersion: scrim.dev/v1
+    kind: Config
+    profile: k8s
+    {{- include "scrim.commonSettings" . | nindent 4 }}
+    proxy:
+      listen: 0.0.0.0:9790
+      forward-listen: 0.0.0.0:9791
+    {{- if .Values.upstreamCA.configMap }}
+    dataplane:
+      upstream-ca-file: /etc/scrim/upstream-ca/{{ .Values.upstreamCA.key }}
+    {{- end }}
+    {{- include "scrim.metricsSettings" (dict "root" . "listen" (printf "0.0.0.0:%v" .Values.metrics.port)) | nindent 4 }}
+    {{- include "scrim.identitySettings" (dict "root" .) | nindent 4 }}
+    admin:
+      {{- if .Values.admin.tcp.enabled }}
+      url: http://0.0.0.0:{{ .Values.admin.tcp.port }}
+      token: file:/run/secrets/scrim/admin/{{ include "chart.secretKey" (list . "admin" "token") }}
+      {{- else }}
+      url: unix:/run/scrim/admin.sock
+      {{- end }}
+    redaction:
+      placeholder-keys:
+        {{- include "scrim.placeholderKeysConfig" (dict "root" . "path" "/etc/scrim/placeholder") | trim | nindent 8 }}
+    deployment:
+      # Replicas sharing this state; more than one needs postgres for state and events.
+      replicas: {{ include "scrim.maxReplicas" . }}
+    {{- if .Values.postgres.enabled }}
+    state:
+      backend: postgres
+      postgres:
+        dsn: file:/run/secrets/scrim/postgres/{{ include "chart.secretKey" (list . "postgres" "dsn") }}
+        max-conns: {{ .Values.postgres.maxConns }}
+    events:
+      backend: postgres
+    {{- else }}
+    state:
+      backend: memory
+    events:
+      backend: local
+    {{- end }}
+  {{- with .Values.policyRules }}
+  policy.yaml: |
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

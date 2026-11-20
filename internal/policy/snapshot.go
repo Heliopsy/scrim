@@ -418,3 +418,28 @@ func checkLiteralGlobs(a *cel.Ast) error {
 	}))
 	return err
 }
+
+// StoreIdentityRule is the rule the control plane adds in front of the
+// snapshot when stores check each agent's own identity (package
+// agentstore): every injection or restore of a secret from one of them
+// becomes a control-plane call, since only the control plane can ask the
+// store about the caller. It is residual, so the data plane never decides
+// it, and the control plane never evaluates it: the full rule set and the
+// store check decide.
+func StoreIdentityRule(storeNames []string) SnapshotRule {
+	return SnapshotRule{
+		Name:     StoreIdentityRuleName,
+		Decision: Deny,
+		Reason:   "the agent's own store identity is checked by the control plane",
+		Clauses: []Clause{{
+			Conditions: []Condition{
+				{Field: "op", Op: OpIn, Values: []string{string(ActionInject), string(ActionRestore)}},
+				{Field: "secret.store", Op: OpIn, Values: slices.Clone(storeNames)},
+			},
+			Residual: true,
+		}},
+	}
+}
+
+// StoreIdentityRuleName names [StoreIdentityRule].
+const StoreIdentityRuleName = "scrim:store-identity"

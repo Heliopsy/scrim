@@ -4,7 +4,9 @@ package daemon
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"slices"
@@ -178,6 +180,7 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 		cat = b.Catalog()
 	}
 	snap.Values = b.values(cat)
+	snap.Unavailable = unavailable(cat, snap.Values)
 
 	if b.CA != nil {
 		gens := b.CA()
@@ -237,6 +240,93 @@ func (b *SnapshotBuilder) values(cat *catalog.Catalog) []*pb.ValueEntry {
 			}
 			out = append(out, e)
 		})
+	}
+	return uniqueNames(out)
+}
+
+// uniqueNames drops repeated values and gives every credential entry a name no
+// other entry uses, because the data plane refuses a snapshot in which two
+// credentials share a name (the catalog name, else the reference) or a
+// placeholder. Both happen without it: a store's own credentials repeat (a
+// static OpenBao token is both the configured and the current token, each
+// "store:<name>", with one placeholder), and a rotated value is retained under
+// its entry's name next to the current one.
+//
+// An entry with the same slug and value as an earlier one would get the same
+// placeholder, so it adds nothing and is dropped (its copy wiped). Of the
+// rest, the first keeps its name, so a bound current value is never renamed;
+// later ones get "~2", "~3", which no catalog name or reference contains.
+func uniqueNames(entries []*pb.ValueEntry) []*pb.ValueEntry {
+	out := entries[:0]
+	bySlug := map[string][]*pb.ValueEntry{}
+	seen := map[string]int{}
+	for _, e := range entries {
+		if slices.ContainsFunc(bySlug[e.GetSlug()], func(o *pb.ValueEntry) bool {
+			return subtle.ConstantTimeCompare(o.GetValue(), e.GetValue()) == 1
+		}) {
+			clear(e.Value)
+			continue
+		}
+		bySlug[e.GetSlug()] = append(bySlug[e.GetSlug()], e)
+		out = append(out, e)
+		if e.GetClass() == pb.ValueClass_VALUE_CLASS_DISPLAY {
+			continue
+		}
+		n := e.GetName()
+		if n == "" {
+			n = e.GetRef()
+		}
+		seen[n]++
+		if c := seen[n]; c > 1 {
+			e.Name = fmt.Sprintf("%s~%d", n, c)
+		}
+	}
+	clear(entries[len(out):])
+	return out
+}
+
+// unavailable lists the catalog credentials bound to hosts that have no
+// current value in values: a store still loading, a read that failed. The
+// tool proxy refuses their placeholders toward their hosts with
+// credential_unavailable instead of forwarding them as text
+// (specs/credential-injection "Unresolved placeholders are refused"). No
+// value is copied.
+func unavailable(cat *catalog.Catalog, values []*pb.ValueEntry) []*pb.ValueEntry {
+	if cat == nil {
+		return nil
+	}
+	have := map[string]bool{}
+	declared := map[string]bool{}
+	for _, v := range values {
+		have[v.GetRef()] = true
+		if r, err := stores.ParseRef(v.GetRef()); err == nil {
+			have[r.Secret().String()] = true
+		}
+		if v.GetName() != "" {
+			have["name:"+v.GetName()] = true
+		}
+		for _, p := range v.GetDeclaredPlaceholders() {
+			declared[p] = true
+		}
+	}
+	var out []*pb.ValueEntry
+	for _, e := range cat.Entries() {
+		bd := e.Binding
+		if !e.OK || e.Entry.Prefix != "" || bd.Ref.IsZero() || !bd.Injectable() || bd.Class == catalog.ClassDisplay {
+			continue
+		}
+		if have[bd.Ref.String()] || have[bd.Ref.Secret().String()] || have["name:"+bd.Name] {
+			continue
+		}
+		u := &pb.ValueEntry{
+			Ref: bd.Ref.String(), Name: bd.Name, Slug: SlugFor(bd, bd.Ref), Class: pb.ValueClass_VALUE_CLASS_CREDENTIAL,
+			Store: bd.Ref.Scheme, BoundHosts: slices.Clone(bd.Hosts), InjectLocations: slices.Clone(bd.Inject),
+		}
+		if bd.Placeholder != "" && !declared[bd.Placeholder] {
+			declared[bd.Placeholder] = true
+			u.DeclaredPlaceholders = []string{bd.Placeholder}
+		}
+		out = append(out, u)
 	}
 	return out
 }

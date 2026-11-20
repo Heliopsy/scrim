@@ -49,6 +49,16 @@ const (
 // that needs another adds it here.
 var SecretFields = []string{"token", "role-id", "secret-id", "client-id", "client-secret", "password", "unlock"}
 
+// AllowEmptyTargets lets scrim start while a redact target loads no value.
+var AllowEmptyTargets = config.Register(config.Spec[bool]{
+	Key:             refresh.AllowEmptyTargetsKey,
+	Weakening:       true,
+	RestartRequired: true,
+	Description: "Start even when a store's redact target matches no secret on the first load. Off, such a target stops start-up " +
+		"with an error naming it, since it usually means a misspelt name or pattern and redaction would protect nothing. " +
+		"On, the store starts and status reports the target as degraded with 0 values.",
+})
+
 // Collection is the registered `stores` collection.
 var Collection = config.RegisterCollection(config.CollectionSpec{
 	Key: Key,
@@ -119,7 +129,8 @@ func Validate(reg *stores.Registry, inst config.Instance) error {
 			return fmt.Errorf("alias %q is not a valid scheme", a)
 		}
 	}
-	if _, err := refresh.ParseConfig(inst.Name, ropts); err != nil {
+	rc, err := refresh.ParseConfig(inst.Name, ropts)
+	if err != nil {
 		return err
 	}
 	a, err := reg.Open(context.Background(), stores.Instance{
@@ -131,7 +142,23 @@ func Validate(reg *stores.Registry, inst config.Instance) error {
 	if err != nil {
 		return err
 	}
+	if err := checkTargets(a, rc); err != nil {
+		_ = a.Close()
+		return err
+	}
 	return a.Close()
+}
+
+// checkTargets refuses a glob target on a store that cannot expand one: it
+// would load nothing.
+func checkTargets(a stores.Adapter, rc refresh.Config) error {
+	for _, t := range rc.Targets {
+		if t.Glob && !a.Capabilities().Has(stores.CapGlob) {
+			return fmt.Errorf("option %s: %s: store %s (capabilities %s) does not match names by a trailing *; "+
+				"use a folder prefix (dir/*) or name each secret", refresh.KeyRedact, t, a.Name(), a.Capabilities())
+		}
+	}
+	return nil
 }
 
 // Instance builds the stores.Instance for one configured instance, with a
@@ -208,6 +235,11 @@ func OpenWith(ctx context.Context, cfg *config.Config, reg *stores.Registry, opt
 			errs = append(errs, err)
 			continue
 		}
+		if err := checkTargets(a, rc); err != nil {
+			_ = a.Close()
+			errs = append(errs, fmt.Errorf("store %s: %w", inst.Name, err))
+			continue
+		}
 		if err := o.Set.Add(a, inst.Aliases...); err != nil {
 			_ = a.Close()
 			errs = append(errs, err)
@@ -218,6 +250,7 @@ func OpenWith(ctx context.Context, cfg *config.Config, reg *stores.Registry, opt
 			rc.OnChange = func() { opts.OnChange(name) }
 		}
 		rc.OnStatus = opts.OnStatus
+		rc.AllowEmptyTargets = AllowEmptyTargets.Get(cfg)
 		o.Refreshers = append(o.Refreshers, refresh.New(a, rc))
 	}
 	if err := errors.Join(errs...); err != nil {

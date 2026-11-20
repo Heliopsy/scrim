@@ -14,6 +14,7 @@ import (
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/internal/options"
+	"github.com/heliopsy/scrim/internal/stores/internal/satoken"
 )
 
 // Option keys, relative to stores.<instance>. The full configuration key is
@@ -30,6 +31,8 @@ const (
 	optWatchBackoff  = "watch.max-backoff"
 	optCreateFolders = "create-folders"
 	optExpandRefs    = "expand-references"
+	optK8sIdentityID = "auth.kubernetes.identity-id"
+	optK8sTokenFile  = "auth.kubernetes.token-file"
 )
 
 // Defaults.
@@ -38,11 +41,18 @@ const (
 	defaultWatchInterval = 30 * time.Second
 	defaultWatchBackoff  = 5 * time.Minute
 	methodUniversalAuth  = "universal-auth"
+	methodKubernetesAuth = "kubernetes-auth"
 )
 
 // settings is the decoded, validated configuration of one instance.
 type settings struct {
-	address       *url.URL
+	address *url.URL
+	method  string
+	// identityID and tokenFile configure Kubernetes Auth: the machine
+	// identity to log in as, and the service account token file, read
+	// again at every login.
+	identityID    string
+	tokenFile     string
 	idRef         config.SecretRef
 	secretRef     config.SecretRef
 	resolve       func(context.Context, config.SecretRef) (secret.Value, error)
@@ -75,14 +85,38 @@ func decodeSettings(ctx context.Context, inst stores.Instance) (*settings, error
 	} else {
 		s.address = u
 	}
-	if m := d.String(optAuthMethod, methodUniversalAuth); m != methodUniversalAuth {
-		d.Errorf("option %s: unsupported method %q (supported: %s)", optAuthMethod, m, methodUniversalAuth)
-	}
+	s.method = d.String(optAuthMethod, methodUniversalAuth)
+	s.identityID = strings.TrimSpace(d.String(optK8sIdentityID, ""))
+	s.tokenFile = d.String(optK8sTokenFile, satoken.DefaultPath)
 	// The client ID is not secret on its own, but it is half of the
 	// credential and the stores collection takes it as a reference too.
 	idRef := d.SecretRef(optClientID)
-	if idRef == "" {
-		d.Errorf("option %s is required", optClientID)
+	ref := d.SecretRef(optClientSecret)
+	switch s.method {
+	case methodUniversalAuth:
+		if idRef == "" {
+			d.Errorf("option %s is required", optClientID)
+		}
+		if ref == "" {
+			d.Errorf("option %s is required", optClientSecret)
+		}
+	case methodKubernetesAuth:
+		if s.identityID == "" {
+			d.Errorf("option %s is required with auth.method %s", optK8sIdentityID, methodKubernetesAuth)
+		}
+		if s.tokenFile == "" {
+			d.Errorf("option %s must not be empty", optK8sTokenFile)
+		}
+		// Kubernetes Auth exists so that no static credential does; one
+		// configured anyway would sit unused in the cluster.
+		if idRef != "" {
+			d.Errorf("option %s is not used with auth.method %s; remove it", optClientID, methodKubernetesAuth)
+		}
+		if ref != "" {
+			d.Errorf("option %s is not used with auth.method %s; remove it", optClientSecret, methodKubernetesAuth)
+		}
+	default:
+		d.Errorf("option %s: unsupported method %q (supported: %s, %s)", optAuthMethod, s.method, methodUniversalAuth, methodKubernetesAuth)
 	}
 	if ca := d.String(optCAFile, ""); ca != "" {
 		pem, err := os.ReadFile(ca)
@@ -91,14 +125,10 @@ func decodeSettings(ctx context.Context, inst stores.Instance) (*settings, error
 		}
 		s.caPEM = pem
 	}
-	ref := d.SecretRef(optClientSecret)
-	if ref == "" {
-		d.Errorf("option %s is required", optClientSecret)
-	}
 	if err := d.Finish(); err != nil {
 		return nil, err
 	}
-	if inst.Resolve == nil {
+	if s.method == methodUniversalAuth && inst.Resolve == nil {
 		return nil, fmt.Errorf("option %s: no secret resolver configured", optClientSecret)
 	}
 	// Credentials are resolved at the first login, not here: building an

@@ -34,13 +34,23 @@ type client struct {
 
 	mu sync.Mutex
 	// token is the token sent with requests: the configured token, or the
-	// client token from the last AppRole login.
+	// client token from the last AppRole or Kubernetes login.
 	token secret.Value
-	// expires is when an AppRole token should be replaced; zero means
-	// never (static tokens, or tokens without a TTL).
-	expires time.Time
+	// ttl is the lease the last login granted, and the increment asked for
+	// when renewing. Zero means the token has no TTL.
+	ttl time.Duration
+	// refreshAt is when the token is renewed or replaced (two thirds into
+	// its lease); expires is when the lease ends. Zero means never.
+	refreshAt time.Time
+	expires   time.Time
+	// renewable is whether renew-self is worth trying at refreshAt. It is
+	// cleared once a renewal comes back shorter than asked for, which means
+	// the token's max TTL is near and only a new login helps.
+	renewable bool
 	// creds holds the resolved login material (token or role and secret
-	// ID), kept for Credentials and for logging in again.
+	// ID), kept for Credentials and for logging in again. Kubernetes auth
+	// holds none: the service account token is read at each login and
+	// wiped after it.
 	creds  map[string]secret.Value
 	closed bool
 }
@@ -100,6 +110,11 @@ type request struct {
 	involved []secret.Value
 	// noAuth sends no token (sys/health, login).
 	noAuth bool
+	// token, when set, is sent instead of the adapter's own token, and a
+	// refusal is returned as is: the adapter neither logs in nor retries.
+	// The caller owns it. It is for acting with a token scrim obtained on
+	// someone else's behalf, and for renewing a token.
+	token secret.Value
 }
 
 func (c *client) storeErr(r request, kind error, detail string, cause error) *stores.Error {
@@ -108,29 +123,37 @@ func (c *client) storeErr(r request, kind error, detail string, cause error) *st
 	return e
 }
 
-// do runs r, logging in first when needed and once more when the store
-// rejects a token it should have accepted. A non-2xx status is returned as a
+// do runs r with the adapter's token, logging in first when needed and once
+// more when the store rejects a token it should have accepted. A request
+// with its own token or none is sent once. A non-2xx status is returned as a
 // classified error; the response is still returned for 404 bodies.
 func (c *client) do(ctx context.Context, r request) (*response, error) {
-	resp, err := c.attempt(ctx, r)
-	if err == nil || r.noAuth || c.opts.AuthMethod != AuthAppRole || !errors.Is(err, stores.ErrPermission) {
+	if r.noAuth || !r.token.IsZero() {
+		return c.attempt(ctx, r, r.token)
+	}
+	tok, err := c.currentToken(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.attempt(ctx, r, tok)
+	if err == nil || c.opts.AuthMethod == AuthToken || !errors.Is(err, stores.ErrPermission) {
+		tok.Wipe()
 		return resp, err
 	}
-	// A 403 with AppRole may be an expired or revoked client token. Log
-	// in again once; a second 403 is a real policy refusal.
+	// A 403 on a login token may mean it expired or was revoked. Log in
+	// again once; a second 403 is a real policy refusal.
 	resp.wipe()
-	c.dropToken()
-	return c.attempt(ctx, r)
+	c.dropToken(tok)
+	tok.Wipe()
+	if tok, err = c.currentToken(ctx, r); err != nil {
+		return nil, err
+	}
+	defer tok.Wipe()
+	return c.attempt(ctx, r, tok)
 }
 
-func (c *client) attempt(ctx context.Context, r request) (*response, error) {
-	var token secret.Value
-	if !r.noAuth {
-		var err error
-		if token, err = c.currentToken(ctx, r); err != nil {
-			return nil, err
-		}
-	}
+// attempt sends r once, with token unless r.noAuth.
+func (c *client) attempt(ctx context.Context, r request, token secret.Value) (*response, error) {
 	u := *c.opts.Address
 	u.Path = c.opts.Address.Path + "/v1/" + r.path
 	u.RawPath = c.opts.Address.EscapedPath() + "/v1/" + r.path
@@ -156,10 +179,15 @@ func (c *client) attempt(ctx context.Context, r request) (*response, error) {
 		// net/http takes header values as strings, so the token exists as a
 		// Go string for the life of this request. This is the one place a
 		// store credential leaves secret.Value; see the package docs.
-		_ = token.Expose(func(b []byte) error {
+		if err := token.Expose(func(b []byte) error {
+			if len(b) == 0 {
+				return secret.ErrWiped
+			}
 			req.Header["X-Vault-Token"] = []string{string(b)}
 			return nil
-		})
+		}); err != nil {
+			return nil, c.storeErr(r, stores.ErrPermission, "no token to send", nil)
+		}
 	}
 	hr, err := c.http.Do(req)
 	if err != nil {
@@ -229,136 +257,6 @@ func classify(status int, body []byte) (kind error, detail string) { //nolint:st
 		}
 		return stores.ErrUnavailable, fmt.Sprintf("HTTP %d: %s", status, msg)
 	}
-}
-
-// currentToken returns the token to send, logging in when there is none or
-// it is about to expire.
-func (c *client) currentToken(ctx context.Context, r request) (secret.Value, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return secret.Value{}, c.storeErr(r, stores.ErrUnavailable, "adapter closed", nil)
-	}
-	if !c.token.IsZero() && (c.expires.IsZero() || c.now().Before(c.expires)) {
-		return c.token, nil
-	}
-	if err := c.loadCredsLocked(ctx, r); err != nil {
-		return secret.Value{}, err
-	}
-	switch c.opts.AuthMethod {
-	case AuthToken:
-		c.token = copyValue(c.creds[optAuthToken])
-		c.expires = time.Time{}
-	case AuthAppRole:
-		if err := c.loginAppRoleLocked(ctx, r); err != nil {
-			return secret.Value{}, err
-		}
-	}
-	return c.token, nil
-}
-
-// loadCredsLocked resolves the configured credential references once.
-func (c *client) loadCredsLocked(ctx context.Context, r request) error {
-	if c.creds != nil {
-		return nil
-	}
-	keys := []string{optAuthToken}
-	refs := []config.SecretRef{c.opts.Token}
-	if c.opts.AuthMethod == AuthAppRole {
-		keys = []string{optAppRoleRoleID, optAppRoleSecretID}
-		refs = []config.SecretRef{c.opts.RoleID, c.opts.SecretID}
-	}
-	creds := map[string]secret.Value{}
-	for i, key := range keys {
-		v, err := c.resolve(ctx, refs[i])
-		if err == nil && v.IsZero() {
-			err = errors.New("resolved to an empty value")
-		}
-		if err != nil {
-			for _, v := range creds {
-				v.Wipe()
-			}
-			// The reference names a source (env:, file:), not a value, and
-			// is safe to show.
-			return c.storeErr(r, stores.ErrPermission,
-				fmt.Sprintf("option %s: cannot resolve %s", key, refs[i]), err)
-		}
-		creds[key] = v
-	}
-	c.creds = creds
-	return nil
-}
-
-type authResponse struct {
-	Auth *struct {
-		ClientToken   wire.Raw `json:"client_token"`
-		LeaseDuration int64    `json:"lease_duration"`
-	} `json:"auth"`
-}
-
-func (c *client) loginAppRoleLocked(ctx context.Context, r request) error {
-	buf := []byte(`{"role_id":`)
-	var err error
-	if buf, err = wire.AppendValue(buf, c.creds[optAppRoleRoleID]); err != nil {
-		secret.WipeBytes(buf)
-		return c.storeErr(r, stores.ErrPermission, "role ID is not valid UTF-8", nil)
-	}
-	buf = append(buf, `,"secret_id":`...)
-	if buf, err = wire.AppendValue(buf, c.creds[optAppRoleSecretID]); err != nil {
-		secret.WipeBytes(buf)
-		return c.storeErr(r, stores.ErrPermission, "secret ID is not valid UTF-8", nil)
-	}
-	body := wire.NewBody(append(buf, '}'))
-	defer body.Wipe()
-	login := request{
-		op: r.op, ref: r.ref, method: http.MethodPost, noAuth: true,
-		path:     "auth/" + escapePath(c.opts.AppRoleMount) + "/login",
-		body:     body,
-		involved: []secret.Value{c.creds[optAppRoleRoleID], c.creds[optAppRoleSecretID]},
-	}
-	start := c.now()
-	resp, err := c.attempt(ctx, login)
-	if err != nil {
-		var se *stores.Error
-		if errors.As(err, &se) {
-			se.Detail = strings.TrimSpace("AppRole login failed: " + se.Detail)
-			// OpenBao answers a bad role or secret ID with 400, and a
-			// missing AppRole mount with 404 or 405: all mean scrim cannot
-			// log in, which is a credentials problem, not a bad reference.
-			if errors.Is(err, stores.ErrNotFound) || errors.Is(err, stores.ErrInvalidRef) {
-				se.Kind = stores.ErrPermission
-			}
-		}
-		return err
-	}
-	defer resp.wipe()
-	var ar authResponse
-	if err := json.Unmarshal(resp.body, &ar); err != nil || ar.Auth == nil {
-		return c.storeErr(r, stores.ErrPermission, "AppRole login returned no token", nil)
-	}
-	defer ar.Auth.ClientToken.Wipe()
-	tok, err := ar.Auth.ClientToken.Value()
-	if err != nil || tok.IsZero() {
-		return c.storeErr(r, stores.ErrPermission, "AppRole login returned no token", nil)
-	}
-	c.token.Wipe()
-	c.token = tok
-	c.expires = time.Time{}
-	if ar.Auth.LeaseDuration > 0 {
-		// Replace the token at two thirds of its TTL, well before it
-		// expires, so a slow request never carries an expired token.
-		ttl := time.Duration(ar.Auth.LeaseDuration) * time.Second
-		c.expires = start.Add(ttl * 2 / 3)
-	}
-	return nil
-}
-
-// dropToken forgets the current token so the next request logs in again.
-func (c *client) dropToken() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.token.Wipe()
-	c.token = secret.Value{}
 }
 
 // credentials returns copies of the login material and the current token.

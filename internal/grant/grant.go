@@ -180,10 +180,15 @@ func target(g *state.Grant) string {
 
 // Service uses, lists and revokes grants.
 type Service struct {
-	st  state.Store
-	bg  *breakglass.Switch
-	now func() time.Time
+	st    state.Store
+	bg    *breakglass.Switch
+	now   func() time.Time
+	onUse func(rule string)
 }
+
+// OnUse calls fn with the grant's rule after every counted use. Set it
+// before the service is used.
+func (s *Service) OnUse(fn func(rule string)) { s.onUse = fn }
 
 // NewService returns a service over st. bg may be nil in tests.
 func NewService(st state.Store, bg *breakglass.Switch) *Service {
@@ -248,6 +253,9 @@ func (s *Service) Use(ctx context.Context, req policy.Request, requestID string)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("grant: %w", err)
+	}
+	if s.onUse != nil && used != nil {
+		s.onUse(used.Rule)
 	}
 	return used, nil
 }

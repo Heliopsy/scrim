@@ -1,0 +1,46 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- $cert := include "scrim.caCert" . | trim -}}
+{{- $bundle := $cert -}}
+{{- with .Values.ca.extraTrustedCerts }}{{ $bundle = printf "%s\n%s" $cert (trim .) }}{{ end -}}
+{{- if and .Values.ca.create (not .Values.ca.existingSecret) }}
+{{- include "scrim.generatedCA" . }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "scrim.fullname" . }}-ca
+  namespace: {{ (include "scrim.namespace" $) }}
+  labels:
+    {{- include "scrim.labels" . | nindent 4 }}
+  annotations:
+    # Agents trust this CA; deleting it with the release would break them, so it stays.
+    helm.sh/resource-policy: keep
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ index .Values.__scrimCA "crt" | b64enc }}
+  tls.key: {{ index .Values.__scrimCA "key" | b64enc }}
+{{- end }}
+{{- $namespaces := uniq (prepend .Values.agents.namespaces (include "scrim.namespace" $)) }}
+{{- range $ns := $namespaces }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $.Values.ca.configMapName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "scrim.labels" $ | nindent 4 }}
+data:
+  # scrim's interception CA, for runtimes that add to their roots (NODE_EXTRA_CA_CERTS).
+  scrim-ca.pem: |
+    {{- $cert | nindent 4 }}
+  # For runtimes that replace their roots (SSL_CERT_FILE and friends). Agent pods reach only
+  # scrim, so every TLS connection they make ends at a scrim leaf; extra cluster CAs go in
+  # ca.extraTrustedCerts.
+  ca-bundle.pem: |
+    {{- $bundle | nindent 4 }}
+  {{- if $.Values.identity.kubernetes.enabled }}
+  # Runs an agent command with the pod's projected token as its scrim identity.
+  scrim-exec: |
+    {{- include "scrim.execScript" $ | nindent 4 }}
+  {{- end }}
+{{- end }}

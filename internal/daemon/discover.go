@@ -100,7 +100,7 @@ func TrustBundle(ctx context.Context, cfg *config.Config) ([]byte, error) {
 func adminGet(ctx context.Context, cfg *config.Config, path string) ([]byte, error) {
 	addr := approval.AdminURL.Get(cfg)
 	if addr == "" {
-		addr = "unix:" + approval.DefaultAdminSocket()
+		addr = "unix:" + approval.ClientAdminSocket()
 	}
 	var base string
 	hc := &http.Client{Timeout: 5 * time.Second}

@@ -219,6 +219,17 @@ type Tx interface {
 	Emit(ctx context.Context, e *Event) error
 	// EventsAfter returns committed events with ID > after, oldest first.
 	EventsAfter(ctx context.Context, after int64, limit int) ([]Event, error)
+	// LastEventID returns the highest committed event ID, 0 for an empty
+	// outbox: where a reader that does not replay history starts.
+	LastEventID(ctx context.Context) (int64, error)
+}
+
+// CommitHook is implemented by every backend: fn runs after each commit of
+// a transaction that emitted at least one event, so an in-process events
+// reader can read the outbox at once instead of on its next poll. fn runs on
+// the committing goroutine and must not block.
+type CommitHook interface {
+	OnEventCommit(fn func())
 }
 
 // Store opens transactions.

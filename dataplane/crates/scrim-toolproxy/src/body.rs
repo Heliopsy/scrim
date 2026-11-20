@@ -45,13 +45,16 @@ pub(crate) enum Stage {
 
 pub(crate) struct ScanStage {
     injector: Arc<Injector>,
+    /// Toward a bound host, placeholder-shaped tokens no credential resolves abort too.
+    unresolved: bool,
     pending: Vec<u8>,
 }
 
 impl ScanStage {
-    pub(crate) fn new(injector: Arc<Injector>) -> Self {
+    pub(crate) fn new(injector: Arc<Injector>, unresolved: bool) -> Self {
         Self {
             injector,
+            unresolved,
             pending: Vec::new(),
         }
     }
@@ -63,11 +66,16 @@ impl ScanStage {
                 "a placeholder appeared in a request body too large to rewrite",
             ));
         }
-        let keep = if last {
-            0
-        } else {
-            self.injector.max_len().saturating_sub(1)
-        };
+        if self.unresolved && crate::unresolved::find(&self.pending, &[]).is_some() {
+            return Err(io::Error::other(
+                "an unresolved scrim placeholder appeared in a request body to a bound host",
+            ));
+        }
+        let mut hold = self.injector.max_len();
+        if self.unresolved {
+            hold = hold.max(crate::unresolved::MAX_TOKEN_LEN);
+        }
+        let keep = if last { 0 } else { hold.saturating_sub(1) };
         let emit = self.pending.len().saturating_sub(keep);
         out.extend(self.pending.drain(..emit));
         Ok(())

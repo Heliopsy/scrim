@@ -1,0 +1,116 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- /*
+Per agent namespace: the environment as a ConfigMap (for envFrom, the manual way to
+configure a pod without Kyverno) and, in sidecar mode, the sidecar's configuration,
+CA and placeholder keys.
+*/ -}}
+{{- if and .Values.sidecar.enabled .Values.existingConfigMap }}
+{{- fail "sidecar mode renders its configuration into every agent namespace from `config`; existingConfigMap only works for central mode" }}
+{{- end }}
+{{- range $ns := .Values.agents.namespaces }}
+{{- if $.Values.central.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "scrim.fullname" $ }}-agent-env
+  namespace: {{ $ns }}
+  labels:
+    {{- include "scrim.labels" $ | nindent 4 }}
+data:
+  {{- range (include "scrim.centralAgentEnv" $ | fromYamlArray) }}
+  {{ .name }}: {{ .value | quote }}
+  {{- end }}
+{{- end }}
+{{- if $.Values.sidecar.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "scrim.fullname" $ }}-agent-env-sidecar
+  namespace: {{ $ns }}
+  labels:
+    {{- include "scrim.labels" $ | nindent 4 }}
+data:
+  {{- range (include "scrim.sidecarAgentEnv" $ | fromYamlArray) }}
+  {{ .name }}: {{ .value | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "scrim.fullname" $ }}-sidecar-config
+  namespace: {{ $ns }}
+  labels:
+    {{- include "scrim.labels" $ | nindent 4 }}
+data:
+  config.yaml: |
+    apiVersion: scrim.dev/v1
+    kind: Config
+    {{- with $.Values.config }}
+    {{- toYaml (omit . "apiVersion" "kind") | nindent 4 }}
+    {{- end }}
+  chart.yaml: |
+    # Settings the chart owns for the in-pod scrim. Listeners stay on loopback; the health
+    # and metrics port is on the pod IP for probes and scrapes.
+    apiVersion: scrim.dev/v1
+    kind: Config
+    profile: k8s
+    {{- include "scrim.commonSettings" $ | nindent 4 }}
+    proxy:
+      listen: 127.0.0.1:9790
+      forward-listen: 127.0.0.1:9791
+    {{- if $.Values.upstreamCA.configMap }}
+    dataplane:
+      upstream-ca-file: /etc/scrim/upstream-ca/{{ $.Values.upstreamCA.key }}
+    {{- end }}
+    {{- include "scrim.metricsSettings" (dict "root" $ "listen" (printf "0.0.0.0:%v" $.Values.metrics.port)) | nindent 4 }}
+    {{- $api := include "scrim.sidecarAPIPath" $ }}
+    {{- include "scrim.identitySettings" (dict "root" $ "tokenFile" (printf "%s/token" $api) "caFile" (printf "%s/ca.crt" $api)) | nindent 4 }}
+    admin:
+      url: unix:/run/scrim/admin.sock
+    redaction:
+      placeholder-keys:
+        {{- include "scrim.placeholderKeysConfig" (dict "root" $ "path" "/etc/scrim/placeholder") | trim | nindent 8 }}
+    # One scrim per pod, so nothing is shared between replicas.
+    deployment:
+      replicas: 1
+    state:
+      backend: memory
+    events:
+      backend: local
+  {{- with $.Values.policyRules }}
+  policy.yaml: |
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- if and $.Values.ca.create (not $.Values.ca.existingSecret) }}
+{{- include "scrim.generatedCA" $ }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $.Values.sidecar.caSecretName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "scrim.labels" $ | nindent 4 }}
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ index $.Values.__scrimCA "crt" | b64enc }}
+  tls.key: {{ index $.Values.__scrimCA "key" | b64enc }}
+{{- end }}
+{{- if and $.Values.placeholderKeys.create (not $.Values.placeholderKeys.existingSecret) }}
+{{- include "scrim.generatedKey" $ }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $.Values.sidecar.keysSecretName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "scrim.labels" $ | nindent 4 }}
+type: Opaque
+data:
+  k1: {{ $.Values.__scrimKey | b64enc }}
+{{- end }}
+{{- end }}
+{{- end }}

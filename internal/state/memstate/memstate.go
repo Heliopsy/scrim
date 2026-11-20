@@ -44,6 +44,9 @@ type Store struct {
 	auditLog  []audit.Entry
 	events    []state.Event
 	closed    bool
+
+	hookMu sync.Mutex
+	hooks  []func()
 }
 
 // New returns an empty store.
@@ -100,14 +103,34 @@ func (s *Store) View(ctx context.Context, fn func(state.Tx) error) error {
 }
 
 // Update implements state.Store.
-func (s *Store) Update(ctx context.Context, fn func(state.Tx) error) (err error) {
+func (s *Store) Update(ctx context.Context, fn func(state.Tx) error) error {
+	emitted, err := s.update(ctx, fn)
+	if err == nil && emitted {
+		s.hookMu.Lock()
+		hooks := slices.Clone(s.hooks)
+		s.hookMu.Unlock()
+		for _, h := range hooks {
+			h()
+		}
+	}
+	return err
+}
+
+// OnEventCommit implements state.CommitHook.
+func (s *Store) OnEventCommit(fn func()) {
+	s.hookMu.Lock()
+	defer s.hookMu.Unlock()
+	s.hooks = append(s.hooks, fn)
+}
+
+func (s *Store) update(ctx context.Context, fn func(state.Tx) error) (emitted bool, err error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return errors.New("memstate: closed")
+		return false, errors.New("memstate: closed")
 	}
 	t := &tx{s: s}
 	defer func() {
@@ -119,12 +142,14 @@ func (s *Store) Update(ctx context.Context, fn func(state.Tx) error) (err error)
 			t.rollback()
 		}
 	}()
-	return fn(t)
+	err = fn(t)
+	return t.emitted, err
 }
 
 type tx struct {
 	s        *Store
 	readOnly bool
+	emitted  bool
 	undo     []func()
 }
 
@@ -433,7 +458,15 @@ func (t *tx) Emit(_ context.Context, e *state.Event) error {
 	}
 	t.s.events = append(t.s.events, *e)
 	t.undo = append(t.undo, func() { t.s.events = t.s.events[:n] })
+	t.emitted = true
 	return nil
+}
+
+func (t *tx) LastEventID(context.Context) (int64, error) {
+	if n := len(t.s.events); n > 0 {
+		return t.s.events[n-1].ID, nil
+	}
+	return 0, nil
 }
 
 func (t *tx) EventsAfter(_ context.Context, after int64, n int) ([]state.Event, error) {

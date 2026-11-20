@@ -1,0 +1,288 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The Kubernetes identity test (run.sh fills the ${...} values with envsubst).
+#
+#   namespace scrim:  OpenBao (dev mode, Kubernetes auth), PostgreSQL, two scrim replicas
+#   namespace agents: agent-a and agent-b (one service account each), the fake tool API
+#
+# scrim holds no static store credential: it logs in to OpenBao with its own
+# projected service account token (audience openbao), and checks every
+# injection with the calling pod's own token (audience scrim) against the
+# OpenBao role bound to that pod's service account.
+apiVersion: v1
+kind: Namespace
+metadata: {name: scrim}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: agents}
+---
+# OpenBao reviews service account tokens with its own service account.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: openbao, namespace: scrim}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: scrim-k8sid-openbao-auth-delegator}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
+subjects: [{kind: ServiceAccount, name: openbao, namespace: scrim}]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: openbao, namespace: scrim, labels: {app: openbao}}
+spec:
+  serviceAccountName: openbao
+  containers:
+    - name: openbao
+      image: ${OPENBAO_IMAGE}
+      imagePullPolicy: Never
+      args: [server, -dev, -dev-listen-address=0.0.0.0:8200]
+      env:
+        - {name: BAO_DEV_ROOT_TOKEN_ID, valueFrom: {secretKeyRef: {name: openbao-root, key: token}}}
+        - {name: SKIP_SETCAP, value: "true"}
+      ports: [{containerPort: 8200}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: openbao, namespace: scrim}
+spec:
+  selector: {app: openbao}
+  ports: [{port: 8200, targetPort: 8200}]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: postgres, namespace: scrim, labels: {app: postgres}}
+spec:
+  containers:
+    - name: postgres
+      image: ${POSTGRES_IMAGE}
+      imagePullPolicy: Never
+      env:
+        - {name: POSTGRES_USER, value: scrim}
+        - {name: POSTGRES_DB, value: scrim}
+        - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: postgres, key: password}}}
+      ports: [{containerPort: 5432}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres, namespace: scrim}
+spec:
+  selector: {app: postgres}
+  ports: [{port: 5432, targetPort: 5432}]
+---
+# scrim verifies agents' tokens with TokenReview.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: scrim, namespace: scrim}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: scrim-k8sid-scrim-auth-delegator}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
+subjects: [{kind: ServiceAccount, name: scrim, namespace: scrim}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: scrim, namespace: scrim}
+data:
+  rules.yaml: |
+    default: deny
+    rules:
+      # The built-in rule injects toward bound hosts for every identified
+      # agent; agent-a may not POST.
+      - name: no-post-for-agent-a
+        decision: deny
+        when: op == "inject" && agent.labels.service_account == "agent-a" && dest.method == "POST"
+        reason: agent-a may not POST
+  scrim.yaml: |
+    apiVersion: scrim.dev/v1
+    kind: Config
+    state:
+      backend: postgres
+      postgres: {dsn: env:SCRIM_PG_DSN}
+    events: {backend: postgres}
+    deployment: {replicas: 2}
+    stores:
+      bao:
+        kind: openbao
+        address: http://openbao.scrim.svc:8200
+        auth:
+          method: kubernetes
+          kubernetes: {role: scrim, token-file: /var/run/secrets/tokens/openbao}
+        redact: ["bao://kv/agents/*"]
+    catalog:
+      entries:
+        key-a:
+          ref: bao://kv/agents/a/token#value
+          hosts: [fakeapi.agents.svc]
+          placeholder: SCRIM_A_KEY
+        key-b:
+          ref: bao://kv/agents/b/token#value
+          hosts: [fakeapi.agents.svc]
+          placeholder: SCRIM_B_KEY
+    identity:
+      kubernetes:
+        enabled: true
+      store-login:
+        bao: "kubernetes role:{namespace}-{service_account}"
+    policy:
+      rules-file: /etc/scrim/rules.yaml
+    approvals:
+      timeout: 5s
+    notify:
+      terminal: {enabled: false}
+    redaction:
+      placeholder-keys:
+        k1: {version: 1, key: file:/etc/scrim-keys/k1}
+    tool-proxy:
+      ca:
+        cert-file: /etc/scrim-ca/ca.crt
+        key: file:/etc/scrim-ca/ca.key
+    dataplane:
+      path: /usr/local/bin/scrim-dataplane
+      upstream-ca-file: /etc/fakeapi-ca/ca.crt
+    proxy:
+      listen: 0.0.0.0:8080
+      forward-listen: 0.0.0.0:3128
+    api:
+      socket: /tmp/run/api.sock
+    admin:
+      url: unix:/tmp/run/admin.sock
+    metrics:
+      listen: 0.0.0.0:9090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: scrim, namespace: scrim}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: scrim}}
+  template:
+    metadata: {labels: {app: scrim}}
+    spec:
+      serviceAccountName: scrim
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532}
+      containers:
+        - name: scrim
+          image: ${SCRIM_IMAGE}
+          imagePullPolicy: Never
+          args: [proxy]
+          env:
+            - {name: SCRIM_CONFIG, value: /etc/scrim/scrim.yaml}
+            - {name: SCRIM_PG_DSN, valueFrom: {secretKeyRef: {name: postgres, key: dsn}}}
+            - {name: HOME, value: /tmp}
+            - {name: XDG_STATE_HOME, value: /tmp/state}
+            - {name: XDG_RUNTIME_DIR, value: /tmp/run}
+          ports:
+            - {containerPort: 8080}
+            - {containerPort: 3128}
+          securityContext: {readOnlyRootFilesystem: true, allowPrivilegeEscalation: false}
+          volumeMounts:
+            - {name: config, mountPath: /etc/scrim}
+            - {name: ca, mountPath: /etc/scrim-ca}
+            - {name: keys, mountPath: /etc/scrim-keys}
+            - {name: fakeapi-ca, mountPath: /etc/fakeapi-ca}
+            - {name: openbao-token, mountPath: /var/run/secrets/tokens}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: config, configMap: {name: scrim}}
+        - {name: ca, secret: {secretName: scrim-ca}}
+        - {name: keys, secret: {secretName: scrim-keys}}
+        - {name: fakeapi-ca, configMap: {name: fakeapi-ca}}
+        - {name: tmp, emptyDir: {}}
+        # scrim's own login to OpenBao: a projected token for OpenBao's
+        # audience. No static store credential exists in the cluster.
+        - name: openbao-token
+          projected:
+            sources:
+              - serviceAccountToken: {audience: openbao, expirationSeconds: 3600, path: openbao}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: scrim, namespace: scrim}
+spec:
+  selector: {app: scrim}
+  ports:
+    - {name: llm, port: 8080, targetPort: 8080}
+    - {name: proxy, port: 3128, targetPort: 3128}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: fakeapi, namespace: agents, labels: {app: fakeapi}}
+spec:
+  containers:
+    - name: fakeapi
+      image: ${TOOLS_IMAGE}
+      imagePullPolicy: Never
+      args: [fakeapi]
+      env:
+        - {name: TLS_CERT, value: /etc/fakeapi/tls.crt}
+        - {name: TLS_KEY, value: /etc/fakeapi/tls.key}
+        - {name: KEY_A, valueFrom: {secretKeyRef: {name: fakeapi-keys, key: a}}}
+        - {name: KEY_B, valueFrom: {secretKeyRef: {name: fakeapi-keys, key: b}}}
+      volumeMounts: [{name: tls, mountPath: /etc/fakeapi}]
+  volumes: [{name: tls, secret: {secretName: fakeapi-tls}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fakeapi, namespace: agents}
+spec:
+  selector: {app: fakeapi}
+  ports: [{port: 443, targetPort: 8443}]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: agent-a, namespace: agents}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: agent-b, namespace: agents}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: agent-a, namespace: agents}
+spec:
+  serviceAccountName: agent-a
+  containers:
+    - name: agent
+      image: ${TOOLS_IMAGE}
+      imagePullPolicy: Never
+      args: [sleep]
+      env:
+        - {name: SCRIM_CA, value: /etc/scrim-ca/ca.crt}
+      volumeMounts:
+        - {name: scrim-token, mountPath: /var/run/secrets/tokens}
+        - {name: scrim-ca, mountPath: /etc/scrim-ca}
+  volumes:
+    # The agent's identity toward scrim: a projected token for scrim's
+    # audience, which kubelet rotates.
+    - name: scrim-token
+      projected:
+        sources:
+          - serviceAccountToken: {audience: scrim, expirationSeconds: 3600, path: scrim}
+    - {name: scrim-ca, configMap: {name: scrim-ca-public}}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: agent-b, namespace: agents}
+spec:
+  serviceAccountName: agent-b
+  containers:
+    - name: agent
+      image: ${TOOLS_IMAGE}
+      imagePullPolicy: Never
+      args: [sleep]
+      env:
+        - {name: SCRIM_CA, value: /etc/scrim-ca/ca.crt}
+      volumeMounts:
+        - {name: scrim-token, mountPath: /var/run/secrets/tokens}
+        - {name: scrim-ca, mountPath: /etc/scrim-ca}
+  volumes:
+    # The agent's identity toward scrim: a projected token for scrim's
+    # audience, which kubelet rotates.
+    - name: scrim-token
+      projected:
+        sources:
+          - serviceAccountToken: {audience: scrim, expirationSeconds: 3600, path: scrim}
+    - {name: scrim-ca, configMap: {name: scrim-ca-public}}

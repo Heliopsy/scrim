@@ -539,6 +539,102 @@ jobs:
         if: always()
         run: scripts/release/image.sh clean "$IMAGE"
 
+  # The Helm chart at the release version, pushed to
+  # oci://ghcr.io/heliopsy/charts/scrim after the images it names, signed
+  # keyless with the images' identity, with an SPDX SBOM and SLSA provenance
+  # attached to its digest and all three verified from the registry. The chart
+  # lives in the registry only, not among the GitHub release files. A pull
+  # request only packages it.
+  chart:
+    name: Helm chart
+    needs: [plan, image]
+    if: always() && needs.plan.result == 'success' && (needs.plan.outputs.publish != 'true' || needs.image.result == 'success')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      SCRIM_VERSION: ${{ needs.plan.outputs.version }}
+      SCRIM_COMMIT: ${{ needs.plan.outputs.commit }}
+      SOURCE_DATE_EPOCH: ${{ needs.plan.outputs.epoch }}
+      PUBLISH: ${{ needs.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+      - name: Install helm, cosign and syft
+        run: |
+          scripts/release/tools.sh "$RUNNER_TEMP/tools" helm cosign syft
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - name: Package
+        id: package
+        run: |
+          set -euo pipefail
+          tgz=$(scripts/release/chart.sh package "$RUNNER_TEMP/chart")
+          echo "tgz=$tgz" >> "$GITHUB_OUTPUT"
+          helm show chart "$tgz"
+      - name: Log in to ghcr.io
+        if: env.PUBLISH == 'true'
+        env:
+          TOKEN: ${{ github.token }}
+        run: printf '%s' "$TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Push
+        id: push
+        if: env.PUBLISH == 'true'
+        env:
+          TGZ: ${{ steps.package.outputs.tgz }}
+        run: |
+          set -euo pipefail
+          repo=$(sed -n 's/^SCRIM_CHART_REPOSITORY=//p' scripts/release/release.env)/scrim
+          digest=$(scripts/release/chart.sh push "$TGZ")
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "pushed $repo@$digest"
+      - name: Sign
+        if: env.PUBLISH == 'true'
+        env:
+          REF: ${{ steps.push.outputs.repo }}@${{ steps.push.outputs.digest }}
+        run: cosign sign --yes "$REF"
+      - name: Attest an SBOM
+        if: env.PUBLISH == 'true'
+        env:
+          REF: ${{ steps.push.outputs.repo }}@${{ steps.push.outputs.digest }}
+          REPO: ${{ steps.push.outputs.repo }}
+          TGZ: ${{ steps.package.outputs.tgz }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/sbom" && tar -xzf "$TGZ" -C "$RUNNER_TEMP/sbom"
+          SYFT_CHECK_FOR_APP_UPDATE=false syft scan --quiet "dir:$RUNNER_TEMP/sbom/scrim" \
+            --source-name "$REPO" --source-version "$SCRIM_VERSION" \
+            -o "spdx-json=$RUNNER_TEMP/chart.spdx.json"
+          cosign attest --yes --type spdxjson --predicate "$RUNNER_TEMP/chart.spdx.json" "$REF"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        if: env.PUBLISH == 'true'
+        with:
+          subject-name: ${{ steps.push.outputs.repo }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: Verify what the registry holds
+        if: env.PUBLISH == 'true'
+        env:
+          REPO: ${{ steps.push.outputs.repo }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          TGZ: ${{ steps.package.outputs.tgz }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          issuer=https://token.actions.githubusercontent.com
+          helm pull "oci://$REPO" --version "$SCRIM_VERSION" -d "$RUNNER_TEMP/pulled"
+          cmp "$TGZ" "$RUNNER_TEMP/pulled/scrim-$SCRIM_VERSION.tgz"
+          cosign verify --certificate-identity "$RELEASE_IDENTITY" --certificate-oidc-issuer "$issuer" "$REPO@$DIGEST" >/dev/null
+          cosign verify-attestation --type spdxjson \
+            --certificate-identity "$RELEASE_IDENTITY" --certificate-oidc-issuer "$issuer" "$REPO@$DIGEST" >/dev/null
+          gh attestation verify "oci://$REPO@$DIGEST" --repo "$GITHUB_REPOSITORY" >/dev/null
+          echo "signature, SBOM and provenance verified: $REPO@$DIGEST"
+
   # Checks the release the way docs/install.md tells a user to: from what was
   # published, not from what this run believes it uploaded.
   verify:

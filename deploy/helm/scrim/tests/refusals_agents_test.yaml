@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: refusals in agents.yaml
+templates:
+- agents.yaml
+release:
+  name: rel
+  namespace: ns
+tests:
+- it: refuses sidecar mode with existingConfigMap
+  set:
+    existingConfigMap: mine
+    sidecar:
+      enabled: true
+      egressGuard:
+        image: nft:1
+  asserts:
+  - failedTemplate:
+      errorPattern: existingConfigMap only works for central mode

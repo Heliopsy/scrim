@@ -1,0 +1,36 @@
+# Kubernetes identity in both modes, per-agent store login and scrim's own OpenBao login with
+# its service account (no static store credential).
+identity:
+  kubernetes:
+    audience: scrim-prod
+    expirationSeconds: 7200
+    agents:
+      reviewer: "sa:agents/reviewer label:team=platform"
+    unmapped: unknown
+storeAuth:
+  serviceAccountToken:
+    enabled: true
+    audience: openbao
+config:
+  stores:
+    bao:
+      kind: openbao
+      address: https://bao.example.com:8200
+      auth:
+        method: kubernetes
+        kubernetes:
+          role: scrim
+          token-file: /var/run/secrets/scrim/store-token
+      redact: ["bao://kv/agents/*"]
+  identity:
+    store-login:
+      bao: "kubernetes role:{namespace}-{service_account}"
+agents:
+  namespaces: [agents]
+kyverno:
+  enabled: true
+networkPolicy:
+  enabled: true
+sidecar:
+  enabled: true
+  egressGuard: {image: registry.example.com/nft:1}

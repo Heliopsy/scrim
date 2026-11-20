@@ -1,0 +1,192 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: central scrim (chart.std.component)
+templates:
+  - deployment.yaml
+  - config.yaml
+release:
+  name: rel
+  namespace: ns
+tests:
+  - it: renders the ServiceAccount, Deployment, Service and PDB, no HPA by default
+    template: deployment.yaml
+    asserts:
+      - hasDocuments: {count: 4}
+      - containsDocument: {kind: ServiceAccount, apiVersion: v1, name: rel-scrim-proxy, any: true}
+      - containsDocument: {kind: Deployment, apiVersion: apps/v1, name: rel-scrim, any: true}
+      - containsDocument: {kind: Service, apiVersion: v1, name: rel-scrim, any: true}
+      - containsDocument: {kind: PodDisruptionBudget, apiVersion: policy/v1, name: rel-scrim, any: true}
+  - it: runs scrim proxy hardened, with the chart's config files and the health probes
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - equal: {path: 'spec.template.spec.containers[0].args', value: [proxy]}
+      - equal: {path: 'spec.template.spec.containers[0].image', value: ghcr.io/heliopsy/scrim:0.1.0}
+      - contains:
+          path: 'spec.template.spec.containers[0].env'
+          content: {name: SCRIM_CONFIG, value: /etc/scrim/config/config.yaml:/etc/scrim/config/chart.yaml}
+      - equal: {path: 'spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem', value: true}
+      - equal: {path: 'spec.template.spec.containers[0].securityContext.capabilities.drop', value: [ALL]}
+      - equal: {path: spec.template.spec.securityContext.runAsUser, value: 65532}
+      - equal: {path: spec.template.spec.securityContext.seccompProfile.type, value: RuntimeDefault}
+      - equal: {path: 'spec.template.spec.containers[0].readinessProbe.httpGet', value: {path: /readyz, port: health}}
+      - equal: {path: spec.template.spec.enableServiceLinks, value: false}
+      - exists: {path: 'spec.template.metadata.annotations["checksum/config"]'}
+      - equal: {path: spec.selector.matchLabels, value: {app.kubernetes.io/name: rel-scrim-proxy, app.kubernetes.io/instance: rel}}
+  - it: mounts the API token for TokenReview while identity is on
+    template: deployment.yaml
+    asserts:
+      - equal: {path: spec.template.spec.automountServiceAccountToken, value: true}
+        documentSelector: {path: kind, value: Deployment}
+      - equal: {path: automountServiceAccountToken, value: true}
+        documentSelector: {path: kind, value: ServiceAccount}
+  - it: mounts no token with identity off
+    template: deployment.yaml
+    set:
+      identity.kubernetes.enabled: false
+    asserts:
+      - equal: {path: spec.template.spec.automountServiceAccountToken, value: false}
+        documentSelector: {path: kind, value: Deployment}
+  - it: takes the image digest and the registry mirror
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    set:
+      global.imageRegistry: mirror.example.com
+      image.digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    asserts:
+      - equal: {path: 'spec.template.spec.containers[0].image', value: 'mirror.example.com/heliopsy/scrim:0.1.0@sha256:0000000000000000000000000000000000000000000000000000000000000000'}
+  - it: mounts each Secret slot at /run/secrets/scrim/<slot>
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    set:
+      postgres.enabled: true
+      secrets.existing: {postgres: pg, admin: adm}
+      secrets.keys.postgres: {dsn: url}
+      admin.tcp.enabled: true
+      metrics.enabled: true
+    asserts:
+      - contains: {path: 'spec.template.spec.containers[0].volumeMounts', content: {name: postgres-secret, mountPath: /run/secrets/scrim/postgres, readOnly: true}}
+      - contains: {path: spec.template.spec.volumes, content: {name: postgres-secret, secret: {secretName: pg, defaultMode: 288, items: [{key: url, path: url}]}}}
+      - contains: {path: spec.template.spec.volumes, content: {name: admin-secret, secret: {secretName: adm, defaultMode: 288, items: [{key: token, path: token}]}}}
+      - contains: {path: spec.template.spec.volumes, content: {name: metrics-secret, secret: {secretName: rel-scrim-metrics, defaultMode: 288, items: [{key: token, path: token}]}}}
+      - contains: {path: 'spec.template.spec.containers[0].ports', content: {name: admin, containerPort: 9793, protocol: TCP}}
+  - it: exposes metrics and admin on the Service only when enabled
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Service}
+    set:
+      metrics.enabled: true
+    asserts:
+      - contains: {path: spec.ports, content: {name: metrics, port: 9792, targetPort: health, protocol: TCP, appProtocol: http}}
+      - lengthEqual: {path: spec.ports, count: 3}
+  - it: mounts the store token, the upstream CA, an existing config and secretMounts
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    set:
+      storeAuth.serviceAccountToken.enabled: true
+      upstreamCA.configMap: roots
+      existingConfigMap: mine
+      secretMounts: [{name: bao, secretName: bao-approle}]
+    asserts:
+      - contains: {path: spec.template.spec.volumes, content: {name: store-token, projected: {defaultMode: 288, sources: [{serviceAccountToken: {audience: vault, expirationSeconds: 3600, path: store-token}}]}}}
+      - contains: {path: spec.template.spec.volumes, content: {name: upstream-ca, configMap: {name: roots}}}
+      - contains: {path: spec.template.spec.volumes, content: {name: secret-bao, secret: {secretName: bao-approle, defaultMode: 288}}}
+      - contains: {path: 'spec.template.spec.containers[0].env', content: {name: SCRIM_CONFIG, value: /etc/scrim/user/config.yaml:/etc/scrim/config/chart.yaml}}
+  - it: renders the HPA with the connections metric and no replicas field
+    template: deployment.yaml
+    set:
+      postgres.enabled: true
+      secrets.existing.postgres: pg
+      metrics.enabled: true
+      central.autoscaling: {enabled: true, minReplicas: 3, maxReplicas: 6, connections: {enabled: true, targetAverageValue: 30}, behavior: {scaleDown: {stabilizationWindowSeconds: 600}}}
+    asserts:
+      - notExists: {path: spec.replicas}
+        documentSelector: {path: kind, value: Deployment}
+      - equal: {path: spec.minReplicas, value: 3}
+        documentSelector: {path: kind, value: HorizontalPodAutoscaler}
+      - contains:
+          path: spec.metrics
+          content: {type: Pods, pods: {metric: {name: scrim_dataplane_connections_active}, target: {type: AverageValue, averageValue: "30"}}}
+        documentSelector: {path: kind, value: HorizontalPodAutoscaler}
+      - equal: {path: spec.behavior.scaleDown.stabilizationWindowSeconds, value: 600}
+        documentSelector: {path: kind, value: HorizontalPodAutoscaler}
+  - it: global.ha gives replicas, anti-affinity and a zone spread
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    set:
+      global.ha: {enabled: true, replicas: 3}
+      postgres.enabled: true
+      secrets.existing.postgres: pg
+    asserts:
+      - equal: {path: spec.replicas, value: 3}
+      - equal: {path: 'spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.topologyKey', value: kubernetes.io/hostname}
+      - equal: {path: 'spec.template.spec.topologySpreadConstraints[0].topologyKey', value: topology.kubernetes.io/zone}
+  - it: global.ha leaves central alone when excluded
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    set:
+      global.ha: {enabled: true, exclude: [proxy]}
+    asserts:
+      - equal: {path: spec.replicas, value: 1}
+      - notExists: {path: spec.template.spec.affinity}
+  - it: a component's extraEnv wins over global.extraEnv of the same name
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    set:
+      global.extraEnv: [{name: A, value: global}, {name: B, value: global}]
+      central.extraEnv: [{name: A, value: own}]
+    asserts:
+      - contains: {path: 'spec.template.spec.containers[0].env', content: {name: B, value: global}}
+      - contains: {path: 'spec.template.spec.containers[0].env', content: {name: A, value: own}}
+      - notContains: {path: 'spec.template.spec.containers[0].env', content: {name: A, value: global}}
+  - it: extraArgs, extraEnvFrom, extraVolumes, extraContainers and extraInitContainers
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    set:
+      central.extraArgs: [--log-level=debug]
+      central.extraEnvFrom: [{configMapRef: {name: env}}]
+      central.extraVolumes: [{name: x, emptyDir: {}}]
+      central.extraVolumeMounts: [{name: x, mountPath: /x}]
+      central.extraContainers: [{name: side, image: busybox}]
+      central.extraInitContainers: [{name: init, image: busybox}]
+      global.extraVolumes: [{name: shared, emptyDir: {}}]
+    asserts:
+      - equal: {path: 'spec.template.spec.containers[0].args', value: [proxy, --log-level=debug]}
+      - equal: {path: 'spec.template.spec.containers[0].envFrom', value: [{configMapRef: {name: env}}]}
+      - contains: {path: 'spec.template.spec.containers[0].volumeMounts', content: {name: x, mountPath: /x}}
+      - contains: {path: spec.template.spec.volumes, content: {name: shared, emptyDir: {}}}
+      - equal: {path: 'spec.template.spec.containers[1].name', value: side}
+      - equal: {path: 'spec.template.spec.initContainers[0].name', value: init}
+  - it: pod options and lifecycle, with global defaults overridden per component
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    set:
+      global.dnsPolicy: Default
+      global.runtimeClassName: global-rc
+      central.runtimeClassName: gvisor
+      central.dnsConfig: {options: [{name: ndots, value: "2"}]}
+      central.hostAliases: [{ip: 10.0.0.1, hostnames: [a.example.com]}]
+      central.shareProcessNamespace: true
+      global.lifecycle: {preStop: {sleep: {seconds: 1}}}
+      central.lifecycle: {preStop: {sleep: {seconds: 5}}}
+    asserts:
+      - equal: {path: spec.template.spec.dnsPolicy, value: Default}
+      - equal: {path: spec.template.spec.runtimeClassName, value: gvisor}
+      - equal: {path: 'spec.template.spec.dnsConfig.options[0].name', value: ndots}
+      - equal: {path: 'spec.template.spec.hostAliases[0].ip', value: 10.0.0.1}
+      - equal: {path: spec.template.spec.shareProcessNamespace, value: true}
+      - equal: {path: 'spec.template.spec.containers[0].lifecycle.preStop.sleep.seconds', value: 5}
+  - it: podLabels never override the chart's labels
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    set:
+      central.podLabels: {app.kubernetes.io/name: evil, team: a}
+      global.podLabels: {team: global, mesh: "off"}
+    asserts:
+      - equal: {path: 'spec.template.metadata.labels["app.kubernetes.io/name"]', value: rel-scrim-proxy}
+      - equal: {path: spec.template.metadata.labels.team, value: a}
+      - equal: {path: spec.template.metadata.labels.mesh, value: "off"}
+  - it: renders nothing with central off
+    template: deployment.yaml
+    set:
+      central.enabled: false
+    asserts:
+      - hasDocuments: {count: 0}

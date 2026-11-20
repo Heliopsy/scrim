@@ -214,6 +214,140 @@ jobs:
         env:
           SCRIM_TEST_DATAPLANE: ${{ github.workspace }}/dataplane/target/debug/scrim-dataplane
 
+  # The chart's gate, deploy/helm/scrim/ci/verify.sh, on Helm 3 (what Flux's
+  # helm-controller and many clusters still run) and Helm 4: generated files,
+  # lint, kubeconform with CRDs, Pod Security, promtool, helm-unittest, the
+  # golden tests, the upgrade check, helm package. Then ct lint. Tools come
+  # from ci/tools.sh, pinned by version and sha256.
+  chart:
+    name: Helm chart (helm ${{ matrix.helm }})
+    runs-on: ho-z10
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        helm: ["3", "4"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      # golden.sh builds scrim to validate every configuration the chart renders.
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.13"
+      - name: Install tools
+        env:
+          HELM_MAJOR: ${{ matrix.helm }}
+        run: |
+          set -euo pipefail
+          deploy/helm/scrim/ci/tools.sh "$RUNNER_TEMP/tools" "$HELM_MAJOR" > "$RUNNER_TEMP/tools.env"
+          eval "$(tail -n1 "$RUNNER_TEMP/tools.env")"
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+          { echo "HELM_PLUGINS=$HELM_PLUGINS"; echo "CT_ETC=$CT_ETC"; } >> "$GITHUB_ENV"
+          # PyYAML for the generators and checks, yamale and yamllint for ct lint.
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet pyyaml==6.0.3 yamale==6.1.0 yamllint==1.38.0
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: verify.sh
+        run: deploy/helm/scrim/ci/verify.sh
+      - name: ct lint
+        run: |
+          ct lint --config deploy/helm/scrim/ci/ct.yaml --charts deploy/helm/scrim \
+            --chart-yaml-schema "$CT_ETC/chart_schema.yaml" --lint-conf "$CT_ETC/lintconf.yaml"
+
+  # ct install (and, once a release has the chart, an upgrade from it) on kind,
+  # with the scrim image built from this commit. GitHub-hosted: the ho-z10 pods
+  # have no container runtime. The image is built with podman; kind runs its
+  # node on the runner's Docker, the runtime GitHub's runners provide for it.
+  chart-kind:
+    name: Helm chart on kind (ct install)
+    needs: chart
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Set up rustup
+        run: scripts/ci-setup-rust.sh
+      - name: Install musl tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends musl-tools
+      - name: Build the scrim image
+        env:
+          SCRIM_RELEASE_NO_AUDITABLE: "1"
+          CARGO_TARGET_DIR: ${{ runner.temp }}/target
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/stage"
+          mkdir -p "$stage/linux-amd64" "$stage/state"
+          scripts/release/dataplane.sh linux-amd64 "$RUNNER_TEMP/scrim-dataplane"
+          scripts/release/controlplane.sh linux-amd64 "$RUNNER_TEMP/scrim-dataplane" "$stage/linux-amd64/scrim"
+          image="localhost/scrim-chart-ci:${GITHUB_SHA::12}"
+          podman build -q --platform linux/amd64 -f Containerfile -t "$image" "$stage" >/dev/null
+          podman save -q -o "$RUNNER_TEMP/scrim-image.tar" "$image"
+          { echo "SCRIM_IMAGE=$image"; echo "SCRIM_IMAGE_ARCHIVE=$RUNNER_TEMP/scrim-image.tar"; } >> "$GITHUB_ENV"
+          rm -rf "$CARGO_TARGET_DIR"
+      - name: Install tools
+        run: |
+          set -euo pipefail
+          deploy/helm/scrim/ci/tools.sh "$RUNNER_TEMP/tools" 3 >/dev/null
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - name: kind-test.sh
+        env:
+          KIND_PROVIDER: docker
+        run: deploy/helm/scrim/ci/kind-test.sh
+      - name: Remove the image
+        if: always()
+        run: podman rmi -f "${SCRIM_IMAGE:-none}" >/dev/null 2>&1 || true
+
+  # GitHub-hosted: test/e2e/sandbox.sh needs unprivileged user and network
+  # namespaces, which the ho-z10 pods do not allow. Real curl, git (with git
+  # http-backend behind TLS), Node.js fetch and Python requests under
+  # `scrim run` against a real `scrim proxy` (tasks.md 10.2); the network
+  # namespace has loopback only, so nothing leaves the runner.
+  e2e-tools:
+    name: Tool clients end-to-end
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      # NODE_USE_ENV_PROXY needs Node.js 24.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 24
+      - run: rustup toolchain install && cargo --version
+        working-directory: dataplane
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          workspaces: dataplane
+          save-if: false
+      - name: Allow unprivileged user namespaces and install Python requests
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          python3 -c 'import requests' 2>/dev/null || sudo apt-get install -y --no-install-recommends python3-requests
+          curl --version | head -1; git --version; node --version; python3 -c 'import requests; print("requests", requests.__version__)'
+      # SCRIM_E2E_REQUIRE_TOOLS turns a missing client into a failure.
+      - run: test/e2e/run.sh tools
+        env:
+          SCRIM_E2E_REQUIRE_TOOLS: "1"
+
   proto:
     name: Generated code up to date
     runs-on: ho-z10
@@ -293,6 +427,23 @@ jobs:
           echo "$GITLEAKS_SHA256  $RUNNER_TEMP/$tarball" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git --redact --no-banner --verbose --config .gitleaks.toml --log-opts=HEAD .
+
+  # Alert rules (promtool check and unit tests), Prometheus configs, the
+  # PrometheusRule and dashboard ConfigMap staying in sync with their sources.
+  # promtool is the pinned release the script verifies by sha256. A
+  # GitHub-hosted runner: it ships python3 with PyYAML.
+  monitoring:
+    name: Monitoring assets
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: PyYAML
+        run: python3 -I -c 'import yaml' || { sudo apt-get update -q && sudo apt-get install -yq python3-yaml; }
+      - run: scripts/monitoring-check.sh
 
   # The files it checks are set in .markdownlint-cli2.yaml, the rules in
   # .markdownlint.yaml; `just md` runs the same thing locally.
