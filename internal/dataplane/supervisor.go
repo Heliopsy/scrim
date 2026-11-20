@@ -240,6 +240,9 @@ func wipe(snap *pb.Snapshot) {
 	for _, k := range snap.GetPlaceholderKeys() {
 		clear(k.Key)
 	}
+	for _, c := range snap.GetToolProxyCa() {
+		clear(c.KeyPem)
+	}
 }
 
 func (s *Supervisor) consumeEvents(stream pb.DataPlane_EventsClient) {

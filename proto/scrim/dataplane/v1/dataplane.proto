@@ -18,10 +18,11 @@
 // would misread bumps PROTOCOL_VERSION; both sides and their tests change in
 // the same commit.
 //
-// Secrets: ValueEntry.value, PlaceholderKey.key and CaptureRequest.value are
-// the only fields that hold secret material. Generated debug printers for those messages are
-// replaced by redacting ones on both sides; neither may be logged, echoed in
-// an error or copied into an event.
+// Secrets: ValueEntry.value, PlaceholderKey.key, CaptureRequest.value and
+// CaCertificate.key_pem are the only fields that hold secret material.
+// Generated debug printers for those messages are replaced by redacting ones
+// on both sides; neither may be logged, echoed in an error or copied into an
+// event.
 syntax = "proto3";
 
 package scrim.dataplane.v1;
@@ -114,6 +115,25 @@ message Snapshot {
   // "Share and reveal"; dataplane/crates/scrim-policy/README.md). Absent,
   // nothing is restored: every placeholder reaches the agent unresolved.
   RestoreSettings restore = 10;
+  // tool_proxy_ca is the interception CA the control plane holds (design
+  // D5). Exactly one entry is current: the tool proxy signs leaves with it.
+  // A second, non-current entry is the previous generation during a
+  // rotation's overlap: clients may still trust only it, so leaves are
+  // served with a cross certificate until it leaves the snapshot. Empty
+  // means the data plane keeps the CA it has (generating an ephemeral one
+  // when it has none).
+  repeated CaCertificate tool_proxy_ca = 11;
+}
+
+// CaCertificate is one generation of the tool-proxy CA.
+message CaCertificate {
+  // cert_pem is the self-signed CA certificate, PEM. Public.
+  string cert_pem = 1;
+  // key_pem is the CA's PKCS#8 private key, PEM. Secret: never logged,
+  // wiped on both sides after use.
+  bytes key_pem = 2;
+  // current marks the generation leaves are signed with.
+  bool current = 3;
 }
 
 // DisplayMode decides placeholders in text the agent displays (assistant

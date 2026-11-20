@@ -65,6 +65,30 @@ pub struct Snapshot {
     /// nothing is restored: every placeholder reaches the agent unresolved.
     #[prost(message, optional, tag = "10")]
     pub restore: ::core::option::Option<RestoreSettings>,
+    /// tool_proxy_ca is the interception CA the control plane holds (design
+    /// D5). Exactly one entry is current: the tool proxy signs leaves with it.
+    /// A second, non-current entry is the previous generation during a
+    /// rotation's overlap: clients may still trust only it, so leaves are
+    /// served with a cross certificate until it leaves the snapshot. Empty
+    /// means the data plane keeps the CA it has (generating an ephemeral one
+    /// when it has none).
+    #[prost(message, repeated, tag = "11")]
+    pub tool_proxy_ca: ::prost::alloc::vec::Vec<CaCertificate>,
+}
+/// CaCertificate is one generation of the tool-proxy CA.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[prost(skip_debug)]
+pub struct CaCertificate {
+    /// cert_pem is the self-signed CA certificate, PEM. Public.
+    #[prost(string, tag = "1")]
+    pub cert_pem: ::prost::alloc::string::String,
+    /// key_pem is the CA's PKCS#8 private key, PEM. Secret: never logged,
+    /// wiped on both sides after use.
+    #[prost(bytes = "vec", tag = "2")]
+    pub key_pem: ::prost::alloc::vec::Vec<u8>,
+    /// current marks the generation leaves are signed with.
+    #[prost(bool, tag = "3")]
+    pub current: bool,
 }
 /// ToolAlias gives a tool name a role, adding to or overriding the built-in
 /// tool table.
