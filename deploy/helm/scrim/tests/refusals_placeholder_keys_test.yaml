@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: refusals in placeholder-keys.yaml
+templates:
+- placeholder-keys.yaml
+release:
+  name: rel
+  namespace: ns
+tests:
+- it: refuses no placeholder key source
+  set:
+    placeholderKeys.create: false
+  asserts:
+  - failedTemplate:
+      errorPattern: every replica needs the same placeholder keys

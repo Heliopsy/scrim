@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# chart-testing (ct). ct lint reads every ci/*-values.yaml as one case;
+# ct install (ci/kind-test.sh) runs on a copy of the chart that keeps only
+# install-values.yaml, the one case that comes up on a bare kind cluster.
+target-branch: main
+remote: origin
+chart-dirs:
+  - deploy/helm
+# The release sets Chart.yaml's version (release-please keeps it current).
+check-version-increment: false
+# The maintainer is the organisation, not a GitHub user.
+validate-maintainers: false
+validate-chart-schema: true
+validate-yaml: true
+helm-extra-args: --timeout 600s
+upgrade: false

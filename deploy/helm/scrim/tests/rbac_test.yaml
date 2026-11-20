@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: TokenReview RBAC (rbac.yaml)
+templates:
+  - rbac.yaml
+release:
+  name: rel
+  namespace: ns
+tests:
+  - it: a ClusterRole that only creates TokenReviews, bound to scrim
+    asserts:
+      - hasDocuments: {count: 2}
+      - equal: {path: rules, value: [{apiGroups: [authentication.k8s.io], resources: [tokenreviews], verbs: [create]}]}
+        documentIndex: 0
+      - equal: {path: subjects, value: [{kind: ServiceAccount, name: rel-scrim-proxy, namespace: ns}]}
+        documentIndex: 1
+  - it: binds the agent namespaces' service accounts in sidecar mode
+    set:
+      agents.namespaces: [agents]
+      sidecar: {enabled: true, egressGuard: {image: nft:1}}
+    asserts:
+      - contains: {path: subjects, content: {kind: Group, apiGroup: rbac.authorization.k8s.io, name: "system:serviceaccounts:agents"}}
+        documentIndex: 1
+  - it: nothing with identity off or the RBAC turned off
+    set:
+      identity.kubernetes.tokenReviewRBAC: false
+    asserts:
+      - hasDocuments: {count: 0}

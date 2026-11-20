@@ -191,13 +191,27 @@ clean:
 
 # ---------------------------------------------------------------- kubernetes
 
-# Helm chart: lint, golden `helm template` output and refused values (test/k8s/golden).
+# Generated files, lint, kubeconform, Pod Security, promtool, helm-unittest, golden renders,
+# upgrade check and package. Needs the tools of `just helm-tools`.
+# Helm chart gate (deploy/helm/scrim/ci/verify.sh).
 helm-test:
-    test/k8s/golden.sh
+    deploy/helm/scrim/ci/verify.sh
+
+# Regenerate the schema, the values reference, the image list and the monitoring copies, then check.
+helm-generate:
+    deploy/helm/scrim/ci/verify.sh --generate
+
+# Install the chart's test tools into bin/helm-tools; eval the line it prints.
+helm-tools:
+    deploy/helm/scrim/ci/tools.sh bin/helm-tools | tail -n1
 
 # Rewrite the golden output after checking the diff of `just helm-test`.
 helm-golden-update:
     test/k8s/golden.sh --update
+
+# What an existing install would see change against a git ref (default origin/main).
+helm-render-diff ref="origin/main":
+    deploy/helm/scrim/ci/render-diff.sh {{ref}}
 
 # Creates and deletes its own kind cluster, images and network (test/k8s/e2e.sh).
 #

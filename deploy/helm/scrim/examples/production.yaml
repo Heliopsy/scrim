@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# A production shape: central scrim with three or more replicas on PostgreSQL
+# (state and events) under global.ha, OpenBao with Kubernetes auth (no static
+# store credential), TokenReview identity, Kyverno injection, NetworkPolicies
+# narrowed to the providers and the store, metrics with a ServiceMonitor, the
+# alert rules and the dashboard. Host names and Secret names are placeholders.
+global:
+  ha:
+    enabled: true
+    replicas: 3
+postgres:
+  enabled: true
+secrets:
+  # The DSN (key dsn) in a Secret you manage; postgres://...?sslmode=verify-full.
+  existing:
+    postgres: scrim-postgres
+storeAuth:
+  serviceAccountToken:
+    enabled: true
+    audience: openbao
+config:
+  stores:
+    bao:
+      kind: openbao
+      address: https://bao.example.com:8200
+      auth:
+        method: kubernetes
+        kubernetes: {role: scrim, token-file: /var/run/secrets/scrim/store-token}
+      redact: ["bao://kv/agents/*"]
+  catalog:
+    entries:
+      github:
+        ref: bao://kv/agents/github#token
+        hosts: [api.github.com]
+        placeholder: SCRIM_GITHUB_TOKEN
+        inject: ["header:Authorization"]
+central:
+  resources:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {memory: 1Gi}
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+agents:
+  namespaces: [agents, ci]
+kyverno:
+  enabled: true
+networkPolicy:
+  enabled: true
+  scrimEgress:
+    # Providers and GitHub over HTTPS, OpenBao and PostgreSQL inside the cluster.
+    - ports: [{port: 443, protocol: TCP}]
+    - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: openbao}}}]
+      ports: [{port: 8200, protocol: TCP}]
+    - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: postgres}}}]
+      ports: [{port: 5432, protocol: TCP}]
+metrics:
+  enabled: true
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+prometheusRule:
+  enabled: true
+grafanaDashboard:
+  enabled: true

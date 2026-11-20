@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: central configuration (config.yaml)
+templates:
+  - config.yaml
+release:
+  name: rel
+  namespace: ns
+tests:
+  - it: owns listeners, identity, state, events, replicas and metrics in chart.yaml
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: 'listen: 0\.0\.0\.0:9790'}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "kubernetes:\n    enabled: true\n    audience: scrim"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "deployment:\n.*\n  replicas: 1"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "state:\n  backend: memory\nevents:\n  backend: local"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "metrics:\n  listen: 0\\.0\\.0\\.0:9792\n  enabled: false"}
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: upstream-ca-file}
+  - it: postgres renders state and events together and the replica count follows the HPA
+    set:
+      postgres.enabled: true
+      secrets.existing.postgres: pg
+      central.autoscaling: {enabled: true, maxReplicas: 7}
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "replicas: 7"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "backend: postgres\n  postgres:\n    dsn: file:/run/secrets/scrim/postgres/dsn"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "events:\n  backend: postgres"}
+  - it: metrics take the slot token, or the weakening
+    set:
+      metrics.enabled: true
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "auth:\n    token: file:/run/secrets/scrim/metrics/token"}
+  - it: metrics without a token set allow-unauthenticated-remote
+    set:
+      metrics: {enabled: true, allowUnauthenticatedRemote: true}
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "allow-unauthenticated-remote: true"}
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: "auth:"}
+  - it: the upstream CA is dataplane.upstream-ca-file, set once
+    set:
+      upstreamCA.configMap: roots
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "dataplane:\n  upstream-ca-file: /etc/scrim/upstream-ca/ca.crt"}
+  - it: identity off is written explicitly (the k8s profile turns it on)
+    set:
+      identity.kubernetes.enabled: false
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "kubernetes:\n    enabled: false"}
+  - it: the user's config and policy rules
+    set:
+      config.catalog.entries.gh: {ref: bao://kv/gh#token, hosts: [api.github.com]}
+      policyRules: {rules: [{name: r, decision: deny, when: "true"}]}
+    asserts:
+      - matchRegex: {path: 'data["config.yaml"]', pattern: "catalog:"}
+      - exists: {path: 'data["policy.yaml"]'}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "rules-file: /etc/scrim/config/policy.yaml"}
+  - it: the admin TCP listener with the slot token
+    set:
+      admin.tcp.enabled: true
+      secrets.existing.admin: adm
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "url: http://0\\.0\\.0\\.0:9793\n  token: file:/run/secrets/scrim/admin/token"}
