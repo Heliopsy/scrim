@@ -6,8 +6,7 @@
   "bump-patch-for-minor-pre-major": false,
   "packages": {
     ".": {
-      "package-name": "scrim",
-      "release-as": "0.1.0"
+      "package-name": "scrim"
     }
   }
 }
