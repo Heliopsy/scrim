@@ -340,6 +340,41 @@ alert rules and dashboard of `deploy/monitoring` unchanged.
 - **WHEN** the chart's copy of the alert rules or dashboard differs from `deploy/monitoring`
 - **THEN** the chart test fails
 
+### Requirement: Published, signed chart
+
+Each release SHALL publish the chart at the release version to `oci://ghcr.io/heliopsy/charts/scrim`,
+signed keyless with the same workflow identity as the images, with an SPDX SBOM and SLSA provenance
+attached to its digest, and SHALL verify all three from the registry before the release completes.
+
+#### Scenario: Verify a published chart
+
+- **WHEN** a user runs `cosign verify` on the chart digest with the release workflow identity
+- **THEN** the signature verifies, and the SBOM and provenance attestations verify on the same digest
+
+### Requirement: Closed chart values and one chart gate
+
+The chart's values schema SHALL be generated from values.yaml and closed, so an unknown key is
+refused, and one script SHALL check the chart the same way locally and in CI: generated files,
+lint, schema validation with CRDs, Pod Security "restricted" for every pod the chart renders or
+injects (the egress guard as the one listed exception), unit tests, the upgrade from the previous
+chart, and packaging.
+
+#### Scenario: Misspelt value
+
+- **WHEN** the values name a key the chart does not declare
+- **THEN** the chart refuses to render and names the key
+
+#### Scenario: High availability preset
+
+- **WHEN** `global.ha` is on without PostgreSQL
+- **THEN** the chart refuses to render; with PostgreSQL it renders two replicas, a PDB keeping one,
+  anti-affinity and a zone spread
+
+#### Scenario: helm test
+
+- **WHEN** an operator runs `helm test` on an installed release
+- **THEN** test pods reach the LLM listener and the forward proxy through the Service
+
 ### Requirement: Agent pod injection policy
 
 The chart SHALL optionally install an admission policy that configures pods carrying a documented
