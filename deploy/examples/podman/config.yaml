@@ -1,0 +1,29 @@
+# /etc/scrim/config.yaml inside the container.
+#
+# Secrets arrive as podman secrets mounted under /run/scrim-secrets/agents/,
+# one file per secret. The listeners bind every address inside the container;
+# publish them on the host's loopback only (-p 127.0.0.1:...).
+apiVersion: scrim.dev/v1
+kind: Config
+
+stores:
+  files:
+    kind: file
+    root: /run/scrim-secrets
+    redact:
+      - files://agents/*
+
+catalog:
+  entries:
+    github:
+      ref: files://agents/github-token
+      hosts: [api.github.com]
+      placeholder: SCRIM_GITHUB_TOKEN
+      inject: ["header:Authorization"]
+
+proxy:
+  listen: 0.0.0.0:9790
+  forward-listen: 0.0.0.0:9791
+
+metrics:
+  listen: 0.0.0.0:9792

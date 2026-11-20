@@ -1,0 +1,4 @@
+apiVersion: scrim.dev/v1
+kind: Config
+catalog:
+  environment: prod

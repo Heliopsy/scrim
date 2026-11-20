@@ -1,0 +1,33 @@
+# scrim from the chart in this repository's release tags (sources/scrim-chart.yaml).
+# The values are a ConfigMap generated from values.yaml next to this file, so
+# a values change is a reviewed commit and a new ConfigMap name. Store
+# credentials and keys are Secrets from SOPS or External Secrets
+# (deploy/examples/secrets), referenced by name in values.yaml, never inline.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: scrim
+  namespace: scrim
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: ./deploy/helm/scrim
+      reconcileStrategy: Revision
+      sourceRef:
+        kind: GitRepository
+        name: scrim
+        namespace: flux-system
+  valuesFrom:
+    - kind: ConfigMap
+      name: scrim-values
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+      strategy: rollback
+  driftDetection:
+    mode: enabled

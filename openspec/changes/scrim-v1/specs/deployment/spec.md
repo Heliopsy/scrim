@@ -179,3 +179,21 @@ without a token.
 
 - **WHEN** `admin.url` is a TCP address and `admin.token` is not set
 - **THEN** the daemon refuses to start and names `admin.token`
+
+### Requirement: Tested deployment examples
+
+The repository SHALL document every supported way to deploy scrim (workstation, systemd, cloud-init,
+Ansible, podman, Kubernetes manifests, Kustomize, Helm, Flux, Argo CD) with complete example files,
+and CI SHALL check each file: configs with `scrim config validate` in the release image, Kubernetes
+objects against pinned schemas, units with `systemd-analyze verify`, and the container examples by
+running them and sending a canary request.
+
+#### Scenario: Example config drifts from the release
+
+- **WHEN** an example config uses a setting the pinned release does not know
+- **THEN** the deployment example check fails and names the example and the setting
+
+#### Scenario: Container example leaks
+
+- **WHEN** a container example is run by the smoke check and sent a canary value
+- **THEN** the capture holds the placeholder and not the value, or the check fails

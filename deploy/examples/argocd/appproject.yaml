@@ -1,0 +1,31 @@
+# The Argo CD project scrim's Applications belong to: the chart's repository,
+# your fleet repository, and only the namespaces and cluster-scoped kinds scrim
+# needs (the Kyverno ClusterPolicy, the TokenReview binding of the chart's
+# Kubernetes identity).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: scrim
+  namespace: argocd
+spec:
+  description: scrim, keeps secret values away from LLM providers
+  sourceRepos:
+    - https://github.com/Heliopsy/scrim
+    - https://github.com/example-org/fleet
+  destinations:
+    - server: "*"
+      namespace: scrim
+    - server: "*"
+      namespace: agents
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: kyverno.io
+      kind: ClusterPolicy
+    - group: external-secrets.io
+      kind: ClusterSecretStore
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: ResourceQuota

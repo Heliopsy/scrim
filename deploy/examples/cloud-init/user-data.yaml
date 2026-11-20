@@ -1,0 +1,237 @@
+#cloud-config
+# cloud-init user-data: installs scrim from a signed release and starts it as a
+# system service. Checked with `cloud-init schema --config-file user-data.yaml`.
+#
+# The files under write_files are copies of deploy/examples/systemd/system/ and
+# deploy/examples/workstation/install.sh, written by
+# scripts/deploy-examples/cloud-init.py; `just deploy-examples-check` fails when
+# they drift. No secret is in here: user-data is readable from the instance
+# metadata service, so secrets reach /etc/scrim/secrets/agents/ from your
+# provisioning afterwards.
+
+package_update: true
+packages:
+  - curl
+  - ca-certificates
+
+write_files:
+  - path: /etc/sysusers.d/scrim.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # /etc/sysusers.d/scrim.conf: the user and group scrim runs as.
+      # Apply with `systemd-sysusers`; agent users that use the agent API socket are
+      # added to the scrim group (`usermod -aG scrim ci-runner`).
+      u scrim - "scrim daemon" /var/lib/scrim /usr/sbin/nologin
+  - path: /etc/tmpfiles.d/scrim.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # /etc/tmpfiles.d/scrim.conf: the directory the file store reads secrets from.
+      # Apply with `systemd-tmpfiles --create /etc/tmpfiles.d/scrim.conf`.
+      d /etc/scrim/secrets        0700 scrim scrim -
+      d /etc/scrim/secrets/agents 0700 scrim scrim -
+  - path: /etc/systemd/system/scrim.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # /etc/systemd/system/scrim.service
+      #
+      # scrim as a system service under its own user, for people who manage units
+      # themselves. `scrim install --system` writes and records an equivalent unit;
+      # use one or the other, not both.
+      #
+      # Files it expects:
+      #   /usr/local/bin/scrim                       the release binary
+      #   /etc/scrim/config.yaml                     config.yaml next to this file
+      #   /etc/scrim/secrets/agents/                 one file per secret, owned by scrim, 0600
+      #   /etc/sysusers.d/scrim.conf                 creates the scrim user (scrim.sysusers.conf)
+      #
+      # State (SQLite, placeholder key, CA) lives in /var/lib/scrim, the sockets in
+      # /run/scrim. To read secrets from OpenBao instead of files, add the drop-in
+      # scrim.service.d/openbao.conf and use config-openbao.yaml.
+
+      [Unit]
+      Description=scrim, keeps secret values away from LLM providers
+      Documentation=https://github.com/Heliopsy/scrim/blob/main/docs/deploy/vm.md
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=simple
+      User=scrim
+      Group=scrim
+      ExecStart=/usr/local/bin/scrim proxy --config /etc/scrim/config.yaml
+      ExecReload=/bin/kill -HUP $MAINPID
+      Restart=on-failure
+      RestartSec=2s
+      TimeoutStopSec=30s
+
+      # scrim derives its paths from the XDG variables: state in
+      # $XDG_STATE_HOME/scrim, sockets in $XDG_RUNTIME_DIR/scrim.
+      Environment=HOME=/var/lib/scrim
+      Environment=XDG_STATE_HOME=/var/lib
+      Environment=XDG_RUNTIME_DIR=/run
+      Environment=XDG_CONFIG_HOME=/etc
+      StateDirectory=scrim
+      StateDirectoryMode=0700
+      RuntimeDirectory=scrim
+      RuntimeDirectoryMode=0750
+      ConfigurationDirectory=scrim
+      ConfigurationDirectoryMode=0755
+
+      # The data plane locks its memory so values are never swapped.
+      LimitMEMLOCK=infinity
+
+      UMask=0077
+      NoNewPrivileges=yes
+      CapabilityBoundingSet=
+      AmbientCapabilities=
+      ProtectSystem=strict
+      ProtectHome=yes
+      PrivateTmp=yes
+      PrivateDevices=yes
+      ProtectKernelTunables=yes
+      ProtectKernelModules=yes
+      ProtectKernelLogs=yes
+      ProtectControlGroups=yes
+      ProtectClock=yes
+      ProtectHostname=yes
+      RestrictNamespaces=yes
+      RestrictRealtime=yes
+      RestrictSUIDSGID=yes
+      RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+      RemoveIPC=yes
+      LockPersonality=yes
+      MemoryDenyWriteExecute=yes
+      SystemCallArchitectures=native
+      SystemCallFilter=@system-service
+      SystemCallErrorNumber=EPERM
+      LimitCORE=0
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/scrim/config.yaml
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # /etc/scrim/config.yaml for scrim as a system service, secrets from files.
+      #
+      # Every file under /etc/scrim/secrets/agents/ is a secret scrim redacts; one
+      # token per file, owned by scrim, mode 0600. New files are picked up within
+      # refresh.interval, changed ones within watch.interval. config-openbao.yaml is
+      # the same setup with OpenBao as the store.
+      apiVersion: scrim.dev/v1
+      kind: Config
+
+      stores:
+        files:
+          kind: file
+          root: /etc/scrim/secrets
+          redact:
+            - files://agents/*
+          refresh:
+            interval: 1m
+
+      catalog:
+        entries:
+          github:
+            ref: files://agents/github-token
+            hosts: [api.github.com]
+            placeholder: SCRIM_GITHUB_TOKEN
+            inject: ["header:Authorization"]
+
+      api:
+        # Agents running as other users connect to /run/scrim/api.sock through the
+        # scrim group; identity.peers says which agent each of them is.
+        permissions: "0660"
+
+      identity:
+        peers:
+          ci: "user:ci-runner"
+
+      metrics:
+        listen: 127.0.0.1:9792
+  - path: /usr/local/sbin/scrim-install
+    owner: root:root
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      # SPDX-License-Identifier: AGPL-3.0-only
+      #
+      # Download a scrim release, check its signature and checksum, and install the
+      # binary into ~/.local/bin (or $PREFIX/bin).
+      #
+      #   VERSION=0.1.0 ./install.sh
+      #
+      # Needs curl, cosign 2.4 or later, tar and sha256sum (shasum on macOS). Nothing
+      # is installed unless cosign verifies checksums.txt against the release
+      # workflow's identity and the archive matches its signed checksum. The binary it
+      # replaces is kept as scrim.prev, so a rollback is one mv.
+      set -euo pipefail
+
+      VERSION=${VERSION:-0.1.0}
+      PREFIX=${PREFIX:-$HOME/.local}
+      OS=${OS:-$(uname -s | tr '[:upper:]' '[:lower:]')}
+      case "${ARCH:-$(uname -m)}" in
+        x86_64 | amd64) ARCH=amd64 ;;
+        aarch64 | arm64) ARCH=arm64 ;;
+        *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+      esac
+      case "$OS" in
+        linux | darwin) ;;
+        *) echo "unsupported OS: $OS" >&2; exit 1 ;;
+      esac
+
+      BASE=https://github.com/Heliopsy/scrim/releases/download/v$VERSION
+      ARCHIVE=scrim_${VERSION}_${OS}_${ARCH}.tar.gz
+      # The signing identity: the release workflow of Heliopsy/scrim, run from a
+      # release tag or from main (release-please dispatches it from main).
+      IDENTITY='^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$'
+      ISSUER=https://token.actions.githubusercontent.com
+
+      work=$(mktemp -d)
+      trap 'rm -rf "$work"' EXIT
+      cd "$work"
+
+      for f in "$ARCHIVE" checksums.txt checksums.txt.sigstore.json; do
+        curl -fsSLO --retry 3 "$BASE/$f"
+      done
+
+      cosign verify-blob \
+        --bundle checksums.txt.sigstore.json \
+        --certificate-identity-regexp "$IDENTITY" \
+        --certificate-oidc-issuer "$ISSUER" \
+        checksums.txt
+
+      if command -v sha256sum >/dev/null; then
+        sha256sum --check --ignore-missing checksums.txt
+      else
+        shasum -a 256 --check --ignore-missing checksums.txt
+      fi
+
+      tar -xzf "$ARCHIVE" ./scrim
+      mkdir -p "$PREFIX/bin"
+      if [ -e "$PREFIX/bin/scrim" ]; then
+        mv -f "$PREFIX/bin/scrim" "$PREFIX/bin/scrim.prev"
+      fi
+      install -m 0755 scrim "$PREFIX/bin/scrim"
+      "$PREFIX/bin/scrim" version
+
+runcmd:
+  - [systemd-sysusers, /etc/sysusers.d/scrim.conf]
+  - [systemd-tmpfiles, --create, /etc/tmpfiles.d/scrim.conf]
+  # cosign verifies the release; pinned by version and sha256.
+  - - sh
+    - -ec
+    - |
+      case "$(uname -m)" in
+        x86_64) arch=amd64 sum=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa ;;
+        aarch64) arch=arm64 sum=ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2 ;;
+      esac
+      curl -fsSL -o /usr/local/bin/cosign "https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-$arch"
+      echo "$sum  /usr/local/bin/cosign" | sha256sum -c -
+      chmod 0755 /usr/local/bin/cosign
+  - [env, VERSION=0.1.0, PREFIX=/usr/local, /usr/local/sbin/scrim-install]
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, scrim.service]

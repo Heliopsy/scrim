@@ -1,0 +1,42 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "flux": {
+    "managerFilePatterns": ["/(^|/)clusters/.+\\.ya?ml$/", "/(^|/)flux/.+\\.ya?ml$/"]
+  },
+  "argocd": {
+    "managerFilePatterns": ["/(^|/)argocd/.+\\.ya?ml$/"]
+  },
+  "kustomize": {
+    "pinDigests": true
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "scrim release in install scripts, cloud-init and Ansible defaults",
+      "managerFilePatterns": ["/(^|/)install\\.sh$/", "/(^|/)user-data\\.ya?ml$/", "/(^|/)defaults/main\\.ya?ml$/"],
+      "matchStrings": [
+        "VERSION=\\$\\{VERSION:-(?<currentValue>[0-9][^}]*)\\}",
+        "VERSION=(?<currentValue>[0-9][0-9.]*)[ ,\\]]",
+        "scrim_version: (?<currentValue>[0-9][0-9.]*)"
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "Heliopsy/scrim",
+      "extractVersionTemplate": "^v(?<version>.*)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "One pull request per scrim release, across image, chart and binary",
+      "matchPackageNames": ["ghcr.io/heliopsy/scrim", "ghcr.io/heliopsy/scrim-dataplane", "Heliopsy/scrim", "https://github.com/Heliopsy/scrim"],
+      "groupName": "scrim"
+    },
+    {
+      "description": "dev follows patches on its own; staging and prod wait for review",
+      "matchPackageNames": ["ghcr.io/heliopsy/scrim"],
+      "matchFileNames": ["**/overlays/dev/**"],
+      "matchUpdateTypes": ["patch", "digest"],
+      "automerge": true
+    }
+  ]
+}

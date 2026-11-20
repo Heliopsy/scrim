@@ -1,0 +1,38 @@
+# Central mode: one scrim Deployment serves the agent pods in `agents` through
+# its Service. Secrets come from OpenBao; the only credential in the cluster is
+# scrim's OpenBao token, a Secret mounted by reference (secretMounts), never a
+# value in these values.
+#
+#   kubectl --context <ctx> -n scrim create secret generic scrim-openbao --from-file=token=./bao-token
+#   helm --kube-context <ctx> install scrim deploy/helm/scrim -n scrim -f values-central.yaml
+config:
+  stores:
+    bao:
+      kind: openbao
+      address: https://bao.example.com:8200
+      token: file:/run/secrets/scrim/bao/token
+      redact: ["bao://kv/agents/*"]
+  catalog:
+    entries:
+      github:
+        ref: bao://kv/agents/github#token
+        hosts: [api.github.com]
+        placeholder: SCRIM_GITHUB_TOKEN
+        inject: ["header:Authorization"]
+
+secretMounts:
+  - name: bao
+    secretName: scrim-openbao
+
+# Agent pods reach scrim over TCP without a session, as unknown callers, until
+# Kubernetes identity lands; the built-in injection rule serves only known
+# agents. This rule injects the GitHub token toward its bound host for any
+# caller that can reach scrim, which the NetworkPolicy limits to labelled pods.
+policyRules:
+  rules:
+    - name: agents-github-read
+      decision: allow
+      when: op == "inject" && secret.name == "github" && dest.method in ["GET", "HEAD"]
+
+agents:
+  namespaces: [agents]

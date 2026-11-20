@@ -1,0 +1,6 @@
+apiVersion: scrim.dev/v1
+kind: Config
+state:
+  backend: postgres
+  postgres:
+    dsn: file:/run/secrets/scrim-postgres/dsn

@@ -19,6 +19,23 @@ to start. The behaviour contract, with every requirement and scenario, is the Op
 | [running.md](running.md) | `scrim proxy`: the daemon, its listeners and sockets, snapshots, capture mode, shutdown, a systemd unit |
 | [configuration.md](configuration.md) | Config files, `SCRIM_*` environment variables, flags, precedence, profiles, reload and every setting |
 
+## Deployment
+
+Worked examples with tested files in [`deploy/examples`](../deploy/examples/), and a table of which
+way fits which situation: [deploy/README.md](deploy/README.md).
+
+| Page | Covers |
+| --- | --- |
+| [deploy/workstation.md](deploy/workstation.md) | Signed binary install, config, CA trust, `scrim run` for Claude Code and Codex |
+| [deploy/vm.md](deploy/vm.md) | `scrim install`, plain systemd units, cloud-init user data, the Ansible role |
+| [deploy/containers.md](deploy/containers.md) | Rootless `podman run`, Quadlet, `podman kube play`, compose |
+| [deploy/kubernetes.md](deploy/kubernetes.md) | Raw manifests, Kustomize base with dev, staging and prod overlays |
+| [deploy/helm.md](deploy/helm.md) | Helm values for central and sidecar mode, PostgreSQL, injection, NetworkPolicy |
+| [deploy/flux.md](deploy/flux.md) | Flux sources, HelmRelease, Kustomizations, image automation, signature checks, staged rollout |
+| [deploy/argocd.md](deploy/argocd.md) | Argo CD Applications, ApplicationSet, sync waves, Image Updater |
+| [deploy/gitops-secrets.md](deploy/gitops-secrets.md) | Which credential goes where; SOPS with age, External Secrets with OpenBao |
+| [deploy/renovate.md](deploy/renovate.md) | Renovate configuration for scrim versions |
+
 ## Secrets
 
 | Page | Covers |

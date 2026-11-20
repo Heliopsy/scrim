@@ -239,8 +239,9 @@ and how to build a release-identical binary.
 
 ### 2. Configure
 
-This `~/.config/scrim/config.yaml` redacts every variable in scrim's environment whose name starts
-with `SCRIM_SECRET_`, and lets one of them, a GitHub token, be injected toward the GitHub API:
+This `~/.config/scrim/config.yaml` redacts a GitHub token from scrim's environment and lets it be
+injected toward the GitHub API. Each variable to redact is listed by name: `local://SCRIM_SECRET_*`
+names one variable called `SCRIM_SECRET_*` and loads nothing.
 
 ```yaml
 apiVersion: scrim.dev/v1
@@ -251,7 +252,7 @@ stores:
     kind: env
     prefix: SCRIM_SECRET_
     redact:
-      - local://SCRIM_SECRET_*
+      - local://SCRIM_SECRET_GITHUB_TOKEN
 
 catalog:
   entries:
@@ -291,7 +292,7 @@ scrim proxy --capture
 ```
 
 Each request is written to the capture directory (`$XDG_STATE_HOME/scrim/capture`, or the
-directory you pass as `--capture DIR`) byte for byte as it left for the provider. Search
+directory you pass as `--capture=DIR`) byte for byte as it left for the provider. Search
 it for the secret value: it is absent, and its placeholder is there instead. To run the whole leak
 suite against your setup, see [docs/leak-assurance.md](docs/leak-assurance.md).
 
@@ -443,6 +444,7 @@ veil's per-tool policy.
 | Page | Covers |
 | --- | --- |
 | [docs/install.md](docs/install.md) | Release archives, signature and provenance checks, images, reproducible builds |
+| [docs/deploy/README.md](docs/deploy/README.md) | Deployment examples for every target: workstation, systemd, cloud-init, Ansible, podman, Kubernetes, Helm, Flux, Argo CD |
 | [docs/configuration.md](docs/configuration.md) | Config files, environment, flags, precedence, reload and every setting |
 | [docs/stores/README.md](docs/stores/README.md) | Store adapters, capabilities, freshness and outages |
 | [docs/stores/openbao.md](docs/stores/openbao.md) | OpenBao and Vault-compatible KV v2 |

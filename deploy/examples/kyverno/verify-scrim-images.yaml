@@ -1,0 +1,43 @@
+# Admission check for every pod in the cluster: an image from
+# ghcr.io/heliopsy/scrim or ghcr.io/heliopsy/scrim-dataplane must carry a
+# keyless cosign signature from this repository's release workflow, recorded
+# in Rekor. Kyverno also rewrites the tag to the verified digest, so the pod
+# runs exactly the bytes that were checked. Needs Kyverno 1.13 or later.
+#
+# Flux and Argo CD apply it before scrim (Argo CD sync wave -1, a Flux
+# Kustomization that scrim dependsOn), so the first scrim pod is checked too.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-scrim-images
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  webhookTimeoutSeconds: 30
+  background: false
+  rules:
+    - name: scrim-release-signature
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      verifyImages:
+        # Releases are signed with cosign 3, which stores the signature as a
+        # Sigstore bundle in an OCI 1.1 referrer, not as a .sig tag.
+        - type: SigstoreBundle
+          imageReferences:
+            - "ghcr.io/heliopsy/scrim:*"
+            - "ghcr.io/heliopsy/scrim@*"
+            - "ghcr.io/heliopsy/scrim-dataplane:*"
+            - "ghcr.io/heliopsy/scrim-dataplane@*"
+          failureAction: Enforce
+          mutateDigest: true
+          verifyDigest: true
+          required: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: https://token.actions.githubusercontent.com
+                    subjectRegExp: '^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(heads/main|tags/v.+)$'
+                    rekor:
+                      url: https://rekor.sigstore.dev

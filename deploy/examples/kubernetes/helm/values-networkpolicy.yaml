@@ -1,0 +1,16 @@
+# Agent pods reach only scrim and DNS; scrim reaches HTTPS (providers, GitHub,
+# OpenBao) and PostgreSQL. Needs a CNI that enforces NetworkPolicy.
+agents:
+  namespaces: [agents]
+networkPolicy:
+  enabled: true
+  scrimEgress:
+    - ports:
+        - {port: 443, protocol: TCP}
+        - {port: 8200, protocol: TCP}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: postgres
+      ports:
+        - {port: 5432, protocol: TCP}

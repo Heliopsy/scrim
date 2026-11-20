@@ -1,0 +1,37 @@
+# /etc/scrim/config.yaml for scrim as a system service, secrets from files.
+#
+# Every file under /etc/scrim/secrets/agents/ is a secret scrim redacts; one
+# token per file, owned by scrim, mode 0600. New files are picked up within
+# refresh.interval, changed ones within watch.interval. config-openbao.yaml is
+# the same setup with OpenBao as the store.
+apiVersion: scrim.dev/v1
+kind: Config
+
+stores:
+  files:
+    kind: file
+    root: /etc/scrim/secrets
+    redact:
+      - files://agents/*
+    refresh:
+      interval: 1m
+
+catalog:
+  entries:
+    github:
+      ref: files://agents/github-token
+      hosts: [api.github.com]
+      placeholder: SCRIM_GITHUB_TOKEN
+      inject: ["header:Authorization"]
+
+api:
+  # Agents running as other users connect to /run/scrim/api.sock through the
+  # scrim group; identity.peers says which agent each of them is.
+  permissions: "0660"
+
+identity:
+  peers:
+    ci: "user:ci-runner"
+
+metrics:
+  listen: 127.0.0.1:9792

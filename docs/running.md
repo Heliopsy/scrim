@@ -9,7 +9,7 @@ and friends through the admin API.
 ```sh
 scrim proxy                        # until SIGINT or SIGTERM
 scrim proxy --capture              # capture mode into $XDG_STATE_HOME/scrim/capture
-scrim proxy --capture ~/scrim-cap  # or into a directory of your choice
+scrim proxy --capture=$HOME/scrim-cap  # or into a directory of your choice (the = is required)
 ANTHROPIC_BASE_URL=http://127.0.0.1:9790/anthropic claude
 ```
 
@@ -124,7 +124,7 @@ changed key collection is picked up on reload. Key material is never logged.
 
 ## Capture mode
 
-`scrim proxy --capture DIR` (or `proxy.capture.dir`; `--capture` alone uses
+`scrim proxy --capture=DIR` (or `proxy.capture.dir`; `--capture` alone uses
 `$XDG_STATE_HOME/scrim/capture`) writes every provider request exactly as it
 left, and the response as received, to `DIR`, so you can check what the provider saw. The directory
 is created with mode 0700 and the daemon refuses to start if group or others can access it. The

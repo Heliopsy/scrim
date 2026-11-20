@@ -159,3 +159,17 @@ e2e-ntfy port="":
 clean:
     rm -rf bin/ dist/ {{embed}}
     cd dataplane && cargo clean
+
+# ---------------------------------------------------------------- deployment examples
+
+deploy_tools := justfile_directory() / ".tools/deploy-examples"
+
+# Check every file under deploy/examples with pinned tools (scripts/deploy-examples/check.sh).
+deploy-examples-check:
+    scripts/deploy-examples/tools.sh {{deploy_tools}}
+    scripts/deploy-examples/check.sh {{deploy_tools}}
+
+# Run the container examples for real under rootless podman and send each a canary request.
+deploy-examples-smoke:
+    scripts/deploy-examples/tools.sh {{deploy_tools}}
+    scripts/deploy-examples/smoke.sh {{deploy_tools}}

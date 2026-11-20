@@ -1,0 +1,28 @@
+# Shared state in PostgreSQL, which more than one replica needs. The DSN comes
+# from the Secret scrim-postgres (key dsn), created by External Secrets or
+# SOPS, never written here.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+configMapGenerator:
+  - name: scrim-config
+    behavior: merge
+    files:
+      - overlay-postgres.yaml
+patches:
+  - target:
+      kind: Deployment
+      name: scrim
+    patch: |-
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: postgres
+          secret:
+            secretName: scrim-postgres
+            defaultMode: 0440
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          name: postgres
+          mountPath: /run/secrets/scrim-postgres
+          readOnly: true

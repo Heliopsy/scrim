@@ -1,0 +1,57 @@
+name: Deployment examples
+
+# Checks every file under deploy/examples, which docs/deploy shows, with the
+# tools scripts/deploy-examples/tools.env pins by version and sha256, then runs
+# the container examples for real. GitHub-hosted: the checks need podman,
+# systemd-analyze and quadlet, which the ho-z10 pods do not have. No secret,
+# no OIDC token, read-only token.
+on:
+  pull_request:
+    paths:
+      - deploy/**
+      - docs/deploy/**
+      - scripts/deploy-examples/**
+      - justfile
+      - .github/workflows/deploy-examples.yaml
+  push:
+    branches: [main]
+    paths:
+      - deploy/**
+      - docs/deploy/**
+      - scripts/deploy-examples/**
+      - justfile
+      - .github/workflows/deploy-examples.yaml
+
+permissions: read-all
+
+concurrency:
+  group: deploy-examples-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Check deployment examples
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-just
+      - run: podman version && systemd-analyze --version | head -1 && shellcheck --version | head -2
+      - name: Static checks
+        run: just deploy-examples-check
+      # Starts the podman run, kube play, compose and raw Deployment examples
+      # and sends each a canary request to api.anthropic.com with an invalid
+      # key; Anthropic answers 401 and the capture must hold the placeholder.
+      - name: Container examples, for real
+        if: success() || failure()
+        run: just deploy-examples-smoke
+      - name: Remove leftover containers
+        if: always()
+        run: |
+          podman ps -aq --filter name=scrim-examples- | xargs -r podman rm -f -v
+          podman pod ps -q --filter name=scrim-examples- | xargs -r podman pod rm -f
+          podman volume ls -q --filter name=scrim-examples- | xargs -r podman volume rm -f

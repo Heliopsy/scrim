@@ -1,0 +1,23 @@
+# Several replicas sharing state in PostgreSQL, with an HPA. The DSN is the
+# Secret scrim-postgres (key dsn) from SOPS or External Secrets.
+state:
+  backend: postgres
+  postgres:
+    dsnSecret:
+      name: scrim-postgres
+      key: dsn
+central:
+  pdb:
+    minAvailable: 1
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: scrim

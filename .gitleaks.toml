@@ -84,3 +84,25 @@ paths = [
 ]
 matchCondition = "AND"
 regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']
+
+[[allowlists]]
+description = """
+The canary request of the deployment guides sends an invalid API key on
+purpose, so Anthropic answers 401 and the capture can be checked without an
+account. The value is the literal string not-a-real-key.
+"""
+paths = ['''^docs/deploy/.*\.md$''', '''^scripts/deploy-examples/smoke\.sh$''']
+matchCondition = "AND"
+regexTarget = "line"
+regexes = ['''x-api-key: not-a-real-key''']
+
+[[allowlists]]
+description = """
+Placeholders in the deployment examples: the base64 of REPLACE-ME in a Secret
+template, and the name of the data key that holds the placeholder key in a
+Helm values file (the value is a key name, not key material).
+"""
+paths = ['''^deploy/examples/''']
+matchCondition = "AND"
+regexTarget = "line"
+regexes = ['''UkVQTEFDRS1NRQ==''', '''^\s+key: placeholder-k1$''']

@@ -1,0 +1,17 @@
+# The scrim Helm chart, from this repository's release tags. The release
+# pipeline publishes no OCI chart yet, so Flux reads deploy/helm/scrim from git.
+# The semver range picks the newest release tag below 1.0; the chart ships from
+# the first release that contains deploy/helm/scrim on.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: scrim
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://github.com/Heliopsy/scrim
+  ref:
+    semver: ">=0.2.0 <1.0.0"
+  ignore: |
+    /*
+    !/deploy/helm/scrim/

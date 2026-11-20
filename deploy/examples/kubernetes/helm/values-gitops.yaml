@@ -1,0 +1,21 @@
+# For tools that render the chart with `helm template` (Argo CD): they have no
+# `lookup`, so the chart's generated CA and placeholder key would change at
+# every render. Take both from Secrets that External Secrets or SOPS create
+# (deploy/examples/secrets): scrim-ca (kubernetes.io/tls, PKCS#8 key) and
+# scrim-keys (placeholder-k1). The CA certificate is public; paste its PEM
+# here so the chart can publish it to agents without reading the Secret:
+#   kubectl --context <ctx> -n scrim get secret scrim-ca -o jsonpath='{.data.tls\.crt}' | base64 -d
+ca:
+  create: false
+  existingSecret: scrim-ca
+  certificate: |
+    -----BEGIN CERTIFICATE-----
+    REPLACE-WITH-THE-PUBLIC-PEM-OF-scrim-ca
+    -----END CERTIFICATE-----
+placeholderKeys:
+  create: false
+  existingSecret: scrim-keys
+  keys:
+    - name: k1
+      version: 1
+      key: placeholder-k1

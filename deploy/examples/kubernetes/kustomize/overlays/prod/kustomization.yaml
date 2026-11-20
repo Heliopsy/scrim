@@ -1,0 +1,49 @@
+# prod: three replicas spread over nodes, PostgreSQL, NetworkPolicy, and the
+# image pinned by the digest `cosign verify` printed for the release.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+components:
+  - ../../components/postgres
+  - ../../components/networkpolicy
+configMapGenerator:
+  - name: scrim-config
+    behavior: merge
+    files:
+      - overlay-env.yaml
+replicas:
+  - name: scrim
+    count: 3
+images:
+  - name: ghcr.io/heliopsy/scrim
+    newTag: 0.1.0
+    digest: sha256:490a9ca52efeba6f9ed4c886f0dba55e33325603988c6570dd29477827cf683e
+patches:
+  - target:
+      kind: PodDisruptionBudget
+      name: scrim
+    patch: |-
+      - op: remove
+        path: /spec/maxUnavailable
+      - op: add
+        path: /spec/minAvailable
+        value: 2
+  - target:
+      kind: Deployment
+      name: scrim
+    patch: |-
+      - op: add
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: scrim
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: {cpu: 500m, memory: 256Mi}
+          limits: {memory: 1Gi}

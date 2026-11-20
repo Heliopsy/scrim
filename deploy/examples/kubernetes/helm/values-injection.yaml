@@ -1,0 +1,8 @@
+# Kyverno configures every pod labelled scrim.dev/inject: central in the agent
+# namespaces at creation: base URLs, HTTPS_PROXY, NO_PROXY and the CA bundle.
+# Needs Kyverno 1.13 or later in the cluster before scrim is installed.
+agents:
+  namespaces: [agents, ci]
+kyverno:
+  enabled: true
+  failurePolicy: Fail

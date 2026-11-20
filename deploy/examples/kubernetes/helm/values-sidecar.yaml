@@ -1,0 +1,35 @@
+# Sidecar mode: a full scrim proxy inside each agent pod labelled
+# scrim.dev/inject: sidecar, on loopback, with an nftables egress guard that
+# lets only the scrim container out. The store token and the CA are copied
+# into every agent namespace, so prefer central mode unless agents must keep
+# working without a shared service.
+#
+# The guard's image needs sh and nft; build it from egress-guard/Containerfile
+# and push it to your registry.
+central:
+  enabled: false
+config:
+  stores:
+    bao:
+      kind: openbao
+      address: https://bao.example.com:8200
+      token: file:/run/secrets/scrim/bao/token
+      redact: ["bao://kv/agents/*"]
+agents:
+  namespaces: [agents]
+kyverno:
+  enabled: true
+sidecar:
+  enabled: true
+  secretMounts:
+    - name: bao
+      secretName: scrim-openbao
+  egressGuard:
+    enabled: true
+    image: registry.example.com/platform/nft:3.22
+networkPolicy:
+  enabled: true
+  sidecarEgress:
+    - ports:
+        - {port: 443, protocol: TCP}
+        - {port: 8200, protocol: TCP}

@@ -1,0 +1,44 @@
+# scrim from the chart in this repository, values from your fleet repository.
+# targetRevision is a release tag; Renovate or Argo CD Image Updater moves it.
+# The chart ships from the first release that contains deploy/helm/scrim.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: scrim
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: scrim
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: scrim
+  sources:
+    - repoURL: https://github.com/Heliopsy/scrim
+      targetRevision: v0.2.0
+      path: deploy/helm/scrim
+      helm:
+        releaseName: scrim
+        valueFiles:
+          - $values/scrim/helm/values.yaml
+          # The CA and placeholder key from Secrets: Argo CD renders with
+          # helm template, which cannot read back the chart's generated ones.
+          - $values/scrim/helm/values-gitops.yaml
+    - repoURL: https://github.com/example-org/fleet
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

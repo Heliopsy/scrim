@@ -1,0 +1,106 @@
+# One scrim replica with in-memory state (the k8s profile's default). For more
+# replicas set state.backend: postgres (see the kustomize prod overlay); the
+# placeholder key and CA come from Secrets so every replica and every restart
+# produces the same placeholders and certificates.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrim
+  namespace: scrim
+  labels:
+    app.kubernetes.io/name: scrim
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scrim
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: scrim
+    spec:
+      serviceAccountName: scrim
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: scrim
+          image: ghcr.io/heliopsy/scrim:0.1.0
+          args: ["proxy"]
+          env:
+            - name: XDG_RUNTIME_DIR
+              value: /run/scrim
+          ports:
+            - name: llm
+              containerPort: 9790
+            - name: forward
+              containerPort: 9791
+            - name: health
+              containerPort: 9792
+          startupProbe:
+            httpGet: {path: /livez, port: health}
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: {path: /livez, port: health}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /readyz, port: health}
+            periodSeconds: 5
+            failureThreshold: 2
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/scrim
+              readOnly: true
+            - name: agent-secrets
+              mountPath: /run/secrets/scrim/agents
+              readOnly: true
+            - name: keys
+              mountPath: /run/secrets/scrim-keys
+              readOnly: true
+            - name: ca
+              mountPath: /run/secrets/scrim-ca
+              readOnly: true
+            - name: state
+              mountPath: /var/lib/scrim
+            - name: runtime
+              mountPath: /run/scrim
+      volumes:
+        - name: config
+          configMap:
+            name: scrim-config
+        - name: agent-secrets
+          secret:
+            secretName: scrim-agent-secrets
+        - name: keys
+          secret:
+            secretName: scrim-keys
+            defaultMode: 0440
+        - name: ca
+          secret:
+            secretName: scrim-ca
+            defaultMode: 0440
+        - name: state
+          emptyDir: {}
+        - name: runtime
+          emptyDir:
+            medium: Memory
