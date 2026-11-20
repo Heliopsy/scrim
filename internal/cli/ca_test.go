@@ -121,7 +121,7 @@ func TestCAInstallUninstall(t *testing.T) {
 	if code, _, errb := f.run(t, "ca", "install"); code != 1 || !strings.Contains(errb, "choose --user") {
 		t.Fatalf("install without scope: %d %s", code, errb)
 	}
-	if code, _, errb := f.run(t, "ca", "install", "--system"); code != 1 || !strings.Contains(errb, "--system is not supported yet") {
+	if code, _, errb := f.run(t, "ca", "install", "--system"); code != 1 || !strings.Contains(errb, "scrim install --system") {
 		t.Fatalf("install --system: %d %s", code, errb)
 	}
 	code, out, errb := f.run(t, "ca", "install", "--user", "--dry-run")

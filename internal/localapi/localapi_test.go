@@ -55,6 +55,12 @@ type harness struct {
 
 func start(t *testing.T) *harness {
 	t.Helper()
+	return startWith(t, nil)
+}
+
+// startWith starts the harness after setup adjusts the server.
+func startWith(t *testing.T, setup func(*Server)) *harness {
+	t.Helper()
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("peer credentials are implemented on Linux and macOS")
 	}
@@ -67,6 +73,9 @@ func start(t *testing.T) *harness {
 	mgr := identity.NewManager(identity.NewMemorySessions(), identity.ManagerOptions{})
 	srv := &Server{Resolver: identity.Resolver{Peers: peers, Sessions: mgr}, Sessions: mgr, Tools: e.Service,
 		Auditor: e.Audit, ServerVersion: "test", SweepEvery: -1}
+	if setup != nil {
+		setup(srv)
+	}
 	// Unix socket paths are short on macOS; keep the directory shallow.
 	dir, err := os.MkdirTemp("", "scrim-api")
 	if err != nil {

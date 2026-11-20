@@ -120,11 +120,12 @@ When no system bundle is found, the combined bundle is not written and only
 
 ## Not covered yet
 
-- `--system` (the system trust store: `update-ca-certificates`, `update-ca-trust`,
-  `security add-trusted-cert -d`). The command says so; install the exported bundle with the OS
-  tool.
+- `scrim ca install --system`. The system trust store is set up by `scrim install --system`
+  (`update-ca-certificates` on Debian and Ubuntu, `update-ca-trust` on Fedora and RHEL), recorded
+  in the install manifest and reverted by `scrim uninstall` ([service.md](service.md)). macOS
+  (`security add-trusted-cert -d`) is not automated.
 - Firefox profiles (each has its own NSS database), Java keystores (`keytool`), and creating
   `~/.pki/nssdb` when it does not exist.
-- Writing the environment variables into shell profiles or agent settings; that is part of
-  `scrim install`.
+- Writing the environment variables into shell profiles or agent settings. `scrim install --user`
+  runs `scrim ca install --user` and prints them; `scrim run` sets them for the agent it starts.
 - Reloading `tool-proxy.ca.*` settings without a restart.

@@ -61,7 +61,7 @@ fuzz:
 # ---------------------------------------------------------------- gates
 
 # The pre-push gate.
-check: fmt-check lint md test spec proto-check vuln
+check: fmt-check lint md test spec proto-check vuln monitoring
 
 fmt:
     gofmt -w .
@@ -79,6 +79,10 @@ lint:
 # Lint the Markdown .markdownlint-cli2.yaml selects, with the rules in .markdownlint.yaml.
 md:
     npx --yes markdownlint-cli2@0.24.1
+
+# Alert rules, their tests, the Prometheus configs and the dashboard (deploy/monitoring).
+monitoring:
+    scripts/monitoring-check.sh
 
 # Validate every OpenSpec change and spec.
 spec:
@@ -174,6 +178,12 @@ e2e-ntfy port="":
     trap 'podman rm -f -v "$name" >/dev/null' EXIT
     for _ in $(seq 50); do curl -fsS "http://127.0.0.1:$port/v1/health" >/dev/null 2>&1 && break; sleep 0.2; done
     SCRIM_TEST_NTFY_URL="http://127.0.0.1:$port" go test -race -count=1 -run TestEndToEndAgainstNtfy -v ./internal/notify/ntfy/
+
+# VM test of `scrim install` and `scrim uninstall` in a disposable systemd host under rootless
+# podman (test/service/vm-test.sh). SCRIM_SVC_BIN names a binary with the data plane embedded;
+# without it `just build` runs first.
+service-vm-test:
+    test/service/vm-test.sh
 
 clean:
     rm -rf bin/ dist/ {{embed}}

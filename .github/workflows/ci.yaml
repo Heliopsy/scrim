@@ -332,6 +332,23 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git --redact --no-banner --verbose --config .gitleaks.toml --log-opts=HEAD .
 
+  # Alert rules (promtool check and unit tests), Prometheus configs, the
+  # PrometheusRule and dashboard ConfigMap staying in sync with their sources.
+  # promtool is the pinned release the script verifies by sha256. A
+  # GitHub-hosted runner: it ships python3 with PyYAML.
+  monitoring:
+    name: Monitoring assets
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: PyYAML
+        run: python3 -I -c 'import yaml' || { sudo apt-get update -q && sudo apt-get install -yq python3-yaml; }
+      - run: scripts/monitoring-check.sh
+
   # The files it checks are set in .markdownlint-cli2.yaml, the rules in
   # .markdownlint.yaml; `just md` runs the same thing locally.
   markdown:

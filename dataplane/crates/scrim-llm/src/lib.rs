@@ -45,6 +45,7 @@ pub mod head;
 #[cfg(feature = "intercept")]
 pub mod intercept;
 pub mod json;
+pub mod metrics;
 pub mod outgoing;
 pub mod proxy;
 mod restore;
@@ -68,5 +69,6 @@ pub use engine::{
     ToolInputRestore, ToolMode, ValueClass,
 };
 pub use error::{ERROR_HEADER, Refusal};
+pub use metrics::LlmMetrics;
 pub use proxy::{BuildError, Proxy, SESSION_HEADER};
 pub use stream::{SseRestorer, restore_json};

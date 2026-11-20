@@ -31,6 +31,17 @@ func DefaultSocketPath() string {
 	return filepath.Join(os.TempDir(), "scrim-"+strconv.Itoa(os.Getuid()), "api.sock")
 }
 
+// SystemRuntimeDir holds the sockets of the system service that
+// `scrim install --system` sets up. A variable so tests can move it.
+var SystemRuntimeDir = "/run/scrim"
+
+// SystemAgentGroup is the group whose members may use the system service's
+// agent API socket.
+const SystemAgentGroup = "scrim-agents"
+
+// SystemSocketPath is the system service's agent API socket.
+func SystemSocketPath() string { return filepath.Join(SystemRuntimeDir, "api.sock") }
+
 // SocketPath returns the socket clients should use: $SCRIM_API_SOCKET, or
 // the default.
 func SocketPath() string {
@@ -38,6 +49,21 @@ func SocketPath() string {
 		return p
 	}
 	return DefaultSocketPath()
+}
+
+// ClientSocketPath is where a client looks when nothing is configured: the
+// per-user default socket when it exists, otherwise the system service's
+// socket when that exists, otherwise the per-user default (so the error
+// names the path the user's own daemon would use).
+func ClientSocketPath() string {
+	def := DefaultSocketPath()
+	if _, err := os.Stat(def); err == nil {
+		return def
+	}
+	if fi, err := os.Stat(SystemSocketPath()); err == nil && fi.Mode().Type() == fs.ModeSocket {
+		return SystemSocketPath()
+	}
+	return def
 }
 
 // ListenOptions configure the socket.
@@ -48,6 +74,10 @@ type ListenOptions struct {
 	// identity still comes from peer credentials, and unmapped users are
 	// refused.
 	Mode fs.FileMode
+	// Group, when positive, is the group ID the socket file is given,
+	// so members of that group can connect under a 0660 mode. The process
+	// must be a member of it.
+	Group int
 }
 
 // Listen creates the API socket at path. The parent directory is created
@@ -82,6 +112,12 @@ func Listen(path string, o ListenOptions) (net.Listener, error) {
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		return nil, fmt.Errorf("localapi: listening: %w", err)
+	}
+	if o.Group > 0 {
+		if err := os.Chown(path, -1, o.Group); err != nil {
+			_ = ln.Close()
+			return nil, fmt.Errorf("localapi: setting the socket group: %w", err)
+		}
 	}
 	if err := os.Chmod(path, mode); err != nil {
 		_ = ln.Close()

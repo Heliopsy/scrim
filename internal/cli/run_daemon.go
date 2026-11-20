@@ -5,9 +5,9 @@ package cli
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/heliopsy/scrim/internal/daemon"
 	agentrun "github.com/heliopsy/scrim/internal/run"
@@ -27,16 +27,13 @@ func (a runDaemonAdapter) Ensure(ctx context.Context) (agentrun.Instance, error)
 	if err != nil {
 		return nil, err
 	}
-	logw := io.Discard
-	closeLog := func() {}
+	// The log file is opened on the first line, so a run that reuses a
+	// running daemon (a user or system service) leaves no file behind.
+	logw := &lazyLog{}
 	if dir, err := cfg.StateDir(); err == nil {
-		if err := os.MkdirAll(dir, 0o700); err == nil {
-			f, err := os.OpenFile(filepath.Join(dir, "run-daemon.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // fixed name in the state directory
-			if err == nil {
-				logw, closeLog = f, func() { _ = f.Close() }
-			}
-		}
+		logw.path = filepath.Join(dir, "run-daemon.log")
 	}
+	closeLog := logw.close
 	l, err := daemon.Acquire(ctx, daemon.Options{Config: a.e.ConfigOptions(), LogOutput: logw, Notices: a.e.Stderr})
 	if err != nil {
 		closeLog()
@@ -47,6 +44,40 @@ func (a runDaemonAdapter) Ensure(ctx context.Context) (agentrun.Instance, error)
 		closeLog = func() {}
 	}
 	return &runInstance{l: l, closeLog: closeLog}, nil
+}
+
+// lazyLog appends to path, creating it (and its directory, 0700) on the
+// first write. Without a path, or when it cannot be opened, lines are
+// dropped.
+type lazyLog struct {
+	path string
+	mu   sync.Mutex
+	f    *os.File
+	err  bool
+}
+
+func (l *lazyLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.f == nil && !l.err && l.path != "" {
+		if err := os.MkdirAll(filepath.Dir(l.path), 0o700); err == nil {
+			l.f, _ = os.OpenFile(l.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // fixed name in the state directory
+		}
+		l.err = l.f == nil
+	}
+	if l.f == nil {
+		return len(p), nil
+	}
+	return l.f.Write(p)
+}
+
+func (l *lazyLog) close() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.f != nil {
+		_ = l.f.Close()
+		l.f = nil
+	}
 }
 
 type runInstance struct {
