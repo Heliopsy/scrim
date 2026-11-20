@@ -47,6 +47,37 @@ materials and build provenance attestation, and the verification steps SHALL be 
 - **WHEN** a user follows the documented verification steps for a downloaded binary
 - **THEN** the signature and provenance verify against the release
 
+#### Scenario: Verify an image
+
+- **WHEN** a user follows the documented verification steps for a published image tag
+- **THEN** the image signature, the SBOM attestation for the user's architecture and the build provenance verify against the release workflow's identity
+
+#### Scenario: Pre-release does not move latest
+
+- **WHEN** a pre-release tag such as `v0.2.0-rc.1` is released
+- **THEN** its image is tagged `0.2.0-rc.1` only and `latest` still names the previous release
+
+### Requirement: Reproducible release builds
+
+Release binaries, archives and images SHALL be byte-for-byte reproducible from the tagged source,
+the locked dependencies and the pinned toolchains, and the release SHALL fail if a rebuild differs.
+
+#### Scenario: Rebuild matches the release
+
+- **WHEN** the linux amd64 binaries are rebuilt from the release tag on a different machine and checkout path
+- **THEN** their SHA-256 digests equal those in the signed checksums of the release
+
+### Requirement: Standalone data plane artifacts
+
+Each release SHALL publish the data plane on its own, as `scrim-dataplane` binaries for the same
+platforms and a `scrim-dataplane` image, built from the same source and toolchain as the copy
+embedded in `scrim`, with the same signatures, SBOMs and provenance.
+
+#### Scenario: Sidecar uses the same data plane
+
+- **WHEN** the `scrim-dataplane` binary of a release is compared with the data plane embedded in that release's `scrim` binary for the same platform
+- **THEN** they are byte-identical
+
 ### Requirement: Local service installation
 
 `scrim install` SHALL set scrim up as a local service running as a dedicated user (systemd unit or
