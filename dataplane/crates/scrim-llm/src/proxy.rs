@@ -18,6 +18,7 @@ use crate::codec::{self, Api};
 use crate::config::{OnUnavailable, ProxyConfig};
 use crate::engine::{Admission, RedactReport, RequestInfo, Snapshot, SnapshotCell};
 use crate::error::Refusal;
+use crate::head;
 use crate::outgoing::{self, Outgoing};
 use crate::restore::{Ctx, RestoreStats};
 use crate::route::{Route, RouteError, RouteTable};
@@ -315,7 +316,7 @@ impl Proxy {
             Ok(s) => s,
             Err(r) => return self.refuse(Some(route), api, &r),
         };
-        let out = match self.prepare(&snap, api, &parts.headers, body).await {
+        let mut out = match self.prepare(&snap, api, &parts.headers, body).await {
             Ok(o) => o,
             Err(r) => return self.refuse(Some(route), api, &r),
         };
@@ -325,10 +326,22 @@ impl Proxy {
             header::ACCEPT_ENCODING,
             HeaderValue::from_static("identity"),
         );
+        // The request target and headers leave too: same redactor, same guard.
+        let head = match head::prepare(&snap, &parts.method, rest, parts.uri.query(), &mut headers)
+        {
+            Ok(h) => h,
+            Err(r) => return self.refuse(Some(route), api, &r),
+        };
+        out.report.merge(head.report);
+        for r in head.guard_repaired {
+            if !out.guard_repaired.contains(&r) {
+                out.guard_repaired.push(r);
+            }
+        }
         let target = Target {
             route,
-            rest,
-            query: parts.uri.query(),
+            rest: &head.path,
+            query: head.query.as_deref(),
             method: &parts.method,
             headers: &headers,
         };

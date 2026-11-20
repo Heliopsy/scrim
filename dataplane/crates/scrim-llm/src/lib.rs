@@ -12,6 +12,7 @@
 //!             │ route by path prefix
 //!             ▼
 //!           codec plan ─▶ redactor over raw bytes ─▶ guard over exact bytes ─▶ capture
+//!           (body; the request target and headers get the same two checks in [`head`])
 //!             │                                                     (refuse on any error)
 //!             ▼
 //!           [chained upstream] ─▶ provider (rustls, pooled, HTTP/1.1 or HTTP/2)
@@ -40,6 +41,7 @@ pub mod config;
 pub mod core;
 pub mod engine;
 pub mod error;
+pub mod head;
 #[cfg(feature = "intercept")]
 pub mod intercept;
 pub mod json;
