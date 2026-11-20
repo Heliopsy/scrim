@@ -24,6 +24,12 @@ parse, or names an unconfigured store, SHALL be rejected with an error that cont
 - **THEN** scrim rejects it with an error naming the unknown scheme
 - **AND** no store is contacted
 
+#### Scenario: Selector the store cannot honour
+
+- **WHEN** a reference carries a selector its store does not support, such as `bao://kv/x?stage=AWSPREVIOUS`
+- **THEN** scrim rejects the reference with an error naming the selector
+- **AND** it does not fall back to the current version
+
 ### Requirement: Several stores at once
 
 The system SHALL support any number of configured store instances at the same time, including several
@@ -95,6 +101,11 @@ Redaction SHALL NOT be weakened by an outage.
 - **THEN** values previously loaded from it are still redacted in every provider request
 - **AND** the store is reported as degraded
 
+#### Scenario: Rotated value survives an outage
+
+- **WHEN** a secret was rotated, then its store became unreachable
+- **THEN** both the current and the previous value stay redacted until the retention period ends
+
 ### Requirement: Injection fails closed when a value is unavailable
 
 The system SHALL refuse any operation that needs a value it cannot currently obtain, such as injecting
@@ -106,6 +117,13 @@ a stale value past its configured staleness limit, or the placeholder itself tow
 - **WHEN** an outbound request needs a credential whose value is not in memory and its store is down
 - **THEN** the outbound request is refused with an error naming the reference
 - **AND** no request reaches the destination
+
+#### Scenario: Value past the staleness limit
+
+- **WHEN** a credential was loaded, its store has been unreachable for longer than the configured
+  staleness limit, and an outbound request needs it
+- **THEN** the request is refused with an error naming the reference
+- **AND** the value is still redacted
 
 ### Requirement: Agents see names, never values
 
@@ -135,6 +153,12 @@ dropped from memory.
 - **WHEN** an agent generates a secret without naming a store and the matching rule's default target
   is `bao://kv/agents/`
 - **THEN** the secret is written under that path and the agent receives its reference
+
+#### Scenario: Value redacted while the write is in flight
+
+- **WHEN** scrim writes a captured value and the store has not answered yet
+- **THEN** the value is already in the redaction set
+- **AND** if the store then refuses the write, the value is removed from memory
 
 #### Scenario: Write rejected by the store
 
@@ -284,6 +308,12 @@ suite SHALL run in CI against each store or a compatible emulator.
 - **WHEN** an adapter is contributed
 - **THEN** it is accepted only with a passing conformance run recorded in CI
 
+#### Scenario: Suite catches a broken adapter
+
+- **WHEN** the conformance suite runs against an adapter that leaks a value into an error, ignores a
+  field selector, reports a missing secret as an outage, or serves a cached copy during an outage
+- **THEN** the case aimed at that fault fails
+
 ### Requirement: Store plugins
 
 The system SHALL load additional store adapters as plugins through a documented, versioned contract
@@ -307,6 +337,11 @@ returned by any API, tool, log, metric, trace or audit entry.
 - **WHEN** an agent with filesystem access prints a scrim configuration that references credentials
 - **THEN** the credentials are referenced by source, not inline, or are redacted in the provider
   request
+
+#### Scenario: Session token issued by the store
+
+- **WHEN** scrim logs in to OpenBao with AppRole and receives a client token
+- **THEN** that token is added to the redaction set like scrim's configured credentials
 
 ### Requirement: Optional secret catalog
 
