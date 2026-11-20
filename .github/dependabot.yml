@@ -24,3 +24,11 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
+  # The distroless base of Containerfile and Containerfile.dataplane, pinned
+  # by digest.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build

@@ -97,6 +97,8 @@ proto:
       proto/scrim/dataplane/v1/dataplane.proto
     cd dataplane/tools/protogen && cargo run --quiet --locked
 
+import "scripts/release/release.just"
+
 # Fail when the committed generated code differs from what proto/ produces.
 proto-check: proto
     git diff --exit-code -- internal/dataplane/dataplanev1 dataplane/crates/scrim-proto/src/gen

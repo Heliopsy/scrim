@@ -124,3 +124,36 @@ an emulator in podman. State backends follow the same shape with `state.Register
 
 - Conventional Commits. No `Co-Authored-By` trailers.
 - Pin every GitHub Action to a full commit SHA with the version as a comment.
+
+## Release pipeline
+
+- `.github/workflows/release.yaml` builds every release; `scripts/release/` holds the steps, so a
+  laptop and CI run the same commands. `docs/install.md` is the user's side of it.
+- Plain scripts and a GitHub Actions matrix, not GoReleaser. GoReleaser builds Go targets in
+  parallel from one tree, and each needs a different data plane at the one embed path; a prebuild
+  hook per target would race or force serial builds through a tool that no longer does the build.
+  Its archive, checksum and signing steps are a few lines of shell here.
+- No cross linker, no cargo-zigbuild. Each Linux data plane is built on a native runner of its
+  architecture (`ubuntu-24.04`, `ubuntu-24.04-arm`) against musl, both darwin targets on one macOS
+  runner with Apple's toolchain. The Go control plane is `CGO_ENABLED=0` and cross-compiles from
+  one Linux runner, embedding the data plane built for the same target. Zig would add a third
+  toolchain whose libc and linker nobody else tests.
+- Reproducible: `--locked` and `-mod=readonly`, `-trimpath`, Rust paths remapped, symbols stripped,
+  `SOURCE_DATE_EPOCH` from the commit, deterministic tar and gzip, images with `--timestamp` and
+  the base pinned by digest in the Containerfile. The `reproduce` job rebuilds linux-amd64 on a
+  second runner from a different path and fails the release on any byte difference. No caches in
+  the release workflow.
+- Images are assembled from the release binaries (`COPY`, no `RUN`), so the image holds the bytes
+  the archives hold and a multi-arch build needs no emulation. Rootless podman, distroless static
+  base, UID 65532, read-only root filesystem tested on every build.
+- Signing is keyless (GitHub OIDC, Sigstore): cosign over `checksums.txt` and each image
+  (`--recursive`), SPDX SBOMs per archive and per image architecture, SLSA provenance through
+  `actions/attest-build-provenance`. Build jobs have a read-only token and no OIDC token; only the
+  sign, image and publish jobs get `id-token`, `attestations` or `contents: write`.
+- Release tools are pinned in `scripts/release/release.env`, downloads checked by sha256. Bump a
+  tool by changing its version and checksum together.
+- release-please creates the tag with `GITHUB_TOKEN`, which starts no workflow, so its workflow
+  must dispatch the release: `gh workflow run release.yaml -f tag=vX.Y.Z`. A hand-pushed `v*` tag
+  builds on its own.
+- The layout the scripts depend on (embed path, Go main package, version package, crate name) is
+  the top block of `release.env`. Move a path there in the same change that moves it in the tree.
