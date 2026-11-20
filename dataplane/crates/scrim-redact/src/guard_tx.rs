@@ -1067,8 +1067,8 @@ fn swar_lower(x: u64) -> u64 {
 }
 
 /// Bytes of `v` fixed by its format, which a fragment must reach beyond: PEM armour lines, a
-/// JWT's header and the first twelve characters of its payload, and a short lower-case prefix
-/// ending in `_` or `-` (`ghp_`, `sk-`).
+/// JWT's header and the first twelve characters of its payload. Nothing else is guessed: a
+/// password starting `abc-` is all secret.
 fn public_mask(v: &[u8]) -> Vec<bool> {
     let mut m = vec![false; v.len()];
     if v.starts_with(b"-----BEGIN") {
@@ -1084,13 +1084,6 @@ fn public_mask(v: &[u8]) -> Vec<bool> {
         && memchr::memchr(b'.', &v[d1 + 1..]).is_some()
     {
         m[..(d1 + 13).min(v.len())].fill(true);
-    }
-    let pre = v
-        .iter()
-        .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_uppercase())
-        .count();
-    if (2..=6).contains(&pre) && matches!(v.get(pre), Some(b'_' | b'-')) {
-        m[..=pre].fill(true);
     }
     m
 }
@@ -1601,6 +1594,16 @@ mod tests {
 
     fn frag_index(vals: &[&[u8]]) -> Fragments {
         Fragments::build(vals.iter().enumerate().map(|(i, v)| (*v, i as u32)), 8)
+    }
+
+    #[test]
+    fn password_prefix_is_secret() {
+        // Letters then a dash: still all secret, so half of it is a fragment.
+        let v: &[u8] = b"kQx-9fT2_w8Lr!m4Zp7e";
+        let f = frag_index(&[v]);
+        let mut out = vec![];
+        f.scan(&[b"x ".as_slice(), &v[..10], b" y"].concat(), &mut out);
+        assert_eq!(out, vec![(2, 12, 0)]);
     }
 
     #[test]
