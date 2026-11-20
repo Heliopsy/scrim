@@ -173,16 +173,3 @@ func Run(ctx context.Context, e *Env, args []string) int {
 	}
 	return code
 }
-
-// stub returns a placeholder command that fails with ErrNotImplemented and
-// names the task that implements it.
-func stub(use, short, task string) *cobra.Command {
-	return &cobra.Command{
-		Use:                use,
-		Short:              short + " (not implemented yet)",
-		DisableFlagParsing: true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return fmt.Errorf("%s: %w (tasks.md %s)", cmd.CommandPath(), ErrNotImplemented, task)
-		},
-	}
-}
