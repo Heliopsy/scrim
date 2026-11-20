@@ -1,0 +1,213 @@
+[
+  {
+    "name": "approval_status",
+    "read_only": true,
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "approval identifier from secret_request, or ask identifier from secret_ask_human",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "grants_list",
+    "read_only": true,
+    "input_schema": {
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  {
+    "name": "secret_ask_human",
+    "read_only": false,
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "overwrite": {
+          "description": "replace an existing secret at the reference",
+          "type": "boolean"
+        },
+        "prompt": {
+          "description": "what to ask the human for, for example: the Hetzner API token for project web",
+          "type": "string"
+        },
+        "ref": {
+          "description": "reference to store the value at",
+          "type": "string"
+        },
+        "store": {
+          "description": "store to write to when the reference does not name one",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "description": "how long the human has to answer, default 900",
+          "type": "integer"
+        },
+        "wait_seconds": {
+          "description": "how long to wait for the answer before returning pending, default 120, at most 600",
+          "type": [
+            "null",
+            "integer"
+          ]
+        }
+      },
+      "required": [
+        "ref",
+        "prompt"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "secret_capture",
+    "read_only": false,
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "program and arguments to run, without a shell, for example [\"gh\",\"api\",\"-X\",\"POST\",\"/user/tokens\"]",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "dir": {
+          "description": "working directory for the command",
+          "type": "string"
+        },
+        "json_path": {
+          "description": "take the value at this path of the JSON output, for example .token",
+          "type": "string"
+        },
+        "overwrite": {
+          "description": "replace an existing secret at the reference",
+          "type": "boolean"
+        },
+        "pattern": {
+          "description": "take the first capture group of this regular expression",
+          "type": "string"
+        },
+        "ref": {
+          "description": "reference to store the captured value at",
+          "type": "string"
+        },
+        "store": {
+          "description": "store to write to when the reference does not name one",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "description": "command timeout in seconds, default 60",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ref",
+        "command"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "secret_gen",
+    "read_only": false,
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "charset": {
+          "description": "for chars: alnum (default), alnum-symbols, alpha, lower, digits",
+          "type": "string"
+        },
+        "format": {
+          "description": "chars (default), hex, base64, base64url, uuid or passphrase",
+          "type": "string"
+        },
+        "length": {
+          "description": "number of characters, default 32, between 8 and 4096",
+          "type": "integer"
+        },
+        "overwrite": {
+          "description": "replace an existing secret at the reference",
+          "type": "boolean"
+        },
+        "ref": {
+          "description": "reference to store the generated value at, for example bao://kv/agents/app-db#password",
+          "type": "string"
+        },
+        "separator": {
+          "description": "for passphrase: separator between words, default -",
+          "type": "string"
+        },
+        "store": {
+          "description": "store to write to when the reference does not name one",
+          "type": "string"
+        },
+        "words": {
+          "description": "for passphrase: number of words, default 6",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ref"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "secret_request",
+    "read_only": false,
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "duration": {
+          "description": "how long the grant should last, for example 30m or 2h",
+          "type": "string"
+        },
+        "reason": {
+          "description": "why the secret is needed, shown to the approver",
+          "type": "string"
+        },
+        "ref": {
+          "description": "reference of the secret, for example bao://kv/agents/hetzner",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "reason"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "secrets_list",
+    "read_only": true,
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "binding": {
+          "description": "only secrets bound to this host",
+          "type": "string"
+        },
+        "prefix": {
+          "description": "only references starting with this prefix, for example bao://kv/agents/",
+          "type": "string"
+        },
+        "store": {
+          "description": "only secrets in this store",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  }
+]

@@ -54,6 +54,22 @@ configuration.
 - **WHEN** a user starts two agents with `scrim run`
 - **THEN** each gets its own session token and identity, and their grants are separate
 
+#### Scenario: Token used from outside the session's process tree
+
+- **WHEN** a process of the same user that did not descend from the `scrim run` that minted a token
+  presents that token
+- **THEN** the call is refused and audited as a token used outside its process tree
+
+#### Scenario: Refused token is not retried as the peer
+
+- **WHEN** a caller presents a token that is refused
+- **THEN** the call fails, even though the caller's peer credentials alone would map to an agent
+
+#### Scenario: Session cannot mint sessions
+
+- **WHEN** a process holding a session token asks for a new session token
+- **THEN** the request is refused
+
 ### Requirement: Tokens expire and can be revoked
 
 The system SHALL give every agent token an expiry and SHALL let an operator revoke a token or all
@@ -63,6 +79,11 @@ tokens of an agent at once. A revoked or expired token SHALL be refused on every
 
 - **WHEN** the process started by `scrim run` exits
 - **THEN** its session token is revoked
+
+#### Scenario: scrim run killed
+
+- **WHEN** the `scrim run` process that minted a token dies without revoking it
+- **THEN** scrim revokes the token once it sees the process is gone
 
 #### Scenario: Revoked token reused
 

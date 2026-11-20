@@ -69,10 +69,10 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 8. Identity and agent tools
 
-- [ ] 8.1 Unix socket peer credentials and session tokens from `scrim run`; verify: one agent cannot use another's token or grants
-- [ ] 8.2 MCP server (stdio) with secrets_list, secret_request, secret_gen, secret_capture, secret_ask_human, approval_status, grants_list; verify: no tool schema accepts a value and no response contains one, checked against seeded values
-- [ ] 8.3 Agent-facing CLI equivalents including `scrim secret put --stdin` that never echoes; verify: golden tests and a pipe test with the value absent from all output
-- [ ] 8.4 Human entry page for secret_ask_human; verify: the agent receives only stored or declined
+- [x] 8.1 Unix socket peer credentials and session tokens from `scrim run`; verify: one agent cannot use another's token or grants
+- [x] 8.2 MCP server (stdio) with secrets_list, secret_request, secret_gen, secret_capture, secret_ask_human, approval_status, grants_list; verify: no tool schema accepts a value and no response contains one, checked against seeded values
+- [x] 8.3 Agent-facing CLI equivalents including `scrim secret put --stdin` that never echoes; verify: golden tests and a pipe test with the value absent from all output
+- [x] 8.4 Human entry page for secret_ask_human; verify: the agent receives only stored or declined
 
 ## 9. Restore policy, wrapper and leak assurance (M1 exit)
 
