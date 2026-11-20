@@ -3,66 +3,34 @@
 {{- $np := .Values.networkPolicy }}
 {{- $label := .Values.agents.label }}
 {{- if .Values.central.enabled }}
-# Central scrim: agents reach the LLM and forward proxy ports; scrim reaches DNS and what
-# networkPolicy.scrimEgress allows (providers, stores, tool hosts, PostgreSQL).
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: {{ include "scrim.fullname" . }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "scrim.labels" . | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels:
-      {{- include "scrim.selectorLabels" . | nindent 6 }}
-  policyTypes: [Ingress, Egress]
-  ingress:
-    - from:
-        - namespaceSelector:
-            {{- if .Values.agents.namespaces }}
-            matchExpressions:
-              - key: kubernetes.io/metadata.name
-                operator: In
-                values:
-                  {{- toYaml .Values.agents.namespaces | nindent 18 }}
-            {{- else }}
-            {}
-            {{- end }}
-          podSelector:
-            matchLabels:
-              {{ $label }}: central
-      ports:
-        - port: 9790
-          protocol: TCP
-        - port: 9791
-          protocol: TCP
-    {{- if .Values.metrics.enabled }}
-    - from:
-        - namespaceSelector:
-            {{- toYaml $np.prometheus.namespaceSelector | nindent 12 }}
-          podSelector:
-            {{- toYaml $np.prometheus.podSelector | nindent 12 }}
-      ports:
-        - port: {{ .Values.metrics.port }}
-          protocol: TCP
-    {{- end }}
-    {{- if and .Values.admin.tcp.enabled $np.adminFrom }}
-    - from:
-        {{- toYaml $np.adminFrom | nindent 8 }}
-      ports:
-        - port: {{ .Values.admin.tcp.port }}
-          protocol: TCP
-    {{- end }}
-  egress:
-    {{- include "scrim.dnsEgress" $np.dns | nindent 4 }}
-    {{- if .Values.identity.kubernetes.enabled }}
-    # TokenReview.
-    {{- toYaml $np.apiServerEgress | nindent 4 }}
-    {{- end }}
-    {{- with $np.scrimEgress }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
+{{- /*
+Central scrim, through chart.std.networkPolicy: agents reach the LLM and
+forward proxy ports, Prometheus the metrics port, adminFrom the admin port,
+the helm test pods the listeners; scrim reaches DNS, the API server
+(TokenReview) and what networkPolicy.scrimEgress allows. central.networkPolicy
+adds to it.
+*/ -}}
+{{- $listen := list (dict "port" 9790 "protocol" "TCP") (dict "port" 9791 "protocol" "TCP") -}}
+{{- $agentNs := dict -}}
+{{- if .Values.agents.namespaces -}}
+  {{- $agentNs = dict "matchExpressions" (list (dict "key" "kubernetes.io/metadata.name" "operator" "In" "values" .Values.agents.namespaces)) -}}
+{{- end -}}
+{{- $ingress := list (dict "from" (list (dict "namespaceSelector" $agentNs "podSelector" (dict "matchLabels" (dict $label "central")))) "ports" $listen) -}}
+{{- if .Values.metrics.enabled -}}
+  {{- $ingress = append $ingress (dict "from" (list (dict "namespaceSelector" $np.prometheus.namespaceSelector "podSelector" $np.prometheus.podSelector)) "ports" (list (dict "port" (int .Values.metrics.port) "protocol" "TCP"))) -}}
+{{- end -}}
+{{- if and .Values.admin.tcp.enabled $np.adminFrom -}}
+  {{- $ingress = append $ingress (dict "from" $np.adminFrom "ports" (list (dict "port" (int .Values.admin.tcp.port) "protocol" "TCP"))) -}}
+{{- end -}}
+{{- if .Values.tests.enabled -}}
+  {{- $ingress = append $ingress (dict "from" (list (include "chart.netpolTestPeer" . | fromYaml)) "ports" (append $listen (dict "port" (int .Values.metrics.port) "protocol" "TCP"))) -}}
+{{- end -}}
+{{- $egress := list (include "chart.netpolDNSEgress" . | fromYaml) -}}
+{{- if .Values.identity.kubernetes.enabled -}}
+  {{- $egress = concat $egress $np.apiServerEgress -}}
+{{- end -}}
+{{- $egress = concat $egress (default list $np.scrimEgress) -}}
+{{- include "chart.std.networkPolicy" (dict "root" . "comp" "proxy" "name" (include "scrim.fullname" .) "ingress" $ingress "egress" $egress "extra" .Values.central.networkPolicy) }}
 {{- end }}
 {{- range $ns := .Values.agents.namespaces }}
 {{- if $.Values.central.enabled }}
@@ -84,7 +52,7 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+              kubernetes.io/metadata.name: {{ (include "scrim.namespace" $) }}
           podSelector:
             matchLabels:
               {{- include "scrim.selectorLabels" $ | nindent 14 }}

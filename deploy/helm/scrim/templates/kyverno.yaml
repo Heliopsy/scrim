@@ -8,7 +8,7 @@
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: {{ include "scrim.fullname" . }}-{{ .Release.Namespace }}-inject
+  name: {{ include "scrim.fullname" . }}-{{ (include "scrim.namespace" $) }}-inject
   labels:
     {{- include "scrim.labels" . | nindent 4 }}
   annotations:
@@ -102,6 +102,8 @@ spec:
                   capabilities:
                     drop: [ALL]
                     add: [NET_ADMIN]
+                  seccompProfile:
+                    type: RuntimeDefault
                 resources:
                   requests:
                     cpu: 10m
@@ -111,7 +113,7 @@ spec:
               {{- end }}
               - name: scrim
                 image: {{ include "scrim.image" . }}
-                imagePullPolicy: {{ .Values.image.pullPolicy }}
+                imagePullPolicy: {{ include "chart.imagePullPolicy" .Values.image }}
                 # A native sidecar: it starts, and passes its startup probe, before the agent.
                 restartPolicy: Always
                 args: [proxy]
@@ -176,7 +178,7 @@ spec:
                     mountPath: {{ dir .Values.storeAuth.serviceAccountToken.path }}
                     readOnly: true
                   {{- end }}
-                  {{- if and .Values.metrics.enabled .Values.metrics.authSecret.name }}
+                  {{- if and .Values.metrics.enabled (not .Values.metrics.allowUnauthenticatedRemote) }}
                   - name: scrim-metrics-token
                     mountPath: /run/secrets/scrim/metrics
                     readOnly: true
@@ -241,15 +243,15 @@ spec:
                         expirationSeconds: {{ .Values.storeAuth.serviceAccountToken.expirationSeconds }}
                         path: {{ base .Values.storeAuth.serviceAccountToken.path }}
               {{- end }}
-              {{- if and .Values.metrics.enabled .Values.metrics.authSecret.name }}
-              # Must exist in every agent namespace.
+              {{- if and .Values.metrics.enabled (not .Values.metrics.allowUnauthenticatedRemote) }}
+              # secrets.existing.metrics: must exist in every agent namespace.
               - name: scrim-metrics-token
                 secret:
-                  secretName: {{ .Values.metrics.authSecret.name }}
+                  secretName: {{ include "chart.secretName" (list . "metrics") }}
                   defaultMode: 0444
                   items:
-                    - key: {{ .Values.metrics.authSecret.key }}
-                      path: {{ .Values.metrics.authSecret.key }}
+                    - key: {{ include "chart.secretKey" (list . "metrics" "token") }}
+                      path: {{ include "chart.secretKey" (list . "metrics" "token") }}
               {{- end }}
               - name: scrim-state
                 emptyDir: {}

@@ -1,2 +1,2 @@
-# expect: postgres.enabled needs postgres.dsnSecret.name
+# expect: postgres.enabled needs the DSN in the Secret slot postgres
 postgres: {enabled: true}

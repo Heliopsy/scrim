@@ -9,10 +9,10 @@ metadata:
   namespace: agents
   labels:
     helm.sh/chart: scrim-0.1.0
-    app.kubernetes.io/name: scrim
+    app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
-    app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
 spec:
   podSelector:
     matchLabels:
@@ -41,20 +41,6 @@ spec:
       - port: 443
         protocol: TCP
 ---
-# Source: scrim/templates/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: scrim
-  namespace: scrim
-  labels:
-    helm.sh/chart: scrim-0.1.0
-    app.kubernetes.io/name: scrim
-    app.kubernetes.io/instance: scrim
-    app.kubernetes.io/version: "0.1.0"
-    app.kubernetes.io/managed-by: Helm
-automountServiceAccountToken: true
----
 # Source: scrim/templates/agents.yaml
 apiVersion: v1
 kind: Secret
@@ -63,10 +49,10 @@ metadata:
   namespace: agents
   labels:
     helm.sh/chart: scrim-0.1.0
-    app.kubernetes.io/name: scrim
+    app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
-    app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
 type: kubernetes.io/tls
 data:
   tls.crt: <generated>
@@ -80,10 +66,10 @@ metadata:
   namespace: agents
   labels:
     helm.sh/chart: scrim-0.1.0
-    app.kubernetes.io/name: scrim
+    app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
-    app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
 type: Opaque
 data:
   k1: <generated>
@@ -96,10 +82,10 @@ metadata:
   namespace: scrim
   labels:
     helm.sh/chart: scrim-0.1.0
-    app.kubernetes.io/name: scrim
+    app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
-    app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
   annotations:
     # Agents trust this CA; deleting it with the release would break them, so it stays.
     helm.sh/resource-policy: keep
@@ -116,10 +102,10 @@ metadata:
   namespace: scrim
   labels:
     helm.sh/chart: scrim-0.1.0
-    app.kubernetes.io/name: scrim
+    app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
-    app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
   annotations:
     # Placeholders in running conversations are derived from this key.
     helm.sh/resource-policy: keep
@@ -135,10 +121,10 @@ metadata:
   namespace: agents
   labels:
     helm.sh/chart: scrim-0.1.0
-    app.kubernetes.io/name: scrim
+    app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
-    app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
 data:
   ANTHROPIC_BASE_URL: "http://127.0.0.1:9790/anthropic"
   OPENAI_BASE_URL: "http://127.0.0.1:9790/openai/v1"
@@ -169,10 +155,10 @@ metadata:
   namespace: agents
   labels:
     helm.sh/chart: scrim-0.1.0
-    app.kubernetes.io/name: scrim
+    app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
-    app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
 data:
   config.yaml: |
     apiVersion: scrim.dev/v1
@@ -237,10 +223,10 @@ metadata:
   namespace: scrim
   labels:
     helm.sh/chart: scrim-0.1.0
-    app.kubernetes.io/name: scrim
+    app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
-    app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
 data:
   # scrim's interception CA, for runtimes that add to their roots (NODE_EXTRA_CA_CERTS).
   scrim-ca.pem: |
@@ -298,10 +284,10 @@ metadata:
   namespace: agents
   labels:
     helm.sh/chart: scrim-0.1.0
-    app.kubernetes.io/name: scrim
+    app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
-    app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
 data:
   # scrim's interception CA, for runtimes that add to their roots (NODE_EXTRA_CA_CERTS).
   scrim-ca.pem: |
@@ -351,7 +337,7 @@ data:
     unset f tok u v hdrs line nl old_ifs
     exec "$@"
 ---
-# Source: scrim/templates/serviceaccount.yaml
+# Source: scrim/templates/rbac.yaml
 # TokenReview only, to verify the projected tokens agent pods present. Narrower than
 # system:auth-delegator, which also allows SubjectAccessReviews.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -360,26 +346,26 @@ metadata:
   name: scrim-scrim-tokenreview
   labels:
     helm.sh/chart: scrim-0.1.0
-    app.kubernetes.io/name: scrim
+    app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
-    app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
 rules:
   - apiGroups: [authentication.k8s.io]
     resources: [tokenreviews]
     verbs: [create]
 ---
-# Source: scrim/templates/serviceaccount.yaml
+# Source: scrim/templates/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: scrim-scrim-tokenreview
   labels:
     helm.sh/chart: scrim-0.1.0
-    app.kubernetes.io/name: scrim
+    app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
-    app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -397,10 +383,10 @@ metadata:
   name: scrim-scrim-inject
   labels:
     helm.sh/chart: scrim-0.1.0
-    app.kubernetes.io/name: scrim
+    app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
-    app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
   annotations:
     policies.kyverno.io/title: scrim agent injection
     policies.kyverno.io/description: >-
@@ -483,6 +469,8 @@ spec:
                   capabilities:
                     drop: [ALL]
                     add: [NET_ADMIN]
+                  seccompProfile:
+                    type: RuntimeDefault
                 resources:
                   requests:
                     cpu: 10m

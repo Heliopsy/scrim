@@ -57,9 +57,28 @@ mode need `privileged`, or an exemption for that init container.
 
 ## Install
 
+From the registry (each release from the first one with the chart), verifying the keyless
+signature first:
+
+```sh
+cosign verify ghcr.io/heliopsy/charts/scrim:<version> \
+  --certificate-identity-regexp '^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+helm --kube-context <ctx> install scrim oci://ghcr.io/heliopsy/charts/scrim --version <version> \
+  -n scrim --create-namespace -f values.yaml
+helm --kube-context <ctx> test scrim -n scrim
+```
+
+The SBOM (`cosign verify-attestation --type spdxjson`) and the SLSA provenance (`gh attestation
+verify oci://ghcr.io/heliopsy/charts/scrim@<digest> --repo Heliopsy/scrim`) are attached to the
+same digest. With Flux, start from `deploy/helm/scrim/examples/flux`: an OCIRepository that
+verifies the signature by its workflow identity, and a HelmRelease. Every value is described in
+[helm-values.md](helm-values.md).
+
 Requirements: Kubernetes 1.29 or later, a CNI that enforces NetworkPolicy (Calico, Cilium, Antrea,
 kube-network-policies; kindnet only from kind 0.24 on, plain flannel never), Kyverno 1.13 or later
-for injection by label, and PostgreSQL for more than one replica.
+for injection by label, and PostgreSQL for more than one replica. From a checkout instead of the
+registry:
 
 ```sh
 kubectl --context <ctx> create namespace scrim
@@ -98,14 +117,14 @@ networkPolicy:
     - ports: [{port: 443, protocol: TCP}]           # providers, GitHub, OpenBao
 ```
 
-The OpenBao role `scrim` binds scrim's service account (`scrim` in namespace `scrim`) with audience
+The OpenBao role `scrim` binds scrim's service account (`scrim-proxy` in namespace `scrim` for the release `scrim`) with audience
 `openbao` ([stores/openbao.md](stores/openbao.md#kubernetes-auth)); in sidecar mode it must also bind
 the agent pods' service accounts, since each in-pod scrim logs in as its pod. Infisical works the
 same way with `auth.method: kubernetes-auth`.
 
 `config` takes scrim's configuration file as it is; the chart adds `apiVersion` and `kind`. Secret
 values never go into values: settings that hold a credential take a `file:` reference to a Secret
-mounted with `secretMounts` (or `env:` with `extraEnv` and `secretKeyRef`), and the chart refuses a
+mounted with `secretMounts` (or `env:` with `central.extraEnv` and `secretKeyRef`), and the chart refuses a
 literal in the credential fields of `config.stores` and in `config.identity.store-credentials`.
 Every value is listed in the [chart README](../deploy/helm/scrim/README.md#values).
 
@@ -128,7 +147,7 @@ These settings are written to a second file, `chart.yaml`, read after yours, so 
 | `metrics.enabled`, `metrics.path`, `metrics.auth.token`, `metrics.allow-unauthenticated-remote` | from `metrics` | the same |
 | `identity.kubernetes.*` | from `identity.kubernetes`; scrim's own API token is the pod's mounted service account | the same, with the pod's API token from a projected volume only the scrim container mounts |
 | `api.socket`, `admin.url` | `/run/scrim/api.sock`, `unix:/run/scrim/admin.sock` (or TCP with `admin.tcp`) | the same, Unix only |
-| `state.backend`, `events.backend` | `postgres` and `postgres` with `postgres.enabled` (the DSN from `postgres.dsnSecret`), else `memory` and `local` | `memory`, `local` |
+| `state.backend`, `events.backend` | `postgres` and `postgres` with `postgres.enabled` (the DSN from the Secret slot `postgres`), else `memory` and `local` | `memory`, `local` |
 | `deployment.replicas` | `central.replicaCount`, or `central.autoscaling.maxReplicas` with the HPA | `1` |
 | `tool-proxy.ca.cert-file`, `tool-proxy.ca.key` | the CA Secret | its copy in the agent namespace |
 | `redaction.placeholder-keys` | the key Secret | its copy |
@@ -214,7 +233,7 @@ written, so a Deployment in Git does not drift), and adds to every container:
 | `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `AWS_CA_BUNDLE`, `PIP_CERT`, `NPM_CONFIG_CAFILE`, `CARGO_HTTP_CAINFO`, `DENO_CERT`, `CODEX_CA_CERTIFICATE` | `/etc/scrim/trust/ca-bundle.pem` | the same |
 | `SCRIM_K8S_TOKEN_FILE` (with `identity.kubernetes.enabled`) | `identity.kubernetes.tokenPath` | the same |
 
-`<svc>` is `<release>-scrim.<namespace>.svc.<clusterDomain>`. These are the variables `scrim run`
+`<svc>` is `<release>-scrim.<namespace>.svc.<global.clusterDomain>`. These are the variables `scrim run`
 sets for an agent on a laptop (`internal/run`), with the Service in place of loopback. The `scrim-ca`
 ConfigMap is mounted at `agents.trustPath` (`/etc/scrim/trust`), with the `scrim-exec` launcher when
 identity is on, and the projected identity token at `identity.kubernetes.tokenPath`
@@ -362,6 +381,17 @@ With that, every injection of a `bao` secret is also checked against the OpenBao
 pod ([identity.md](identity.md#store-identity-per-agent)). The agent token's audience
 (`identity.kubernetes.audience`) must be one the role accepts.
 
+## Secrets the chart mounts
+
+The credentials the chart itself wires in are Secret slots (the shared helpers of
+`templates/_helpers.tpl`): `postgres` (key `dsn`), `admin` (key `token`, for `admin.tcp`) and
+`metrics` (key `token`). A slot's Secret is the one named in `secrets.existing.<slot>`, or an
+ExternalSecret the chart renders from `secrets.externalSecrets.data.<slot>`, or, for `metrics`
+only, a Secret the chart generates on first install and keeps (`helm.sh/resource-policy: keep`).
+`secrets.keys.<slot>` renames the keys of an existing Secret. No value ever comes from values.yaml.
+Store credentials are scrim settings and take `file:` references to `secretMounts`, or better none
+at all with [store login](#store-identity).
+
 ## Scaling and state
 
 One replica with in-memory state is the default: approvals and grants live in the pod and are lost
@@ -374,7 +404,9 @@ start with more than one replica on anything else:
 ```yaml
 postgres:
   enabled: true
-  dsnSecret: {name: scrim-pg, key: dsn}       # postgres://user:pass@host/db?sslmode=verify-full
+secrets:
+  existing:
+    postgres: scrim-pg            # key dsn: postgres://user:pass@host/db?sslmode=verify-full
 central:
   pdb: {minAvailable: 1}
   autoscaling:
@@ -383,7 +415,11 @@ central:
     maxReplicas: 10
 ```
 
-The chart refuses more than one replica, or the HPA, without `postgres.enabled`. Replicas share the
+`global.ha.enabled` is the shortcut: `global.ha.replicas` (2) replicas, a PDB that keeps one,
+preferred anti-affinity on the node and a zone spread (ScheduleAnyway, so a single-zone cluster
+still schedules). It needs `postgres.enabled` like any other replica count above one. The chart
+refuses more than one replica, the HPA or `global.ha` without `postgres.enabled`, and an HPA with
+`minReplicas` below 2. Replicas share the
 CA and the placeholder keys through their Secrets, so any replica produces and resolves the same
 placeholders.
 
@@ -410,12 +446,13 @@ Helm cannot read files outside the chart; `just helm-test` fails when they diffe
 `deploy/monitoring/`. Metric meanings and alert runbooks are in [monitoring.md](monitoring.md).
 
 The metrics listener is on the pod IP, so scrim requires a bearer token there:
-`metrics.authSecret` (at least 16 bytes) becomes `metrics.auth.token`, and the monitors present
-the same Secret. The chart refuses `metrics.enabled` without it unless
-`metrics.allowUnauthenticatedRemote` is set, which turns on scrim's weakening
-`metrics.allow-unauthenticated-remote` (logged at start-up and in `scrim status`); pair that with
-`networkPolicy.enabled`, so only `networkPolicy.prometheus` reaches the port. In sidecar mode the
-token Secret must exist in every agent namespace.
+the Secret slot `metrics` (key `token`) becomes `metrics.auth.token`, and the monitors present the
+same Secret. The chart generates the token on first install and keeps it; `secrets.existing.metrics`
+or an ExternalSecret supplies your own. `metrics.allowUnauthenticatedRemote` drops the token and
+turns on scrim's weakening `metrics.allow-unauthenticated-remote` (logged at start-up and in `scrim
+status`); pair that with `networkPolicy.enabled`, so only `networkPolicy.prometheus` reaches the
+port. In sidecar mode the token Secret must exist in every agent namespace, so the chart wants
+`secrets.existing.metrics` there.
 
 ## Upgrades
 
@@ -448,11 +485,31 @@ token Secret must exist in every agent namespace.
 
 ## Testing
 
-`just helm-test` lints the chart, compares `helm template` of every case in `test/k8s/golden/cases`
-with `test/k8s/golden/out`, runs `scrim config validate` on every configuration a case renders,
-checks the values in `test/k8s/golden/fail` are refused, that every value is in the chart README,
-that the chart's monitoring copies equal `deploy/monitoring/`, and runs `scrim-exec` with `sh`
-against a fake token.
+`just helm-test` runs `deploy/helm/scrim/ci/verify.sh`, the chart's whole gate, the same in CI:
+
+- the generated files are current: `values.schema.json` and `docs/helm-values.schema.json`
+  (`ci/gen-schema.py`), [helm-values.md](helm-values.md) (helm-docs), Chart.yaml's
+  `artifacthub.io/images` (`ci/gen-images.py`) and the chart's copies of `deploy/monitoring`;
+  `just helm-generate` rewrites them;
+- `helm lint --strict`, `helm template` and `kubeconform -strict` (CRDs from the datreeio
+  catalog) for the defaults, every example and every `ci/*-values.yaml` case, with
+  `ci/assert-all-features.py` and `ci/assert-ha.py` on theirs, and the Flux example;
+- every rendered pod, and every container the Kyverno policy injects, against Pod Security
+  "restricted" with requests and a memory limit (`ci/check-pods.py`); the egress guard is the one
+  documented exception;
+- `promtool check rules` on the PrometheusRule;
+- the helm-unittest suites in `deploy/helm/scrim/tests` (every template and every refusal);
+- `test/k8s/golden.sh`: golden `helm template` output of `test/k8s/golden/cases`, the refusals in
+  `test/k8s/golden/fail`, `scrim config validate` on every configuration a case renders, and
+  `scrim-exec` under `sh` with a fake token;
+- the upgrade check against the newest release tag that has the chart (`ci/upgrade-check.sh`);
+- `helm package`.
+
+`just helm-tools` installs the pinned tools (helm, kubeconform, helm-docs, ct, kind, kubectl,
+promtool, the helm-unittest plugin) into `bin/helm-tools`. CI runs the gate on Helm 3 and Helm 4,
+`ct lint`, and `ci/kind-test.sh`: `ct install` of `ci/install-values.yaml` with the image built
+from the commit, `helm test`, and an upgrade from the previous chart once a release has one.
+`just helm-render-diff` shows what an existing install would see change against a git ref.
 
 `just k8s-e2e` (`test/k8s/e2e.sh`) creates a kind cluster on rootless podman
 (`KIND_EXPERIMENTAL_PROVIDER=podman`) with Calico, installs Kyverno, OpenBao in dev mode, the fake
@@ -486,6 +543,8 @@ namespace's directory under `$XDG_RUNTIME_DIR/libpod/tmp/rootless-netns/run` los
 - Transparent redirection for agents that ignore the injected variables (an init container or CNI
   that redirects with `NET_ADMIN`). The egress guard rejects such traffic instead of redirecting it.
 - MCP registration in agent pods and the edge forwarder for ssh-agent and database ports (12.5).
+- The chart lives in `oci://ghcr.io/heliopsy/charts/scrim` from the first release after it
+  merged; earlier releases have no chart.
 - A standalone `scrim-dataplane` sidecar with a remote control plane (no transport is specified).
 - Agents that cannot be started through a shell launcher get no identity. A long-running agent
   keeps the token it started with ([Identity](#identity)).

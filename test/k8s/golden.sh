@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Golden tests of the Helm chart: `helm lint`, then `helm template` of every
-# values file in golden/cases compared with golden/out, and every file in
+# Golden tests of the Helm chart, run by deploy/helm/scrim/ci/verify.sh:
+# `helm template` of every values file in golden/cases compared with golden/out, and every file in
 # golden/fail must be refused with the message on its `# expect:` line.
 # Generated material (the CA, the placeholder key) is masked before comparing.
 # Every scrim configuration a case renders is checked with `scrim config
@@ -29,12 +29,9 @@ export HELM_CONFIG_HOME="$tmp/config" HELM_CACHE_HOME="$tmp/cache" HELM_DATA_HOM
 
 mask() {
   # Base64 Secret data of generated keys, and the body of every PEM block.
-  sed -E 's/^(  (tls\.crt|tls\.key|k1): ).*/\1<generated>/' |
+  sed -E 's/^(  (tls\.crt|tls\.key|k1|token): ).*/\1<generated>/' |
     awk '/-----BEGIN /{print; skip=1; next} /-----END /{skip=0} !skip{print}'
 }
-
-helm lint "$chart" --strict >/dev/null
-helm lint "$chart" --strict -f "$dir/cases/metrics-on.yaml" >/dev/null
 
 status=0
 
@@ -85,23 +82,6 @@ validate_configs() {
     fi
   done
 }
-
-# Every documented value (a key after a `# --` comment in values.yaml) is in
-# the README's table.
-while read -r key; do
-  grep -qF "| \`$key\` |" "$chart/README.md" || { echo "golden: $key is not in deploy/helm/scrim/README.md" >&2; status=1; }
-done < <(awk '
-  /^ *# -- / {doc = 1; next}
-  /^ *#/ {next}
-  /^ *[A-Za-z0-9_]+:/ {
-    match($0, /^ */); depth = RLENGTH / 2
-    key = $1; sub(/:.*/, "", key)
-    path[depth] = key
-    if (doc) { p = path[0]; for (i = 1; i <= depth; i++) p = p "." path[i]; print p }
-    doc = 0; next
-  }
-  {doc = 0}
-' "$chart/values.yaml")
 
 mkdir -p "$dir/out"
 for values in "$dir"/cases/*.yaml; do

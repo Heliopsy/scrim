@@ -1,13 +1,9 @@
 {{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
-{{- include "scrim.checkConfig" . -}}
 {{- if .Values.central.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "scrim.fullname" . }}-config
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "scrim.labels" . | nindent 4 }}
+  {{- include "chart.objectMeta" (dict "root" . "kind" "ConfigMap" "comp" "proxy" "name" (printf "%s-config" (include "scrim.fullname" .)) "values" .Values.central) | nindent 2 }}
 data:
   {{- if not .Values.existingConfigMap }}
   config.yaml: |
@@ -35,22 +31,21 @@ data:
     admin:
       {{- if .Values.admin.tcp.enabled }}
       url: http://0.0.0.0:{{ .Values.admin.tcp.port }}
-      token: file:/run/secrets/scrim/admin/{{ .Values.admin.tcp.tokenSecret.key }}
+      token: file:/run/secrets/scrim/admin/{{ include "chart.secretKey" (list . "admin" "token") }}
       {{- else }}
       url: unix:/run/scrim/admin.sock
       {{- end }}
     redaction:
       placeholder-keys:
         {{- include "scrim.placeholderKeysConfig" (dict "root" . "path" "/etc/scrim/placeholder") | trim | nindent 8 }}
-    {{- $c := .Values.central }}
     deployment:
       # Replicas sharing this state; more than one needs postgres for state and events.
-      replicas: {{ if $c.autoscaling.enabled }}{{ $c.autoscaling.maxReplicas }}{{ else }}{{ $c.replicaCount }}{{ end }}
+      replicas: {{ include "scrim.maxReplicas" . }}
     {{- if .Values.postgres.enabled }}
     state:
       backend: postgres
       postgres:
-        dsn: file:/run/secrets/scrim/postgres/{{ .Values.postgres.dsnSecret.key }}
+        dsn: file:/run/secrets/scrim/postgres/{{ include "chart.secretKey" (list . "postgres" "dsn") }}
         max-conns: {{ .Values.postgres.maxConns }}
     events:
       backend: postgres

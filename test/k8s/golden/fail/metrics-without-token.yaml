@@ -1,2 +1,0 @@
-# expect: metrics.enabled listens on the pod IP and needs metrics.authSecret.name
-metrics: {enabled: true}

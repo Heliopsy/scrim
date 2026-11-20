@@ -5,7 +5,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: {{ include "scrim.fullname" . }}-placeholder-keys
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ (include "scrim.namespace" $) }}
   labels:
     {{- include "scrim.labels" . | nindent 4 }}
   annotations:

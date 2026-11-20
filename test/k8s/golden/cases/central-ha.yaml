@@ -2,12 +2,15 @@
 # metrics with a token, TCP admin API.
 postgres:
   enabled: true
-  dsnSecret: {name: scrim-pg, key: dsn}
+secrets:
+  existing:
+    postgres: scrim-pg
+    metrics: scrim-metrics
+    admin: scrim-admin
 metrics:
   enabled: true
-  authSecret: {name: scrim-metrics, key: token}
 central:
-  pdb: {minAvailable: 2}
+  pdb: {minAvailable: 2, maxUnavailable: null}
   autoscaling:
     enabled: true
     minReplicas: 3
@@ -16,7 +19,6 @@ central:
 admin:
   tcp:
     enabled: true
-    tokenSecret: {name: scrim-admin, key: token}
 networkPolicy:
   enabled: true
   adminFrom:

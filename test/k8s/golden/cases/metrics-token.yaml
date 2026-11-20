@@ -1,0 +1,5 @@
+# Metrics with the generated token and a ServiceMonitor.
+metrics:
+  enabled: true
+serviceMonitor:
+  enabled: true

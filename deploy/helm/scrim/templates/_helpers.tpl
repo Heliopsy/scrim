@@ -1,10 +1,31 @@
-{{/* SPDX-License-Identifier: AGPL-3.0-only */}}
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{/*
+=============================================================================
+ Names
+=============================================================================
+Ported from toc-helm-chart-template (templates/_helpers.tpl). The generic
+helpers keep the "chart.*" names; scrim's own are "scrim.*" in _scrim.tpl.
+Left out: the docker-registry pull Secret and extraSecrets (both put
+credentials in values, which this chart refuses) and secrets.values (a slot
+is an existing Secret, an ExternalSecret or a generated value, never a
+value from values.yaml).
+*/}}
 
-{{- define "scrim.name" -}}
+{{/* Domain of the chart's own label and annotation keys (helm-test, secret-slot). */}}
+{{- define "chart.labelDomain" -}}
+scrim.dev
+{{- end -}}
+
+{{/* Chart name, truncated to the DNS label limit. */}}
+{{- define "chart.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "scrim.fullname" -}}
+{{/*
+Release-wide prefix of every object name. A release whose name contains the
+chart name keeps the release name alone.
+*/}}
+{{- define "chart.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
@@ -17,420 +38,594 @@
 {{- end -}}
 {{- end -}}
 
-{{- define "scrim.labels" -}}
-helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
-app.kubernetes.io/name: {{ include "scrim.name" . }}
+{{/* Namespace every object is created in. */}}
+{{- define "chart.namespace" -}}
+{{- default .Release.Namespace .Values.namespaceOverride | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/*
+Name of one component's objects: "<fullname>-<component>".
+Usage: include "chart.componentName" (list $ "app")
+*/}}
+{{- define "chart.componentName" -}}
+{{- $root := index . 0 -}}
+{{- $comp := index . 1 -}}
+{{- printf "%s-%s" (include "chart.fullname" $root) $comp | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/* In-cluster DNS name of a component's Service. Usage: (list $ "kv") */}}
+{{- define "chart.serviceHost" -}}
+{{- $root := index . 0 -}}
+{{- printf "%s.%s.svc.%s" (include "chart.componentName" .) (include "chart.namespace" $root) $root.Values.global.clusterDomain -}}
+{{- end -}}
+
+{{- define "chart.chart" -}}
+{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/*
+=============================================================================
+ Labels
+=============================================================================
+*/}}
+
+{{/* Labels on every object. */}}
+{{- define "chart.labels" -}}
+helm.sh/chart: {{ include "chart.chart" . }}
+app.kubernetes.io/part-of: {{ include "chart.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- with .Values.commonLabels }}
+{{- with .Chart.AppVersion }}
+app.kubernetes.io/version: {{ . | quote }}
+{{- end }}
+{{- with .Values.global.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- with include "chart.omitKeys" (list (default dict .Values.commonLabels) (default dict .Values.global.commonLabels)) | fromJson }}
 {{ toYaml . }}
 {{- end }}
 {{- end -}}
 
-{{- define "scrim.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "scrim.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/component: proxy
-{{- end -}}
-
-{{- define "scrim.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create -}}
-{{- default (include "scrim.fullname" .) .Values.serviceAccount.name -}}
-{{- else -}}
-{{- default "default" .Values.serviceAccount.name -}}
-{{- end -}}
-{{- end -}}
-
-{{- define "scrim.image" -}}
-{{- if .Values.image.digest -}}
-{{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}
-{{- else -}}
-{{- printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) -}}
-{{- end -}}
-{{- end -}}
-
-{{/* Host name of the central Service as agents use it. */}}
-{{- define "scrim.serviceHost" -}}
-{{- printf "%s.%s.svc.%s" (include "scrim.fullname" .) .Release.Namespace .Values.clusterDomain -}}
-{{- end -}}
-
-{{- define "scrim.caSecretName" -}}
-{{- default (printf "%s-ca" (include "scrim.fullname" .)) .Values.ca.existingSecret -}}
-{{- end -}}
-
-{{- define "scrim.keysSecretName" -}}
-{{- default (printf "%s-placeholder-keys" (include "scrim.fullname" .)) .Values.placeholderKeys.existingSecret -}}
+{{/*
+Selector labels of one component. app.kubernetes.io/name is the component's
+object name (<fullname>-app, ...), which is what the network policies select
+on. Never add a label that changes between releases: selectors are immutable.
+Usage: include "chart.selectorLabels" (list $ "app")
+*/}}
+{{- define "chart.selectorLabels" -}}
+{{- $root := index . 0 -}}
+app.kubernetes.io/name: {{ include "chart.componentName" . }}
+app.kubernetes.io/instance: {{ $root.Release.Name }}
+{{- with include "chart.extraSelectorLabels" $root }}
+{{ . }}
+{{- end }}
 {{- end -}}
 
 {{/*
-The generated CA, created once and then read back with lookup so upgrades keep it.
-Returns a dict with "crt" and "key" (PEM). Cached in .Values so every template that
-needs it in one render sees the same CA.
+global.extraSelectorLabels as YAML, minus the chart's own selector keys.
+Selectors are immutable: set it on a fresh install only. Changing it on an
+existing release fails the upgrade (Deployment/StatefulSet selectors) and
+re-selects Services and NetworkPolicies.
 */}}
-{{- define "scrim.generatedCA" -}}
-{{- if not (hasKey .Values "__scrimCA") -}}
-{{- $name := printf "%s-ca" (include "scrim.fullname" .) -}}
-{{- $existing := lookup "v1" "Secret" .Release.Namespace $name -}}
-{{- if and $existing (index $existing "data") (index $existing.data "tls.key") -}}
-{{- $_ := set .Values "__scrimCA" (dict "crt" (index $existing.data "tls.crt" | b64dec) "key" (index $existing.data "tls.key" | b64dec)) -}}
-{{- else -}}
-{{- $key := genPrivateKey "ed25519" -}}
-{{- $ca := genCAWithKey (printf "scrim interception CA %s" .Release.Name) (int .Values.ca.validityDays) $key -}}
-{{- $_ := set .Values "__scrimCA" (dict "crt" $ca.Cert "key" $ca.Key) -}}
-{{- end -}}
+{{- define "chart.extraSelectorLabels" -}}
+{{- with omit (default dict .Values.global.extraSelectorLabels) "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/component" "app.kubernetes.io/part-of" "app.kubernetes.io/managed-by" "app.kubernetes.io/version" "helm.sh/chart" -}}
+{{- toYaml . -}}
 {{- end -}}
 {{- end -}}
 
-{{/* Public PEM of the CA, whatever its source. */}}
-{{- define "scrim.caCert" -}}
-{{- if .Values.ca.existingSecret -}}
-{{- if .Values.ca.certificate -}}
-{{- .Values.ca.certificate -}}
-{{- else -}}
-{{- $s := lookup "v1" "Secret" .Release.Namespace .Values.ca.existingSecret -}}
-{{- if and $s (index $s "data") (index $s.data "tls.crt") -}}
-{{- index $s.data "tls.crt" | b64dec -}}
-{{- else -}}
-{{- fail (printf "ca.existingSecret %q: its certificate cannot be read here (helm template, or the Secret does not exist yet); set ca.certificate to the public PEM" .Values.ca.existingSecret) -}}
-{{- end -}}
-{{- end -}}
-{{- else if .Values.ca.create -}}
-{{- include "scrim.generatedCA" . -}}
-{{- index .Values.__scrimCA "crt" -}}
-{{- else -}}
-{{- fail "set ca.create=true or ca.existingSecret: scrim needs one interception CA shared by every replica" -}}
-{{- end -}}
-{{- end -}}
-
-{{/* The generated placeholder key, created once and read back with lookup. */}}
-{{- define "scrim.generatedKey" -}}
-{{- if not (hasKey .Values "__scrimKey") -}}
-{{- $name := printf "%s-placeholder-keys" (include "scrim.fullname" .) -}}
-{{- $existing := lookup "v1" "Secret" .Release.Namespace $name -}}
-{{- if and $existing (index $existing "data") (index $existing.data "k1") -}}
-{{- $_ := set .Values "__scrimKey" (index $existing.data "k1" | b64dec) -}}
-{{- else -}}
-{{- $_ := set .Values "__scrimKey" (randAlphaNum 64) -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-
-{{/* The placeholder keys as scrim configuration, for a mount at $path. */}}
-{{- define "scrim.placeholderKeysConfig" -}}
-{{- $path := .path -}}
-{{- $root := .root -}}
-{{- if $root.Values.placeholderKeys.existingSecret }}
-{{- range $root.Values.placeholderKeys.keys }}
-{{ .name }}:
-  version: {{ .version }}
-  key: file:{{ $path }}/{{ .key }}
+{{/* Full label set of one component. Usage: (list $ "app") */}}
+{{- define "chart.componentLabels" -}}
+{{- $root := index . 0 -}}
+{{ include "chart.labels" $root }}
+app.kubernetes.io/name: {{ include "chart.componentName" . }}
+app.kubernetes.io/component: {{ index . 1 }}
+{{- with include "chart.extraSelectorLabels" $root }}
+{{ . }}
 {{- end }}
+{{- end -}}
+
+{{/* Annotations on every workload (global.commonAnnotations, commonAnnotations), may be empty. */}}
+{{- define "chart.commonAnnotations" -}}
+{{- with mustMergeOverwrite (deepCopy (default dict .Values.global.commonAnnotations)) (deepCopy (default dict .Values.commonAnnotations)) }}
+{{- toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{/* Entries of a map whose keys another map lacks, as JSON. Usage: (list $m $without) */}}
+{{- define "chart.omitKeys" -}}
+{{- $out := dict -}}
+{{- $without := index . 1 -}}
+{{- range $k, $v := index . 0 -}}
+{{- if not (hasKey $without $k) -}}{{- $_ := set $out $k $v -}}{{- end -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}
+
+{{/*
+A values "labels" map for one object, minus the keys the chart's own labels
+already set (a selector or chart label is never overridden), tpl-rendered.
+Prints nothing when empty. Params: root, labels, comp (component, optional).
+*/}}
+{{- define "chart.extraLabels" -}}
+{{- $base := dict -}}
+{{- if .comp -}}
+{{- $base = include "chart.componentLabels" (list .root .comp) | fromYaml -}}
+{{- else -}}
+{{- $base = include "chart.labels" .root | fromYaml -}}
+{{- end -}}
+{{- $extra := include "chart.omitKeys" (list (default dict .labels) $base) | fromJson -}}
+{{- with $extra -}}
+{{- tpl (toYaml .) $.root -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+=============================================================================
+ Values helpers
+=============================================================================
+*/}}
+
+{{/*
+Render a value that may contain template syntax.
+Usage: include "chart.tpl" (dict "value" .Values.x "context" $)
+*/}}
+{{- define "chart.tpl" -}}
+{{- if kindIs "string" .value -}}
+{{- tpl .value .context -}}
+{{- else -}}
+{{- tpl (.value | toYaml) .context -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Image reference. A digest wins over a tag; "tag@digest" keeps the tag readable
+while pinning. global.imageRegistry replaces the registry of every image.
+useAppVersion: true takes the tag from Chart.appVersion when tag is empty.
+Usage: include "chart.image" (dict "root" $ "image" .Values.app.image)
+*/}}
+{{- define "chart.image" -}}
+{{- $img := .image -}}
+{{- $registry := default $img.registry .root.Values.global.imageRegistry -}}
+{{- $repo := $img.repository -}}
+{{- $ref := $repo -}}
+{{- if $registry -}}
+{{- $ref = printf "%s/%s" $registry $repo -}}
+{{- end -}}
+{{- $tag := toString (default "" $img.tag) -}}
+{{- if and (not $tag) $img.useAppVersion -}}
+{{- $tag = .root.Chart.AppVersion -}}
+{{- end -}}
+{{- if $img.digest -}}
+{{- if $tag -}}
+{{- printf "%s:%s@%s" $ref $tag $img.digest -}}
+{{- else -}}
+{{- printf "%s@%s" $ref $img.digest -}}
+{{- end -}}
+{{- else -}}
+{{- printf "%s:%s" $ref (required (printf "image %s needs a tag or a digest" $repo) $tag) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Boolean with a default that survives an explicit false ("default" treats false
+as unset). Prints "true" or nothing. Usage: include "chart.flag" (list $map "key" true)
+*/}}
+{{- define "chart.flag" -}}
+{{- $m := index . 0 | default dict -}}
+{{- $k := index . 1 -}}
+{{- $d := index . 2 -}}
+{{- $v := $d -}}
+{{- if and (kindIs "map" $m) (hasKey $m $k) -}}{{- $v = index $m $k -}}{{- end -}}
+{{- if and $v (ne (toString $v) "false") -}}true{{- end -}}
+{{- end -}}
+
+{{/* pullPolicy of an image, defaulting to IfNotPresent. */}}
+{{- define "chart.imagePullPolicy" -}}
+{{- default "IfNotPresent" .pullPolicy -}}
+{{- end -}}
+
+{{/*
+imagePullSecrets for a pod: global.imagePullSecrets plus the component's own.
+Accepts names as strings or {name: x}.
+Usage: include "chart.imagePullSecrets" (dict "root" $ "values" .Values.app)
+*/}}
+{{- define "chart.imagePullSecrets" -}}
+{{- $names := list -}}
+{{- range (concat (default list .root.Values.global.imagePullSecrets) (default list .values.imagePullSecrets)) -}}
+{{- if kindIs "string" . -}}
+{{- $names = append $names . -}}
+{{- else -}}
+{{- $names = append $names .name -}}
+{{- end -}}
+{{- end -}}
+{{- if $names }}
+imagePullSecrets:
+{{- range ($names | uniq) }}
+  - name: {{ . }}
+{{- end }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Container securityContext: the hardened defaults from global, overlaid by the
+component's own. Usage: (dict "root" $ "values" .Values.app)
+*/}}
+{{- define "chart.containerSecurityContext" -}}
+{{- $base := deepCopy (default dict .root.Values.global.containerSecurityContext) -}}
+{{- $sc := mustMergeOverwrite $base (deepCopy (default dict .values.securityContext)) -}}
+{{- toYaml $sc -}}
+{{- end -}}
+
+{{/* Pod securityContext: global defaults overlaid by the component's own. */}}
+{{- define "chart.podSecurityContext" -}}
+{{- $base := deepCopy (default dict .root.Values.global.podSecurityContext) -}}
+{{- $sc := mustMergeOverwrite $base (deepCopy (default dict .values.podSecurityContext)) -}}
+{{- toYaml $sc -}}
+{{- end -}}
+
+{{/*
+Probes of the main container. Each probe is {enabled: bool, ...probe spec}.
+Usage: include "chart.probes" .Values.app
+*/}}
+{{- define "chart.probes" -}}
+{{- range $kind := list "startupProbe" "livenessProbe" "readinessProbe" -}}
+{{- $p := index $ $kind -}}
+{{- if and $p (include "chart.flag" (list $p "enabled" true)) }}
+{{ $kind }}:
+{{- toYaml (omit $p "enabled") | nindent 2 }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+=============================================================================
+ Secrets
+=============================================================================
+Every credential lives in a Secret "slot". A slot's Secret is, in order:
+  1. secrets.existing.<slot>                a Secret you manage (nothing rendered)
+  2. secrets.externalSecrets.data.<slot>    an ExternalSecret the chart renders
+  3. a chart-rendered Secret with the value already in the cluster (lookup),
+     else a random one for generated keys. There is no secrets.values: a
+     credential never comes from values.yaml.
+*/}}
+
+{{/* Name of a slot's Secret. Usage: include "chart.secretName" (list $ "kv") */}}
+{{- define "chart.secretName" -}}
+{{- $root := index . 0 -}}
+{{- $slot := index . 1 -}}
+{{- $existing := index (default dict $root.Values.secrets.existing) $slot -}}
+{{- if $existing -}}
+{{- tpl $existing $root -}}
+{{- else -}}
+{{- include "chart.componentName" (list $root $slot) -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Key a slot uses for a logical key (secrets.keys.<slot>.<key> renames it). */}}
+{{- define "chart.secretKey" -}}
+{{- $root := index . 0 -}}
+{{- $slot := index . 1 -}}
+{{- $key := index . 2 -}}
+{{- $map := index (default dict $root.Values.secrets.keys) $slot | default dict -}}
+{{- default $key (index $map $key) -}}
+{{- end -}}
+
+{{/*
+Render a slot: an ExternalSecret, a Secret, or nothing.
+Optional param values: the owning component's values block (its
+secretLabels / secretAnnotations / replication).
+Usage:
+  include "chart.secret" (dict "root" $ "slot" "kv" "keys" (list
+    (dict "name" "password" "generate" true "length" 48)
+    (dict "name" "token" "required" true)     # input, no generation
+  ))
+Generated values are hex (URL-safe), persisted across upgrades by lookup and
+kept on uninstall.
+*/}}
+{{- define "chart.secret" -}}
+{{- $root := .root -}}
+{{- $slot := .slot -}}
+{{- $domain := include "chart.labelDomain" $root -}}
+{{- $existing := index (default dict $root.Values.secrets.existing) $slot -}}
+{{- if not $existing -}}
+{{- $name := include "chart.componentName" (list $root $slot) -}}
+{{- $es := $root.Values.secrets.externalSecrets -}}
+{{- $esData := index (default dict $es.data) $slot -}}
+{{- if and $es.enabled $esData }}
+---
+apiVersion: {{ $es.apiVersion }}
+kind: ExternalSecret
+metadata:
+  name: {{ $name }}
+  namespace: {{ include "chart.namespace" $root }}
+  {{- $esMeta := dict "root" $root "kind" "ExternalSecret" "name" $name }}
+  labels:
+    {{- include "chart.labels" $root | nindent 4 }}
+    {{ $domain }}/secret-slot: {{ $slot }}
+    {{- with include "chart.metaLabels" $esMeta }}
+    {{- . | nindent 4 }}
+    {{- end }}
+  {{- with include "chart.metaAnnotations" $esMeta }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  refreshInterval: {{ $es.refreshInterval }}
+  {{- $_ := required "secrets.externalSecrets.secretStoreRef.name is required" $es.secretStoreRef.name }}
+  secretStoreRef:
+    {{- toYaml $es.secretStoreRef | nindent 4 }}
+  target:
+    name: {{ $name }}
+    creationPolicy: Owner
+    {{- /* The Secret external-secrets writes gets the same metadata hooks as a chart-rendered one. */ -}}
+    {{- $tm := include "chart.meta" (dict "root" $root "kind" "Secret" "name" $name "values" .values) | fromJson }}
+    {{- if or $tm.labels $tm.annotations }}
+    template:
+      mergePolicy: Merge
+      metadata:
+        {{- with $tm.labels }}
+        labels:
+          {{- tpl (toYaml .) $root | nindent 10 }}
+        {{- end }}
+        {{- with $tm.annotations }}
+        annotations:
+          {{- tpl (toYaml .) $root | nindent 10 }}
+        {{- end }}
+    {{- end }}
+  data:
+    {{- range $k, $ref := $esData }}
+    - secretKey: {{ include "chart.secretKey" (list $root $slot $k) }}
+      remoteRef:
+        {{- if kindIs "string" $ref }}
+        key: {{ $ref }}
+        {{- else }}
+        {{- toYaml $ref | nindent 8 }}
+        {{- end }}
+    {{- end }}
 {{- else }}
-k1:
-  version: 1
-  key: file:{{ $path }}/k1
-{{- end }}
+{{- $current := dict -}}
+{{- $found := lookup "v1" "Secret" (include "chart.namespace" $root) $name -}}
+{{- if $found -}}{{- $current = default dict $found.data -}}{{- end -}}
+{{- $data := dict -}}
+{{- range .keys -}}
+{{- $k := include "chart.secretKey" (list $root $slot .name) -}}
+{{- if index $current $k -}}
+{{- $_ := set $data $k (index $current $k) -}}
+{{- else if .generate -}}
+{{- $_ := set $data $k (randAlphaNum (int (default 48 .length)) | lower | sha256sum | trunc (int (default 48 .length)) | b64enc) -}}
+{{- else if .required -}}
+{{- fail (printf "secret %s key %s has no value: set secrets.existing.%s to a Secret you manage, or map it in secrets.externalSecrets.data.%s" $slot .name $slot $slot) -}}
 {{- end -}}
-
-{{/* A store or setting reference, never a literal. */}}
-{{- define "scrim.isRef" -}}
-{{- if regexMatch "^((env|file|cred):.+|[a-z][a-z0-9+.-]*://.+)$" (toString .) -}}true{{- end -}}
+{{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ include "chart.namespace" $root }}
+  {{- $sMeta := dict "root" $root "kind" "Secret" "name" $name "values" .values "skipAnnotations" (list "helm.sh/resource-policy") }}
+  labels:
+    {{- include "chart.labels" $root | nindent 4 }}
+    {{ $domain }}/secret-slot: {{ $slot }}
+    {{- with include "chart.metaLabels" $sMeta }}
+    {{- . | nindent 4 }}
+    {{- end }}
+  annotations:
+    # Generated values must survive an uninstall/reinstall (a data store
+    # keeps the old password).
+    helm.sh/resource-policy: keep
+    {{- with include "chart.metaAnnotations" $sMeta }}
+    {{- . | nindent 4 }}
+    {{- end }}
+type: Opaque
+{{- with $data }}
+data:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- end -}}
 
 {{/*
-Refuse literals where scrim takes a credential. scrim itself warns about literals; the chart
-refuses them so a values file never carries a secret.
+=============================================================================
+ Extra ConfigMaps and Secrets
+=============================================================================
+extraConfigMaps: a map of key -> spec, rendered as "<fullname>-<key>" (or
+spec.name), or not rendered at all when the spec names an existingConfigMap. Reference them from extraVolumes,
+extraEnv or extraEnvFrom by this helper so a values file can switch between
+an inline object and an existing one without touching the mounts:
+  {{ include "chart.extraConfigMapName" (list $ "ca-bundle") }}
 */}}
-{{- define "scrim.checkConfig" -}}
-{{- $cfg := .Values.config -}}
-{{- $credFields := list "token" "secret-id" "role-id" "client-id" "client-secret" "password" "api-key" "access-token" "master-password" -}}
-{{- range $store, $inst := (default dict (index $cfg "stores")) -}}
-{{- if kindIs "map" $inst -}}
-{{- range $field, $v := $inst -}}
-{{- if and (has $field $credFields) (kindIs "string" $v) (not (include "scrim.isRef" $v)) -}}
-{{- fail (printf "config.stores.%s.%s holds a literal; use a reference (file:/run/secrets/scrim/<mount>/<key>, env:NAME or a store reference)" $store $field) -}}
+{{- define "chart.extraConfigMapName" -}}
+{{- $root := index . 0 -}}
+{{- $key := index . 1 -}}
+{{- $c := index (default dict $root.Values.extraConfigMaps) $key | default dict -}}
+{{- if $c.existingConfigMap -}}
+{{- tpl $c.existingConfigMap $root -}}
+{{- else if $c.name -}}
+{{- tpl $c.name $root -}}
+{{- else -}}
+{{- include "chart.componentName" (list $root $key) -}}
 {{- end -}}
 {{- end -}}
-{{- end -}}
-{{- end -}}
-{{- with (index $cfg "admin") -}}
-{{- if and (kindIs "map" .) (hasKey . "token") (not (include "scrim.isRef" (index . "token"))) -}}
-{{- fail "config.admin.token holds a literal; use admin.tcp.tokenSecret" -}}
-{{- end -}}
-{{- end -}}
-{{- with (index $cfg "identity") -}}
-{{- if kindIs "map" . -}}
-{{- range $k, $v := (default dict (index . "store-credentials")) -}}
-{{- if and (kindIs "string" $v) (not (include "scrim.isRef" $v)) -}}
-{{- fail (printf "config.identity.store-credentials.%s holds a literal; use a reference (file:/run/secrets/scrim/<mount>/<key>, env:NAME or a store reference)" $k) -}}
-{{- end -}}
-{{- end -}}
-{{- if hasKey . "kubernetes" -}}
-{{- fail "config.identity.kubernetes is set by the chart; use the identity.kubernetes values" -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-{{- range $section := list "state" "events" "deployment" -}}
-{{- if hasKey $cfg $section -}}
-{{- fail (printf "config.%s is set by the chart; use the postgres values (state.backend and events.backend postgres) and central.replicaCount" $section) -}}
-{{- end -}}
-{{- end -}}
-{{- if hasKey $cfg "metrics" -}}
-{{- fail "config.metrics is set by the chart; use the metrics values" -}}
-{{- end -}}
-{{- if or (gt (int .Values.central.replicaCount) 1) .Values.central.autoscaling.enabled -}}
-{{- if not .Values.postgres.enabled -}}
-{{- fail "several replicas need shared state and events: set postgres.enabled=true and postgres.dsnSecret (state.backend and events.backend postgres)" -}}
-{{- end -}}
-{{- end -}}
-{{- if and .Values.postgres.enabled (not .Values.postgres.dsnSecret.name) -}}
-{{- fail "postgres.enabled needs postgres.dsnSecret.name" -}}
-{{- end -}}
-{{- if and .Values.metrics.enabled (not .Values.metrics.authSecret.name) (not .Values.metrics.allowUnauthenticatedRemote) -}}
-{{- fail "metrics.enabled listens on the pod IP and needs metrics.authSecret.name (scrim refuses a remote metrics listener without metrics.auth.token), or metrics.allowUnauthenticatedRemote=true with a NetworkPolicy" -}}
-{{- end -}}
-{{- if and .Values.central.autoscaling.enabled .Values.central.autoscaling.connections.enabled (not .Values.metrics.enabled) -}}
-{{- fail "central.autoscaling.connections needs metrics.enabled: the adapter reads scrim_dataplane_connections_active from scrim's metrics" -}}
-{{- end -}}
-{{- if and .Values.admin.tcp.enabled (not .Values.admin.tcp.tokenSecret.name) -}}
-{{- fail "admin.tcp.enabled needs admin.tcp.tokenSecret.name: scrim refuses a TCP admin listener without a token" -}}
-{{- end -}}
-{{- if and .Values.sidecar.enabled .Values.sidecar.egressGuard.enabled (not .Values.sidecar.egressGuard.image) -}}
-{{- fail "sidecar.egressGuard.image is required (an image with nft and sh), or set sidecar.egressGuard.enabled=false to accept that agent containers can reach what the pod's NetworkPolicy allows without scrim" -}}
-{{- end -}}
-{{- if and .Values.sidecar.enabled (not .Values.ca.create) (not .Values.ca.existingSecret) -}}
-{{- fail "sidecar mode needs a CA: ca.create or ca.existingSecret" -}}
-{{- end -}}
-{{- end -}}
-
-{{/* Settings the chart owns, shared by central and sidecar. */}}
-{{- define "scrim.commonSettings" -}}
-log:
-  level: {{ .Values.log.level }}
-  format: {{ .Values.log.format }}
-api:
-  socket: /run/scrim/api.sock
-entry:
-  listen: 127.0.0.1:0
-tool-proxy:
-  ca:
-    cert-file: /etc/scrim/ca/tls.crt
-    key: file:/etc/scrim/ca/tls.key
-{{- if .Values.policyRules }}
-policy:
-  rules-file: /etc/scrim/config/policy.yaml
-{{- end }}
-{{- end -}}
-
-{{/* metrics.*: the listener always serves /livez and /readyz for the probes. */}}
-{{- define "scrim.metricsSettings" -}}
-{{- $m := .root.Values.metrics -}}
-metrics:
-  listen: {{ .listen }}
-  enabled: {{ $m.enabled }}
-{{- if $m.enabled }}
-  path: {{ $m.path }}
-{{- if $m.authSecret.name }}
-  auth:
-    token: file:/run/secrets/scrim/metrics/{{ $m.authSecret.key }}
-{{- else if $m.allowUnauthenticatedRemote }}
-  allow-unauthenticated-remote: true
-{{- end }}
-{{- end }}
-{{- end -}}
-
-{{/* identity.kubernetes.*. .tokenFile and .caFile override scrim's own API credentials. */}}
-{{- define "scrim.identitySettings" -}}
-{{- $k := .root.Values.identity.kubernetes -}}
-identity:
-  kubernetes:
-    enabled: {{ $k.enabled }}
-{{- if $k.enabled }}
-    audience: {{ $k.audience }}
-    unmapped: {{ $k.unmapped }}
-{{- with .tokenFile }}
-    token-file: {{ . }}
-{{- end }}
-{{- with .caFile }}
-    ca-file: {{ . }}
-{{- end }}
-{{- with $k.agents }}
-    agents:
-      {{- toYaml . | nindent 6 }}
-{{- end }}
-{{- end }}
-{{- end -}}
-
-{{/* Where the sidecar's own API token and the API server CA are mounted (TokenReview). */}}
-{{- define "scrim.sidecarAPIPath" -}}/var/run/secrets/scrim/kube-api{{- end -}}
 
 {{/*
-scrim-exec: runs a command with the pod's identity (design D14). It reads the projected token
-when the command starts and sends it where scrim expects a caller's token: the password of the
-proxy user k8s in the proxy variables, and x-scrim-session in ANTHROPIC_CUSTOM_HEADERS for the
-base URL. Plain POSIX sh with no other tools, for a read-only root filesystem.
+Checksum of the chart-rendered extraConfigMaps a pod
+references (volumes, projected sources, envFrom, env valueFrom), so the pod
+rolls when one changes. Empty when it references none.
+Params: root, volumes (list), containers (list, init containers included).
 */}}
-{{- define "scrim.execScript" -}}
-#!/bin/sh
-# scrim-exec COMMAND [ARGS...]: run COMMAND identified to scrim by this pod's service account
-# (docs/kubernetes.md, "Identity"). Generated by the scrim Helm chart.
-set -eu
-f="${SCRIM_K8S_TOKEN_FILE:?scrim-exec: SCRIM_K8S_TOKEN_FILE is not set}"
-[ "$#" -gt 0 ] || { echo "scrim-exec: no command" >&2; exit 2; }
-tok=
-IFS= read -r tok < "$f" || true
-[ -n "$tok" ] || { echo "scrim-exec: $f is empty" >&2; exit 1; }
-for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy; do
-  eval "u=\${$v:-}"
-  case $u in
-    http://*@*) ;;
-    http://*) export "$v=http://k8s:$tok@${u#http://}" ;;
-  esac
-done
-# git sends proxy credentials only after a 407, which scrim never sends.
-export GIT_HTTP_PROXY_AUTHMETHOD=basic
-nl='
-'
-hdrs=
-old_ifs=$IFS
-IFS=$nl
-set -f
-for line in ${ANTHROPIC_CUSTOM_HEADERS:-}; do
-  case $line in
-    [Xx]-[Ss][Cc][Rr][Ii][Mm]-[Ss][Ee][Ss][Ss][Ii][Oo][Nn]:*) ;;
-    *) hdrs="$hdrs$line$nl" ;;
-  esac
-done
-set +f
-IFS=$old_ifs
-export ANTHROPIC_CUSTOM_HEADERS="${hdrs}x-scrim-session: $tok"
-unset f tok u v hdrs line nl old_ifs
-exec "$@"
-{{- end -}}
-
-{{/* Agent environment, as a list of {name, value}. .base is the LLM base URL, .proxy the forward proxy. */}}
-{{- define "scrim.agentEnv" -}}
+{{- define "chart.extraObjects.checksum" -}}
 {{- $root := .root -}}
-{{- $trust := $root.Values.agents.trustPath -}}
-{{- $noProxy := concat (list "localhost" "127.0.0.1" "::1") .noProxy $root.Values.agents.noProxy | uniq | join "," -}}
-- name: ANTHROPIC_BASE_URL
-  value: {{ printf "%s/anthropic" .base | quote }}
-- name: OPENAI_BASE_URL
-  value: {{ printf "%s/openai/v1" .base | quote }}
-{{- range list "HTTPS_PROXY" "https_proxy" "HTTP_PROXY" "http_proxy" }}
-- name: {{ . }}
-  value: {{ $.proxy | quote }}
-{{- end }}
-{{- range list "NO_PROXY" "no_proxy" }}
-- name: {{ . }}
-  value: {{ $noProxy | quote }}
-{{- end }}
-- name: NODE_EXTRA_CA_CERTS
-  value: {{ printf "%s/scrim-ca.pem" $trust | quote }}
-{{- range list "SSL_CERT_FILE" "REQUESTS_CA_BUNDLE" "CURL_CA_BUNDLE" "GIT_SSL_CAINFO" "AWS_CA_BUNDLE" "PIP_CERT" "NPM_CONFIG_CAFILE" "CARGO_HTTP_CAINFO" "DENO_CERT" "CODEX_CA_CERTIFICATE" }}
-- name: {{ . }}
-  value: {{ printf "%s/ca-bundle.pem" $trust | quote }}
-{{- end }}
-{{- if $root.Values.identity.kubernetes.enabled }}
-- name: SCRIM_K8S_TOKEN_FILE
-  value: {{ $root.Values.identity.kubernetes.tokenPath | quote }}
-{{- end }}
-{{- with $root.Values.agents.extraEnv }}
-{{ toYaml . }}
+{{- $known := dict -}}
+{{- range $k, $c := (default dict $root.Values.extraConfigMaps) -}}
+{{- if and $c (not $c.existingConfigMap) -}}{{- $_ := set $known (printf "cm/%s" (include "chart.extraConfigMapName" (list $root $k))) $c -}}{{- end -}}
+{{- end -}}
+{{- if $known -}}
+{{- $refs := list -}}
+{{- range (tpl (toYaml (default list .volumes)) $root | fromYamlArray) -}}
+{{- with .configMap }}{{ $refs = append $refs (printf "cm/%s" .name) }}{{ end -}}
+{{- with .secret }}{{ $refs = append $refs (printf "secret/%s" .secretName) }}{{ end -}}
+{{- with .projected -}}
+{{- range .sources -}}
+{{- with .configMap }}{{ $refs = append $refs (printf "cm/%s" .name) }}{{ end -}}
+{{- with .secret }}{{ $refs = append $refs (printf "secret/%s" .name) }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range (tpl (toYaml (default list .containers)) $root | fromYamlArray) -}}
+{{- range .envFrom -}}
+{{- with .configMapRef }}{{ $refs = append $refs (printf "cm/%s" .name) }}{{ end -}}
+{{- with .secretRef }}{{ $refs = append $refs (printf "secret/%s" .name) }}{{ end -}}
+{{- end -}}
+{{- range .env -}}
+{{- with .valueFrom -}}
+{{- with .configMapKeyRef }}{{ $refs = append $refs (printf "cm/%s" .name) }}{{ end -}}
+{{- with .secretKeyRef }}{{ $refs = append $refs (printf "secret/%s" .name) }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $hit := dict -}}
+{{- range $r := ($refs | uniq) -}}
+{{- with index $known $r -}}{{- $_ := set $hit $r (tpl (toJson .) $root) -}}{{- end -}}
+{{- end -}}
+{{- with $hit -}}{{- toJson . | sha256sum -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+=============================================================================
+ Object metadata hooks
+=============================================================================
+Extra labels and annotations of one object, on top of what its template
+prints. Params:
+  root
+  kind        object kind; Secret and ConfigMap pick up global and component
+              secretLabels/secretAnnotations/configMapLabels/
+              configMapAnnotations and the replication annotations,
+              NetworkPolicy networkPolicy.labels/annotations
+  name        rendered object name (objectMetadata lookup)
+  comp        component whose labels the object carries (keys never overridden)
+  values      component values block (secretLabels, ... , replication), optional
+  labels, annotations   object-specific maps from values, optional
+  replication           object-specific replication override, optional
+  skipAnnotations       list of annotation keys the template already prints
+Precedence, later wins: commonAnnotations, global kind maps, component kind
+maps, replication, object maps, objectMetadata["<Kind>/<name>"].
+Returns JSON {labels, annotations}.
+*/}}
+{{- define "chart.meta" -}}
+{{- $root := .root -}}
+{{- $g := $root.Values.global -}}
+{{- $v := .values | default dict -}}
+{{- $labels := dict -}}
+{{- $ann := include "chart.commonAnnotations" $root | fromYaml | default dict -}}
+{{- $repl := deepCopy (default dict $g.replication) -}}
+{{- if eq .kind "Secret" -}}
+{{- $labels = mustMergeOverwrite $labels (deepCopy (default dict $g.secretLabels)) (deepCopy (default dict $v.secretLabels)) -}}
+{{- $ann = mustMergeOverwrite $ann (deepCopy (default dict $g.secretAnnotations)) (deepCopy (default dict $v.secretAnnotations)) -}}
+{{- else if eq .kind "ConfigMap" -}}
+{{- $labels = mustMergeOverwrite $labels (deepCopy (default dict $g.configMapLabels)) (deepCopy (default dict $v.configMapLabels)) -}}
+{{- $ann = mustMergeOverwrite $ann (deepCopy (default dict $g.configMapAnnotations)) (deepCopy (default dict $v.configMapAnnotations)) -}}
+{{- else if eq .kind "NetworkPolicy" -}}
+{{- $labels = mustMergeOverwrite $labels (deepCopy (default dict $root.Values.networkPolicy.labels)) -}}
+{{- $ann = mustMergeOverwrite $ann (deepCopy (default dict $root.Values.networkPolicy.annotations)) -}}
+{{- end -}}
+{{- $labels = mustMergeOverwrite $labels (deepCopy (default dict .labels)) -}}
+{{- $ann = mustMergeOverwrite $ann (deepCopy (default dict .annotations)) -}}
+{{- $om := dict -}}
+{{- with .name -}}
+{{- $short := trimPrefix (printf "%s-" (include "chart.fullname" $root)) . -}}
+{{- $all := default dict $root.Values.objectMetadata -}}
+{{- $om = mustMergeOverwrite (deepCopy (default dict (index $all (printf "%s/%s" $.kind $short)))) (deepCopy (default dict (index $all (printf "%s/%s" $.kind .)))) -}}
+{{- end -}}
+{{- if has .kind (list "Secret" "ConfigMap") -}}
+{{- $repl = mustMergeOverwrite $repl (deepCopy (default dict $v.replication)) (deepCopy (default dict .replication)) (deepCopy (default dict $om.replication)) -}}
+{{- $ann = mustMergeOverwrite $ann (include "chart.replicationAnnotations" $repl | fromJson) -}}
+{{- end -}}
+{{- $labels = mustMergeOverwrite $labels (deepCopy (default dict $om.labels)) -}}
+{{- $ann = mustMergeOverwrite $ann (deepCopy (default dict $om.annotations)) -}}
+{{- $base := dict -}}
+{{- if .comp -}}
+{{- $base = include "chart.componentLabels" (list $root .comp) | fromYaml -}}
+{{- else -}}
+{{- $base = include "chart.labels" $root | fromYaml -}}
+{{- end -}}
+{{- $labels = include "chart.omitKeys" (list $labels $base) | fromJson -}}
+{{- $skip := dict -}}
+{{- range (default list .skipAnnotations) -}}{{- $_ := set $skip . true -}}{{- end -}}
+{{- $ann = include "chart.omitKeys" (list $ann $skip) | fromJson -}}
+{{- toJson (dict "labels" $labels "annotations" $ann) -}}
+{{- end -}}
+
+{{/* Extra labels of one object as YAML lines (chart.meta params), or nothing. */}}
+{{- define "chart.metaLabels" -}}
+{{- with (include "chart.meta" . | fromJson).labels -}}
+{{- tpl (toYaml .) $.root -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Extra annotations of one object as YAML lines (chart.meta params), or nothing. */}}
+{{- define "chart.metaAnnotations" -}}
+{{- with (include "chart.meta" . | fromJson).annotations -}}
+{{- tpl (toYaml .) $.root -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The metadata block of one object: name, namespace, labels (component or
+release labels plus chart.meta's) and annotations. Params as chart.meta.
+*/}}
+{{- define "chart.objectMeta" -}}
+name: {{ .name }}
+namespace: {{ include "chart.namespace" .root }}
+labels:
+  {{- if .comp }}
+  {{- include "chart.componentLabels" (list .root .comp) | nindent 2 }}
+  {{- else }}
+  {{- include "chart.labels" .root | nindent 2 }}
+  {{- end }}
+  {{- with include "chart.metaLabels" . }}
+  {{- . | nindent 2 }}
+  {{- end }}
+{{- with include "chart.metaAnnotations" . }}
+annotations:
+  {{- . | nindent 2 }}
 {{- end }}
 {{- end -}}
 
-{{- define "scrim.centralAgentEnv" -}}
-{{- $host := include "scrim.serviceHost" . -}}
-{{- $short := include "scrim.fullname" . -}}
-{{- include "scrim.agentEnv" (dict "root" . "base" (printf "http://%s:%v" $host .Values.central.service.llmPort) "proxy" (printf "http://%s:%v" $host .Values.central.service.forwardPort) "noProxy" (list $host $short (printf "%s.%s" $short .Release.Namespace) (printf "%s.%s.svc" $short .Release.Namespace))) -}}
+{{/*
+Replication annotations for a Secret or ConfigMap, as JSON.
+  mode: none | reflector (emberstack Reflector) | replicator (mittwald
+  kubernetes-replicator)
+  allowedNamespaces: namespaces (regex allowed) that may copy the object
+  autoNamespaces:    namespaces the object is pushed into
+  replicateFrom:     replicator only, "<namespace>/<name>" this object is filled from
+*/}}
+{{- define "chart.replicationAnnotations" -}}
+{{- $r := . | default dict -}}
+{{- $mode := default "none" $r.mode -}}
+{{- $allowed := default list $r.allowedNamespaces -}}
+{{- $auto := default list $r.autoNamespaces -}}
+{{- $out := dict -}}
+{{- if eq $mode "reflector" -}}
+{{- $p := "reflector.v1.k8s.emberstack.com" -}}
+{{- $_ := set $out (printf "%s/reflection-allowed" $p) "true" -}}
+{{- with $allowed -}}{{- $_ := set $out (printf "%s/reflection-allowed-namespaces" $p) (join "," .) -}}{{- end -}}
+{{- if $auto -}}
+{{- $_ := set $out (printf "%s/reflection-auto-enabled" $p) "true" -}}
+{{- $_ := set $out (printf "%s/reflection-auto-namespaces" $p) (join "," $auto) -}}
 {{- end -}}
-
-{{- define "scrim.sidecarAgentEnv" -}}
-{{- include "scrim.agentEnv" (dict "root" . "base" "http://127.0.0.1:9790" "proxy" "http://127.0.0.1:9791" "noProxy" (list)) -}}
+{{- else if eq $mode "replicator" -}}
+{{- $p := "replicator.v1.mittwald.de" -}}
+{{- if or $allowed (not $auto) -}}
+{{- $_ := set $out (printf "%s/replication-allowed" $p) "true" -}}
+{{- with $allowed -}}{{- $_ := set $out (printf "%s/replication-allowed-namespaces" $p) (join "," .) -}}{{- end -}}
 {{- end -}}
-
-{{/* nftables rules of the sidecar egress guard. */}}
-{{- define "scrim.egressGuardScript" -}}
-set -eu
-nft -f - <<'NFT'
-table inet scrim_guard {
-  chain output {
-    type filter hook output priority 0; policy accept;
-    oifname "lo" accept
-    ct state established,related accept
-    meta skuid 65532 accept
-    udp dport 53 accept
-    tcp dport 53 accept
-    meta l4proto tcp reject with tcp reset
-    reject with icmpx admin-prohibited
-  }
-}
-NFT
-nft list table inet scrim_guard
+{{- with $auto -}}{{- $_ := set $out (printf "%s/replicate-to" $p) (join "," .) -}}{{- end -}}
+{{- with $r.replicateFrom -}}{{- $_ := set $out (printf "%s/replicate-from" $p) . -}}{{- end -}}
+{{- else if ne $mode "none" -}}
+{{- fail (printf "replication.mode must be none, reflector or replicator, not %q" $mode) -}}
 {{- end -}}
-
-{{/* Egress to the cluster DNS. */}}
-{{- define "scrim.dnsEgress" -}}
-- to:
-    - namespaceSelector:
-        {{- toYaml .namespaceSelector | nindent 8 }}
-      podSelector:
-        {{- toYaml .podSelector | nindent 8 }}
-  ports:
-    - port: 53
-      protocol: UDP
-    - port: 53
-      protocol: TCP
-{{- end -}}
-
-{{/* Volumes and mounts every agent container gets. */}}
-{{- define "scrim.agentMounts" -}}
-- name: scrim-trust
-  mountPath: {{ .Values.agents.trustPath }}
-  readOnly: true
-{{- if .Values.identity.kubernetes.enabled }}
-- name: scrim-identity
-  mountPath: {{ dir .Values.identity.kubernetes.tokenPath }}
-  readOnly: true
-{{- end }}
-{{- end -}}
-
-{{- define "scrim.agentVolumes" -}}
-- name: scrim-trust
-  configMap:
-    name: {{ .Values.ca.configMapName }}
-    items:
-      - key: scrim-ca.pem
-        path: scrim-ca.pem
-      - key: ca-bundle.pem
-        path: ca-bundle.pem
-      {{- if .Values.identity.kubernetes.enabled }}
-      - key: scrim-exec
-        path: scrim-exec
-        mode: 0555
-      {{- end }}
-{{- if .Values.identity.kubernetes.enabled }}
-- name: scrim-identity
-  projected:
-    # Readable by whatever user the agent runs as; only agent containers mount it.
-    defaultMode: 0444
-    sources:
-      - serviceAccountToken:
-          audience: {{ .Values.identity.kubernetes.audience }}
-          expirationSeconds: {{ .Values.identity.kubernetes.expirationSeconds }}
-          path: {{ base .Values.identity.kubernetes.tokenPath }}
-{{- end }}
-{{- end -}}
-
-{{/* Bearer auth of a Prometheus Operator scrape endpoint. */}}
-{{- define "scrim.scrapeAuth" -}}
-{{- if .Values.metrics.authSecret.name }}
-authorization:
-  type: Bearer
-  credentials:
-    name: {{ .Values.metrics.authSecret.name }}
-    key: {{ .Values.metrics.authSecret.key }}
-{{- end }}
+{{- toJson $out -}}
 {{- end -}}

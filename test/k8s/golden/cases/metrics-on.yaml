@@ -1,7 +1,9 @@
 # Metrics with every monitoring object, central and sidecar.
 metrics:
   enabled: true
-  authSecret: {name: scrim-metrics, key: token}
+secrets:
+  existing:
+    metrics: scrim-metrics
 serviceMonitor:
   enabled: true
   labels: {release: kube-prometheus-stack}

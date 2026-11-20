@@ -1,21 +1,7 @@
 {{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
-{{- if .Values.serviceAccount.create }}
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: {{ include "scrim.serviceAccountName" . }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "scrim.labels" . | nindent 4 }}
-  {{- with .Values.serviceAccount.annotations }}
-  annotations:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
-automountServiceAccountToken: {{ or .Values.serviceAccount.automountToken .Values.identity.kubernetes.enabled }}
-{{- end }}
 {{- $k := .Values.identity.kubernetes }}
 {{- if and $k.enabled $k.tokenReviewRBAC (or .Values.central.enabled .Values.sidecar.enabled) }}
-{{- $name := printf "%s-%s-tokenreview" (include "scrim.fullname" .) .Release.Namespace }}
+{{- $name := printf "%s-%s-tokenreview" (include "scrim.fullname" .) (include "scrim.namespace" $) }}
 ---
 # TokenReview only, to verify the projected tokens agent pods present. Narrower than
 # system:auth-delegator, which also allows SubjectAccessReviews.
@@ -44,7 +30,7 @@ subjects:
   {{- if .Values.central.enabled }}
   - kind: ServiceAccount
     name: {{ include "scrim.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
+    namespace: {{ (include "scrim.namespace" $) }}
   {{- end }}
   {{- if .Values.sidecar.enabled }}
   {{- range .Values.agents.namespaces }}

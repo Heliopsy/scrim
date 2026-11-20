@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# What a default cannot say: enums, alternative types, item shapes.
+# Paths are dotted value paths; each fragment is merged into the generated node.
+global.replication.mode: {enum: [none, reflector, replicator]}
+global.imagePullSecrets: {items: {type: [string, object]}}
+central.imagePullSecrets: {items: {type: [string, object]}}
+tests.imagePullSecrets: {items: {type: [string, object]}}
+global.dnsPolicy: {enum: ["", ClusterFirst, ClusterFirstWithHostNet, Default, None]}
+global.shareProcessNamespace: {type: [boolean, "null"]}
+global.enableServiceLinks: {type: [boolean, "null"]}
+central.dnsPolicy: {enum: ["", ClusterFirst, ClusterFirstWithHostNet, Default, None]}
+central.shareProcessNamespace: {type: [boolean, "null"]}
+central.enableServiceLinks: {type: [boolean, "null"]}
+tests.dnsPolicy: {enum: ["", ClusterFirst, ClusterFirstWithHostNet, Default, None]}
+tests.shareProcessNamespace: {type: [boolean, "null"]}
+tests.enableServiceLinks: {type: [boolean, "null"]}
+global.ha.replicas: {minimum: 2}
+global.ha.exclude: {items: {enum: [proxy]}}
+global.revisionHistoryLimit: {minimum: 0}
+log.level: {enum: [debug, info, warn, error]}
+log.format: {enum: [json, text]}
+central.replicaCount: {minimum: 0}
+central.terminationGracePeriodSeconds: {minimum: 0}
+central.service.type: {enum: [ClusterIP, NodePort, LoadBalancer]}
+central.service.llmPort: {minimum: 1, maximum: 65535}
+central.service.forwardPort: {minimum: 1, maximum: 65535}
+central.autoscaling.maxReplicas: {minimum: 1}
+central.autoscaling.connections.targetAverageValue: {type: [string, integer]}
+central.extraArgs: {items: {type: string}}
+admin.tcp.port: {minimum: 1, maximum: 65535}
+metrics.port: {minimum: 1, maximum: 65535}
+metrics.path: {pattern: "^/"}
+ca.validityDays: {minimum: 1}
+image.digest: {pattern: "^(sha256:[0-9a-f]{64})?$"}
+placeholderKeys.keys:
+  items:
+    type: object
+    required: [name, version, key]
+    properties:
+      name: {type: string, minLength: 1}
+      version: {type: integer, minimum: 1}
+      key: {type: string, minLength: 1}
+    additionalProperties: false
+secretMounts:
+  items:
+    type: object
+    required: [name, secretName]
+    properties:
+      name: {type: string, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"}
+      secretName: {type: string, minLength: 1}
+      items: {type: array, items: {type: object}}
+    additionalProperties: false
+sidecar.secretMounts:
+  items:
+    type: object
+    required: [name, secretName]
+    properties:
+      name: {type: string, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"}
+      secretName: {type: string, minLength: 1}
+      items: {type: array, items: {type: object}}
+    additionalProperties: false
+identity.kubernetes.expirationSeconds: {minimum: 600}
+identity.kubernetes.tokenPath: {pattern: "^/"}
+identity.kubernetes.agents: {additionalProperties: {type: string}}
+identity.kubernetes.unmapped: {enum: [derive, unknown]}
+storeAuth.serviceAccountToken.expirationSeconds: {minimum: 600}
+storeAuth.serviceAccountToken.path: {pattern: "^/"}
+postgres.maxConns: {minimum: 1}
+agents.noProxy: {items: {type: string}}
+agents.namespaces: {items: {type: string}}
+agents.extraEnv: {items: {type: object}}
+agents.trustPath: {pattern: "^/"}
+kyverno.failurePolicy: {enum: [Fail, Ignore]}
+sidecar.egressGuard.pullPolicy: {enum: [Always, IfNotPresent, Never]}
+image.pullPolicy: {enum: [Always, IfNotPresent, Never]}
+tests.retries: {minimum: 1}
+grafanaDashboard.json: {type: string}

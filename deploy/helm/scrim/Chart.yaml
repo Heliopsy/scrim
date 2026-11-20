@@ -3,8 +3,10 @@ apiVersion: v2
 name: scrim
 description: Keeps secret values away from LLM providers while AI agents keep working
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+# The release packages the chart with version and appVersion set to the scrim
+# release (scripts/release/chart.sh); release-please keeps both current here.
+version: 0.1.0  # x-release-please-version
+appVersion: "0.1.0"  # x-release-please-version
 kubeVersion: ">=1.29.0-0"
 home: https://github.com/Heliopsy/scrim
 sources:
@@ -12,6 +14,12 @@ sources:
 icon: https://raw.githubusercontent.com/Heliopsy/scrim/main/scrim.svg
 annotations:
   artifacthub.io/license: AGPL-3.0-only
+  # Generated from values.yaml by ci/gen-images.py (verify.sh checks it).
+  artifacthub.io/images: |
+    - name: scrim
+      image: ghcr.io/heliopsy/scrim:0.1.0 # x-release-please-version
+    - name: curl
+      image: docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
 keywords: [llm, secrets, redaction, proxy, agents]
 maintainers:
   - name: Heliopsy

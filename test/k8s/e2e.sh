@@ -21,7 +21,8 @@
 #   - a placeholder sent toward an unbound host is refused and nothing
 #     reaches that host;
 #   - no secret value appears in scrim's logs;
-#   - Kyverno refuses a labelled pod in a namespace the chart did not prepare.
+#   - Kyverno refuses a labelled pod in a namespace the chart did not prepare;
+#   - `helm test` passes through the NetworkPolicy.
 #
 # It never touches another cluster or your kubeconfig: the cluster's
 # kubeconfig lives in a temporary directory and every command names it.
@@ -212,7 +213,7 @@ bao_sh 'bao auth enable kubernetes' >/dev/null
 bao_sh 'bao write auth/kubernetes/config kubernetes_host=https://kubernetes.default.svc' >/dev/null
 printf 'path "secret/data/e2e/*" { capabilities = ["read"] }\npath "secret/metadata/e2e" { capabilities = ["list"] }\npath "secret/metadata/e2e/*" { capabilities = ["read", "list"] }\npath "secret/detailed-metadata/e2e/*" { capabilities = ["list"] }\n' |
   bao_sh 'bao policy write scrim-e2e -' >/dev/null
-bao_sh 'bao write auth/kubernetes/role/scrim bound_service_account_names=scrim,default bound_service_account_namespaces=scrim,agents audience=openbao token_policies=scrim-e2e token_ttl=20m' >/dev/null
+bao_sh 'bao write auth/kubernetes/role/scrim bound_service_account_names=scrim-proxy,default bound_service_account_namespaces=scrim,agents audience=openbao token_policies=scrim-e2e token_ttl=20m' >/dev/null
 
 # Values go in on stdin (`field=-`), not on a command line.
 printf %s "$tool_token" | k -n scrim-e2e exec -i deploy/openbao -- sh -c \
@@ -224,10 +225,13 @@ printf %s "$llm_secret" | k -n scrim-e2e exec -i deploy/openbao -- sh -c \
 
 log "install the chart"
 hl upgrade --install scrim "$root/deploy/helm/scrim" -n scrim -f "$here/values-e2e.yaml" \
-  --set image.repository="${img_scrim%:*}" --set image.tag="$tag" \
+  --set image.registry=localhost --set image.repository="$(basename "${img_scrim%:*}")" --set image.tag="$tag" \
   --set sidecar.egressGuard.image="$img_tools" \
   --set 'agents.namespaces={agents}' --wait --timeout 240s >/dev/null
 kwait 120 wait --for=condition=Ready clusterpolicy/scrim-scrim-inject --timeout=100s >/dev/null
+# The chart's own helm test pods, through the NetworkPolicy.
+hl test scrim -n scrim --timeout 180s >/dev/null || fail "helm test failed"
+pass "helm test"
 
 log "agent pods"
 k -n agents delete pod agent-central agent-sidecar --ignore-not-found --wait=true >/dev/null
