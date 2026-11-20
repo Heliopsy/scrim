@@ -5,6 +5,7 @@ package app_test
 import (
 	"bytes"
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -71,7 +72,7 @@ func TestSQLiteBackendWired(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	a.Metrics.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	a.Metrics.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if !strings.Contains(rec.Body.String(), `scrim_state_transaction_seconds_count{backend="sqlite",kind="view"}`) {
 		t.Errorf("state transactions not observed:\n%s", rec.Body.String())
 	}
