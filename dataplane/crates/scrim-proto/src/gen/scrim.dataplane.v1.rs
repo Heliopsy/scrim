@@ -283,6 +283,22 @@ pub struct Route {
     /// path_prefix selects the route on a base-URL listener.
     #[prost(string, tag = "5")]
     pub path_prefix: ::prost::alloc::string::String,
+    /// chain, when set, sends the redacted request to another proxy (for
+    /// example a context-compression proxy) in place of `upstream`.
+    #[prost(message, optional, tag = "6")]
+    pub chain: ::core::option::Option<RouteChain>,
+}
+/// RouteChain is a chained upstream that receives requests after redaction.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RouteChain {
+    /// url is the chained proxy's base URL (`http` or `https`).
+    #[prost(string, tag = "1")]
+    pub url: ::prost::alloc::string::String,
+    /// direct_on_unavailable sends the redacted request straight to the
+    /// route's upstream when the chained proxy cannot be reached. False refuses
+    /// the request instead.
+    #[prost(bool, tag = "2")]
+    pub direct_on_unavailable: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Listener {
@@ -442,8 +458,9 @@ pub struct AskAnswer {
     #[prost(string, tag = "4")]
     pub reason: ::prost::alloc::string::String,
     /// grant_id and grant_expires_unix_nano describe the grant an approval
-    /// created, so the data plane can let matching requests through until it
-    /// expires without asking again.
+    /// created, for audit only. The data plane does not cache grants: the
+    /// control plane reads them on every use, so a revoked or used-up grant
+    /// takes effect on the next request (design D7).
     #[prost(string, tag = "5")]
     pub grant_id: ::prost::alloc::string::String,
     #[prost(int64, tag = "6")]
@@ -480,6 +497,36 @@ pub struct StatusResponse {
     /// tool_proxy is present once the tool proxy is built.
     #[prost(message, optional, tag = "10")]
     pub tool_proxy: ::core::option::Option<ToolProxyStatus>,
+    /// redaction describes the value dictionary in force; absent before the
+    /// first snapshot.
+    #[prost(message, optional, tag = "11")]
+    pub redaction: ::core::option::Option<RedactionStatus>,
+    /// policy_engine names how the data plane takes restore and injection
+    /// decisions, for example `standin/v1` (no rule table evaluation; display
+    /// values restored in text only, credentials never) or `table/v1`.
+    #[prost(string, tag = "12")]
+    pub policy_engine: ::prost::alloc::string::String,
+}
+/// RedactionStatus reports counts and references, never values.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RedactionStatus {
+    /// engine is the matcher in use: `aho-corasick` or `hash-window`.
+    #[prost(string, tag = "1")]
+    pub engine: ::prost::alloc::string::String,
+    /// patterns is how many encoded variants are compiled.
+    #[prost(uint32, tag = "2")]
+    pub patterns: u32,
+    /// short_values counts values below the minimum length, matched only
+    /// whole.
+    #[prost(uint32, tag = "3")]
+    pub short_values: u32,
+    /// unprotected_refs are references whose values are below the floor and
+    /// are not redacted.
+    #[prost(string, repeated, tag = "4")]
+    pub unprotected_refs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// duplicates counts entries whose value another entry already holds.
+    #[prost(uint32, tag = "5")]
+    pub duplicates: u32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ToolProxyStatus {
@@ -547,6 +594,8 @@ pub struct ListenerStatus {
     /// error says why the listener is not bound.
     #[prost(string, tag = "4")]
     pub error: ::prost::alloc::string::String,
+    #[prost(enumeration = "ListenerKind", tag = "5")]
+    pub kind: i32,
 }
 /// ProtocolVersion is the boundary protocol version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]

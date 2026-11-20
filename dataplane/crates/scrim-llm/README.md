@@ -52,8 +52,12 @@ atomically (`SnapshotCell`); a request uses one snapshot from start to end.
 | `RestorePolicy` | control-plane snapshot | per site and tool: resolve or keep |
 | `AuditSink` | data plane binary | metadata-only events, non-blocking |
 
-Until `scrim-redact` lands, the `test-util` feature provides fakes (`testing::Fixture`) with
-fault injection, a stand-in fallback detector and a recording fake upstream.
+Feature `redact` provides the production engine: `core::CoreEngine` wraps a built
+`scrim_redact::Snapshot` and hands out the `Redactor`, `Guard` and `Placeholders` adapters (the
+data plane binary uses it). A `Snapshot` may carry its own `routes`, so a request takes its route
+and its dictionary from one version; `SnapshotCell::from_source` lets an embedder publish one
+bundle for several engines. The `test-util` feature provides fakes (`testing::Fixture`) with fault
+injection, a stand-in fallback detector and a recording fake upstream.
 
 ## Errors
 

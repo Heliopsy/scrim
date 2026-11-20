@@ -18,6 +18,8 @@ test-util = ["dep:aho-corasick", "dep:hmac", "dep:sha2", "dep:getrandom"]
 # InterceptHandler adapter for scrim-toolproxy: provider hosts reached through the forward
 # proxy (HTTPS_PROXY) are served by this crate.
 intercept = ["dep:scrim-toolproxy"]
+# The production engine: scrim-redact behind the engine traits (`core::CoreEngine`).
+redact = ["dep:scrim-redact"]
 
 [dependencies]
 arc-swap = "1.7"
@@ -42,6 +44,7 @@ webpki-roots = "1"
 zeroize.workspace = true
 
 scrim-toolproxy = { path = "../scrim-toolproxy", optional = true }
+scrim-redact = { path = "../scrim-redact", optional = true }
 
 # test-util only
 aho-corasick = { version = "1.1", optional = true }
@@ -55,7 +58,7 @@ rcgen = "0.13"
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "fs", "io-util", "macros", "process"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-scrim-llm = { path = ".", features = ["test-util", "intercept"] }
+scrim-llm = { path = ".", features = ["test-util", "intercept", "redact"] }
 
 [[bench]]
 name = "latency_gate"

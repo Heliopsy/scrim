@@ -41,7 +41,7 @@ pub enum BuildError {
 /// The LLM proxy. Cheap to share behind an [`Arc`]; one instance serves every listener.
 pub struct Proxy {
     cfg: ProxyConfig,
-    routes: RouteTable,
+    routes: Arc<RouteTable>,
     snapshots: Arc<SnapshotCell>,
     client: UpstreamClient,
     audit: Arc<dyn AuditSink>,
@@ -179,7 +179,7 @@ impl Proxy {
         }
         Ok(Self {
             cfg,
-            routes,
+            routes: Arc::new(routes),
             snapshots,
             client,
             audit,
@@ -218,18 +218,28 @@ impl Proxy {
         B::Error: Into<BoxError>,
     {
         let path = req.uri().path().to_string();
-        let Some((route, rest)) = self.routes.find(&path) else {
+        let snap = self.snapshots.load();
+        let routes = self.routes_of(snap.as_ref());
+        let Some((route, rest)) = routes.find(&path) else {
             let r = Refusal::new(RefusalReason::NoRoute, "");
             return self.refuse(None, Api::Generic, &r);
         };
-        self.serve(route, rest, req).await
+        self.serve(snap, route, rest, req).await
     }
 
     /// Whether a route claims provider host `host` (see [`RouteConfig::hosts`]).
     ///
     /// [`RouteConfig::hosts`]: crate::config::RouteConfig::hosts
     pub fn claims_host(&self, host: &str) -> bool {
-        self.routes.find_host(host).is_some()
+        self.routes_of(self.snapshots.load().as_ref())
+            .find_host(host)
+            .is_some()
+    }
+
+    /// The routes of `snap` when it carries them, else the configured ones.
+    fn routes_of(&self, snap: Option<&Arc<Snapshot>>) -> Arc<RouteTable> {
+        snap.and_then(|s| s.routes.clone())
+            .unwrap_or_else(|| self.routes.clone())
     }
 
     /// Handles a request that arrived for provider host `host` through the forward proxy or a
@@ -240,21 +250,31 @@ impl Proxy {
         B: Body<Data = Bytes> + Send + 'static,
         B::Error: Into<BoxError>,
     {
-        let Some(route) = self.routes.find_host(host) else {
+        let snap = self.snapshots.load();
+        let routes = self.routes_of(snap.as_ref());
+        let Some(route) = routes.find_host(host) else {
             let r = Refusal::new(RefusalReason::NoRoute, "");
             return self.refuse(None, Api::Generic, &r);
         };
         let path = req.uri().path().to_string();
-        self.serve(route, &path, req).await
+        self.serve(snap, route, &path, req).await
     }
 
-    async fn serve<B>(&self, route: &Route, rest: &str, req: Request<B>) -> Response<ProxyBody>
+    /// Serves one request with the one snapshot it loaded (route, dictionary, guard and restore
+    /// policy all from the same version).
+    async fn serve<B>(
+        &self,
+        snap: Option<Arc<Snapshot>>,
+        route: &Route,
+        rest: &str,
+        req: Request<B>,
+    ) -> Response<ProxyBody>
     where
         B: Body<Data = Bytes> + Send + 'static,
         B::Error: Into<BoxError>,
     {
         let api = route.provider.api_for(req.method(), rest);
-        let Some(snap) = self.snapshots.load() else {
+        let Some(snap) = snap else {
             let r = Refusal::new(RefusalReason::NotReady, "");
             return self.refuse(Some(route), api, &r);
         };

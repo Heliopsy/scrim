@@ -85,7 +85,8 @@ pub use engine::{RequestSigner, Snapshot, ToolProxyConfig};
 pub use error::{ErrorCode, Refusal};
 pub use host::{Destination, HostPattern, HostPatternError, Scheme};
 pub use proxy::{
-    BuildError, InterceptHandler, ProxyStatus, ToolProxy, ToolProxyBuilder, ToolProxySettings,
+    BuildError, CompiledSnapshot, InterceptHandler, ProxyStatus, SnapshotSource, ToolProxy,
+    ToolProxyBuilder, ToolProxySettings,
 };
 pub use redactor::{
     CoreRedactor, RedactError, RedactMatch, Redactor, RedactorChain, StreamRedactor, ValueRedactor,
