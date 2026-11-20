@@ -300,8 +300,9 @@ its capabilities on the secret's path (OpenBao `sys/capabilities-self`), and ref
 when the agent's identity may not read it. The value itself is never read with the agent's
 identity. An agent with neither a passthrough login nor a static credential is refused for that
 store. A store in neither setting is used with scrim's own identity. OpenBao is the only store that
-implements the check so far; Infisical and Vaultwarden are used with scrim's own identity. `scrim doctor` lists, per store and agent, which identity applies
-(`kubernetes`, `static`, `shared`, or `none` for refused).
+implements the check so far; Infisical and Vaultwarden are used with scrim's own identity.
+`scrim doctor` lists, per store and agent, which identity applies (`kubernetes`, `static`,
+`shared`, or `none` for refused).
 
 ### Testing in a cluster
 

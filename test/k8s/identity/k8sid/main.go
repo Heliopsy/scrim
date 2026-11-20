@@ -108,10 +108,10 @@ func agent(method, target, placeholder string) {
 	resp, err := c.Do(req)
 	if err != nil {
 		// The error can quote the proxy URL; name the failure only.
-		fmt.Println("status=0 body=transport error")
+		_, _ = fmt.Fprintln(os.Stdout, "status=0 body=transport error")
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 2000))
-	fmt.Printf("status=%d body=%s\n", resp.StatusCode, strings.ReplaceAll(string(b), "\n", " "))
+	_, _ = fmt.Fprintf(os.Stdout, "status=%d body=%s\n", resp.StatusCode, strings.ReplaceAll(string(b), "\n", " "))
 }
