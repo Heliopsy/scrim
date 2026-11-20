@@ -1440,6 +1440,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "bytes",
+ "getrandom 0.3.4",
  "hmac 0.12.1",
  "http",
  "http-body-util",
