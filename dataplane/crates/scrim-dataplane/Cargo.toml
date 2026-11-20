@@ -24,7 +24,8 @@ http = "1"
 rustls-pki-types = { version = "1.16.0", features = ["std"] }
 arc-swap.workspace = true
 prost.workspace = true
-rustix = { workspace = true, features = ["process", "mm", "fs", "rand", "std"] }
+getrandom = "0.3"
+rustix = { workspace = true, features = ["process", "mm", "fs", "std"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros", "sync", "time", "signal"] }
 tokio-stream = { workspace = true, features = ["sync", "net"] }
 tonic = { workspace = true, features = ["server", "router", "codegen"] }
