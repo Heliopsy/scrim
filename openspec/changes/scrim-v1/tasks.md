@@ -121,6 +121,10 @@ deployments and the remaining edge modes (groups 14-16).
 
 - [ ] 12.1 Postgres-notify events for multiple replicas; verify: two replicas sharing one PostgreSQL agree on grants and approvals
 - [ ] 12.2 Kubernetes service account identity; verify: TokenReview-based identity in kind
+- [ ] 12.2a scrim as identity provider: per-session signed tokens, discovery document, signing keys, rotation; verify: OpenBao JWT auth accepts scrim tokens and rejects expired or wrong-audience ones
+- [ ] 12.2b Per-agent store identity with token exchange (Vault and OpenBao JWT, AWS web identity, Google federation, Azure federated credentials, Infisical OIDC) and the intersection rule; verify: one agent is denied by store policy that another passes, and CloudTrail-style audit shows the agent's session name against LocalStack
+- [ ] 12.2c Kubernetes service account passthrough and static per-agent fallback reported in doctor; verify: two agent pods with different service accounts get different OpenBao policies in kind
+- [ ] 12.2d Separate redaction identity and the stricter per-agent redaction option marked as weakening; verify: a value the agent cannot use is still redacted
 - [ ] 12.3 Helm chart (Deployment, Service, PDB, HPA, NetworkPolicy) and Kyverno injection policy; verify: agent pod in kind reaches providers only through scrim
 - [ ] 12.4 OpenBao and Infisical Kubernetes auth; verify: no static store credentials in the kind test
 - [ ] 12.5 Edge forwarder for ssh-agent, localhost database ports and the exec broker in agent pods; verify: `git push` over SSH and `psql` from an agent pod with a central scrim in kind

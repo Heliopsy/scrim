@@ -126,3 +126,85 @@ ignore any identity claimed in a provider request body, header added by the agen
 
 - **WHEN** a request carries a header naming another agent
 - **THEN** scrim uses the transport identity and ignores the header
+
+### Requirement: Agents act on stores with their own identity
+
+When configured, scrim SHALL perform every store operation on an agent's behalf (inject, generate,
+capture, write) with a store identity belonging to that agent, not with scrim's own identity, so the
+store's own permissions and audit apply per agent. An agent without a usable store identity SHALL be
+refused for that store.
+
+#### Scenario: Store policy narrower than scrim policy
+
+- **WHEN** scrim's rules allow agent `claude-laptop` to use `bao://kv/prod/db` but the OpenBao policy
+  for that agent's identity does not
+- **THEN** the operation is refused with the store's denial and audited in both places
+
+### Requirement: Effective permission is the intersection
+
+An operation SHALL succeed only when both scrim's policy and the store's permissions for the agent's
+identity allow it. Neither side SHALL be able to widen what the other denies.
+
+#### Scenario: Store allows more than scrim
+
+- **WHEN** the store would let the agent read `kv/prod/*` but scrim's rules deny `kv/prod/payments`
+- **THEN** scrim refuses `kv/prod/payments` without contacting the store
+
+### Requirement: scrim as an identity provider for agents
+
+scrim SHALL be able to issue short-lived signed identity tokens for each agent session, with claims
+for agent name, session, host or namespace, profile and audience, and SHALL publish standard
+discovery and signing keys so stores and clouds can trust it as an identity provider. Signing keys
+SHALL rotate without breaking live sessions.
+
+#### Scenario: OpenBao trusts scrim's tokens
+
+- **WHEN** OpenBao's JWT auth is configured with scrim's discovery URL and a role bound to
+  `agent=claude-laptop`
+- **THEN** scrim logs in to OpenBao for that agent with a scrim-issued token and gets only that role's policy
+
+### Requirement: Token exchange per store
+
+Each adapter that supports federated login SHALL exchange the agent's identity token for a
+short-lived store credential: Vault and OpenBao JWT/OIDC auth, AWS AssumeRoleWithWebIdentity, Google
+Workload Identity Federation, Azure federated credentials, Infisical OIDC machine identities. Store
+credentials SHALL be cached per agent session and dropped when it ends.
+
+#### Scenario: AWS role per agent
+
+- **WHEN** the IAM role `agent-claude-laptop` trusts scrim's identity provider for that agent's claims
+- **THEN** scrim assumes that role for the agent and AWS CloudTrail shows the agent's session name
+
+### Requirement: Kubernetes identity passed through
+
+In Kubernetes, scrim SHALL be able to use the agent pod's own service account identity toward stores
+that trust the cluster (for example Vault or OpenBao Kubernetes auth), so the store's role for that
+service account applies, instead of a scrim-issued token.
+
+#### Scenario: Pod service account role
+
+- **WHEN** an agent pod runs as service account `agents/reviewer` and OpenBao has a role for it
+- **THEN** scrim's operations for that pod run under that role
+
+### Requirement: Static per-agent store credentials as fallback
+
+For stores without federated login, the system SHALL support a separate store credential per agent,
+held by scrim and referenced in configuration, and SHALL report in `scrim doctor` which stores fall
+back to shared identity because no per-agent credential exists.
+
+#### Scenario: Vaultwarden per agent
+
+- **WHEN** each agent has its own Vaultwarden account or organisation member configured
+- **THEN** scrim decrypts and writes for that agent only with that agent's account
+
+### Requirement: Redaction coverage is separate from use
+
+The redaction set SHALL be loaded with scrim's own read identity and SHALL cover secrets the agent
+cannot use, so a value an agent sees by accident is still redacted. Per-agent identities SHALL govern
+use and writes only. A stricter option SHALL limit the redaction set to what the agent's identity can
+read, and SHALL be reported as weakening.
+
+#### Scenario: Agent reads a file with someone else's secret
+
+- **WHEN** an agent without access to `prod/payments` reads a log containing its value
+- **THEN** the value is still redacted before reaching the provider
