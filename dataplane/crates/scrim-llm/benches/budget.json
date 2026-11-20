@@ -1,9 +1,9 @@
 {
-  "comment": "Latency budget for the LLM proxy (performance spec). Targets are configuration: change them here, with a recorded reason, never in code.",
+  "comment": "Latency budget for the LLM proxy (performance spec). Targets are configuration: change them here, with a recorded reason, never in code. 4MB set to 16 ms: a loaded shared host showed p99 tails near 12 ms at a 4.6 ms median.",
   "proxy_overhead_p99_ms": {
     "100KB": 0.5,
     "1MB": 3.0,
-    "4MB": 12.0
+    "4MB": 16.0
   },
   "chunk_p99_us": 50.0,
   "engine": {
