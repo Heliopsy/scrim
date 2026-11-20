@@ -5,6 +5,8 @@ package daemon
 import (
 	"context"
 	"errors"
+	"net"
+	"net/url"
 	"slices"
 	"sync"
 
@@ -241,14 +243,47 @@ func (b *SnapshotBuilder) values(cat *catalog.Catalog) []*pb.ValueEntry {
 
 // routes are the provider routes, with the optional chain.
 func routes(cfg *config.Config) []*pb.Route {
-	chain := ChainURL.Get(cfg)
-	direct := chain != "" && ChainOnUnavailable.Get(cfg) == "direct"
+	var chain *pb.RouteChain
+	if u := ChainURL.Get(cfg); u != "" {
+		chain = &pb.RouteChain{Url: u, DirectOnUnavailable: ChainOnUnavailable.Get(cfg) == "direct"}
+	}
+	clone := func() *pb.RouteChain {
+		if chain == nil {
+			return nil
+		}
+		return &pb.RouteChain{Url: chain.GetUrl(), DirectOnUnavailable: chain.GetDirectOnUnavailable()}
+	}
 	return []*pb.Route{
 		{Name: "anthropic", Provider: "anthropic", Upstream: UpstreamAnthropic.Get(cfg), PathPrefix: "/anthropic",
-			Hosts: []string{"api.anthropic.com"}, Chain: chain, ChainDirectOnUnavailable: direct},
+			Hosts: []string{"api.anthropic.com"}, Chain: clone()},
 		{Name: "openai", Provider: "openai", Upstream: UpstreamOpenAI.Get(cfg), PathPrefix: "/openai",
-			Hosts: []string{"api.openai.com"}, Chain: chain, ChainDirectOnUnavailable: direct},
+			Hosts: []string{"api.openai.com"}, Chain: clone()},
+		// Codex signed in with ChatGPT calls the Responses API on
+		// chatgpt.com (/backend-api/codex/responses), reached through the
+		// forward proxy.
+		{Name: "chatgpt", Provider: "openai", Upstream: UpstreamChatGPT.Get(cfg), PathPrefix: "/chatgpt",
+			Hosts: []string{"chatgpt.com"}, Chain: clone()},
 	}
+}
+
+// bypass returns the loopback hosts of the upstreams and the chain, which
+// agents must reach directly (specs/interception "Local chained proxies are
+// not intercepted").
+func bypass(cfg *config.Config) []string {
+	var out []string
+	for _, raw := range []string{ChainURL.Get(cfg), UpstreamAnthropic.Get(cfg), UpstreamOpenAI.Get(cfg), UpstreamChatGPT.Get(cfg)} {
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" {
+			continue
+		}
+		h := u.Hostname()
+		if ip := net.ParseIP(h); (ip != nil && ip.IsLoopback()) || h == "localhost" {
+			if !slices.Contains(out, u.Host) {
+				out = append(out, u.Host)
+			}
+		}
+	}
+	return out
 }
 
 func captureRulesPB(cfg *config.Config) []*pb.CaptureRule {

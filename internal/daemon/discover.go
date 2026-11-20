@@ -79,31 +79,50 @@ func (d *Daemon) writeInfo() error {
 // Connect asks the daemon behind cfg's admin.url for its info. It returns
 // ErrNotRunning when nothing listens there.
 func Connect(ctx context.Context, cfg *config.Config) (Info, error) {
+	body, err := adminGet(ctx, cfg, "/v1/daemon")
+	if err != nil {
+		return Info{}, err
+	}
+	var in Info
+	if err := json.Unmarshal(body, &in); err != nil {
+		return Info{}, fmt.Errorf("daemon: decoding info: %w", err)
+	}
+	return in, nil
+}
+
+// TrustBundle fetches the tool-proxy CA certificates from the daemon behind
+// cfg's admin.url. Public material.
+func TrustBundle(ctx context.Context, cfg *config.Config) ([]byte, error) {
+	return adminGet(ctx, cfg, "/v1/ca")
+}
+
+// adminGet GETs path on the admin API.
+func adminGet(ctx context.Context, cfg *config.Config, path string) ([]byte, error) {
 	addr := approval.AdminURL.Get(cfg)
 	if addr == "" {
 		addr = "unix:" + approval.DefaultAdminSocket()
 	}
 	var base string
 	hc := &http.Client{Timeout: 5 * time.Second}
-	if path, ok := strings.CutPrefix(addr, "unix:"); ok {
-		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-			return Info{}, ErrNotRunning
+	if sock, ok := strings.CutPrefix(addr, "unix:"); ok {
+		if _, err := os.Stat(sock); errors.Is(err, os.ErrNotExist) {
+			return nil, ErrNotRunning
 		}
 		d := net.Dialer{Timeout: 2 * time.Second}
 		hc.Transport = &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return d.DialContext(ctx, "unix", path)
+			return d.DialContext(ctx, "unix", sock)
 		}}
 		base = "http://scrim"
 	} else {
 		u, err := url.Parse(addr)
 		if err != nil || u.Host == "" {
-			return Info{}, fmt.Errorf("admin.url %q: want unix:/path or http(s)://host:port", addr)
+			return nil, fmt.Errorf("admin.url %q: want unix:/path or http(s)://host:port", addr)
 		}
 		base = strings.TrimRight(addr, "/")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/daemon", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
 	if err != nil {
-		return Info{}, err
+		return nil, err
 	}
 	if tok, ok := cfg.Secret(AdminToken); ok {
 		_ = tok.Expose(func(b []byte) error { req.Header.Set("Authorization", "Bearer "+string(b)); return nil })
@@ -111,25 +130,21 @@ func Connect(ctx context.Context, cfg *config.Config) (Info, error) {
 	resp, err := hc.Do(req)
 	if err != nil {
 		if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT) {
-			return Info{}, ErrNotRunning
+			return nil, ErrNotRunning
 		}
-		return Info{}, fmt.Errorf("daemon: %w", err)
+		return nil, fmt.Errorf("daemon: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return Info{}, err
+		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		var e approval.ErrorBody
 		_ = json.Unmarshal(body, &e)
-		return Info{}, fmt.Errorf("daemon: admin API answered %d: %s", resp.StatusCode, e.Error)
+		return nil, fmt.Errorf("daemon: admin API answered %d on %s: %s", resp.StatusCode, path, e.Error)
 	}
-	var in Info
-	if err := json.Unmarshal(body, &in); err != nil {
-		return Info{}, fmt.Errorf("daemon: decoding info: %w", err)
-	}
-	return in, nil
+	return body, nil
 }
 
 // Ensure returns a running daemon's info, starting one in this process when

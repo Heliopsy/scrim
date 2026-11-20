@@ -242,7 +242,7 @@ func TestDaemonServesAndPushes(t *testing.T) {
 	if len(s.GetPolicy().GetTable()) != 2 || s.GetPolicy().GetDefaultEffect() != pb.Effect_EFFECT_DENY {
 		t.Fatalf("policy = %v", s.GetPolicy())
 	}
-	if len(s.GetListeners()) != 2 || len(s.GetRoutes()) != 2 || len(s.GetCaptureRules()) != 1 || s.GetCaptureRules()[0].GetStoreRef() != "vault://issued/token" {
+	if len(s.GetListeners()) != 2 || len(s.GetRoutes()) != 3 || len(s.GetCaptureRules()) != 1 || s.GetCaptureRules()[0].GetStoreRef() != "vault://issued/token" {
 		t.Fatalf("listeners %v routes %v capture rules %v", s.GetListeners(), s.GetRoutes(), s.GetCaptureRules())
 	}
 	if len(s.GetToolProxyCa()) != 1 || !s.GetToolProxyCa()[0].GetCurrent() || !strings.Contains(string(s.GetToolProxyCa()[0].GetKeyPem()), "PRIVATE KEY") {

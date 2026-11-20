@@ -19,6 +19,7 @@ import (
 	"github.com/heliopsy/scrim/internal/identity"
 	"github.com/heliopsy/scrim/internal/identity/sessionstate"
 	"github.com/heliopsy/scrim/internal/localapi"
+	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/version"
 )
 
@@ -60,6 +61,9 @@ type Options struct {
 	Stderr   io.Writer
 	// Placeholders, when set, fills placeholders into results.
 	Placeholders Placeholders
+	// OnMint, when set, receives a copy of every session token minted (see
+	// identity.ManagerOptions.OnMint).
+	OnMint func(identity.Session, secret.Value)
 }
 
 // New builds the local API and entry page from the composition root and
@@ -75,7 +79,7 @@ func New(a *app.App, o Options) (*Runtime, error) {
 		return nil, err
 	}
 	mgr := identity.NewManager(sessionstate.New(a.State), identity.ManagerOptions{
-		DefaultTTL: SessionTTL.Get(cfg), MaxTTL: SessionMaxTTL.Get(cfg)})
+		DefaultTTL: SessionTTL.Get(cfg), MaxTTL: SessionMaxTTL.Get(cfg), OnMint: o.OnMint})
 
 	entryLn, err := entrypage.Listen(EntryListen.Get(cfg))
 	if err != nil {

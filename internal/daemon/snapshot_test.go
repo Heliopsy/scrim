@@ -139,7 +139,7 @@ redaction:
 	}
 	r := s.GetRoutes()[0]
 	if r.GetName() != "anthropic" || r.GetUpstream() != "https://api.anthropic.com" || r.GetPathPrefix() != "/anthropic" ||
-		r.GetChain() != "http://127.0.0.1:9000" || !r.GetChainDirectOnUnavailable() {
+		r.GetChain().GetUrl() != "http://127.0.0.1:9000" || !r.GetChain().GetDirectOnUnavailable() {
 		t.Fatalf("route = %v", r)
 	}
 	if l := s.GetListeners(); len(l) != 2 || l[0].GetKind() != pb.ListenerKind_LISTENER_KIND_BASE_URL || l[1].GetKind() != pb.ListenerKind_LISTENER_KIND_UNIX {

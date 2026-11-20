@@ -117,6 +117,10 @@ type Info struct {
 	Addrs    Addrs             `json:"addrs"`
 	// Capture is the capture directory while capture mode is on.
 	Capture string `json:"capture,omitempty"`
+	// Bypass lists loopback upstreams (a chained proxy, a local provider)
+	// that agents must reach directly, never through the forward proxy, so
+	// traffic does not loop.
+	Bypass []string `json:"bypass,omitempty"`
 }
 
 // Daemon is a running control plane.
@@ -126,6 +130,7 @@ type Daemon struct {
 	builder  *SnapshotBuilder
 	catalog  *catalog.Manager
 	runtime  *agentapi.Runtime
+	tokens   *sessionTokens
 	pusher   *pusher
 	log      *slog.Logger
 	started  time.Time
@@ -236,10 +241,13 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		d.trust = m.TrustBundlePEM
 	}
 
-	values := make([]ValueSource, len(a.Refreshers))
-	for i, r := range a.Refreshers {
-		values[i] = r
+	d.tokens = newSessionTokens(func() { d.pusher.Trigger() })
+	d.cleanup = append(d.cleanup, d.tokens.close)
+	values := make([]ValueSource, 0, len(a.Refreshers)+1)
+	for _, r := range a.Refreshers {
+		values = append(values, r)
 	}
+	values = append(values, d.tokens)
 	pp := a.PolicyParts
 	d.builder = &SnapshotBuilder{
 		Config:    a.Config.Current,
@@ -276,7 +284,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	if notices == nil {
 		notices = logw
 	}
-	d.runtime, err = agentapi.New(a, agentapi.Options{Stderr: notices, Placeholders: placeholders{d.builder}})
+	d.runtime, err = agentapi.New(a, agentapi.Options{Stderr: notices, Placeholders: placeholders{d.builder}, OnMint: d.tokens.add})
 	if err != nil {
 		return nil, err
 	}
@@ -590,6 +598,9 @@ func (d *Daemon) sweepSessions(ctx context.Context) {
 			return
 		case <-t.C:
 		}
+		if d.tokens.prune() {
+			d.pusher.Trigger()
+		}
 		if gone, err := d.runtime.Sessions.Sweep(ctx); err != nil {
 			d.log.Warn("session sweep failed", "err", err)
 		} else if len(gone) > 0 {
@@ -623,7 +634,7 @@ func (d *Daemon) Info() Info {
 	defer cancel()
 	rep := d.app.Health.Run(ctx, true)
 	in := Info{PID: os.Getpid(), Version: version.Version, StartedAt: d.started, Addrs: d.Addrs(), Capture: d.capture,
-		Ready: d.sup.Ready() && d.dpReady.Load() && rep.Status == "ok"}
+		Ready: d.sup.Ready() && d.dpReady.Load() && rep.Status == "ok", Bypass: bypass(d.app.Config.Current())}
 	for k, v := range rep.Checks {
 		if v != "ok" {
 			if in.Problems == nil {

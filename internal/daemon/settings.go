@@ -64,6 +64,13 @@ var (
 		Description: "Base URL OpenAI Chat Completions and Responses requests are forwarded to after redaction.",
 		Validate:    httpURL,
 	})
+	// UpstreamChatGPT is where ChatGPT-signed-in Codex requests go.
+	UpstreamChatGPT = config.Register(config.Spec[string]{
+		Key:         "proxy.upstream.chatgpt",
+		Default:     "https://chatgpt.com",
+		Description: "Base URL requests to chatgpt.com (Codex signed in with ChatGPT, through the forward proxy) are forwarded to after redaction.",
+		Validate:    httpURL,
+	})
 	// ChainURL is an optional chained upstream for every route.
 	ChainURL = config.Register(config.Spec[string]{
 		Key:         "proxy.chain.url",
