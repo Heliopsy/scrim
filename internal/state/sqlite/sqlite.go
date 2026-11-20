@@ -286,3 +286,6 @@ func isUnique(err error) bool {
 	}
 	return false
 }
+
+// Location is the database path, for status.
+func (s *Store) Location() string { return s.path }
