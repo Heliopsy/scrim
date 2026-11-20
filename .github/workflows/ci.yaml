@@ -7,9 +7,14 @@ on:
 
 permissions: read-all
 
+# A new push to a pull request cancels the run for the previous one; pushes to
+# main always finish.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   go:
@@ -23,6 +28,9 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
+        with:
+          version: v2.15.0
       # Container-backed store tests run in their own job below.
       - run: go test -race -count=1 ./...
         env:
@@ -53,12 +61,14 @@ jobs:
     defaults:
       run:
         working-directory: dataplane
-    env:
-      CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       # rust-toolchain.toml pins the toolchain; rustup on the runner installs it.
-      - run: rustup show active-toolchain || rustup toolchain install
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          workspaces: dataplane
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
@@ -85,10 +95,72 @@ jobs:
     defaults:
       run:
         working-directory: dataplane
-    env:
-      CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - run: rustup show active-toolchain || rustup toolchain install
+      - run: rustup toolchain install
       # Fails, naming the measurement, when a p99 exceeds crates/scrim-llm/benches/budget.json.
       - run: cargo bench --locked -p scrim-llm --bench latency_gate
+
+  integration:
+    name: Boundary integration
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: rustup toolchain install
+        working-directory: dataplane
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          workspaces: dataplane
+          save-if: false
+      - run: cargo build --locked -p scrim-dataplane
+        working-directory: dataplane
+      - name: Launch the real data plane from Go
+        run: go test -race -count=1 -run TestRealDataPlane -v ./internal/dataplane/
+        env:
+          SCRIM_TEST_DATAPLANE: ${{ github.workspace }}/dataplane/target/debug/scrim-dataplane
+
+  proto:
+    name: Generated code up to date
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Ubuntu 24.04 ships protoc 3.21.12, the version the committed Go code
+      # names in its header.
+      - run: sudo apt-get update -q && sudo apt-get install -y -q protobuf-compiler just
+      - run: rustup toolchain install
+        working-directory: dataplane
+      - run: just proto-check
+
+  security:
+    name: Vulnerabilities, licences and secrets
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd  # v2.1.3
+        with:
+          manifest-path: dataplane/Cargo.toml
+          command: check advisories licenses bans sources
+      - name: gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -euo pipefail
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLo "$RUNNER_TEMP/$tarball" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$tarball"
+          echo "$GITLEAKS_SHA256  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --redact --no-banner .
