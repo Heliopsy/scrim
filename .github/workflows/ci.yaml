@@ -62,3 +62,19 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+
+  ntfy-e2e:
+    name: ntfy end-to-end
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Approve and deny through a local ntfy (rootless podman)
+        run: |
+          podman run -d --rm --name scrim-e2e-ntfy -p 127.0.0.1:18765:80 docker.io/binwiederhier/ntfy:v2.14.0 serve
+          for _ in $(seq 50); do curl -fsS http://127.0.0.1:18765/v1/health && break; sleep 0.2; done
+          SCRIM_TEST_NTFY_URL=http://127.0.0.1:18765 go test -race -count=1 -run TestEndToEndAgainstNtfy -v ./internal/notify/ntfy/
+      - if: always()
+        run: podman rm -f -v scrim-e2e-ntfy || true

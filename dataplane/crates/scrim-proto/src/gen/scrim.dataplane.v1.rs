@@ -170,6 +170,74 @@ pub struct Policy {
     /// continues.
     #[prost(bool, tag = "6")]
     pub break_glass: bool,
+    /// table is the rule set compiled from CEL into a decision table (design
+    /// D7, docs/policy.md "How the data plane decides"), in rule order. When it
+    /// is set, `rules`, `engine` and `compiled` are empty.
+    #[prost(message, repeated, tag = "7")]
+    pub table: ::prost::alloc::vec::Vec<TableRule>,
+    /// table_format is the version of the table semantics; a data plane that
+    /// does not implement it rejects the snapshot. Currently 1.
+    #[prost(uint32, tag = "8")]
+    pub table_format: u32,
+}
+/// TableRule is one rule in disjunctive normal form: it matches when any
+/// clause matches. The data plane evaluates every rule to match, no match or
+/// unknown, then for each effect in the order deny, ask, allow takes the
+/// first rule (in order) with that effect that is not a no-match: unknown
+/// sends the request to the control plane; otherwise deny denies, ask goes
+/// to the control plane, and allow allows unless control_plane is set. With
+/// no candidate, default_effect applies (ask goes to the control plane).
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TableRule {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(enumeration = "Effect", tag = "2")]
+    pub effect: i32,
+    /// control_plane marks an allow rule with side effects (it leaves a grant
+    /// behind); when it decides, the control plane is asked instead.
+    #[prost(bool, tag = "3")]
+    pub control_plane: bool,
+    /// clauses are alternatives; none means the rule never matches.
+    #[prost(message, repeated, tag = "4")]
+    pub clauses: ::prost::alloc::vec::Vec<Clause>,
+    /// reason is shown in approvals and audit.
+    #[prost(string, tag = "5")]
+    pub reason: ::prost::alloc::string::String,
+}
+/// Clause is a conjunction. Its result: false if any condition is false;
+/// otherwise unknown if residual; otherwise error if any condition errored;
+/// otherwise true. A rule is true if any clause is true, else unknown if any
+/// is unknown, else error if any errored, else false. A rule that errors
+/// counts as a match when its effect is deny or ask and as no match for
+/// allow.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Clause {
+    #[prost(message, repeated, tag = "1")]
+    pub conditions: ::prost::alloc::vec::Vec<Condition>,
+    /// residual: the clause also has parts only the control plane evaluates.
+    #[prost(bool, tag = "2")]
+    pub residual: bool,
+}
+/// Condition tests one request field.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Condition {
+    /// field is one of: op, provider, agent.id, agent.kind, agent.known,
+    /// agent.session, agent.labels, secret.ref, secret.name, secret.store,
+    /// secret.class, secret.labels, dest.host, dest.method, dest.path,
+    /// tool.name, tool.command. agent.known is "true" or "false".
+    #[prost(string, tag = "1")]
+    pub field: ::prost::alloc::string::String,
+    /// key selects an entry of a map field (agent.labels, secret.labels). Any
+    /// op but HAS_KEY on a missing key is an error.
+    #[prost(string, tag = "2")]
+    pub key: ::prost::alloc::string::String,
+    #[prost(enumeration = "ConditionOp", tag = "3")]
+    pub op: i32,
+    #[prost(string, repeated, tag = "4")]
+    pub values: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// negate inverts the result; an error stays an error.
+    #[prost(bool, tag = "5")]
+    pub negate: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PolicyRule {
@@ -302,7 +370,7 @@ pub struct Event {
     >,
 }
 /// PolicyRequest mirrors the control plane's policy request.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PolicyRequest {
     #[prost(string, tag = "1")]
     pub agent_id: ::prost::alloc::string::String,
@@ -322,8 +390,29 @@ pub struct PolicyRequest {
     pub path: ::prost::alloc::string::String,
     #[prost(string, tag = "9")]
     pub tool: ::prost::alloc::string::String,
+    /// The rest of the request attributes rules see (docs/policy.md).
+    #[prost(string, tag = "10")]
+    pub agent_kind: ::prost::alloc::string::String,
+    #[prost(string, tag = "11")]
+    pub session: ::prost::alloc::string::String,
+    #[prost(map = "string, string", tag = "12")]
+    pub agent_labels: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(string, tag = "13")]
+    pub store: ::prost::alloc::string::String,
+    #[prost(string, tag = "14")]
+    pub secret_class: ::prost::alloc::string::String,
+    #[prost(map = "string, string", tag = "15")]
+    pub secret_labels: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(string, tag = "16")]
+    pub command: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AskRequest {
     #[prost(uint32, tag = "1")]
     pub protocol: u32,
@@ -489,6 +578,54 @@ impl Effect {
             "EFFECT_DENY" => Some(Self::Deny),
             "EFFECT_ASK" => Some(Self::Ask),
             "EFFECT_ALLOW" => Some(Self::Allow),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ConditionOp {
+    /// invalid; rejects the snapshot
+    Unspecified = 0,
+    /// operand equals one of values
+    In = 1,
+    /// operand starts with values\[0\]
+    Prefix = 2,
+    /// operand ends with values\[0\]
+    Suffix = 3,
+    /// operand contains values\[0\]
+    Contains = 4,
+    /// operand matches glob values\[0\]
+    Glob = 5,
+    /// map field has key; never errors
+    HasKey = 6,
+}
+impl ConditionOp {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "CONDITION_OP_UNSPECIFIED",
+            Self::In => "CONDITION_OP_IN",
+            Self::Prefix => "CONDITION_OP_PREFIX",
+            Self::Suffix => "CONDITION_OP_SUFFIX",
+            Self::Contains => "CONDITION_OP_CONTAINS",
+            Self::Glob => "CONDITION_OP_GLOB",
+            Self::HasKey => "CONDITION_OP_HAS_KEY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CONDITION_OP_UNSPECIFIED" => Some(Self::Unspecified),
+            "CONDITION_OP_IN" => Some(Self::In),
+            "CONDITION_OP_PREFIX" => Some(Self::Prefix),
+            "CONDITION_OP_SUFFIX" => Some(Self::Suffix),
+            "CONDITION_OP_CONTAINS" => Some(Self::Contains),
+            "CONDITION_OP_GLOB" => Some(Self::Glob),
+            "CONDITION_OP_HAS_KEY" => Some(Self::HasKey),
             _ => None,
         }
     }

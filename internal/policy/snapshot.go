@@ -59,6 +59,8 @@ type SnapshotRule struct {
 	ControlPlane bool `json:"control_plane,omitempty"`
 	// Clauses are alternatives; no clauses means the rule never matches.
 	Clauses []Clause `json:"clauses"`
+	// Reason is the rule's reason, for audit events.
+	Reason string `json:"reason,omitempty"`
 }
 
 // Clause is a conjunction of conditions.
@@ -152,6 +154,7 @@ func (rs *RuleSet) Snapshot(version uint64, denyAll bool) Snapshot {
 			Name:         cr.rule.Name,
 			Decision:     cr.effect,
 			ControlPlane: cr.effect == Allow && cr.rule.Grant.TTL > 0,
+			Reason:       cr.rule.Reason,
 		}
 		if cr.ast == nil {
 			sr.Clauses = []Clause{{}}

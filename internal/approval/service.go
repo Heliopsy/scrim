@@ -463,6 +463,14 @@ func (s *Service) DecideToken(ctx context.Context, id, token string) (Outcome, e
 	return s.Decide(ctx, id, Decision{Approve: c.Action == ActionApprove, By: by, Via: "link"})
 }
 
+// SettleToken is [Service.DecideToken] without the outcome; it lets
+// notifiers that receive decisions (the webhook) settle through the same
+// token check as a phone button.
+func (s *Service) SettleToken(ctx context.Context, id, token string) error {
+	_, err := s.DecideToken(ctx, id, token)
+	return err
+}
+
 func (s *Service) auditRejectedToken(ctx context.Context, id string, cause error) {
 	now := s.o.Now()
 	_ = state.Apply(ctx, s.o.State, func(state.Tx) (state.Change, error) {

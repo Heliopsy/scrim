@@ -402,3 +402,38 @@ func TestConformanceVectors(t *testing.T) {
 		}
 	}
 }
+
+func TestSnapshotProtoRoundTrip(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "conformance.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c conformance
+	if err := json.Unmarshal(data, &c); err != nil {
+		t.Fatal(err)
+	}
+	back, err := SnapshotFromProto(c.Snapshot.Proto())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := json.Marshal(c.Snapshot)
+	b, _ := json.Marshal(back)
+	if !bytes.Equal(a, b) {
+		t.Fatalf("round trip changed the snapshot:\n%s\n%s", a, b)
+	}
+	bad := c.Snapshot.Proto()
+	bad.TableFormat = 2
+	if _, err := SnapshotFromProto(bad); err == nil {
+		t.Fatal("unknown format accepted")
+	}
+	bad = c.Snapshot.Proto()
+	bad.Table[0].Clauses[0].Conditions[0].Field = "agent.nmae"
+	if _, err := SnapshotFromProto(bad); err == nil {
+		t.Fatal("unknown field accepted")
+	}
+	bad = c.Snapshot.Proto()
+	bad.Table[0].Clauses[0].Conditions[0].Op = 0
+	if _, err := SnapshotFromProto(bad); err == nil {
+		t.Fatal("unspecified operator accepted")
+	}
+}
