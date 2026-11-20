@@ -185,8 +185,7 @@ func responsesToolTurn(command string, output any) []any {
 func req(api fp.API, body any, mode Escape, stream bool) Request {
 	h := http.Header{}
 	h.Set("Content-Type", "application/json")
-	switch api {
-	case fp.Anthropic:
+	if api == fp.Anthropic {
 		h.Set("Anthropic-Version", "2023-06-01")
 	}
 	return Request{API: api, Path: api.Path(), Header: h, Body: encode(body, mode), Stream: stream}
