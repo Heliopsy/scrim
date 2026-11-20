@@ -90,6 +90,28 @@ tokens of an agent at once. A revoked or expired token SHALL be refused on every
 - **WHEN** a revoked token is presented
 - **THEN** the call is refused and audited as a revoked credential
 
+### Requirement: Sessions are kept in the state backend
+
+The system SHALL store session tokens in the configured state backend, keeping only a hash of each
+token, and SHALL record creating and revoking a session in the audit log without the token or its
+hash. With a durable backend a session and its revocation SHALL survive a control plane restart;
+with the `memory` backend a restart SHALL end every session.
+
+#### Scenario: Restart with a durable backend
+
+- **WHEN** scrim with `state.backend: sqlite` restarts while a `scrim run` session is active
+- **THEN** the session's token is still accepted from its process tree after the restart
+
+#### Scenario: Revocation survives a restart
+
+- **WHEN** a session is revoked and scrim then restarts with a durable backend
+- **THEN** the token is refused as revoked
+
+#### Scenario: Restart with the memory backend
+
+- **WHEN** scrim with `state.backend: memory` restarts while a `scrim run` session is active
+- **THEN** the session's token is refused
+
 ### Requirement: Kubernetes service account identity
 
 The system SHALL identify in-cluster callers by projected service account tokens with a scrim-specific

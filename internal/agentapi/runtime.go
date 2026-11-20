@@ -17,6 +17,7 @@ import (
 	"github.com/heliopsy/scrim/internal/app"
 	"github.com/heliopsy/scrim/internal/entrypage"
 	"github.com/heliopsy/scrim/internal/identity"
+	"github.com/heliopsy/scrim/internal/identity/sessionstate"
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/version"
 )
@@ -73,7 +74,7 @@ func New(a *app.App, o Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	mgr := identity.NewManager(identity.NewMemorySessions(), identity.ManagerOptions{
+	mgr := identity.NewManager(sessionstate.New(a.State), identity.ManagerOptions{
 		DefaultTTL: SessionTTL.Get(cfg), MaxTTL: SessionMaxTTL.Get(cfg)})
 
 	entryLn, err := entrypage.Listen(EntryListen.Get(cfg))
