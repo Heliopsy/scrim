@@ -32,7 +32,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 3.2 Streaming restorer with per-block holdback, split placeholders and byte-identical thinking and signature content; verify: property test restore(redact(x)) and recorded stream fixtures
 - [x] 3.3 Fail-closed error path; verify: injected redaction or guard errors return the documented error and nothing reaches the fake upstream
 - [x] 3.4 Capture mode; verify: captured requests are byte-identical to what the fake upstream received
-- [ ] 3.5 Upstream chaining through caveman with redaction first; verify: caveman's store holds placeholders only, and placeholders survive compression in an end-to-end run
+- [x] 3.5 Upstream chaining through caveman with redaction first; verify: caveman's store holds placeholders only, and placeholders survive compression in an end-to-end run
 - [x] 3.6 Latency budget gate; verify: CI fails when p99 per request or per chunk exceeds the configured budget on the reference fixtures
 - [x] 3.7 Request target and headers redacted and guarded like the body, only `authorization` and `x-api-key` passed through; verify: the leak gate's `header` and `query` rows are redacted for every transform the guard decodes, and an end-to-end request with secrets in a custom header and a percent-encoded query parameter reaches the fake provider with placeholders only
 - [x] 3.8 Placeholders in header values leave in percent form (`%E2%9F%A6...%E2%9F%A7`), which resolves, restores percent-encoded and is read by the guard; verify: a header redacted or guard-repaired holds only visible ASCII and a fake provider that rejects obs-text accepts it
@@ -90,7 +90,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 ## 10. Credential injection
 
 - [x] 10.1 Host binding for credentials in configuration and policy; verify: a placeholder toward an unbound host is refused and audited
-- [ ] 10.2 HTTPS tool proxy with CA generation, rotation and trust installation; verify: injection works toward bound hosts for curl, git and a Node client
+- [x] 10.2 HTTPS tool proxy with CA generation, rotation and trust installation; verify: injection works toward bound hosts for curl, git and a Node client
 - [x] 10.2a User-declared placeholders mapped to references and bound hosts; verify: a config file with `SCRIM_ACME_KEY` works against a fake API and duplicate declarations fail validation
 - [x] 10.2b Substitution in URL, headers, cookies, form, JSON and multipart bodies with decompression, length, digest and re-signing; verify: gzip, chunked and HTTP/2 fixtures reach the fake upstream valid and unsupported encodings are refused
 - [x] 10.2c Redaction of tool-proxy responses, including streamed and compressed bodies; verify: an echoing fake API and a create-resource fake return only placeholders to the agent
