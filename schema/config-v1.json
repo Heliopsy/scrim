@@ -251,29 +251,6 @@
       },
       "type": "object"
     },
-    "tracing": {
-      "additionalProperties": false,
-      "properties": {
-        "endpoint": {
-          "default": "",
-          "description": "OTLP/HTTP collector URL for traces, for example http://127.0.0.1:4318. Empty disables export; incoming W3C trace context is still propagated.",
-          "type": "string",
-          "x-scrim-env": "SCRIM_TRACING_ENDPOINT",
-          "x-scrim-flag": "--tracing-endpoint",
-          "x-scrim-restart-required": true,
-          "x-scrim-weakening": false
-        },
-        "sample-ratio": {
-          "default": 1,
-          "description": "Fraction of new root traces sampled, 0 to 1. A sampled incoming parent is always followed.",
-          "type": "number",
-          "x-scrim-env": "SCRIM_TRACING_SAMPLE_RATIO",
-          "x-scrim-restart-required": true,
-          "x-scrim-weakening": false
-        }
-      },
-      "type": "object"
-    },
     "stores": {
       "additionalProperties": {
         "properties": {
@@ -315,6 +292,29 @@
       "x-scrim-collection": true,
       "x-scrim-env": "SCRIM_STORES",
       "x-scrim-restart-required": true
+    },
+    "tracing": {
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "default": "",
+          "description": "OTLP/HTTP collector URL for traces, for example http://127.0.0.1:4318. Empty disables export; incoming W3C trace context is still propagated.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_TRACING_ENDPOINT",
+          "x-scrim-flag": "--tracing-endpoint",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "sample-ratio": {
+          "default": 1,
+          "description": "Fraction of new root traces sampled, 0 to 1. A sampled incoming parent is always followed.",
+          "type": "number",
+          "x-scrim-env": "SCRIM_TRACING_SAMPLE_RATIO",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
     }
   },
   "required": [

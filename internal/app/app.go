@@ -23,9 +23,9 @@ import (
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/stores"
-	"github.com/heliopsy/scrim/internal/version"
 	"github.com/heliopsy/scrim/internal/stores/refresh"
 	"github.com/heliopsy/scrim/internal/stores/storeconfig"
+	"github.com/heliopsy/scrim/internal/version"
 )
 
 // App is the running control plane's components.
