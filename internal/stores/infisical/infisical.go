@@ -63,7 +63,7 @@ var (
 )
 
 // New builds an adapter from its configuration. It validates the options and
-// resolves the client secret but does not contact Infisical.
+// does not resolve credentials or contact Infisical.
 func New(ctx context.Context, inst stores.Instance) (stores.Adapter, error) {
 	s, err := decodeSettings(ctx, inst)
 	if err != nil {
@@ -71,7 +71,6 @@ func New(ctx context.Context, inst stores.Instance) (stores.Adapter, error) {
 	}
 	c, err := newClient(s)
 	if err != nil {
-		s.clientSecret.Wipe()
 		return nil, &stores.Error{Store: inst.Name, Op: "configure", Kind: stores.ErrInvalidRef, Detail: err.Error()}
 	}
 	return &Adapter{name: inst.Name, s: s, c: c}, nil

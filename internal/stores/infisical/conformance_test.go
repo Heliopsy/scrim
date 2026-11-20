@@ -13,22 +13,20 @@ import (
 	"github.com/heliopsy/scrim/internal/stores/storetest"
 )
 
-// runConformance runs the shared suite. ValueFidelity is replaced by
-// checkFidelity: Infisical trims leading and trailing whitespace from every
-// value, which the adapter refuses to write rather than store a changed
-// value, so the suite's whitespace sample cannot be seeded.
+// runConformance runs the shared suite, then checkFidelity. Infisical trims
+// surrounding whitespace from every value, so the adapter refuses such
+// writes rather than store a changed value; Unstorable tells the suite.
 func runConformance(t *testing.T, f storetest.Factory) {
 	t.Helper()
-	for _, c := range storetest.Cases() {
-		t.Run(c.Name, func(t *testing.T) {
-			if c.Name == "ValueFidelity" {
-				h := storetest.Prepare(t, f)
-				checkFidelity(t, h.Adapter, h.Scheme, h.Prefix)
-				return
-			}
-			storetest.Check(t, f, c)
-		})
-	}
+	storetest.Run(t, func(tb storetest.TB) storetest.Harness {
+		h := f(tb)
+		h.Unstorable = trimmedByInfisical
+		return h
+	})
+	t.Run("FidelityExtra", func(t *testing.T) {
+		h := storetest.Prepare(t, f)
+		checkFidelity(t, h.Adapter, h.Scheme, h.Prefix)
+	})
 }
 
 func checkFidelity(t *testing.T, a stores.Adapter, scheme, prefix string) {
@@ -69,3 +67,5 @@ func checkFidelity(t *testing.T, a stores.Adapter, scheme, prefix string) {
 		}
 	}
 }
+
+func trimmedByInfisical(p string) bool { return !storable(secret.FromString(p)) }

@@ -158,19 +158,32 @@ func TestOptions(t *testing.T) {
 			t.Fatalf("New: %v", err)
 		}
 	})
-	t.Run("unresolvable secret stops start-up", func(t *testing.T) {
+	// Credentials resolve at the first login, so building an adapter reads
+	// no credential source; the config loader stops start-up on an
+	// unresolvable reference before any adapter exists.
+	t.Run("unresolvable secret refuses the first login", func(t *testing.T) {
 		inst := ok(nil)
 		inst.Resolve = resolver(nil)
-		_, err := New(t.Context(), inst)
-		if err == nil || !strings.Contains(err.Error(), "env:INF_SECRET") {
-			t.Fatalf("New: %v, want it to name the reference", err)
+		a, err := New(t.Context(), inst)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		defer func() { _ = a.Close() }()
+		_, err = a.Read(t.Context(), stores.MustParseRef("inf://proj/dev/X"))
+		if !errors.Is(err, stores.ErrPermission) || !strings.Contains(err.Error(), "env:INF_SECRET") {
+			t.Fatalf("Read: %v, want a permission error naming the reference", err)
 		}
 	})
 	t.Run("empty secret is refused", func(t *testing.T) {
 		inst := ok(nil)
 		inst.Resolve = resolver(map[string]string{"env:INF_SECRET": ""})
-		if _, err := New(t.Context(), inst); err == nil || !strings.Contains(err.Error(), "empty") {
+		a, err := New(t.Context(), inst)
+		if err != nil {
 			t.Fatalf("New: %v", err)
+		}
+		defer func() { _ = a.Close() }()
+		if _, err := a.Read(t.Context(), stores.MustParseRef("inf://proj/dev/X")); err == nil || !strings.Contains(err.Error(), "empty") {
+			t.Fatalf("Read: %v", err)
 		}
 	})
 	t.Run("dotted keys decode like nested ones", func(t *testing.T) {
@@ -262,14 +275,14 @@ func TestCredentials(t *testing.T) {
 	f := newFake(t)
 	a := newAdapter(t, f, nil)
 	defer func() { _ = a.Close() }()
-	if got := a.Credentials(); len(got) != 1 || plain(t, got[0]) != f.clientSecret {
-		t.Fatalf("before login: %d credentials", len(got))
+	if got := a.Credentials(); len(got) != 0 {
+		t.Fatalf("before login: %d credentials, want none resolved yet", len(got))
 	}
 	if err := a.Health(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	got := a.Credentials()
-	if len(got) != 2 || !strings.HasPrefix(plain(t, got[1]), "tok-") {
+	if len(got) != 2 || plain(t, got[0]) != f.clientSecret || !strings.HasPrefix(plain(t, got[1]), "tok-") {
 		t.Fatalf("after login: %d credentials", len(got))
 	}
 	// Copies: wiping them leaves the adapter working.

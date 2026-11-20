@@ -55,15 +55,17 @@ type errorBody struct {
 // uses. It holds the client secret and the current access token as
 // secret.Value and logs in again when the token nears expiry or is refused.
 type client struct {
-	base         *url.URL
-	http         *http.Client
+	base     *url.URL
+	http     *http.Client
+	settings *settings
+	now      func() time.Time
+
+	mu sync.Mutex
+	// clientID and clientSecret are resolved at the first login.
 	clientID     string
 	clientSecret secret.Value
-	now          func() time.Time
-
-	mu     sync.Mutex
-	token  secret.Value
-	expiry time.Time
+	token        secret.Value
+	expiry       time.Time
 
 	projMu   sync.Mutex
 	projects map[string]string // slug -> id
@@ -79,12 +81,11 @@ func newClient(s *settings) (*client, error) {
 		tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	}
 	return &client{
-		base:         s.address,
-		http:         &http.Client{Transport: tr, Timeout: s.timeout},
-		clientID:     s.clientID,
-		clientSecret: s.clientSecret,
-		now:          time.Now,
-		projects:     map[string]string{},
+		base:     s.address,
+		http:     &http.Client{Transport: tr, Timeout: s.timeout},
+		settings: s,
+		now:      time.Now,
+		projects: map[string]string{},
 	}, nil
 }
 
@@ -242,6 +243,13 @@ type loginResponse struct {
 }
 
 func (c *client) loginLocked(ctx context.Context) (secret.Value, error) {
+	if c.clientSecret.IsZero() {
+		id, sec, err := c.settings.resolveCredentials(ctx)
+		if err != nil {
+			return secret.Value{}, &apiError{kind: stores.ErrPermission, msg: err.Error()}
+		}
+		c.clientID, c.clientSecret = id, sec
+	}
 	buf, err := wire.AppendJSON(nil, map[string]string{"clientId": c.clientID})
 	if err != nil {
 		return secret.Value{}, &apiError{kind: stores.ErrInvalidRef, msg: "cannot encode login", cause: err}
@@ -297,9 +305,12 @@ func (c *client) loginLocked(ctx context.Context) (secret.Value, error) {
 
 // credentials returns copies of the client secret and the current token.
 func (c *client) credentials() []secret.Value {
-	out := []secret.Value{copyValue(c.clientSecret)}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	var out []secret.Value
+	if !c.clientSecret.IsZero() {
+		out = append(out, copyValue(c.clientSecret))
+	}
 	if !c.token.IsZero() {
 		out = append(out, copyValue(c.token))
 	}
@@ -308,7 +319,9 @@ func (c *client) credentials() []secret.Value {
 
 func (c *client) close() {
 	c.dropToken()
+	c.mu.Lock()
 	c.clientSecret.Wipe()
+	c.mu.Unlock()
 	c.http.CloseIdleConnections()
 }
 

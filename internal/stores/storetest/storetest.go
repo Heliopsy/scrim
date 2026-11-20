@@ -85,6 +85,12 @@ type Harness struct {
 	// path outside scrim's policy). When set, the suite checks the refusal
 	// is ErrPermission, names the reference and carries no value.
 	Reject func(t TB) stores.Ref
+	// Unstorable reports values the store cannot hold byte for byte (for
+	// example Infisical trims surrounding whitespace). For those the suite
+	// requires Write to refuse with ErrUnsupported and store nothing,
+	// instead of storing a changed value that would no longer match what
+	// scrim redacts.
+	Unstorable func(value string) bool
 	// WatchTimeout bounds how long a watch may take to report a change;
 	// default 10s.
 	WatchTimeout time.Duration
@@ -414,6 +420,19 @@ func valueFidelity(t TB, h *Harness) {
 	for i, p := range trickyValues(t) {
 		ref := h.ref(fmt.Sprintf("fidelity-%d", i))
 		field := h.names("value")[0]
+		if h.Unstorable != nil && h.Unstorable(p) {
+			if !h.can(stores.CapWrite) {
+				continue
+			}
+			_, err := h.Adapter.Write(ctx, ref, map[string]secret.Value{field: secret.FromString(p)}, stores.WriteOptions{})
+			wantKind(t, h, err, stores.ErrUnsupported, fmt.Sprintf("Write of unstorable value %d", i))
+			noLeak(t, "unstorable value error", err, []string{p})
+			if s, err := h.Adapter.Read(ctx, ref); err == nil {
+				s.Wipe()
+				t.Errorf("an unstorable value %d was stored anyway", i)
+			}
+			continue
+		}
 		h.seed(t, ref, map[string]secret.Value{field: secret.FromString(p)})
 		got, err := h.Adapter.Read(ctx, ref.WithField(field))
 		if err != nil {

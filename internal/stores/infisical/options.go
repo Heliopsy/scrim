@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/internal/options"
@@ -42,8 +43,9 @@ const (
 // settings is the decoded, validated configuration of one instance.
 type settings struct {
 	address       *url.URL
-	clientID      string
-	clientSecret  secret.Value
+	idRef         config.SecretRef
+	secretRef     config.SecretRef
+	resolve       func(context.Context, config.SecretRef) (secret.Value, error)
 	timeout       time.Duration
 	caPEM         []byte
 	watchInterval time.Duration
@@ -93,32 +95,39 @@ func decodeSettings(ctx context.Context, inst stores.Instance) (*settings, error
 	if ref == "" {
 		d.Errorf("option %s is required", optClientSecret)
 	}
-	// The client secret is resolved only once everything else is valid,
-	// so a bad configuration does not read credential sources.
 	if err := d.Finish(); err != nil {
 		return nil, err
 	}
 	if inst.Resolve == nil {
 		return nil, fmt.Errorf("option %s: no secret resolver configured", optClientSecret)
 	}
-	id, err := inst.Resolve(ctx, idRef)
+	// Credentials are resolved at the first login, not here: building an
+	// adapter (for `scrim config validate`, for instance) reads no
+	// credential source and contacts nothing.
+	s.idRef, s.secretRef, s.resolve = idRef, ref, inst.Resolve
+	return s, nil
+}
+
+// resolveCredentials resolves the client ID and secret references. Errors
+// name the option and the reference form, never a value.
+func (s *settings) resolveCredentials(ctx context.Context) (string, secret.Value, error) {
+	id, err := s.resolve(ctx, s.idRef)
 	if err != nil {
-		return nil, fmt.Errorf("option %s: %w", optClientID, err)
+		return "", secret.Value{}, fmt.Errorf("option %s: cannot resolve %s: %w", optClientID, s.idRef, err)
 	}
-	_ = id.Expose(func(b []byte) error { s.clientID = string(b); return nil })
+	var clientID string
+	_ = id.Expose(func(b []byte) error { clientID = string(b); return nil })
 	id.Wipe()
-	if s.clientID == "" {
-		return nil, fmt.Errorf("option %s resolved to an empty value", optClientID)
+	if clientID == "" {
+		return "", secret.Value{}, fmt.Errorf("option %s resolved to an empty value", optClientID)
 	}
-	v, err := inst.Resolve(ctx, ref)
+	v, err := s.resolve(ctx, s.secretRef)
 	if err != nil {
-		// The resolver's error names the reference, never a value.
-		return nil, fmt.Errorf("option %s: %w", optClientSecret, err)
+		return "", secret.Value{}, fmt.Errorf("option %s: cannot resolve %s: %w", optClientSecret, s.secretRef, err)
 	}
 	if v.IsZero() {
 		v.Wipe()
-		return nil, fmt.Errorf("option %s resolved to an empty value", optClientSecret)
+		return "", secret.Value{}, fmt.Errorf("option %s resolved to an empty value", optClientSecret)
 	}
-	s.clientSecret = v
-	return s, nil
+	return clientID, v, nil
 }

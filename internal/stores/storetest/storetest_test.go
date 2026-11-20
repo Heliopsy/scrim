@@ -426,3 +426,28 @@ func TestCleanAdapterPassesEveryCaseInRecorder(t *testing.T) {
 		}
 	}
 }
+
+// TestUnstorableMustBeRefused: a store that silently changes a value it
+// cannot hold fails ValueFidelity even when the harness declares it.
+func TestUnstorableMustBeRefused(t *testing.T) {
+	trims := func(p string) bool { return strings.TrimSpace(p) != p }
+	f := func(tb storetest.TB) storetest.Harness {
+		h := memHarness(func(s *memstore.Store) stores.Adapter {
+			b := &broken{Store: s}
+			b.write = func(ctx context.Context, ref stores.Ref, f map[string]secret.Value, o stores.WriteOptions) (stores.Metadata, error) {
+				out := map[string]secret.Value{}
+				for k, v := range f {
+					out[k] = secret.FromString(strings.TrimSpace(plainOf(v)))
+				}
+				return s.Write(ctx, ref, out, o)
+			}
+			return b
+		})(tb)
+		h.Seed = nil
+		h.Unstorable = trims
+		return h
+	}
+	if failures := run(t, f, "ValueFidelity"); len(failures) == 0 {
+		t.Fatal("ValueFidelity passed against a store that trims unstorable values")
+	}
+}
