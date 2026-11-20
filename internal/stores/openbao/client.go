@@ -202,7 +202,7 @@ func transportDetail(ctx context.Context, err error) string {
 // classify maps an OpenBao status to an error kind and the store's own
 // message. OpenBao's messages for KV operations do not echo request data,
 // but callers still pass them through wire.SafeDetail.
-func classify(status int, body []byte) (error, string) {
+func classify(status int, body []byte) (kind error, detail string) { //nolint:staticcheck // kind is a sentinel, not a failure of classify
 	var ae apiError
 	_ = json.Unmarshal(body, &ae)
 	msg := strings.Join(ae.Errors, "; ")

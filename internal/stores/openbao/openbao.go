@@ -65,9 +65,9 @@ type Adapter struct {
 
 // New builds an adapter for inst without contacting the store.
 func New(inst stores.Instance) (*Adapter, error) {
-	opts, err := ParseOptions(inst.Options)
+	opts, err := parseOptions(inst.Name, inst.Options)
 	if err != nil {
-		return nil, fmt.Errorf("store %s: %w", inst.Name, err)
+		return nil, err
 	}
 	if inst.Resolve == nil {
 		return nil, fmt.Errorf("store %s: no credential resolver", inst.Name)
@@ -307,11 +307,9 @@ func (a *Adapter) listFolder(ctx context.Context, prefix stores.Ref, mount, fold
 		return err
 	}
 	for _, k := range keys {
-		child := k
+		child := strings.TrimSuffix(k, "/")
 		if folder != "" {
-			child = folder + "/" + strings.TrimSuffix(k, "/")
-		} else {
-			child = strings.TrimSuffix(k, "/")
+			child = folder + "/" + child
 		}
 		if strings.HasSuffix(k, "/") {
 			if err := a.listFolder(ctx, prefix, mount, child, out, depth+1); err != nil {

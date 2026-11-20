@@ -35,6 +35,10 @@ func newTest(t *testing.T, srv *httptest.Server, opts map[string]any, creds map[
 	t.Helper()
 	o := map[string]any{"address": srv.URL, "auth.method": "token", "auth.token": "test:token", "timeout": "2s"}
 	for k, v := range opts {
+		if v == nil {
+			delete(o, k)
+			continue
+		}
 		o[k] = v
 	}
 	if creds == nil {
@@ -64,7 +68,7 @@ func TestParseOptions(t *testing.T) {
 		t.Fatal("invalid options accepted")
 	}
 	msg := err.Error()
-	for _, want := range []string{`"watch.intervall"`, `"watch.interval"`, `"auth.approle.secret-id" is required`, `"timeout"`} {
+	for _, want := range []string{"watch.intervall", "did you mean watch.interval", "auth.approle.secret-id is required", "option timeout"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q does not mention %s", msg, want)
 		}

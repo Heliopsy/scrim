@@ -296,10 +296,9 @@ func TestUnchangedVersionsAreNotReadAgain(t *testing.T) {
 // spying checks the redaction set while the store handles a write.
 type spying struct {
 	*memstore.Store
-	r       *refresh.Refresher
-	during  map[string]refresh.Source
-	refuse  bool
-	written chan struct{}
+	r      *refresh.Refresher
+	during map[string]refresh.Source
+	refuse bool
 }
 
 func (s *spying) Write(ctx context.Context, ref stores.Ref, f map[string]secret.Value, o stores.WriteOptions) (stores.Metadata, error) {

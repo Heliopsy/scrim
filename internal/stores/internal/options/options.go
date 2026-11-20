@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/heliopsy/scrim/internal/config"
 )
 
 // Decoder reads options for one store instance.
@@ -71,12 +73,21 @@ func (d *Decoder) String(key, def string) string {
 	if !ok {
 		return def
 	}
-	s, ok := v.(string)
-	if !ok {
-		d.fail(key, "a string")
-		return def
+	switch s := v.(type) {
+	case string:
+		return s
+	case config.SecretRef:
+		return string(s)
 	}
-	return s
+	d.fail(key, "a string")
+	return def
+}
+
+// SecretRef returns a secret-valued option in reference form (`env:NAME`,
+// `file:/path`, a store reference or a literal), or "" when unset. The
+// value is resolved later through stores.Instance.Resolve.
+func (d *Decoder) SecretRef(key string) config.SecretRef {
+	return config.SecretRef(d.String(key, ""))
 }
 
 // Bool returns a boolean option, or def when unset.
