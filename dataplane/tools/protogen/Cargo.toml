@@ -1,0 +1,16 @@
+# Regenerates dataplane/crates/scrim-proto/src/gen from proto/. Run through
+# `just proto`. It is its own workspace so the data plane build never compiles
+# the code generator.
+[package]
+name = "scrim-protogen"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+
+[workspace]
+
+[dependencies]
+protox = "0.10.0"
+tonic-prost-build = "0.14.9"
+prost-build = "0.14.6"

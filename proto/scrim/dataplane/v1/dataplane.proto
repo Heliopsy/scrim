@@ -1,0 +1,338 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// The boundary between the scrim control plane (Go) and data plane (Rust),
+// design D12.
+//
+// Transport: gRPC over one end of a socketpair the control plane creates and
+// the data plane inherits (D11). The data plane is the gRPC server; the
+// control plane is the only client. Nothing else can reach the socket.
+//
+// Off the hot path: the control plane pushes versioned snapshots and the data
+// plane decides allow and deny locally. Only Asks waits on the control plane,
+// and only for requests a rule sends to a human.
+//
+// Versioning: every top-level message carries `protocol` as field 1. Each side
+// refuses a message whose protocol differs from its own PROTOCOL_VERSION
+// (status FAILED_PRECONDITION), and the control plane refuses to start a data
+// plane whose Hello reports a different one. A change that an older peer
+// would misread bumps PROTOCOL_VERSION; both sides and their tests change in
+// the same commit.
+//
+// Secrets: ValueEntry.value and PlaceholderKey.key are the only fields that
+// hold secret material. Generated debug printers for those messages are
+// replaced by redacting ones on both sides; neither may be logged, echoed in
+// an error or copied into an event.
+syntax = "proto3";
+
+package scrim.dataplane.v1;
+
+option go_package = "github.com/heliopsy/scrim/internal/dataplane/dataplanev1;dataplanev1";
+
+// ProtocolVersion is the boundary protocol version.
+enum ProtocolVersion {
+  PROTOCOL_VERSION_UNSPECIFIED = 0;
+  // PROTOCOL_VERSION_CURRENT is the version both sides of this build speak.
+  PROTOCOL_VERSION_CURRENT = 1;
+}
+
+service DataPlane {
+  // Hello is the first call on a new connection. The data plane answers with
+  // its own protocol and build; the control plane stops it on a mismatch.
+  rpc Hello(HelloRequest) returns (HelloResponse);
+
+  // ApplySnapshot replaces the data plane's whole configuration atomically.
+  // A snapshot whose version is not greater than the applied one, or that
+  // fails validation, is rejected and the previous one stays in force.
+  rpc ApplySnapshot(Snapshot) returns (ApplySnapshotResponse);
+
+  // Events streams audit-relevant events in batches until the connection
+  // closes. There is one subscriber, the control plane.
+  rpc Events(EventsRequest) returns (stream EventBatch);
+
+  // Asks carries "ask" decisions. The control plane opens the call once; the
+  // data plane sends an AskRequest for each held operation and the control
+  // plane answers each with an AskAnswer carrying the same id. An operation
+  // with no answer by its deadline, or when the call ends, is denied.
+  rpc Asks(stream AskAnswer) returns (stream AskRequest);
+
+  // Status reports readiness and what is applied, for health and scrim status.
+  rpc Status(StatusRequest) returns (StatusResponse);
+}
+
+message HelloRequest {
+  uint32 protocol = 1;
+  // control_plane_version is the scrim build version, for logs.
+  string control_plane_version = 2;
+}
+
+message HelloResponse {
+  uint32 protocol = 1;
+  // data_plane_version is the scrim-dataplane build version.
+  string data_plane_version = 2;
+  // pid is the data plane's process id as it sees itself.
+  uint32 pid = 3;
+  // applied_snapshot_version is 0 until a snapshot is applied. A restarted
+  // data plane always reports 0, so the control plane pushes again.
+  uint64 applied_snapshot_version = 4;
+  // memory_locked reports whether mlockall succeeded.
+  bool memory_locked = 5;
+  // dumpable is false when core dumps and ptrace attach are disabled.
+  bool dumpable = 6;
+}
+
+// Snapshot is everything the data plane needs to serve traffic.
+message Snapshot {
+  uint32 protocol = 1;
+  // version increases with every snapshot the control plane builds.
+  uint64 version = 2;
+  // values is the value dictionary: every known secret value to redact and,
+  // for credentials, to inject toward bound hosts.
+  repeated ValueEntry values = 3;
+  // placeholder_keys are the HMAC keys placeholders are derived with (D3).
+  // Exactly one is current; older ones keep resolving.
+  repeated PlaceholderKey placeholder_keys = 4;
+  // policy is the compiled policy the data plane decides with.
+  Policy policy = 5;
+  // routes map incoming provider traffic to upstreams.
+  repeated Route routes = 6;
+  // listeners are the sockets the data plane serves.
+  repeated Listener listeners = 7;
+  // redaction holds matcher settings.
+  RedactionSettings redaction = 8;
+}
+
+// ValueClass decides how a value is restored (D5).
+enum ValueClass {
+  // VALUE_CLASS_UNSPECIFIED is treated as CREDENTIAL, the stricter class.
+  VALUE_CLASS_UNSPECIFIED = 0;
+  // VALUE_CLASS_CREDENTIAL is never restored into commands, files or tool
+  // arguments; it is injected only on connections to its bound hosts.
+  VALUE_CLASS_CREDENTIAL = 1;
+  // VALUE_CLASS_DISPLAY may be restored under the per-tool restore policy.
+  VALUE_CLASS_DISPLAY = 2;
+}
+
+message ValueEntry {
+  // ref is the store reference the value was read from, for example
+  // `bao://kv/agents/github#token`. Safe to log.
+  string ref = 1;
+  // slug is the reference slug placeholders carry (`scrim:<slug>:<hmac>`).
+  string slug = 2;
+  // value is the secret. Never logged; wiped on both sides after use.
+  bytes value = 3;
+  ValueClass class = 4;
+  // bound_hosts are the hosts (exact or `*.suffix`) a credential may be
+  // injected toward. Empty means nowhere.
+  repeated string bound_hosts = 5;
+  // name is the catalog name, if the secret has one.
+  string name = 6;
+  // store is the store instance the value came from.
+  string store = 7;
+}
+
+message PlaceholderKey {
+  // version is embedded in placeholders derived with this key.
+  uint32 version = 1;
+  // key is the HMAC key. Secret.
+  bytes key = 2;
+  // current marks the key new placeholders are derived with.
+  bool current = 3;
+}
+
+// Effect is a policy decision. The zero value denies.
+enum Effect {
+  EFFECT_UNSPECIFIED = 0;  // treated as deny
+  EFFECT_DENY = 1;
+  EFFECT_ASK = 2;
+  EFFECT_ALLOW = 3;
+}
+
+message Policy {
+  // version identifies the policy the control plane compiled.
+  uint64 version = 1;
+  // engine names the format of `compiled`, for example `cel/v1`. Empty when
+  // only `rules` is used.
+  string engine = 2;
+  // compiled is the engine's opaque program. A data plane that does not know
+  // `engine` rejects the snapshot.
+  bytes compiled = 3;
+  // rules is the structured form for simple allow, deny and ask rules,
+  // evaluated with deny over ask over allow.
+  repeated PolicyRule rules = 4;
+  // default_effect applies when no rule matches.
+  Effect default_effect = 5;
+  // break_glass denies every injection, restore and ask while redaction
+  // continues.
+  bool break_glass = 6;
+}
+
+message PolicyRule {
+  string name = 1;
+  Effect effect = 2;
+  // Each list holds glob patterns (`*` matches within a segment, `**`
+  // across); an empty list matches anything. A rule matches when every
+  // non-empty list has a match.
+  repeated string agents = 3;
+  repeated string actions = 4;
+  repeated string refs = 5;
+  repeated string providers = 6;
+  repeated string hosts = 7;
+  repeated string tools = 8;
+  // reason is shown in approvals and audit.
+  string reason = 9;
+}
+
+message Route {
+  // name identifies the route in events and status.
+  string name = 1;
+  // provider selects the codec: `anthropic`, `openai`, `gemini`, ...
+  string provider = 2;
+  // upstream is the base URL requests are forwarded to, possibly another
+  // proxy in a chain.
+  string upstream = 3;
+  // hosts are the provider host names this route serves in forward-proxy
+  // and transparent modes.
+  repeated string hosts = 4;
+  // path_prefix selects the route on a base-URL listener.
+  string path_prefix = 5;
+}
+
+enum ListenerKind {
+  LISTENER_KIND_UNSPECIFIED = 0;
+  LISTENER_KIND_BASE_URL = 1;       // plain HTTP base URL for agents
+  LISTENER_KIND_UNIX = 2;           // base URL on a Unix socket
+  LISTENER_KIND_FORWARD_PROXY = 3;  // HTTP CONNECT proxy
+  LISTENER_KIND_TRANSPARENT = 4;    // original-destination, routed by SNI
+  LISTENER_KIND_TOOL_PROXY = 5;     // HTTPS tool proxy with credential injection
+}
+
+message Listener {
+  string name = 1;
+  ListenerKind kind = 2;
+  // address is `host:port` or a Unix socket path.
+  string address = 3;
+}
+
+message RedactionSettings {
+  // min_value_length is the shortest value matched in free text; shorter
+  // values are matched only in exact and encoded forms.
+  uint32 min_value_length = 1;
+}
+
+message ApplySnapshotResponse {
+  uint32 protocol = 1;
+  // applied_version is the version now in force.
+  uint64 applied_version = 2;
+  // value_count is how many values the dictionary holds after the apply.
+  uint32 value_count = 3;
+}
+
+message EventsRequest {
+  uint32 protocol = 1;
+}
+
+message EventBatch {
+  uint32 protocol = 1;
+  repeated Event events = 2;
+  // dropped counts events lost since the previous batch because the control
+  // plane did not read fast enough. Never silently zero.
+  uint64 dropped = 3;
+}
+
+enum EventKind {
+  EVENT_KIND_UNSPECIFIED = 0;
+  EVENT_KIND_REDACTION = 1;      // values replaced in an outbound request
+  EVENT_KIND_GUARD_REPAIR = 2;   // the guard repaired a request
+  EVENT_KIND_GUARD_REFUSAL = 3;  // the guard withheld a request
+  EVENT_KIND_DECISION = 4;       // a policy decision taken locally
+  EVENT_KIND_INJECTION = 5;      // a credential injected toward a host
+  EVENT_KIND_RESTORE = 6;        // a placeholder resolved into a tool argument
+  EVENT_KIND_DETECTOR_HIT = 7;   // a fallback detector matched
+  EVENT_KIND_ERROR = 8;          // a request failed closed
+}
+
+// Event is metadata only: it names references and placeholders, never a
+// value.
+message Event {
+  // seq increases per data plane process.
+  uint64 seq = 1;
+  // time_unix_nano is when it happened.
+  int64 time_unix_nano = 2;
+  EventKind kind = 3;
+  string request_id = 4;
+  string agent_id = 5;
+  string provider = 6;
+  string ref = 7;
+  string rule = 8;
+  Effect effect = 9;
+  // target is the destination host, tool or command.
+  string target = 10;
+  string reason = 11;
+  // count is how many occurrences the event covers (redactions in a body).
+  uint32 count = 12;
+  // snapshot_version is the snapshot in force.
+  uint64 snapshot_version = 13;
+  map<string, string> attrs = 14;
+}
+
+// PolicyRequest mirrors the control plane's policy request.
+message PolicyRequest {
+  string agent_id = 1;
+  string action = 2;
+  string ref = 3;
+  string name = 4;
+  string provider = 5;
+  string host = 6;
+  string method = 7;
+  string path = 8;
+  string tool = 9;
+}
+
+message AskRequest {
+  uint32 protocol = 1;
+  // id is unique per data plane process; the answer echoes it.
+  uint64 id = 2;
+  PolicyRequest request = 3;
+  // rule and reason come from the rule that asked.
+  string rule = 4;
+  string reason = 5;
+  // deadline_unix_nano is when the data plane denies without an answer.
+  int64 deadline_unix_nano = 6;
+}
+
+message AskAnswer {
+  uint32 protocol = 1;
+  uint64 id = 2;
+  // effect is ALLOW or DENY; anything else denies.
+  Effect effect = 3;
+  string reason = 4;
+  // grant_id and grant_expires_unix_nano describe the grant an approval
+  // created, so the data plane can let matching requests through until it
+  // expires without asking again.
+  string grant_id = 5;
+  int64 grant_expires_unix_nano = 6;
+}
+
+message StatusRequest {
+  uint32 protocol = 1;
+}
+
+message StatusResponse {
+  uint32 protocol = 1;
+  // ready is true once a snapshot is applied and every listener is bound.
+  bool ready = 2;
+  uint64 applied_snapshot_version = 3;
+  uint32 value_count = 4;
+  bool memory_locked = 5;
+  bool dumpable = 6;
+  repeated ListenerStatus listeners = 7;
+  string data_plane_version = 8;
+}
+
+message ListenerStatus {
+  string name = 1;
+  string address = 2;
+  bool bound = 3;
+  // error says why the listener is not bound.
+  string error = 4;
+}
