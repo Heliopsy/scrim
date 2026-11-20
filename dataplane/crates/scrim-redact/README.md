@@ -104,8 +104,8 @@ time.
 **Guard (`guard.rs`).** Shares no matching code with the redactor and works the other way round:
 it decodes the bytes into views and searches the raw values there, ASCII case-insensitively. Views:
 raw, JSON-unescaped once, twice and up to `json_depth` times, percent-decoded, every base64 run
-(both alphabets, joined across line breaks) at all four alignments, every hex run (any case) at both alignments. Values are
-indexed by five-byte grams at offsets 0 to 3, so only every fourth position of a view is probed;
+(both alphabets, joined across line breaks) at all four alignments, every hex run (any case) at
+both alignments. Values are indexed by five-byte grams at offsets 0 to 3, so only every fourth position of a view is probed;
 a probe folds bit 5 of every byte and tests a blocked Bloom filter (one word, two bits, about 16
 bits per gram) before the exact, case-insensitive check. Exact necessary conditions keep the cost
 down: one pass builds bitmaps of base64 and hex characters, from which runs of eleven base64
