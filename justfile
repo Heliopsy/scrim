@@ -33,6 +33,33 @@ config-docs:
     go run . config schema > schema/config-v1.json
     go run . config docs --update docs/configuration.md
 
+# The checker, fake provider, matrix and scenarios against the pass-through and naive stand-ins
+# (also part of `just test`).
+#
+# Self-test the leak suite.
+leak-selftest:
+    go test -race -count=1 ./internal/leak/... ./internal/testing/fakeprovider/...
+
+# SCRIM_LEAK_PROXY is the proxy under test (builtin:naive or builtin:passthrough test the suite
+# itself); SCRIM_LEAK_PROXY_CMD starts it. Extra arguments go to `scrim audit run`.
+#
+# Leak gate: bypass matrix and scenarios through the proxy (release gate).
+leak *args: leak-selftest
+    #!/usr/bin/env bash
+    set -euo pipefail
+    proxy="${SCRIM_LEAK_PROXY:-}"
+    if [ -z "$proxy" ]; then
+      echo "leak: set SCRIM_LEAK_PROXY to the proxy under test (builtin:naive and builtin:passthrough test the suite itself)" >&2
+      exit 2
+    fi
+    cmd=()
+    if [ -n "${SCRIM_LEAK_PROXY_CMD:-}" ]; then cmd=(--proxy-cmd "$SCRIM_LEAK_PROXY_CMD"); fi
+    go run . audit run --proxy "$proxy" "${cmd[@]}" --report "${SCRIM_LEAK_REPORT:-leak-report.json}" {{args}}
+
+# Standalone fake model provider for testing a proxy by hand or from Rust tests.
+fakeprovider *args:
+    go run ./internal/testing/fakeprovider/cmd/scrim-fakeprovider {{args}}
+
 ntfy_image := "docker.io/binwiederhier/ntfy:v2.14.0"
 
 # End-to-end approve and deny through a local ntfy in rootless podman.
