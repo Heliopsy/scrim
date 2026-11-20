@@ -23,6 +23,7 @@ pub struct Bus {
     rx: Mutex<Option<mpsc::Receiver<v1::Event>>>,
     seq: AtomicU64,
     dropped: Arc<AtomicU64>,
+    dropped_total: AtomicU64,
 }
 
 impl Default for Bus {
@@ -33,6 +34,7 @@ impl Default for Bus {
             rx: Mutex::new(Some(rx)),
             seq: AtomicU64::new(0),
             dropped: Arc::default(),
+            dropped_total: AtomicU64::new(0),
         }
     }
 }
@@ -49,6 +51,7 @@ impl Bus {
         }
         if self.tx.try_send(ev).is_err() {
             self.dropped.fetch_add(1, Ordering::Relaxed);
+            self.dropped_total.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -65,6 +68,11 @@ impl Bus {
     /// Events dropped and not yet reported.
     pub fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
+    }
+
+    /// Events dropped since the process started, for metrics.
+    pub fn dropped_total(&self) -> u64 {
+        self.dropped_total.load(Ordering::Relaxed)
     }
 }
 

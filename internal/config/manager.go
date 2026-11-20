@@ -42,6 +42,23 @@ type Manager struct {
 	statusMu sync.RWMutex
 	loadedAt time.Time
 	last     *ReloadResult
+	onReload []func(outcome string)
+}
+
+// Reload outcomes passed to [Manager.OnReload].
+const (
+	ReloadApplied   = "applied"
+	ReloadUnchanged = "unchanged"
+	ReloadRejected  = "rejected"
+)
+
+// OnReload calls fn after every reload attempt with its outcome
+// ([ReloadApplied], [ReloadUnchanged] or [ReloadRejected]). Register before
+// Run; fn runs on the reloading goroutine and must not block.
+func (m *Manager) OnReload(fn func(outcome string)) {
+	m.statusMu.Lock()
+	defer m.statusMu.Unlock()
+	m.onReload = append(m.onReload, fn)
 }
 
 // ReloadResult describes one reload attempt. It never contains a secret.
@@ -140,7 +157,7 @@ func (m *Manager) Reload(ctx context.Context, trigger string) ReloadResult {
 		}
 		m.log.Error("configuration reload rejected; keeping the running configuration",
 			"trigger", trigger, "version", cur.version, "problems", res.Problems)
-		m.record(res)
+		m.record(res, ReloadRejected)
 		return res
 	}
 	res.Applied = true
@@ -150,7 +167,7 @@ func (m *Manager) Reload(ctx context.Context, trigger string) ReloadResult {
 	res.Changed = Changed(cur, next)
 	if len(res.Changed) == 0 && !metaChanged(cur, next) {
 		next.wipe()
-		m.record(res)
+		m.record(res, ReloadUnchanged)
 		return res
 	}
 	next.version = cur.version + 1
@@ -161,14 +178,18 @@ func (m *Manager) Reload(ctx context.Context, trigger string) ReloadResult {
 	m.log.Info("configuration reloaded", "trigger", trigger, "version", next.version, "changed", res.Changed)
 	LogWarnings(m.log, next)
 	m.holder.Swap(next)
-	m.record(res)
+	m.record(res, ReloadApplied)
 	return res
 }
 
-func (m *Manager) record(res ReloadResult) {
+func (m *Manager) record(res ReloadResult, outcome string) {
 	m.statusMu.Lock()
-	defer m.statusMu.Unlock()
 	m.last = &res
+	hooks := m.onReload
+	m.statusMu.Unlock()
+	for _, fn := range hooks {
+		fn(outcome)
+	}
 }
 
 // Status reports the configuration state for `scrim status`.

@@ -1452,6 +1452,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "scrim-llm",
+ "scrim-metrics",
  "scrim-policy",
  "scrim-proto",
  "scrim-redact",
@@ -1491,6 +1492,7 @@ dependencies = [
  "rustls-native-certs",
  "rustls-pemfile",
  "scrim-llm",
+ "scrim-metrics",
  "scrim-redact",
  "scrim-toolproxy",
  "serde",
@@ -1504,6 +1506,10 @@ dependencies = [
  "webpki-roots",
  "zeroize",
 ]
+
+[[package]]
+name = "scrim-metrics"
+version = "0.1.0"
 
 [[package]]
 name = "scrim-policy"

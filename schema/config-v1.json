@@ -412,12 +412,52 @@
     "metrics": {
       "additionalProperties": false,
       "properties": {
+        "allow-unauthenticated-remote": {
+          "default": false,
+          "description": "Serve metrics.path on a non-loopback metrics.listen without metrics.auth.token, for a network policy or mesh that already restricts who connects. Anyone who can reach the port reads the metrics.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_METRICS_ALLOW_UNAUTHENTICATED_REMOTE",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": true
+        },
+        "auth": {
+          "additionalProperties": false,
+          "properties": {
+            "token": {
+              "default": "",
+              "description": "Reference to a bearer token (at least 16 bytes) a scraper must present on metrics.path. Required when metrics.listen is not a loopback address, unless metrics.allow-unauthenticated-remote is set. The health endpoints never need it.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_METRICS_AUTH_TOKEN",
+              "x-scrim-restart-required": true,
+              "x-scrim-secret-ref": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Serve Prometheus metrics (control plane and data plane) at metrics.path on metrics.listen. Off: nothing is measured on the request path and no metrics listener is bound.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_METRICS_ENABLED",
+          "x-scrim-flag": "--metrics-enabled",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
         "listen": {
-          "default": "",
-          "description": "Address of the metrics and health endpoint (Prometheus format at /metrics, /healthz or /livez, /readyz). Empty disables it; bind to loopback unless scraped remotely.",
+          "default": "127.0.0.1:9792",
+          "description": "Address of the metrics and health endpoint (/healthz or /livez, /readyz, and metrics.path while metrics.enabled). Used when metrics.enabled is true; set explicitly with metrics.enabled false it serves the health endpoints only. Bind to loopback unless scraped remotely.",
           "type": "string",
           "x-scrim-env": "SCRIM_METRICS_LISTEN",
           "x-scrim-flag": "--metrics-listen",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "path": {
+          "default": "/metrics",
+          "description": "Path of the Prometheus endpoint on metrics.listen.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_METRICS_PATH",
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         }

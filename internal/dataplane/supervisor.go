@@ -51,6 +51,8 @@ type Supervisor struct {
 	OnAsk AskFunc
 	// OnCapture stores captured values; nil withholds every captured field.
 	OnCapture CaptureFunc
+	// OnPush, if set, is told about every snapshot push, for metrics.
+	OnPush func(PushReport)
 	// StartTimeout bounds launch, handshake and first snapshot.
 	StartTimeout time.Duration
 	// MinBackoff and MaxBackoff bound the delay between restarts.
@@ -221,19 +223,75 @@ func (s *Supervisor) push(ctx context.Context, p *Process) error {
 	}
 	s.pushMu.Lock()
 	defer s.pushMu.Unlock()
+	var rep PushReport
+	began := time.Now()
 	snap, err := s.Snapshot(ctx)
+	rep.Build = time.Since(began)
 	if err != nil {
+		rep.BuildErr = err
+		s.report(rep)
 		return fmt.Errorf("dataplane: building snapshot: %w", err)
 	}
 	defer wipe(snap)
 	snap.Protocol = Protocol
 	snap.Version = s.version.Add(1)
+	rep.Version, rep.Entries = snap.Version, Entries(snap)
+	sent := time.Now()
 	resp, err := p.Client.ApplySnapshot(ctx, snap)
+	rep.Apply, rep.ApplyErr = time.Since(sent), err
+	s.report(rep)
 	if err != nil {
 		return fmt.Errorf("dataplane: snapshot %d rejected: %w", snap.Version, err)
 	}
 	s.logger().Info("snapshot applied", "version", resp.GetAppliedVersion(), "values", resp.GetValueCount())
 	return nil
+}
+
+// PushReport describes one snapshot push. Counts and durations only.
+type PushReport struct {
+	// Build is how long the snapshot took to build; BuildErr is set when
+	// the build failed and nothing was sent.
+	Build    time.Duration
+	BuildErr error
+	// Apply is how long the data plane took to apply it; ApplyErr is set
+	// when it was rejected or the call failed.
+	Apply    time.Duration
+	ApplyErr error
+	// Version is the version sent.
+	Version uint64
+	// Entries counts what the snapshot carried, by kind.
+	Entries map[string]int
+}
+
+// Entries counts a snapshot's parts: values, placeholder_keys, routes,
+// listeners, policy_rules and ca_certificates.
+func Entries(snap *pb.Snapshot) map[string]int {
+	return map[string]int{
+		"values":           len(snap.GetValues()),
+		"placeholder_keys": len(snap.GetPlaceholderKeys()),
+		"routes":           len(snap.GetRoutes()),
+		"listeners":        len(snap.GetListeners()),
+		"policy_rules":     len(snap.GetPolicy().GetRules()) + len(snap.GetPolicy().GetTable()),
+		"ca_certificates":  len(snap.GetToolProxyCa()),
+	}
+}
+
+func (s *Supervisor) report(r PushReport) {
+	if s.OnPush != nil {
+		s.OnPush(r)
+	}
+}
+
+// Metrics reads the data plane's own metrics. A data plane started without
+// metrics answers with Enabled false.
+func (s *Supervisor) Metrics(ctx context.Context) (*pb.MetricsResponse, error) {
+	s.mu.Lock()
+	p := s.cur
+	s.mu.Unlock()
+	if p == nil {
+		return nil, errors.New("dataplane: not running")
+	}
+	return p.Client.Metrics(ctx, &pb.MetricsRequest{Protocol: Protocol})
 }
 
 // wipe zeroes the secret bytes of a sent snapshot. The gRPC send buffer is
