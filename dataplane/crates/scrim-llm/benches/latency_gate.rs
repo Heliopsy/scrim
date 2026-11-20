@@ -100,14 +100,27 @@ fn anthropic_body(fx: &Fixture, rng: &mut Rng, size: usize, hits: bool) -> Vec<u
 /// An Anthropic stream of `events` events with a placeholder in about one delta in five, split
 /// into chunks at event boundaries and, for one event in four, inside the event.
 fn stream_chunks(fx: &Fixture, rng: &mut Rng, events: usize) -> Vec<Vec<u8>> {
-    let phs: Vec<String> = fx.entries().iter().take(64).map(|e| e.placeholder.clone()).collect();
+    let phs: Vec<String> = fx
+        .entries()
+        .iter()
+        .take(64)
+        .map(|e| e.placeholder.clone())
+        .collect();
     let mut s = String::new();
     let mut n = 0;
     let mut index = 0;
     while n < events {
         let (start, dtype, field) = match rng.below(10) {
-            0 => (r#"{"type":"thinking","thinking":"","signature":""}"#, "thinking_delta", "thinking"),
-            1 => (r#"{"type":"tool_use","id":"t","name":"Bash","input":{}}"#, "input_json_delta", "partial_json"),
+            0 => (
+                r#"{"type":"thinking","thinking":"","signature":""}"#,
+                "thinking_delta",
+                "thinking",
+            ),
+            1 => (
+                r#"{"type":"tool_use","id":"t","name":"Bash","input":{}}"#,
+                "input_json_delta",
+                "partial_json",
+            ),
             _ => (r#"{"type":"text","text":""}"#, "text_delta", "text"),
         };
         s.push_str(&format!(
@@ -140,7 +153,10 @@ fn stream_chunks(fx: &Fixture, rng: &mut Rng, events: usize) -> Vec<Vec<u8>> {
     let mut chunks = Vec::new();
     let mut pos = 0;
     while pos < b.len() {
-        let end = b[pos..].windows(2).position(|w| w == b"\n\n").map_or(b.len(), |p| pos + p + 2);
+        let end = b[pos..]
+            .windows(2)
+            .position(|w| w == b"\n\n")
+            .map_or(b.len(), |p| pos + p + 2);
         if rng.below(4) == 0 && end - pos > 8 {
             let mid = pos + 1 + rng.below(end - pos - 1);
             chunks.push(b[pos..mid].to_vec());
@@ -200,14 +216,21 @@ fn machine() -> String {
                 .map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string())
         })
         .unwrap_or_else(|| "unknown".into());
-    let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0);
-    format!("{cpu}, {cpus} logical CPUs, {} {}", std::env::consts::OS, std::env::consts::ARCH)
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(0);
+    format!(
+        "{cpu}, {cpus} logical CPUs, {} {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
 }
 
 fn main() {
     let quick = std::env::var_os("SCRIM_LLM_BENCH_QUICK").is_some();
-    let budget_path = std::env::var("SCRIM_LLM_BUDGET")
-        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/benches/budget.json").to_string());
+    let budget_path = std::env::var("SCRIM_LLM_BUDGET").unwrap_or_else(|_| {
+        concat!(env!("CARGO_MANIFEST_DIR"), "/benches/budget.json").to_string()
+    });
     let budget: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&budget_path).unwrap()).unwrap();
     let mut failures = Vec::new();
@@ -218,12 +241,22 @@ fn main() {
     println!(
         "- crate: scrim-llm {}, profile: {}",
         env!("CARGO_PKG_VERSION"),
-        if cfg!(debug_assertions) { "debug" } else { "release" }
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
     );
     println!("- budget: {budget_path}\n");
 
     let sizes: &[(&str, usize)] = &[("100KB", 100 << 10), ("1MB", 1 << 20), ("4MB", 4 << 20)];
-    let iters = |size: usize| if quick { 10 } else { ((400 << 20) / size).clamp(30, 400) };
+    let iters = |size: usize| {
+        if quick {
+            10
+        } else {
+            ((400 << 20) / size).clamp(30, 400)
+        }
+    };
 
     println!(
         "## Proxy overhead (pass-through engine)\n\n| body | p50 | p99 | budget |\n|---|---|---|---|"
@@ -236,18 +269,25 @@ fn main() {
         let limit = budget["proxy_overhead_p99_ms"][name].as_f64().unwrap();
         let ms = p.as_secs_f64() * 1e3;
         let med = m.as_secs_f64() * 1e3;
-        println!("| {name} ({} B) | {med:.3} ms | {ms:.3} ms | {limit} ms |", body.len());
+        println!(
+            "| {name} ({} B) | {med:.3} ms | {ms:.3} ms | {limit} ms |",
+            body.len()
+        );
         if ms > limit {
-            failures.push(format!("proxy overhead p99 for {name}: {ms:.3} ms > {limit} ms"));
+            failures.push(format!(
+                "proxy overhead p99 for {name}: {ms:.3} ms > {limit} ms"
+            ));
         }
     }
 
-    println!(
-        "\n## Added request latency, fake engine (Aho-Corasick redactor, automaton guard)\n"
-    );
+    println!("\n## Added request latency, fake engine (Aho-Corasick redactor, automaton guard)\n");
     println!("| secrets | body | hits | p50 | p99 | budget (1 MB) |\n|---|---|---|---|---|---|");
     let enforce = budget["engine"]["enforce"].as_bool().unwrap_or(false);
-    let counts: &[usize] = if quick { &[10, 1000] } else { &[10, 1000, 10000] };
+    let counts: &[usize] = if quick {
+        &[10, 1000]
+    } else {
+        &[10, 1000, 10000]
+    };
     for &n in counts {
         let mut fx = Fixture::generated(n);
         fx.fast_guard = true;
@@ -303,7 +343,10 @@ fn main() {
     let us = p99(samples).as_secs_f64() * 1e6;
     let limit = budget["chunk_p99_us"].as_f64().unwrap();
     println!("| events | chunks | output bytes | p99 per chunk | budget |\n|---|---|---|---|---|");
-    println!("| {events} | {} | {bytes} | {us:.2} µs | {limit} µs |", chunks.len());
+    println!(
+        "| {events} | {} | {bytes} | {us:.2} µs | {limit} µs |",
+        chunks.len()
+    );
     if us > limit {
         failures.push(format!("chunk p99: {us:.2} µs > {limit} µs"));
     }

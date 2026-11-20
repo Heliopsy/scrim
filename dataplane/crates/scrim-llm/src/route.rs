@@ -13,6 +13,9 @@ pub enum RouteError {
     /// The upstream or chain URL is not an absolute http(s) URL.
     #[error("route {0}: {1} is not an absolute http or https URL")]
     Url(String, &'static str),
+    /// Two routes claim the same provider host.
+    #[error("routes {0} and {1} both claim host {2}")]
+    DuplicateHost(String, String, String),
     /// Two routes share a prefix.
     #[error("routes {0} and {1} share the same prefix")]
     Duplicate(String, String),
@@ -31,6 +34,7 @@ pub struct Route {
     strip_prefix: bool,
     /// Chained upstream and its base URI.
     pub chain: Option<(ChainConfig, http::Uri)>,
+    hosts: Vec<String>,
 }
 
 fn parse_base(name: &str, url: &str, what: &'static str) -> Result<http::Uri, RouteError> {
@@ -94,10 +98,31 @@ impl RouteTable {
                 provider: c.provider,
                 strip_prefix: c.strip_prefix,
                 chain,
+                hosts: c.hosts.iter().map(|h| h.to_ascii_lowercase()).collect(),
             });
+        }
+        for (i, a) in routes.iter().enumerate() {
+            for b in &routes[i + 1..] {
+                if let Some(h) = a.hosts.iter().find(|h| b.hosts.contains(h)) {
+                    return Err(RouteError::DuplicateHost(
+                        a.name.clone(),
+                        b.name.clone(),
+                        h.clone(),
+                    ));
+                }
+            }
         }
         routes.sort_by_key(|r| std::cmp::Reverse(r.prefix.len()));
         Ok(Self { routes })
+    }
+
+    /// Finds the route that claims provider host `host` (forward-proxy and transparent
+    /// traffic). The whole request path is forwarded.
+    pub fn find_host(&self, host: &str) -> Option<&Route> {
+        let host = host.trim_end_matches('.');
+        self.routes
+            .iter()
+            .find(|r| r.hosts.iter().any(|h| h.eq_ignore_ascii_case(host)))
     }
 
     /// Finds the route for `path` and returns it with the path to forward.
@@ -131,6 +156,7 @@ mod tests {
             provider: Provider::Anthropic,
             strip_prefix: true,
             chain: None,
+            hosts: vec![],
         });
         let t = RouteTable::new(&cfg).unwrap();
         let (r, rest) = t.find("/anthropic/v1/messages").unwrap();
@@ -155,9 +181,24 @@ mod tests {
             provider: Provider::Anthropic,
             strip_prefix: false,
             chain: None,
+            hosts: vec![],
         }];
         let t = RouteTable::new(&cfg).unwrap();
         assert_eq!(t.find("/v1/messages").unwrap().1, "/v1/messages");
+    }
+
+    #[test]
+    fn host_routes() {
+        let t = RouteTable::new(&default_routes()).unwrap();
+        assert_eq!(t.find_host("API.Anthropic.com").unwrap().name, "anthropic");
+        assert_eq!(t.find_host("api.openai.com.").unwrap().name, "openai");
+        assert!(t.find_host("example.com").is_none());
+        let mut c = default_routes();
+        c[1].hosts = vec!["api.anthropic.com".into()];
+        assert!(matches!(
+            RouteTable::new(&c),
+            Err(RouteError::DuplicateHost(..))
+        ));
     }
 
     #[test]

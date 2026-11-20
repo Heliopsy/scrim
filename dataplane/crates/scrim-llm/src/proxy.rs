@@ -222,6 +222,37 @@ impl Proxy {
             let r = Refusal::new(RefusalReason::NoRoute, "");
             return self.refuse(None, Api::Generic, &r);
         };
+        self.serve(route, rest, req).await
+    }
+
+    /// Whether a route claims provider host `host` (see [`RouteConfig::hosts`]).
+    ///
+    /// [`RouteConfig::hosts`]: crate::config::RouteConfig::hosts
+    pub fn claims_host(&self, host: &str) -> bool {
+        self.routes.find_host(host).is_some()
+    }
+
+    /// Handles a request that arrived for provider host `host` through the forward proxy or a
+    /// transparent listener: the route is chosen by host and the whole origin-form path is
+    /// forwarded to the route's upstream.
+    pub async fn handle_for_host<B>(&self, host: &str, req: Request<B>) -> Response<ProxyBody>
+    where
+        B: Body<Data = Bytes> + Send + 'static,
+        B::Error: Into<BoxError>,
+    {
+        let Some(route) = self.routes.find_host(host) else {
+            let r = Refusal::new(RefusalReason::NoRoute, "");
+            return self.refuse(None, Api::Generic, &r);
+        };
+        let path = req.uri().path().to_string();
+        self.serve(route, &path, req).await
+    }
+
+    async fn serve<B>(&self, route: &Route, rest: &str, req: Request<B>) -> Response<ProxyBody>
+    where
+        B: Body<Data = Bytes> + Send + 'static,
+        B::Error: Into<BoxError>,
+    {
         let api = route.provider.api_for(req.method(), rest);
         let Some(snap) = self.snapshots.load() else {
             let r = Refusal::new(RefusalReason::NotReady, "");

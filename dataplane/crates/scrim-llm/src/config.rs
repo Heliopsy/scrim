@@ -91,6 +91,11 @@ pub struct RouteConfig {
     /// Optional chained upstream.
     #[serde(default)]
     pub chain: Option<ChainConfig>,
+    /// Provider host names this route serves when traffic arrives through the forward proxy
+    /// or a transparent listener, with an origin-form path and no prefix (for example
+    /// `api.anthropic.com`). Matched case-insensitively on the host alone.
+    #[serde(default)]
+    pub hosts: Vec<String>,
 }
 
 fn yes() -> bool {
@@ -219,6 +224,7 @@ pub fn default_routes() -> Vec<RouteConfig> {
             provider: Provider::Anthropic,
             strip_prefix: true,
             chain: None,
+            hosts: vec!["api.anthropic.com".into()],
         },
         RouteConfig {
             name: "openai".into(),
@@ -227,6 +233,7 @@ pub fn default_routes() -> Vec<RouteConfig> {
             provider: Provider::Openai,
             strip_prefix: true,
             chain: None,
+            hosts: vec!["api.openai.com".into()],
         },
     ]
 }

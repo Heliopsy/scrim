@@ -79,6 +79,7 @@ pub fn routes_to(url: &str) -> Vec<RouteConfig> {
             provider: Provider::Anthropic,
             strip_prefix: true,
             chain: None,
+            hosts: vec!["api.anthropic.com".into()],
         },
         RouteConfig {
             name: "openai".into(),
@@ -87,6 +88,7 @@ pub fn routes_to(url: &str) -> Vec<RouteConfig> {
             provider: Provider::Openai,
             strip_prefix: true,
             chain: None,
+            hosts: vec!["api.openai.com".into()],
         },
     ]
 }

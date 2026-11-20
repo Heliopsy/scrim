@@ -567,7 +567,8 @@ impl Fixture {
                 mode: self.guard_mode,
                 fault: self.guard_fault,
                 automaton: self.fast_guard.then(|| {
-                    AhoCorasick::new(self.entries.iter().map(|e| e.value.expose().to_vec())).expect("aho-corasick")
+                    AhoCorasick::new(self.entries.iter().map(|e| e.value.expose().to_vec()))
+                        .expect("aho-corasick")
                 }),
             }),
             placeholders: Arc::new(self.fake_placeholders()),

@@ -38,6 +38,8 @@ pub mod codec;
 pub mod config;
 pub mod engine;
 pub mod error;
+#[cfg(feature = "intercept")]
+pub mod intercept;
 pub mod json;
 pub mod outgoing;
 pub mod proxy;
