@@ -96,7 +96,7 @@ stores:
 		{"no version", "kind: Config\n", false},
 		{"wrong kind", "apiVersion: scrim.dev/v1\nkind: Policy\n", false},
 		{"unknown key", header + "aprovals:\n  timeout: 60s\n", false},
-		{"unknown section key", header + "log:\n  levle: info\n", false},
+		{"unknown section key", header + "log:\n  levle: info\n", false}, //nolint:misspell // the typo is the input under test
 		{"bad enum", header + "log:\n  level: loud\n", false},
 		{"bad duration", header + "approvals:\n  timeout: soon\n", false},
 		{"int duration", header + "approvals:\n  timeout: 60\n", false},
