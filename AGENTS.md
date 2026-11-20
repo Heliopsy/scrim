@@ -134,8 +134,7 @@ an emulator in podman. State backends follow the same shape with `state.Register
   hook per target would race or force serial builds through a tool that no longer does the build.
   Its archive, checksum and signing steps are a few lines of shell here.
 - No cross linker, no cargo-zigbuild. Each Linux data plane is built on a native runner of its
-  architecture (self-hosted `ho-z10` for amd64, GitHub's `ubuntu-24.04-arm` for arm64, since there
-  is no self-hosted arm64 runner) against musl, both darwin targets on one macOS runner with Apple's
+  architecture (GitHub's `ubuntu-24.04` for amd64 and `ubuntu-24.04-arm` for arm64) against musl, both darwin targets on one macOS runner with Apple's
   toolchain (the self-hosted Mac for a release, GitHub's `macos-15` for a pull request). The Go
   control plane is `CGO_ENABLED=0` and cross-compiles from one Linux runner, embedding the data
   plane built for the same target. Zig would add a third toolchain whose libc and linker nobody else
@@ -143,9 +142,10 @@ an emulator in podman. State backends follow the same shape with `state.Register
 - Reproducible: `--locked` and `-mod=readonly`, `-trimpath`, Rust paths remapped, symbols stripped,
   `SOURCE_DATE_EPOCH` from the commit, deterministic tar and gzip, images with `--timestamp` and
   the base pinned by digest in the Containerfile. The `reproduce` job rebuilds linux-amd64 on a
-  GitHub-hosted runner from a different path and fails the release on any byte difference with the
-  `ho-z10` build. No caches in
-  the release workflow.
+  second `ubuntu-24.04` runner from a different path and fails the release on any byte difference.
+  The C parts of the build (ring, zstd) use the image's compiler and musl, so the bytes only match
+  on the same image; release builds move to `ho-z10` once it has a pinned toolchain image. No caches
+  in the release workflow.
 - Images are assembled from the release binaries (`COPY`, no `RUN`), so the image holds the bytes
   the archives hold and a multi-arch build needs no emulation. Rootless podman, distroless static
   base, UID 65532, read-only root filesystem tested on every build.

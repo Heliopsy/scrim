@@ -20,8 +20,12 @@ name: Release
 # the platform; everything that needs podman, signs or publishes stays on
 # GitHub-hosted runners:
 #
-# - ho-z10 (ARC scale set, one ephemeral pod per job, no podman): plan, the
-#   linux-amd64 data plane, and the control plane and archives.
+# - ho-z10 (ARC scale set, one ephemeral pod per job, no podman): plan.
+# - linux-amd64 data plane, control plane and archives: GitHub's ubuntu-24.04.
+#   The release build compiles C (ring, zstd) with the image's compiler and
+#   musl, so it is only byte-for-byte reproducible on the same image; the
+#   reproduce job rebuilds on another ubuntu-24.04. Building on ho-z10 needs a
+#   pinned toolchain image first.
 # - linux-arm64 data plane: GitHub's ubuntu-24.04-arm. There is no self-hosted
 #   Linux arm64 runner, and a cross build would need the cross linker or
 #   cargo-zigbuild that the native musl build exists to avoid (AGENTS.md).
@@ -29,8 +33,8 @@ name: Release
 #   release, both targets with Apple's toolchain. It is a personal machine, so
 #   pull requests build darwin on GitHub's macos-15 instead and code from a
 #   pull request never runs on it.
-# - reproduce: GitHub's ubuntu-24.04, so the rebuild is on a different machine
-#   and path from the ho-z10 build it is compared with.
+# - reproduce: another GitHub ubuntu-24.04 runner and a different checkout
+#   path from the build it is compared with.
 # - image-check and image: GitHub-hosted, they need podman.
 # - sign, publish, image, verify: GitHub-hosted, so the Sigstore certificates
 #   and provenance record a GitHub-hosted signer.
@@ -142,7 +146,7 @@ jobs:
           # Native runners for both Linux architectures, so the musl link is
           # done by the host toolchain with no cross linker; one macOS runner
           # builds both darwin targets with Apple's toolchain.
-          - {platform: linux-amd64, runner: '"ho-z10"'}
+          - {platform: linux-amd64, runner: '"ubuntu-24.04"'}
           - {platform: linux-arm64, runner: '"ubuntu-24.04-arm"'}
           - {platform: darwin-amd64, runner: mac}
           - {platform: darwin-arm64, runner: mac}
@@ -192,7 +196,7 @@ jobs:
   build:
     name: Control plane and archives
     needs: [plan, dataplane]
-    runs-on: ho-z10
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     env:
@@ -242,7 +246,7 @@ jobs:
 
   # Rebuilds the linux-amd64 pair on a fresh GitHub-hosted runner, from
   # nothing, and refuses the release unless every byte matches the pair built
-  # on ho-z10. A build that depends on the runner,
+  # by the build job. A build that depends on the machine,
   # the clock or the checkout path fails here instead of shipping.
   reproduce:
     name: Reproducibility (linux-amd64)
