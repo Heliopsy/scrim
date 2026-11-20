@@ -36,16 +36,16 @@ func writeRules(t *testing.T, body string) string {
 
 func TestPolicyCheck(t *testing.T) {
 	p := writeRules(t, rulesYAML)
-	code, out, errs := run(t, "", "policy", "check", p)
+	code, out, errs := runAdmin(t, "", "policy", "check", p)
 	if code != 0 || !strings.Contains(out, "ok: 3 rules, default deny, 2 decided entirely in the data plane") {
 		t.Fatalf("%d %q %q", code, out, errs)
 	}
 	bad := writeRules(t, "rules:\n  - name: x\n    decision: allow\n    wehn: op == \"x\"\n")
-	if code, _, errs := run(t, "", "policy", "check", bad); code != 1 || !strings.Contains(errs, "wehn") {
+	if code, _, errs := runAdmin(t, "", "policy", "check", bad); code != 1 || !strings.Contains(errs, "wehn") {
 		t.Fatalf("unknown key: %d %q", code, errs)
 	}
 	typo := writeRules(t, "rules:\n  - name: x\n    decision: allow\n    when: secret.reff == \"x\"\n")
-	if code, _, errs := run(t, "", "policy", "check", typo); code != 1 || !strings.Contains(errs, "reff") {
+	if code, _, errs := runAdmin(t, "", "policy", "check", typo); code != 1 || !strings.Contains(errs, "reff") {
 		t.Fatalf("typo: %d %q", code, errs)
 	}
 	// The setting form.
@@ -57,7 +57,7 @@ func TestPolicyCheck(t *testing.T) {
 
 func TestPolicyEval(t *testing.T) {
 	p := writeRules(t, rulesYAML)
-	code, out, errs := run(t, "", "policy", "eval", p, "--agent", "claude-laptop", "--op", "inject",
+	code, out, errs := runAdmin(t, "", "policy", "eval", p, "--agent", "claude-laptop", "--op", "inject",
 		"--ref", "bao://kv/agents/github", "--host", "api.github.com", "--method", "POST")
 	if code != 0 {
 		t.Fatalf("%d %q", code, errs)
@@ -82,7 +82,7 @@ func TestPolicyEval(t *testing.T) {
 
 func TestPolicySnapshot(t *testing.T) {
 	p := writeRules(t, rulesYAML)
-	code, out, _ := run(t, "", "policy", "snapshot", p)
+	code, out, _ := runAdmin(t, "", "policy", "snapshot", p)
 	if code != 0 || !strings.Contains(out, `"field": "secret.ref"`) || !strings.Contains(out, `"residual": true`) {
 		t.Fatalf("%q", out)
 	}
