@@ -1,0 +1,18 @@
+[pass] audit:db: ok
+[warn] audit:kafka: broker unreachable (17 dropped)
+       fix: check the sink's endpoint in audit.sinks
+[fail] data-plane: exited with signal 9 at 09:31:02, restarting
+       fix: restart scrim; check its log for the data plane's exit reason
+[fail] state: connection refused
+       fix: check state.backend and its location or DSN with `scrim config show --effective`
+[pass] store:bao: ok
+[warn] store:inf: never loaded
+       fix: check the store's reachability; values are refreshed on the next successful poll
+[fail] store:vw: unreachable for 12m, staleness limit 5m
+       fix: check the store's address and credentials in the stores.vw settings
+[warn] weakened-settings: redaction.allow-unknown-fields is set (file /etc/scrim/scrim.yaml): Forwards unknown provider request fields without redaction.
+       fix: unset redaction.allow-unknown-fields unless you accept the weaker protection
+[warn] weakened-settings: state.sqlite.allow-network-filesystem is set (env SCRIM_STATE_SQLITE_ALLOW_NETWORK_FILESYSTEM): Allows the SQLite state file on a network filesystem, where locking is unreliable.
+       fix: unset state.sqlite.allow-network-filesystem unless you accept the weaker protection
+
+3 check(s) failed, 4 warning(s)

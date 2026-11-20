@@ -284,9 +284,10 @@ func auditQuery(t *testing.T, s state.Store) {
 	ref := stores.MustParseRef("inf://proj/prod/DB")
 	update(t, s, func(tx state.Tx) error {
 		for i, e := range []audit.Entry{
-			{Action: "decision", Agent: agent("a1"), Ref: ref, Effect: policy.Deny, Time: t0},
-			{Action: "decision", Agent: agent("a2"), Ref: ref, Effect: policy.Allow, Time: t0.Add(time.Minute)},
-			{Action: "store.write", Agent: agent("a1"), Time: t0.Add(2 * time.Minute)},
+			{Action: "decision", Agent: agent("a1"), Ref: ref, Effect: policy.Deny, Outcome: audit.OutcomeRefused, Time: t0},
+			{Action: "decision", Agent: agent("a2"), Ref: ref, Effect: policy.Allow, Outcome: audit.OutcomeOK, Time: t0.Add(time.Minute)},
+			{Action: "store.write", Agent: agent("a1"), Effect: policy.Allow, Outcome: audit.OutcomeOK, Time: t0.Add(2 * time.Minute),
+				Target: "bao", Attrs: map[string]string{"method": "put"}},
 		} {
 			e.RequestID = string(rune('a' + i))
 			if err := tx.AppendAudit(ctx, &e); err != nil {
@@ -312,8 +313,24 @@ func auditQuery(t *testing.T, s state.Store) {
 		check(state.AuditQuery{Limit: 2}, 2)
 		all, _ := tx.QueryAudit(ctx, state.AuditQuery{})
 		check(state.AuditQuery{AfterID: all[0].ID}, 2)
-		if all[0].Effect != policy.Deny || all[1].Effect != policy.Allow {
-			t.Errorf("effects not kept: %+v", all)
+		if all[0].Effect != policy.Deny || all[1].Effect != policy.Allow || all[0].Outcome != audit.OutcomeRefused {
+			t.Errorf("effects or outcomes not kept: %+v", all)
+		}
+		if all[2].Target != "bao" || all[2].Attrs["method"] != "put" || all[2].RequestID != "c" || !all[2].Time.Equal(t0.Add(2*time.Minute)) {
+			t.Errorf("entry fields not kept: %+v", all[2])
+		}
+		check(state.AuditQuery{Effect: "allow"}, 2)
+		check(state.AuditQuery{Effect: "deny", AgentID: "a1"}, 1)
+		check(state.AuditQuery{Outcome: audit.OutcomeOK}, 2)
+		check(state.AuditQuery{BeforeID: all[2].ID}, 2)
+		newest, _ := tx.QueryAudit(ctx, state.AuditQuery{Newest: true, Limit: 2})
+		if len(newest) != 2 || newest[0].ID != all[2].ID || newest[1].ID != all[1].ID {
+			t.Errorf("newest first with limit = %+v", newest)
+		}
+		// The spec scenario: one agent's asks in a time window, newest first.
+		page, _ := tx.QueryAudit(ctx, state.AuditQuery{AgentID: "a1", Since: t0, Until: t0.Add(time.Hour), Newest: true})
+		if len(page) != 2 || page[0].Action != "store.write" {
+			t.Errorf("a1 in the window, newest first = %+v", page)
 		}
 		return nil
 	})

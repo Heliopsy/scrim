@@ -174,6 +174,22 @@ outcome through the CLI and the admin API, with machine-readable output.
 - **WHEN** an operator queries asks for agent `claude-laptop` in the last hour
 - **THEN** only matching entries are returned, newest first
 
+#### Scenario: Paging through a long log
+
+- **WHEN** a query matches more entries than its limit
+- **THEN** the result names a cursor, and the same query with that cursor returns the next older entries without repeating any
+
+### Requirement: Audit entry written with its change
+
+An audit entry recorded through the state backend SHALL be written in the same transaction as the
+state change it records. A failure between the two writes SHALL leave neither, and a change that
+comes without an audit entry SHALL be refused.
+
+#### Scenario: Connection lost before the audit write
+
+- **WHEN** the database connection is lost after a grant is written and before its audit entry is
+- **THEN** neither the grant nor the entry exists afterwards and the operation reports an error
+
 ### Requirement: Break-glass deny-all
 
 The system SHALL provide a switch, available through the CLI, the admin API and configuration, that

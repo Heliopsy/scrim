@@ -1,0 +1,161 @@
+{
+  "version": "0.1.0",
+  "profile": "server",
+  "interception_modes": [
+    "forward-proxy",
+    "transparent-nftables"
+  ],
+  "protections": [
+    {
+      "name": "credential-injection",
+      "active": true,
+      "detail": "3 host-bound credentials"
+    },
+    {
+      "name": "guard",
+      "active": true,
+      "detail": "independent outbound check"
+    },
+    {
+      "name": "redaction",
+      "active": false,
+      "detail": "known-value matcher over 42 values"
+    },
+    {
+      "name": "unknown-field-redaction",
+      "active": true
+    }
+  ],
+  "providers": [
+    {
+      "name": "anthropic",
+      "upstream": "http://127.0.0.1:8787 (caveman)"
+    },
+    {
+      "name": "openai",
+      "upstream": "https://api.openai.com"
+    }
+  ],
+  "stores": [
+    {
+      "name": "bao",
+      "kind": "openbao",
+      "reachable": true,
+      "last_refresh": "2026-11-20T09:30:00Z",
+      "values": 42,
+      "degraded": false
+    },
+    {
+      "name": "inf",
+      "kind": "infisical",
+      "reachable": true,
+      "values": 0,
+      "degraded": true,
+      "reason": "never loaded"
+    },
+    {
+      "name": "vw",
+      "kind": "vaultwarden",
+      "reachable": false,
+      "last_refresh": "2026-11-20T09:30:00Z",
+      "values": 7,
+      "degraded": true,
+      "reason": "unreachable for 12m, staleness limit 5m"
+    }
+  ],
+  "state": {
+    "backend": "postgres",
+    "location": "postgres://scrim@db.internal/scrim",
+    "schema_version": 1,
+    "healthy": false,
+    "detail": "connection refused"
+  },
+  "audit_sinks": [
+    {
+      "name": "db",
+      "policy": "block",
+      "degraded": false,
+      "dropped": 0
+    },
+    {
+      "name": "kafka",
+      "policy": "drop",
+      "degraded": true,
+      "dropped": 17,
+      "detail": "broker unreachable"
+    }
+  ],
+  "data_plane": {
+    "running": false,
+    "healthy": false,
+    "detail": "exited with signal 9 at 09:31:02, restarting"
+  },
+  "degraded": [
+    {
+      "name": "data-plane",
+      "reason": "exited with signal 9 at 09:31:02, restarting"
+    },
+    {
+      "name": "state:postgres",
+      "reason": "connection refused"
+    },
+    {
+      "name": "store:inf",
+      "reason": "never loaded"
+    },
+    {
+      "name": "store:vw",
+      "reason": "unreachable for 12m, staleness limit 5m"
+    },
+    {
+      "name": "audit:kafka",
+      "reason": "broker unreachable"
+    },
+    {
+      "name": "config",
+      "reason": "last reload rejected; the previous configuration stays in effect"
+    },
+    {
+      "name": "protection:redaction",
+      "reason": "inactive"
+    }
+  ],
+  "weakened_protections": [
+    {
+      "key": "redaction.allow-unknown-fields",
+      "value": "true",
+      "source": "file /etc/scrim/scrim.yaml",
+      "description": "Forwards unknown provider request fields without redaction."
+    },
+    {
+      "key": "state.sqlite.allow-network-filesystem",
+      "value": "true",
+      "source": "env SCRIM_STATE_SQLITE_ALLOW_NETWORK_FILESYSTEM",
+      "description": "Allows the SQLite state file on a network filesystem, where locking is unreliable."
+    }
+  ],
+  "config": {
+    "version": 2,
+    "profile": "server",
+    "files": [
+      "/etc/scrim/scrim.yaml"
+    ],
+    "loadedAt": "2026-11-20T09:30:00Z",
+    "pendingRestart": [
+      "state.backend"
+    ],
+    "weakened": null,
+    "warnings": [
+      "stores.vw.token (file /etc/scrim/scrim.yaml): literal secret in the config file"
+    ],
+    "lastReload": {
+      "at": "2026-11-20T09:30:00Z",
+      "trigger": "SIGHUP",
+      "applied": false,
+      "version": 2,
+      "problems": [
+        "policy.default: maybe is not one of allow, ask, deny"
+      ]
+    }
+  }
+}

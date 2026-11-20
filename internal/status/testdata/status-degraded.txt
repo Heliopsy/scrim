@@ -1,0 +1,56 @@
+scrim 0.1.0
+profile: server
+overall: DEGRADED (7 degraded, 2 weakened)
+
+Configuration
+  version 2, loaded 2026-11-20T09:30:00Z, files: /etc/scrim/scrim.yaml
+  last reload 2026-11-20T09:30:00Z (SIGHUP): REJECTED
+    policy.default: maybe is not one of allow, ask, deny
+  pending restart: state.backend
+  warning: stores.vw.token (file /etc/scrim/scrim.yaml): literal secret in the config file
+
+Interception
+  forward-proxy
+  transparent-nftables
+
+Protections
+  credential-injection     active    3 host-bound credentials
+  guard                    active    independent outbound check
+  redaction                INACTIVE  known-value matcher over 42 values
+  unknown-field-redaction  active
+
+Providers
+  anthropic  http://127.0.0.1:8787 (caveman)
+  openai     https://api.openai.com
+
+Stores
+  bao  openbao      ok           42 values  refreshed 2026-11-20T09:30:00Z
+  inf  infisical    DEGRADED     0 values   refreshed never                 never loaded
+  vw   vaultwarden  UNREACHABLE  7 values   refreshed 2026-11-20T09:30:00Z  unreachable for 12m, staleness limit 5m
+
+State
+  postgres at postgres://scrim@db.internal/scrim, schema 1, UNHEALTHY
+  connection refused
+
+Audit sinks
+  db     policy block  ok        0 dropped
+  kafka  policy drop   DEGRADED  17 dropped  broker unreachable
+
+Data plane
+  NOT RUNNING
+  exited with signal 9 at 09:31:02, restarting
+
+Degraded
+  data-plane: exited with signal 9 at 09:31:02, restarting
+  state:postgres: connection refused
+  store:inf: never loaded
+  store:vw: unreachable for 12m, staleness limit 5m
+  audit:kafka: broker unreachable
+  config: last reload rejected; the previous configuration stays in effect
+  protection:redaction: inactive
+
+Weakened protections
+  redaction.allow-unknown-fields = true (from file /etc/scrim/scrim.yaml)
+    Forwards unknown provider request fields without redaction.
+  state.sqlite.allow-network-filesystem = true (from env SCRIM_STATE_SQLITE_ALLOW_NETWORK_FILESYSTEM)
+    Allows the SQLite state file on a network filesystem, where locking is unreliable.

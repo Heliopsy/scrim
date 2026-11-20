@@ -31,7 +31,7 @@ request correlation id.
 #### Scenario: JSON logs
 
 - **WHEN** `log.format` is `json`
-- **THEN** every log line is one JSON object with `time`, `level`, `component` and `msg`
+- **THEN** every log line is one JSON object with `time`, `level`, `component` and `msg`, plus `agent`, `request_id`, `trace_id` and `span_id` when known
 
 ### Requirement: Metrics endpoint
 
@@ -89,6 +89,11 @@ approval wait time, per policy rule and notifier.
 scrim SHALL emit traces over OTLP when `tracing.endpoint` is set, propagating incoming trace context,
 with spans for redaction, guard, upstream call, resolution, policy and approval wait.
 
+#### Scenario: Tracing disabled
+
+- **WHEN** `tracing.endpoint` is empty
+- **THEN** no span is exported and incoming W3C trace context is still passed on to upstream calls
+
 #### Scenario: Trace context propagated
 
 - **WHEN** a request arrives with a W3C trace context header and tracing is enabled
@@ -100,6 +105,11 @@ scrim SHALL serve a liveness endpoint that reflects only whether the process wor
 endpoint that fails while it cannot redact safely (for example no secrets loaded for a required
 store, or the state backend unavailable).
 
+#### Scenario: Health endpoints
+
+- **WHEN** `metrics.listen` is set
+- **THEN** `/healthz` (alias `/livez`), `/readyz` and `/metrics` are served on that address, each response scrubbed of known values
+
 #### Scenario: Not ready without secrets
 
 - **WHEN** a required store has never been loaded successfully
@@ -110,6 +120,16 @@ store, or the state backend unavailable).
 `scrim status` SHALL report the running version, active interception modes, active protections,
 configured providers and stores with their health, degraded components and every weakened setting in
 effect, in human and machine-readable form.
+
+#### Scenario: Status shows the configuration state
+
+- **WHEN** the last configuration reload was rejected or a restart-only setting changed
+- **THEN** `scrim status` shows the rejected reload with its reasons and the settings pending a restart, and lists the configuration as degraded after a rejected reload
+
+#### Scenario: Status never claims unchecked health
+
+- **WHEN** a component such as the data plane cannot be checked by the process running `scrim status`
+- **THEN** it is reported as not reported and degraded, never as healthy
 
 #### Scenario: Status shows weakened protection
 

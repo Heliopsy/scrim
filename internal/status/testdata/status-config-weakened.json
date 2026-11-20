@@ -1,0 +1,42 @@
+{
+  "version": "0.1.0",
+  "profile": "ci",
+  "interception_modes": [],
+  "protections": [],
+  "providers": [],
+  "stores": [],
+  "state": {
+    "backend": "memory",
+    "schema_version": 0,
+    "healthy": true
+  },
+  "audit_sinks": [],
+  "data_plane": {
+    "running": true,
+    "pid": 7,
+    "healthy": true
+  },
+  "degraded": [],
+  "weakened_protections": [
+    {
+      "key": "policy.default",
+      "value": "allow",
+      "source": "env:SCRIM_POLICY_DEFAULT",
+      "description": "Decision when no rule matches."
+    }
+  ],
+  "config": {
+    "version": 1,
+    "profile": "ci",
+    "files": null,
+    "loadedAt": "2026-11-20T09:30:00Z",
+    "weakened": [
+      {
+        "key": "policy.default",
+        "value": "allow",
+        "source": "env:SCRIM_POLICY_DEFAULT",
+        "description": "Decision when no rule matches."
+      }
+    ]
+  }
+}

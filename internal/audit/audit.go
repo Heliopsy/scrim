@@ -47,11 +47,26 @@ type Entry struct {
 	Subject string
 	// RequestID correlates with logs and traces.
 	RequestID string
+	// Outcome is what came of the operation: [OutcomeOK], [OutcomeRefused],
+	// [OutcomeFailed] or [OutcomePending]. Empty means not recorded.
+	Outcome string
 	// Reason is a human-readable explanation without values.
 	Reason string
 	// Attrs holds extra metadata. Never put a value here.
 	Attrs map[string]string
 }
+
+// Outcomes of an audited operation (specs/policy-approvals "Audit log").
+const (
+	// OutcomeOK: the operation was carried out.
+	OutcomeOK = "ok"
+	// OutcomeRefused: policy, a guard or a human refused it.
+	OutcomeRefused = "refused"
+	// OutcomeFailed: it was allowed but did not complete.
+	OutcomeFailed = "failed"
+	// OutcomePending: it waits for an approval.
+	OutcomePending = "pending"
+)
 
 // Sink receives audit entries.
 type Sink interface {
