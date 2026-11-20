@@ -79,6 +79,34 @@ evaluating rules.
 - **WHEN** the data plane evaluates every vector in `internal/policy/testdata/conformance.json`
 - **THEN** each outcome, deciding rule and reason to ask equals the Go reference evaluator's
 
+### Requirement: Provider requests are not stopped by the default
+
+A provider request (`op` `llm.forward`) SHALL be refused only by a deny rule that matches it, or by
+an ask rule or a rule the data plane cannot evaluate whose control-plane answer is not an allow. The
+default decision SHALL NOT refuse provider requests, and break-glass deny-all SHALL NOT stop them,
+since redaction applies to them whatever the rules say.
+
+#### Scenario: Default deny and no forward rule
+
+- **WHEN** the policy default is deny and no rule mentions `llm.forward`
+- **THEN** provider requests are redacted and forwarded
+
+#### Scenario: Break-glass during a session
+
+- **WHEN** break-glass deny-all is engaged
+- **THEN** provider requests are still redacted and forwarded, and no placeholder is restored or credential injected
+
+### Requirement: Asks are bounded
+
+An operation the data plane sends to the control plane SHALL be held at most for the approval
+timeout the snapshot carries, and SHALL be denied when no allow answer arrives in time or the
+control plane's ask stream is not connected.
+
+#### Scenario: Ask stream down
+
+- **WHEN** the control plane's ask stream is closed and a request needs an ask
+- **THEN** the request is denied at once
+
 ### Requirement: Rules only restrict restore
 
 Restoring a placeholder into a response (`op` `restore`) SHALL be decided by the tool policy, and a

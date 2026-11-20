@@ -139,6 +139,25 @@ The token is bound to the root process's PID and start time, so after a reboot (
 old session matches any process and every old token is refused as `outside the session's process
 tree`.
 
+## Provider and tool traffic
+
+The data plane serves the agent's provider requests and tool traffic, and holds no session tokens
+and no `identity.peers` mapping. It reads what the transport carries and leaves the rest to the
+control plane:
+
+| Listener | What the data plane reads |
+|---|---|
+| Unix socket base URL | the kernel's peer credentials (user, group, process) |
+| forward proxy | the session named as the user of `Proxy-Authorization: Basic` (`HTTPS_PROXY=http://<session id>:<token>@127.0.0.1:<port>`); the password is never read |
+| TCP base URL | the session named in an `x-scrim-session: <session id>` header, which is never forwarded |
+
+A request that carries none of these is an unknown caller (`agent.known` is false), and rules on
+it are decided in the data plane. A request that carries any of them is an agent the data plane
+cannot place: a rule that depends on the agent goes to the control plane, and the ask carries what
+the transport said (`AskCaller` in `proto/scrim/dataplane/v1`) for the control plane to resolve and
+verify. A restore cannot wait for an answer, so a restore rule on the agent keeps the placeholder
+for such a request. `scrim run` does not set the proxy user or the header yet.
+
 ## What this does not protect against
 
 - Processes running as the same user that are not agents (your shell, an editor) are that user's

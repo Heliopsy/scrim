@@ -160,6 +160,24 @@ account, labels, SPIFFE ID), so each agent can be limited to its own secrets, de
 - **WHEN** agent A may use GitHub and agent B only read-only Hetzner
 - **THEN** agent B's request to use the GitHub credential is denied
 
+### Requirement: Data-plane identity from the transport
+
+The data plane SHALL take a request's caller only from its transport: Unix socket peer credentials,
+the user of `Proxy-Authorization: Basic` on the forward proxy, or the `x-scrim-session` header on a
+base-URL listener, which SHALL NOT be forwarded. A request with none of these SHALL be an unknown
+caller. A rule on the agent of a request that carries one SHALL be decided by the control plane,
+with what the transport said in the ask, since the data plane cannot verify sessions.
+
+#### Scenario: Request without a session
+
+- **WHEN** a request through the forward proxy names no session and a rule denies unknown callers
+- **THEN** the data plane refuses it without asking the control plane
+
+#### Scenario: Request naming a session
+
+- **WHEN** a provider request carries `x-scrim-session` and a rule on `agent.session` could deny it
+- **THEN** the data plane asks the control plane with the session id, and the provider never sees the header
+
 ### Requirement: Identity is not taken from request content
 
 The system SHALL derive identity only from the transport (socket peer, token, certificate) and SHALL

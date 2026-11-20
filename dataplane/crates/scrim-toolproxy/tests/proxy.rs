@@ -1058,3 +1058,79 @@ credentials:
     assert_eq!(got.error_code().as_deref(), Some("credential_unavailable"));
     assert!(w.up.seen().is_empty());
 }
+
+/// Denies `/v1/deny`, allows the rest, and records what it was asked.
+#[derive(Default)]
+struct PathPolicy {
+    asked: std::sync::Mutex<Vec<(InjectionRequest, Option<ClientInfo>)>>,
+}
+
+impl InjectionPolicy for PathPolicy {
+    fn decide<'a>(
+        &'a self,
+        req: &'a InjectionRequest,
+        extensions: &'a http::Extensions,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = InjectionDecision> + Send + 'a>> {
+        self.asked
+            .lock()
+            .unwrap()
+            .push((req.clone(), extensions.get::<ClientInfo>().cloned()));
+        Box::pin(async move {
+            if req.path == "/v1/deny" {
+                InjectionDecision::Deny("rule `no-deny-path`".into())
+            } else {
+                InjectionDecision::Allow
+            }
+        })
+    }
+}
+
+#[tokio::test]
+async fn the_injection_policy_decides_per_request_after_the_binding() {
+    let w = world(echo_handler()).await;
+    let policy = Arc::new(PathPolicy::default());
+    let mut snap = snapshot(&config(w.port()), &values());
+    snap.injection = Some(policy.clone());
+    w.proxy.proxy.apply(snap).unwrap();
+    let key = [("authorization", "Bearer SCRIM_ACME_KEY")];
+
+    let got = w.get("api.acme.test", "/v1/deny", &key).await;
+    assert_eq!(got.status, StatusCode::FORBIDDEN, "{}", got.text());
+    assert_eq!(got.error_code().as_deref(), Some("policy_denied"));
+    assert!(got.text().contains("no-deny-path"), "{}", got.text());
+    assert!(w.up.seen().is_empty(), "nothing may reach the upstream");
+    assert!(w.proxy.audit.events().iter().any(|e| matches!(e,
+        AuditEvent::RequestRefused { code: ErrorCode::PolicyDenied, credentials, .. }
+            if credentials == &["acme"])));
+
+    let got = w.get("api.acme.test", "/v1/ok", &key).await;
+    assert_eq!(got.status, StatusCode::OK, "{}", got.text());
+    assert_eq!(
+        w.up.seen()[0].headers["authorization"],
+        format!("Bearer {ACME_VALUE}").as_str()
+    );
+
+    // The policy sees bound requests only, once per credential, with the client attached.
+    let got = w.get("evil.test", "/steal", &key).await;
+    assert_eq!(got.error_code().as_deref(), Some("unbound_destination"));
+    let got = w.get("api.acme.test", "/v1/none", &[]).await;
+    assert_eq!(got.status, StatusCode::OK);
+    let asked = policy.asked.lock().unwrap().clone();
+    assert_eq!(asked.len(), 2);
+    let (r, client) = &asked[0];
+    assert_eq!(
+        (
+            r.credential.as_str(),
+            r.reference.as_str(),
+            r.method.as_str()
+        ),
+        ("acme", "env://ACME", "GET")
+    );
+    assert_eq!(r.destination.host, "api.acme.test");
+    assert!(
+        client
+            .as_ref()
+            .is_some_and(|c| c.peer.is_some() && c.session.is_none())
+    );
+    assert_no_values(&w.texts(&got));
+}

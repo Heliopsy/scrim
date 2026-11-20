@@ -117,6 +117,51 @@ forwarded without redaction.
 - **WHEN** a request contains a field not on the allowlist whose value includes a known secret
 - **THEN** the forwarded request carries that field with the secret replaced by a placeholder
 
+### Requirement: Request target and headers are redacted
+
+The redactor SHALL run over every path segment, query key and value, and request header value the
+proxy forwards, known header or not, on the raw bytes and on their percent-decoded form (in the
+query also with `+` read as a space). A component changed in its decoded form SHALL be forwarded
+percent-encoded. Only the agent's provider credential headers, `authorization` and `x-api-key`,
+SHALL be exempt. Response headers SHALL reach the agent as sent, with no placeholder restored.
+
+#### Scenario: Secret in a custom header
+
+- **WHEN** an agent's request carries a known secret in a custom header such as `X-Debug-Context`, raw, quoted or base64-encoded
+- **THEN** the provider receives that header with the secret replaced by a placeholder
+
+#### Scenario: Percent-encoded secret in the query string
+
+- **WHEN** an agent's request URL carries a known secret in a query parameter, percent-encoded or form-encoded
+- **THEN** the provider receives the query with the secret replaced by a percent-encoded placeholder and the other parameters unchanged
+
+#### Scenario: Provider credential headers pass through
+
+- **WHEN** an agent's request carries its provider API key in `x-api-key` or `authorization`
+- **THEN** the provider receives those headers byte for byte as the agent sent them
+
+#### Scenario: Placeholder in a response header
+
+- **WHEN** the provider's response carries a placeholder in a response header
+- **THEN** the agent receives that header with the placeholder unresolved
+
+### Requirement: Request target and headers are guarded
+
+The guard SHALL check the exact outgoing request line and header block, credential headers
+excepted, and the decoded form of every target component. It SHALL repair a component or
+withhold the request, and SHALL refuse a request with a known value it cannot repair in place (in
+a header name, or split across headers or components).
+
+#### Scenario: Redactor misses a header
+
+- **WHEN** the redactor misses a known secret in a header value or query parameter
+- **THEN** the guard replaces it before the request leaves, or refuses the request with nothing forwarded
+
+#### Scenario: Secret in a header name
+
+- **WHEN** a known secret appears in a request header name
+- **THEN** the proxy refuses the request and nothing reaches the provider
+
 ### Requirement: Raw-byte request redaction
 
 The proxy SHALL redact the raw request bytes without re-serialising the body, parsing the body
@@ -201,12 +246,18 @@ references at most and SHALL never contain a value or request content.
 The proxy SHALL answer 422 (the redaction-failed status) for malformed bodies, redactor errors,
 guard errors, guard refusals and unscannable content under `block`; 503 with `Retry-After` while
 redaction is not ready; 404 for an unknown route; 413 for an oversized body; 415 for a compressed
-body; 502 for an unreachable provider or chained upstream; 500 when capture cannot record.
+body; 502 for an unreachable provider or chained upstream; 500 when capture cannot record; 403
+with `policy_denied` when a rule denies the request or its approval is denied or times out.
 
 #### Scenario: Guard refusal status
 
 - **WHEN** the guard refuses a request
 - **THEN** the agent receives status 422 and the provider receives nothing
+
+#### Scenario: Provider request denied by a rule
+
+- **WHEN** a deny rule matches `op == "llm.forward"` for the request's provider
+- **THEN** the agent receives status 403 with `x-scrim-error: policy_denied` and the provider receives nothing
 
 ### Requirement: Streaming without whole buffering
 
