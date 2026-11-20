@@ -277,6 +277,10 @@
           "token": {
             "type": "string",
             "x-scrim-secret-ref": true
+          },
+          "unlock": {
+            "type": "string",
+            "x-scrim-secret-ref": true
           }
         },
         "required": [
