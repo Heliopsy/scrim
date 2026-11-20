@@ -27,12 +27,12 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 3. Anthropic Messages proxy (M0 exit)
 
-- [ ] 3.1 Base-URL listener and Anthropic Messages codec, agent auth passed through, unknown request fields redacted; verify: recorded request fixtures round-trip with only allowlisted fields untouched
-- [ ] 3.2 Streaming restorer with per-block holdback, split placeholders and byte-identical thinking and signature content; verify: property test restore(redact(x)) and recorded stream fixtures
-- [ ] 3.3 Fail-closed error path; verify: injected redaction or guard errors return the documented error and nothing reaches the fake upstream
-- [ ] 3.4 Capture mode; verify: captured requests are byte-identical to what the fake upstream received
+- [x] 3.1 Base-URL listener and Anthropic Messages codec, agent auth passed through, unknown request fields redacted; verify: recorded request fixtures round-trip with only allowlisted fields untouched
+- [x] 3.2 Streaming restorer with per-block holdback, split placeholders and byte-identical thinking and signature content; verify: property test restore(redact(x)) and recorded stream fixtures
+- [x] 3.3 Fail-closed error path; verify: injected redaction or guard errors return the documented error and nothing reaches the fake upstream
+- [x] 3.4 Capture mode; verify: captured requests are byte-identical to what the fake upstream received
 - [ ] 3.5 Upstream chaining through caveman with redaction first; verify: caveman's store holds placeholders only, and placeholders survive compression in an end-to-end run
-- [ ] 3.6 Latency budget gate; verify: CI fails when p99 per request or per chunk exceeds the configured budget on the reference fixtures
+- [x] 3.6 Latency budget gate; verify: CI fails when p99 per request or per chunk exceeds the configured budget on the reference fixtures
 
 ## 4. Configuration
 
@@ -61,11 +61,11 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 7. Policy, approvals and grants
 
-- [ ] 7.1 Rule language and evaluation (allow, deny, ask, default); verify: rule table tests and a compiled snapshot used by the data plane
-- [ ] 7.2 Approval flow with timeout deny and single-use signed decision links; verify: replayed or expired links are refused
-- [ ] 7.3 ntfy notifier with action buttons and terminal `scrim approve`; verify: end-to-end approve and deny against a local ntfy in podman
-- [ ] 7.4 JIT grants (ttl, max ttl, scope, use count, revoke); verify: expiry and revocation take effect on the next request
-- [ ] 7.5 Break-glass deny-all switch; verify: every path refuses while it is set
+- [x] 7.1 Rule language and evaluation (allow, deny, ask, default); verify: rule table tests and a compiled snapshot used by the data plane
+- [x] 7.2 Approval flow with timeout deny and single-use signed decision links; verify: replayed or expired links are refused
+- [x] 7.3 ntfy notifier with action buttons and terminal `scrim approve`; verify: end-to-end approve and deny against a local ntfy in podman
+- [x] 7.4 JIT grants (ttl, max ttl, scope, use count, revoke); verify: expiry and revocation take effect on the next request
+- [x] 7.5 Break-glass deny-all switch; verify: every path refuses while it is set
 
 ## 8. Identity and agent tools
 

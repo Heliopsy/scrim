@@ -59,3 +59,15 @@ leak *args: leak-selftest
 # Standalone fake model provider for testing a proxy by hand or from Rust tests.
 fakeprovider *args:
     go run ./internal/testing/fakeprovider/cmd/scrim-fakeprovider {{args}}
+
+ntfy_image := "docker.io/binwiederhier/ntfy:v2.14.0"
+
+# End-to-end approve and deny through a local ntfy in rootless podman.
+e2e-ntfy port="18765":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name=scrim-e2e-ntfy-$$
+    podman run -d --rm --name "$name" -p 127.0.0.1:{{port}}:80 {{ntfy_image}} serve >/dev/null
+    trap 'podman rm -f -v "$name" >/dev/null' EXIT
+    for _ in $(seq 50); do curl -fsS http://127.0.0.1:{{port}}/v1/health >/dev/null 2>&1 && break; sleep 0.2; done
+    SCRIM_TEST_NTFY_URL=http://127.0.0.1:{{port}} go test -race -count=1 -run TestEndToEndAgainstNtfy -v ./internal/notify/ntfy/

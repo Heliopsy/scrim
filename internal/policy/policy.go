@@ -130,6 +130,13 @@ type Request struct {
 	Name string
 	// Store is the store instance name.
 	Store string
+	// SecretClass is the catalog class of the secret (credential, display),
+	// if the catalog declares one.
+	SecretClass string
+	// SecretLabels are catalog or store metadata labels of the secret. They
+	// are metadata and safe to log; a store adapter must never copy a value
+	// into them.
+	SecretLabels map[string]string
 	// Provider is the model provider ("anthropic", "openai").
 	Provider string
 	// Host, Method and Path describe the destination.
