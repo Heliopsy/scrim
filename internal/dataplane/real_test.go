@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -49,6 +50,16 @@ func TestRealDataPlane(t *testing.T) {
 	}
 	if err := s.Push(ctx); err != nil {
 		t.Fatal(err)
+	}
+	pem, err := s.TrustBundle(ctx)
+	if err != nil || !strings.HasPrefix(pem, "-----BEGIN CERTIFICATE-----") {
+		t.Fatalf("TrustBundle = %q, %v", pem, err)
+	}
+	if dp := s.DataPlaneStatus(ctx); !dp.Running || !dp.Healthy {
+		t.Fatalf("DataPlaneStatus = %+v", dp)
+	}
+	if dp := (Probe{Path: path}).DataPlaneStatus(ctx); !dp.Running || !dp.Healthy {
+		t.Fatalf("Probe = %+v", dp)
 	}
 	if _, err := p.Client.Status(ctx, &pb.StatusRequest{Protocol: 42}); err == nil {
 		t.Fatal("the data plane accepted a foreign protocol version")

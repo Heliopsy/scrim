@@ -31,6 +31,12 @@ type SnapshotFunc func(ctx context.Context) (*pb.Snapshot, error)
 // denies.
 type AskFunc func(ctx context.Context, req *pb.AskRequest) *pb.AskAnswer
 
+// CaptureFunc stores a value a tool-proxy capture rule took from a response
+// and returns the placeholder the agent sees. req.Value is wiped after it
+// returns, so it must copy what it keeps (into a secret.Value). An error
+// withholds the field; its text must not contain the value.
+type CaptureFunc func(ctx context.Context, req *pb.CaptureRequest) (placeholder string, err error)
+
 // Supervisor runs the data plane and keeps it running. Ready is false
 // whenever the data plane is down or has no snapshot, and health uses it,
 // so traffic is refused rather than served unredacted.
@@ -43,6 +49,8 @@ type Supervisor struct {
 	OnEvents func(*pb.EventBatch)
 	// OnAsk answers asks; nil denies all.
 	OnAsk AskFunc
+	// OnCapture stores captured values; nil withholds every captured field.
+	OnCapture CaptureFunc
 	// StartTimeout bounds launch, handshake and first snapshot.
 	StartTimeout time.Duration
 	// MinBackoff and MaxBackoff bound the delay between restarts.
@@ -52,6 +60,9 @@ type Supervisor struct {
 	ready   atomic.Bool
 	mu      sync.Mutex
 	cur     *Process
+	hello   *pb.HelloResponse
+	since   time.Time
+	lastErr error
 	restart atomic.Uint64
 }
 
@@ -85,6 +96,9 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		s.mu.Lock()
+		s.lastErr = err
+		s.mu.Unlock()
 		if errors.Is(err, ErrProtocolMismatch) {
 			log.Error("refusing to run the data plane", "err", err)
 			return err
@@ -152,11 +166,11 @@ func (s *Supervisor) session(ctx context.Context) error {
 	}
 
 	s.mu.Lock()
-	s.cur = p
+	s.cur, s.hello, s.since = p, hello, time.Now()
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
-		s.cur = nil
+		s.cur, s.hello = nil, nil
 		s.mu.Unlock()
 	}()
 
@@ -170,6 +184,11 @@ func (s *Supervisor) session(ctx context.Context) error {
 		startCancel()
 		return fmt.Errorf("dataplane: asks: %w", err)
 	}
+	captures, err := p.Client.Captures(sctx)
+	if err != nil {
+		startCancel()
+		return fmt.Errorf("dataplane: captures: %w", err)
+	}
 	if err := s.push(startCtx, p); err != nil {
 		startCancel()
 		return err
@@ -180,6 +199,7 @@ func (s *Supervisor) session(ctx context.Context) error {
 	var wg sync.WaitGroup
 	wg.Go(func() { s.consumeEvents(events) })
 	wg.Go(func() { s.answerAsks(sctx, asks) })
+	wg.Go(func() { s.storeCaptures(sctx, captures) })
 	<-sctx.Done()
 	s.ready.Store(false)
 	wg.Wait()
@@ -265,6 +285,66 @@ func (s *Supervisor) answerAsks(ctx context.Context, stream pb.DataPlane_AsksCli
 			_ = stream.Send(ans)
 		})
 	}
+}
+
+func (s *Supervisor) storeCaptures(ctx context.Context, stream pb.DataPlane_CapturesClient) {
+	var send sync.Mutex
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			return
+		}
+		wg.Go(func() {
+			defer clear(req.Value)
+			res := &pb.CaptureResult{Protocol: Protocol, Id: req.GetId(), Error: "no capture store is configured"}
+			if s.OnCapture != nil {
+				cctx := ctx
+				if dl := req.GetDeadlineUnixNano(); dl > 0 {
+					var cancel context.CancelFunc
+					cctx, cancel = context.WithDeadline(ctx, time.Unix(0, dl))
+					defer cancel()
+				}
+				ph, err := s.OnCapture(cctx, req)
+				switch {
+				case err != nil:
+					res.Error = err.Error()
+				case ph == "":
+					res.Error = "capture store returned no placeholder"
+				default:
+					res.Error, res.Placeholder = "", ph
+				}
+			}
+			send.Lock()
+			defer send.Unlock()
+			_ = stream.Send(res)
+		})
+	}
+}
+
+// Status asks the running data plane for its status.
+func (s *Supervisor) Status(ctx context.Context) (*pb.StatusResponse, error) {
+	s.mu.Lock()
+	p := s.cur
+	s.mu.Unlock()
+	if p == nil {
+		return nil, errors.New("dataplane: not running")
+	}
+	return p.Client.Status(ctx, &pb.StatusRequest{Protocol: Protocol})
+}
+
+// TrustBundle returns the PEM certificates of the tool-proxy CA that
+// clients must trust. Public material.
+func (s *Supervisor) TrustBundle(ctx context.Context) (string, error) {
+	st, err := s.Status(ctx)
+	if err != nil {
+		return "", err
+	}
+	if st.GetCaTrustBundlePem() == "" {
+		return "", errors.New("dataplane: no CA trust bundle reported")
+	}
+	return st.GetCaTrustBundlePem(), nil
 }
 
 func (s *Supervisor) logger() *slog.Logger {

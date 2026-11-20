@@ -69,12 +69,6 @@ func (f *fake) ApplySnapshot(_ context.Context, s *pb.Snapshot) (*pb.ApplySnapsh
 	return &pb.ApplySnapshotResponse{Protocol: Protocol, AppliedVersion: s.GetVersion(), ValueCount: uint32(len(s.GetValues()))}, nil
 }
 
-func (f *fake) Status(context.Context, *pb.StatusRequest) (*pb.StatusResponse, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return &pb.StatusResponse{Protocol: Protocol, Ready: f.applied > 0, AppliedSnapshotVersion: f.applied}, nil
-}
-
 func (f *fake) Events(_ *pb.EventsRequest, s grpc.ServerStreamingServer[pb.EventBatch]) error {
 	if err := s.Send(&pb.EventBatch{Protocol: Protocol, Events: []*pb.Event{{Seq: 1, Kind: pb.EventKind_EVENT_KIND_REDACTION}}}); err != nil {
 		return err
@@ -96,6 +90,27 @@ func (f *fake) Asks(s grpc.BidiStreamingServer[pb.AskAnswer, pb.AskRequest]) err
 	}
 	<-s.Context().Done()
 	return nil
+}
+
+func (f *fake) Captures(s grpc.BidiStreamingServer[pb.CaptureResult, pb.CaptureRequest]) error {
+	if err := s.Send(&pb.CaptureRequest{Protocol: Protocol, Id: 9, Rule: "issued", Ref: "mem://new#token", Value: []byte("captured-in-test")}); err != nil {
+		return err
+	}
+	r, err := s.Recv()
+	if err != nil {
+		return err
+	}
+	if r.GetId() == 9 && r.GetError() == "" {
+		_ = s.Send(&pb.CaptureRequest{Protocol: Protocol, Id: 10, Rule: "stored:" + r.GetPlaceholder(), Value: []byte("x")})
+	}
+	<-s.Context().Done()
+	return nil
+}
+
+func (f *fake) Status(context.Context, *pb.StatusRequest) (*pb.StatusResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return &pb.StatusResponse{Protocol: Protocol, Ready: f.applied > 0, AppliedSnapshotVersion: f.applied, CaTrustBundlePem: "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"}, nil
 }
 
 // oneConn is a listener that yields one connection.

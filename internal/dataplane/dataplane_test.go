@@ -152,6 +152,7 @@ func TestSupervisorRestartsAndAnswersAsks(t *testing.T) {
 	var calls atomic.Int32
 	var batches atomic.Int32
 	asked := make(chan *pb.AskRequest, 4)
+	captured := make(chan string, 4)
 	s := &Supervisor{
 		Binary:   fakeBinary(t),
 		Options:  fakeOpts(),
@@ -161,6 +162,10 @@ func TestSupervisorRestartsAndAnswersAsks(t *testing.T) {
 			asked <- r
 			return &pb.AskAnswer{Effect: pb.Effect_EFFECT_ALLOW}
 		},
+		OnCapture: func(_ context.Context, r *pb.CaptureRequest) (string, error) {
+			captured <- r.GetRule() + "=" + string(r.GetValue())
+			return "SCRIM_NEW_TOKEN", nil
+		},
 		MinBackoff: 10 * time.Millisecond,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -168,6 +173,18 @@ func TestSupervisorRestartsAndAnswersAsks(t *testing.T) {
 	go func() { done <- s.Run(ctx) }()
 
 	waitFor(t, "ready", s.Ready)
+	if got := <-captured; got != "issued=captured-in-test" {
+		t.Fatalf("capture handler got %q", got)
+	}
+	if got := <-captured; got != "stored:SCRIM_NEW_TOKEN=x" {
+		t.Fatalf("the placeholder did not reach the data plane: %q", got)
+	}
+	if pem, err := s.TrustBundle(ctx); err != nil || pem == "" {
+		t.Fatalf("TrustBundle = %q, %v", pem, err)
+	}
+	if dp := s.DataPlaneStatus(ctx); !dp.Running || !dp.Healthy || dp.PID == 0 {
+		t.Fatalf("DataPlaneStatus = %+v", dp)
+	}
 	if err := s.Health(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -199,6 +216,24 @@ func TestSupervisorRestartsAndAnswersAsks(t *testing.T) {
 	}
 	if s.Ready() {
 		t.Fatal("ready after stop")
+	}
+	if dp := s.DataPlaneStatus(context.Background()); dp.Running || dp.Detail == "" {
+		t.Fatalf("DataPlaneStatus after stop = %+v", dp)
+	}
+}
+
+func TestProbe(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dp := Probe{Path: exe, Options: fakeOpts()}.DataPlaneStatus(context.Background())
+	if !dp.Running || !dp.Healthy || dp.Version != "fake" {
+		t.Fatalf("probe = %+v", dp)
+	}
+	dp = Probe{Path: filepath.Join(t.TempDir(), "missing")}.DataPlaneStatus(context.Background())
+	if dp.Running || dp.Detail == "" {
+		t.Fatalf("probe of a missing binary = %+v", dp)
 	}
 }
 
