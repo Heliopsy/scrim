@@ -296,12 +296,23 @@ pub struct FakeGuard {
     entries: Vec<Entry>,
     mode: GuardMode,
     fault: Fault,
+    /// One automaton over all raw values, for benchmark-sized sets (`Fixture::fast_guard`).
+    automaton: Option<AhoCorasick>,
 }
 
 impl Guard for FakeGuard {
     fn check(&self, outgoing: &[u8]) -> Result<GuardVerdict, EngineError> {
         if self.fault == Fault::Error {
             return Err(EngineError::new("injected guard fault"));
+        }
+        if self.entries.is_empty() {
+            return Ok(GuardVerdict::Clean);
+        }
+        if let Some(ac) = &self.automaton {
+            // Fast path: one pass to see whether anything is there at all.
+            if !ac.is_match(outgoing) {
+                return Ok(GuardVerdict::Clean);
+            }
         }
         let mut refs = Vec::new();
         let mut bytes = outgoing.to_vec();
@@ -430,6 +441,9 @@ pub struct Fixture {
     /// A literal the fake redactor treats as a fallback-detector hit (stands in for pattern
     /// and entropy rules, which would fire on signatures and encrypted blobs).
     pub detector: Option<String>,
+    /// Let the fake guard pre-check with one automaton, so benchmarks with thousands of values
+    /// measure something closer to a real guard than one scan per value.
+    pub fast_guard: bool,
     /// Snapshot version.
     pub version: u64,
 }
@@ -449,6 +463,7 @@ impl Fixture {
             redactor_misses: Vec::new(),
             binary: BinaryPolicy::Pass,
             detector: None,
+            fast_guard: false,
             version: 1,
         };
         for (r, v) in display {
@@ -551,6 +566,9 @@ impl Fixture {
                 entries: self.entries.clone(),
                 mode: self.guard_mode,
                 fault: self.guard_fault,
+                automaton: self.fast_guard.then(|| {
+                    AhoCorasick::new(self.entries.iter().map(|e| e.value.expose().to_vec())).expect("aho-corasick")
+                }),
             }),
             placeholders: Arc::new(self.fake_placeholders()),
             policy: Arc::new(self.policy.clone()),
