@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>{{.Title}} - scrim</title>
+<style>{{.CSS}}</style>
+</head>
+<body>
+<main>
+<h1>{{.Title}}</h1>
+{{- if .Entry}}
+<div class="card">
+<p>An agent asked for a secret. What you type here goes straight into the store. The agent never sees it; it is told only whether a value was stored.</p>
+<dl>
+<dt>Agent</dt><dd>{{.Entry.Agent}}</dd>
+<dt>Stored at</dt><dd>{{.Entry.Ref}}</dd>
+{{- if .Entry.Store}}<dt>Store</dt><dd>{{.Entry.Store}}</dd>{{end}}
+<dt>Expires</dt><dd>{{.Expires}}</dd>
+</dl>
+<p class="note" id="prompt-label">The agent wrote this request. Check it is something you expect before you answer.</p>
+<blockquote class="prompt" aria-labelledby="prompt-label">{{.Entry.Prompt}}</blockquote>
+<form method="post" autocomplete="off">
+{{- if .Error}}<p class="error" role="alert" id="value-error">{{.Error}}</p>{{end}}
+<label for="value">Value</label>
+<input type="password" id="value" name="value" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="value-help{{if .Error}} value-error{{end}}" autofocus>
+<p class="note" id="value-help">Single line. For a multi-line value, use <code>scrim secret put --stdin</code> instead.</p>
+<div class="actions">
+<button class="primary" type="submit" name="action" value="store">Store value</button>
+<button class="secondary" type="submit" name="action" value="decline">Decline</button>
+</div>
+</form>
+</div>
+{{- else}}
+<p role="status">{{.Message}}</p>
+{{- end}}
+</main>
+</body>
+</html>
