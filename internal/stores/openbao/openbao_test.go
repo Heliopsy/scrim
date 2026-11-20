@@ -468,7 +468,7 @@ func TestListFallsBackWithoutDetailedMetadata(t *testing.T) {
 				"custom_metadata": map[string]string{"scrim.hosts": "h"}, "versions": map[string]any{"4": map[string]any{}}}})
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(404)
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer srv.Close()
@@ -502,7 +502,7 @@ func TestWatchBacksOffAndRecovers(t *testing.T) {
 		defer mu.Unlock()
 		polls = append(polls, time.Now())
 		if fail {
-			w.WriteHeader(500)
+			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 		writeJSON(w, 200, map[string]any{"data": map[string]any{"keys": []string{"a"}, "key_info": map[string]any{

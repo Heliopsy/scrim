@@ -1,7 +1,7 @@
 # Contributing to scrim
 
-scrim is in its design phase. Build, test and toolchain instructions arrive with the first code,
-once the implementation language is settled.
+See "Building from source" in the README for toolchains. `just check` runs every gate CI runs
+except CodeQL and Scorecard; run it before pushing. Coding rules are in [AGENTS.md](AGENTS.md).
 
 ## Specs come first
 

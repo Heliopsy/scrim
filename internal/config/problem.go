@@ -49,7 +49,7 @@ func Problems(err error) []*Problem {
 	if err == nil {
 		return nil
 	}
-	switch e := err.(type) {
+	switch e := err.(type) { //nolint:errorlint // walks the error tree itself; errors.As below covers the rest
 	case *Problem:
 		return []*Problem{e}
 	case interface{ Unwrap() []error }:

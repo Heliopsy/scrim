@@ -92,7 +92,7 @@ func TestAppendQuotedRoundTrips(t *testing.T) {
 }
 
 func TestRawValue(t *testing.T) {
-	cases := map[string]string{`"a\nb"`: "a\nb", `42`: "42", `true`: "true", ` {"k":1} `: `{"k":1}`}
+	cases := map[string]string{`"a\nb"`: "a\nb", `42`: "42", `true`: "true", ` {"k":1} `: `{"k":1}`} //nolint:gocritic // the spaces around the key are the input under test
 	for in, want := range cases {
 		v, err := Raw(in).Value()
 		if err != nil {

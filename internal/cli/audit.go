@@ -15,14 +15,15 @@ import (
 	"github.com/heliopsy/scrim/internal/status"
 )
 
-// Audit groups the audit log commands.
+// Audit groups the audit log commands and the leak suite (`audit run`, in
+// audit_run.go).
 func (Commands) Audit(e *Env) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "audit",
 		Short: "Query the audit log of decisions, approvals, grants, store writes and injections",
 		Args:  cobra.NoArgs,
 	}
-	c.AddCommand(auditLog(e))
+	c.AddCommand(auditLog(e), newAuditRunCmd(e))
 	return c
 }
 

@@ -1,0 +1,13 @@
+{
+  "name": "env-dump",
+  "description": "The agent dumps the process environment, which holds every kind of seed, and the user pastes a short password into the chat.",
+  "prompt": "My deploy script fails. The vault unseal password I use is {{secret:short-password}}. Help.",
+  "steps": [
+    {
+      "tool": "Bash",
+      "input": {"command": "env | sort"},
+      "output": "AWS_ACCESS_KEY_ID={{secret:aws-access-key-id}}\nAWS_SECRET_ACCESS_KEY={{secret:aws-secret-access-key}}\nDB_PASSWORD={{secret:db-password}}\nGITHUB_TOKEN={{secret:github-token}}\nHOME=/home/dev\nJWT={{secret:jwt}}\nPATH=/usr/local/bin:/usr/bin:/bin\nPAYMENTS_API_KEY={{secret:api-key}}\nSESSION_SECRET={{secret:password}}\nUNSEAL={{secret:short-password}}\n"
+    },
+    {"text": "Your environment has everything the script needs. The failure is elsewhere; share the script output."}
+  ]
+}

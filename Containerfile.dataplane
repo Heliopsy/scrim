@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# ghcr.io/heliopsy/scrim-dataplane: the data plane on its own, for Kubernetes
+# sidecars and edge forwarders that need it without a control plane per pod
+# (design D11). Same build as the copy embedded in scrim.
+#
+# Assembled from the release binary, never compiled here, like Containerfile:
+#
+#   scripts/release/image.sh scrim-dataplane
+#
+# The build context holds linux-<arch>/scrim-dataplane for each architecture;
+# TARGETARCH picks one. No RUN step, so a multi-arch build needs no emulation.
+
+# Pinned by the digest of the multi-arch index; dependabot moves it.
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
+
+ARG TARGETARCH
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG CREATED=1970-01-01T00:00:00Z
+ARG SOURCE=https://github.com/Heliopsy/scrim
+
+LABEL org.opencontainers.image.title="scrim-dataplane" \
+      org.opencontainers.image.description="scrim data plane for sidecars and edge forwarders" \
+      org.opencontainers.image.source="${SOURCE}" \
+      org.opencontainers.image.url="${SOURCE}" \
+      org.opencontainers.image.documentation="${SOURCE}/blob/main/docs/install.md" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.vendor="Heliopsy" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}"
+
+COPY --chmod=0755 linux-${TARGETARCH}/scrim-dataplane /usr/local/bin/scrim-dataplane
+
+# distroless nonroot. Numeric so runAsNonRoot can check it without /etc/passwd.
+# Stateless: everything it holds arrives from the control plane over its socket.
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/scrim-dataplane"]

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -132,7 +133,7 @@ func TestMetrics(t *testing.T) {
 	m.Histogram("redaction", "added_seconds", "Added latency.", nil, "provider").WithLabelValues("anthropic").Observe(0.001)
 	m.Gauge("store", "values_loaded", "Values loaded per store.", "store").WithLabelValues("bao").Set(3)
 	rec := httptest.NewRecorder()
-	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	m.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body := rec.Body.String()
 	for _, want := range []string{`scrim_guard_refusals_total{agent="a1",provider="anthropic"} 1`, "scrim_redaction_added_seconds_bucket", "go_goroutines"} {
 		if !strings.Contains(body, want) {

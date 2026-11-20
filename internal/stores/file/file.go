@@ -346,7 +346,7 @@ func (a *Adapter) walk(prefix string) ([]entry, error) {
 		}
 		fi, err := a.root.Stat(p) // follows symlinks, refuses escapes
 		if err != nil || !fi.Mode().IsRegular() {
-			return nil
+			return nil //nolint:nilerr // unreadable and non-regular entries are skipped, not fatal
 		}
 		out = append(out, entry{p, fi})
 		return nil

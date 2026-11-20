@@ -4,6 +4,7 @@ package policy_test
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/heliopsy/scrim/internal/policy"
@@ -54,15 +55,15 @@ func TestRules(t *testing.T) {
 	eng := policy.Rules{
 		List: []policy.Rule{
 			{Name: "gh-api", Effect: policy.Allow, Match: func(r policy.Request) bool { return r.Host == "api.github.com" }},
-			{Name: "gh-push", Effect: policy.Ask, Match: func(r policy.Request) bool { return r.Host == "api.github.com" && r.Method == "POST" }},
+			{Name: "gh-push", Effect: policy.Ask, Match: func(r policy.Request) bool { return r.Host == "api.github.com" && r.Method == http.MethodPost }},
 		},
 		Default: policy.Static{Effect: policy.Deny},
 	}
-	d, _ := eng.Decide(ctx, policy.Request{Host: "api.github.com", Method: "GET"})
+	d, _ := eng.Decide(ctx, policy.Request{Host: "api.github.com", Method: http.MethodGet})
 	if d.Effect != policy.Allow || d.Rule != "gh-api" {
 		t.Fatalf("GET: %+v", d)
 	}
-	d, _ = eng.Decide(ctx, policy.Request{Host: "api.github.com", Method: "POST"})
+	d, _ = eng.Decide(ctx, policy.Request{Host: "api.github.com", Method: http.MethodPost})
 	if d.Effect != policy.Ask || d.Rule != "gh-push" {
 		t.Fatalf("POST: %+v", d)
 	}

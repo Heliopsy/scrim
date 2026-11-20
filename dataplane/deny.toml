@@ -1,0 +1,47 @@
+# cargo-deny: advisories, licences, bans and sources for the data plane.
+# Run with `just vuln` or `cargo deny check` in dataplane/.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+  # rustls-pemfile is unmaintained; its replacement is the PEM support in
+  # rustls-pki-types. It is a dev-dependency of scrim-toolproxy's tests only and
+  # is not in any shipped binary. Remove this entry when those tests move off it.
+  { id = "RUSTSEC-2025-0134", reason = "test-only dev-dependency of scrim-toolproxy" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+  "AGPL-3.0-only",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  # webpki-roots ships Mozilla's root certificate list under this data licence.
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MIT",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+
+[[licenses.clarify]]
+crate = "scrim-proto"
+expression = "AGPL-3.0-only"
+license-files = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

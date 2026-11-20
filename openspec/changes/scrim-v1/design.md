@@ -158,7 +158,58 @@ Rules are expressions over agent, secret, provider, destination and tool, evalua
 plane and pushed to the data plane as a compiled snapshot. The data plane decides allow and deny
 locally; only "ask" crosses back to the control plane, which creates the approval, notifies, waits
 and records the grant. Approvals deny on timeout. JIT grants are pre-approvals with a ttl, checked
-by the same path. Candidates for the expression language are CEL and Rego; the choice follows D1.
+by the same path.
+
+**Language: CEL** (`cel.dev/cel-go`). It is typed, so a misspelt field fails at load time; it is
+side-effect free and cost-bounded; and its `&&`/`||` treat errors the way a fail-closed rule needs
+(`false && error` is false, `true || error` is true). Rego was the alternative; it is a larger
+language for a problem that is mostly string matching, and its Go-only runtime gives the data plane
+nothing either way. Rules see `op`, `agent`, `secret`, `provider`, `dest`, `tool` and `now`, plus a
+`glob` function whose syntax is small enough to implement identically in both halves.
+
+**Ordered evaluation.** Every rule is evaluated. Among matches deny wins over ask over allow; within
+the winning effect the first rule in file order is the one reported and whose settings (approval
+timeout, notifiers, grant ttl, max ttl, uses, scope) apply. No match applies `policy.default`
+(deny). A rule whose expression errors on a request (a missing label) counts as matching if it
+denies or asks and as not matching if it allows, so an error can only tighten the outcome.
+
+**The data plane does not run CEL.** The control plane lowers each rule into disjunctive normal
+form over conditions the data plane evaluates with plain string operations: `in` (equality), prefix,
+suffix, contains, glob and has-key on the fields the data plane knows. Anything else (`now`,
+regular expressions, field-to-field comparisons, macros, string functions, or a rule whose DNF
+exceeds 64 clauses) becomes a residual part of its clause. The data plane evaluates every rule to
+match, no match or unknown with the same three-valued logic as CEL, then takes, for deny, ask and
+allow in that order, the first rule at that level that is not a no-match: unknown sends the request
+to the control plane; deny denies; ask goes to the control plane; allow allows unless the rule has a
+side effect (a grant ttl), which also goes to the control plane. The data plane therefore decides
+locally only when its answer is exactly the control plane's, same effect and same rule; a
+residual rule costs a control-plane call only when it could change the outcome. The table travels
+in `Policy.table` (`table_format` 1); the reference evaluator is Go (`policy.Snapshot.Evaluate`), a
+fuzz target cross-checks it against CEL, and `internal/policy/testdata/conformance.json` holds
+vectors the Rust evaluator must reproduce.
+
+**Grants and approvals stay in the control plane.** A grant can only turn an ask into an allow, so
+the data plane only ever needs a grant after it has already decided to ask; the control plane
+re-evaluates the full rule set, then checks grants (read from the state backend on every use, so
+expiry, revocation and use counts take effect on the next request on every replica sharing the
+backend), then raises an approval. Decisions come back through single-use links: an HMAC-SHA256
+token over approval ID, action, expiry and notifier, signed with `approvals.signing-key` (shared by
+replicas, rotatable by key ID). An approval leaves pending once, so the first decision settles it
+and every later token is refused. A waiting operation re-reads its approval every
+`approvals.poll-interval`, which bounds how long a decision recorded on another replica takes to
+release it.
+
+**Notifiers only deliver.** ntfy buttons post to the decision links. The generic webhook speaks
+nono's approval webhook v1 (submit, then poll) so one approval service can serve nono and scrim; a
+grant or denial from it settles through the same token check, and any error settles nothing and
+leaves the approval to expire. The terminal path is `scrim approve` / `scrim deny` over the admin
+API.
+
+**Break-glass** state is the newest `breakglass.engaged` or `breakglass.released` audit entry, so it
+is durable with the backend, shared between replicas (each re-reads it every
+`policy.deny-all-refresh`) and cannot change without an audit entry. While it is set the snapshot
+carries `break_glass`, the engine denies, grants are not honoured, approvals cannot be created or
+approved, and pending ones are denied.
 
 ### D8. Interception is a set of listeners in front of one engine
 
@@ -253,4 +304,4 @@ settings, units).
 
 - Exact placeholder alphabet and length, settled by the caveman survival test in the first
   milestone. Changing it does not change any requirement.
-- Which notifier ships first after ntfy (Telegram or generic webhook), decided by first users.
+- Which chat notifier ships after ntfy and the webhook (Telegram or Slack), decided by first users.

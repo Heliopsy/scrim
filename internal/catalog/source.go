@@ -330,7 +330,7 @@ func Load(ctx context.Context, c *config.Config, lister Lister, sel Selection) (
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
-	in.Entries = append(fileEntries, cfgEntries...)
+	in.Entries = append(fileEntries, cfgEntries...) //nolint:gocritic // a new slice from both lists is intended
 	var warnings []string
 	in.Listings = map[string][]stores.Metadata{}
 	for _, e := range in.Entries {

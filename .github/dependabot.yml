@@ -1,8 +1,34 @@
 version: 2
 updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+    groups:
+      go:
+        patterns: ["*"]
+  - package-ecosystem: cargo
+    directories: [/dataplane, /dataplane/tools/protogen]
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+    groups:
+      cargo:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     commit-message:
       prefix: ci
+  # The distroless base of Containerfile and Containerfile.dataplane, pinned
+  # by digest.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build

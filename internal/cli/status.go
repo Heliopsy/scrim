@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/dataplane"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/state/sqlite"
 	"github.com/heliopsy/scrim/internal/status"
@@ -75,9 +76,9 @@ func (o *outputFlags) format() (string, error) {
 // statusSources gathers what this process can see: the effective
 // configuration, the state backend and the configured stores. A SQLite file
 // held by a running scrim is reported as in use, not as a failure. The data
-// plane, interception modes and protections are reported by the running
-// daemon; until the admin API serves them they show as not reported, never
-// as healthy.
+// plane is checked by starting it once (dataplane.Probe). Interception modes
+// and protections are reported by the running daemon; until the admin API
+// serves them they show as not reported, never as healthy.
 func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) {
 	cfg, err := e.Config()
 	if err != nil {
@@ -88,6 +89,11 @@ func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) 
 		return status.Sources{}, nil, err
 	}
 	src := status.Sources{Version: version.String(), Config: m}
+	src.DataPlane = dataplane.Probe{
+		Path:    dataplane.PathSetting.Get(cfg),
+		Options: dataplane.StartOptions{Mlock: dataplane.MlockSetting.Get(cfg)},
+		Timeout: dataplane.StartTimeout.Get(cfg),
+	}
 	st, closeFn := openStateForStatus(ctx, cfg)
 	src.State = st
 	src.Audit = status.DBAuditSink{State: st}

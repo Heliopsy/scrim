@@ -18,8 +18,8 @@
 // would misread bumps PROTOCOL_VERSION; both sides and their tests change in
 // the same commit.
 //
-// Secrets: ValueEntry.value and PlaceholderKey.key are the only fields that
-// hold secret material. Generated debug printers for those messages are
+// Secrets: ValueEntry.value, PlaceholderKey.key and CaptureRequest.value are
+// the only fields that hold secret material. Generated debug printers for those messages are
 // replaced by redacting ones on both sides; neither may be logged, echoed in
 // an error or copied into an event.
 syntax = "proto3";
@@ -57,6 +57,14 @@ service DataPlane {
 
   // Status reports readiness and what is applied, for health and scrim status.
   rpc Status(StatusRequest) returns (StatusResponse);
+
+  // Captures carries values a tool-proxy capture rule took from a response
+  // (a token an API just issued). The control plane opens the call once; the
+  // data plane sends a CaptureRequest and the control plane writes the value
+  // to its store and answers with the placeholder the agent sees. A request
+  // with no answer by its deadline, an error answer, or no attached control
+  // plane withholds the field from the agent.
+  rpc Captures(stream CaptureResult) returns (stream CaptureRequest);
 }
 
 message HelloRequest {
@@ -200,6 +208,70 @@ message Policy {
   // break_glass denies every injection, restore and ask while redaction
   // continues.
   bool break_glass = 6;
+  // table is the rule set compiled from CEL into a decision table (design
+  // D7, docs/policy.md "How the data plane decides"), in rule order. When it
+  // is set, `rules`, `engine` and `compiled` are empty.
+  repeated TableRule table = 7;
+  // table_format is the version of the table semantics; a data plane that
+  // does not implement it rejects the snapshot. Currently 1.
+  uint32 table_format = 8;
+}
+
+// TableRule is one rule in disjunctive normal form: it matches when any
+// clause matches. The data plane evaluates every rule to match, no match or
+// unknown, then for each effect in the order deny, ask, allow takes the
+// first rule (in order) with that effect that is not a no-match: unknown
+// sends the request to the control plane; otherwise deny denies, ask goes
+// to the control plane, and allow allows unless control_plane is set. With
+// no candidate, default_effect applies (ask goes to the control plane).
+message TableRule {
+  string name = 1;
+  Effect effect = 2;
+  // control_plane marks an allow rule with side effects (it leaves a grant
+  // behind); when it decides, the control plane is asked instead.
+  bool control_plane = 3;
+  // clauses are alternatives; none means the rule never matches.
+  repeated Clause clauses = 4;
+  // reason is shown in approvals and audit.
+  string reason = 5;
+}
+
+// Clause is a conjunction. Its result: false if any condition is false;
+// otherwise unknown if residual; otherwise error if any condition errored;
+// otherwise true. A rule is true if any clause is true, else unknown if any
+// is unknown, else error if any errored, else false. A rule that errors
+// counts as a match when its effect is deny or ask and as no match for
+// allow.
+message Clause {
+  repeated Condition conditions = 1;
+  // residual: the clause also has parts only the control plane evaluates.
+  bool residual = 2;
+}
+
+enum ConditionOp {
+  CONDITION_OP_UNSPECIFIED = 0;  // invalid; rejects the snapshot
+  CONDITION_OP_IN = 1;           // operand equals one of values
+  CONDITION_OP_PREFIX = 2;       // operand starts with values[0]
+  CONDITION_OP_SUFFIX = 3;       // operand ends with values[0]
+  CONDITION_OP_CONTAINS = 4;     // operand contains values[0]
+  CONDITION_OP_GLOB = 5;         // operand matches glob values[0]
+  CONDITION_OP_HAS_KEY = 6;      // map field has key; never errors
+}
+
+// Condition tests one request field.
+message Condition {
+  // field is one of: op, provider, agent.id, agent.kind, agent.known,
+  // agent.session, agent.labels, secret.ref, secret.name, secret.store,
+  // secret.class, secret.labels, dest.host, dest.method, dest.path,
+  // tool.name, tool.command. agent.known is "true" or "false".
+  string field = 1;
+  // key selects an entry of a map field (agent.labels, secret.labels). Any
+  // op but HAS_KEY on a missing key is an error.
+  string key = 2;
+  ConditionOp op = 3;
+  repeated string values = 4;
+  // negate inverts the result; an error stays an error.
+  bool negate = 5;
 }
 
 message PolicyRule {
@@ -285,6 +357,8 @@ enum EventKind {
   EVENT_KIND_RESTORE = 6;        // a placeholder resolved into a tool argument
   EVENT_KIND_DETECTOR_HIT = 7;   // a fallback detector matched
   EVENT_KIND_ERROR = 8;          // a request failed closed
+  EVENT_KIND_CAPTURE = 9;        // a capture rule stored a response value
+  EVENT_KIND_INTERCEPTION_REFUSED = 10;  // a client refused scrim's certificate
 }
 
 // Event is metadata only: it names references and placeholders, never a
@@ -322,6 +396,14 @@ message PolicyRequest {
   string method = 7;
   string path = 8;
   string tool = 9;
+  // The rest of the request attributes rules see (docs/policy.md).
+  string agent_kind = 10;
+  string session = 11;
+  map<string, string> agent_labels = 12;
+  string store = 13;
+  string secret_class = 14;
+  map<string, string> secret_labels = 15;
+  string command = 16;
 }
 
 message AskRequest {
@@ -363,6 +445,47 @@ message StatusResponse {
   bool dumpable = 6;
   repeated ListenerStatus listeners = 7;
   string data_plane_version = 8;
+  // ca_trust_bundle_pem holds the certificates of the tool-proxy CA that
+  // clients must trust, PEM encoded; during a rotation both CAs. Public.
+  string ca_trust_bundle_pem = 9;
+  // tool_proxy is present once the tool proxy is built.
+  ToolProxyStatus tool_proxy = 10;
+}
+
+message ToolProxyStatus {
+  // ready is true when a snapshot is applied and its redactor is ready.
+  bool ready = 1;
+  uint64 snapshot_version = 2;
+  // unsupported_destinations maps destinations whose clients refused the
+  // interception certificate to the TLS error.
+  map<string, string> unsupported_destinations = 3;
+  uint32 cached_leaves = 4;
+}
+
+message CaptureRequest {
+  uint32 protocol = 1;
+  // id is unique per data plane process; the result echoes it.
+  uint64 id = 2;
+  // rule names the capture rule that matched.
+  string rule = 3;
+  // ref is the store reference to write.
+  string ref = 4;
+  // destination is `scheme://host:port` the value came from.
+  string destination = 5;
+  // value is the captured secret. Never logged; wiped after the write.
+  bytes value = 6;
+  // deadline_unix_nano is when the data plane withholds the field instead.
+  int64 deadline_unix_nano = 7;
+}
+
+message CaptureResult {
+  uint32 protocol = 1;
+  uint64 id = 2;
+  // placeholder is what the agent sees in place of the value. Empty with
+  // error set when the write failed.
+  string placeholder = 3;
+  // error says why the value was not stored, without the value.
+  string error = 4;
 }
 
 message ListenerStatus {

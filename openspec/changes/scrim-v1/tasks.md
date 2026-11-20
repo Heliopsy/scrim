@@ -10,29 +10,29 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 ## 1. Language decision and toolchain
 
 - [x] 1.1 Record the `redact-bench` result and the chosen language split in design.md D1; verify: the decision rule's inputs (CPU per GB, p99, p999) are quoted with a link to the benchmark README
-- [ ] 1.2 Add the build toolchain, `justfile` (`build`, `test`, `check`, `bench`, `fuzz`, `spec`) and language-specific sections of AGENTS.md; verify: `just check` passes on an empty skeleton
-- [ ] 1.3 Add CI: lint, unit tests, `openspec validate --all --strict`, gitleaks, CodeQL, dependency review, Scorecard, release-please, every action pinned by SHA; verify: CI green on a no-op PR
-- [ ] 1.4 Add the release pipeline (static binaries, container image, SBOM, signatures, provenance); verify: a pre-release tag produces signed artifacts that `cosign verify` accepts
+- [x] 1.2 Add the build toolchain, `justfile` (`build`, `test`, `check`, `bench`, `fuzz`, `spec`) and language-specific sections of AGENTS.md; verify: `just check` passes on an empty skeleton
+- [x] 1.3 Add CI: lint, unit tests, `openspec validate --all --strict`, gitleaks, CodeQL, dependency review, Scorecard, release-please, every action pinned by SHA; verify: CI green on a no-op PR
+- [x] 1.4 Add the release pipeline (static binaries, container image, SBOM, signatures, provenance); verify: a pre-release tag produces signed artifacts that `cosign verify` accepts
 
 ## 2. Redaction core
 
 - [ ] 2.0 Hash-window prefilter matcher for large sets with Aho-Corasick for small sets (design D13); verify: identical output to the reference matcher on every fixture and at least 500 MB/s single core at 10,000 secrets
 
-- [ ] 2.1 Value dictionary with encoded variants (raw, JSON-escaped, base64 std/url at three alignments, hex, URL-encoded) and minimum-length rule; verify: table tests per variant and per edge length
-- [ ] 2.2 Multi-pattern matcher over raw request bytes with atomic rebuild and swap; verify: concurrent requests during rebuild never block and never miss a value present before and after the swap
-- [ ] 2.3 Deterministic placeholders with versioned key and rotation; verify: same value gives same bytes across processes; old-key placeholders still resolve after rotation
-- [ ] 2.4 Independent guard over exact outgoing bytes (separate code from 2.2), repair or withhold; verify: a value the redactor is made to miss is caught by the guard in tests
-- [ ] 2.5 Fallback detectors (pattern rules, entropy), configurable; verify: rule fixtures and false-positive corpus thresholds
+- [x] 2.1 Value dictionary with encoded variants (raw, JSON-escaped, base64 std/url at three alignments, hex, URL-encoded) and minimum-length rule; verify: table tests per variant and per edge length
+- [x] 2.2 Multi-pattern matcher over raw request bytes with atomic rebuild and swap; verify: concurrent requests during rebuild never block and never miss a value present before and after the swap
+- [x] 2.3 Deterministic placeholders with versioned key and rotation; verify: same value gives same bytes across processes; old-key placeholders still resolve after rotation
+- [x] 2.4 Independent guard over exact outgoing bytes (separate code from 2.2), repair or withhold; verify: a value the redactor is made to miss is caught by the guard in tests
+- [x] 2.5 Fallback detectors (pattern rules, entropy), configurable; verify: rule fixtures and false-positive corpus thresholds
 - [ ] 2.6 Fuzz targets for matcher, variants and guard; verify: fuzzing runs in CI for a fixed budget with zero findings
 
 ## 3. Anthropic Messages proxy (M0 exit)
 
-- [ ] 3.1 Base-URL listener and Anthropic Messages codec, agent auth passed through, unknown request fields redacted; verify: recorded request fixtures round-trip with only allowlisted fields untouched
-- [ ] 3.2 Streaming restorer with per-block holdback, split placeholders and byte-identical thinking and signature content; verify: property test restore(redact(x)) and recorded stream fixtures
-- [ ] 3.3 Fail-closed error path; verify: injected redaction or guard errors return the documented error and nothing reaches the fake upstream
-- [ ] 3.4 Capture mode; verify: captured requests are byte-identical to what the fake upstream received
+- [x] 3.1 Base-URL listener and Anthropic Messages codec, agent auth passed through, unknown request fields redacted; verify: recorded request fixtures round-trip with only allowlisted fields untouched
+- [x] 3.2 Streaming restorer with per-block holdback, split placeholders and byte-identical thinking and signature content; verify: property test restore(redact(x)) and recorded stream fixtures
+- [x] 3.3 Fail-closed error path; verify: injected redaction or guard errors return the documented error and nothing reaches the fake upstream
+- [x] 3.4 Capture mode; verify: captured requests are byte-identical to what the fake upstream received
 - [ ] 3.5 Upstream chaining through caveman with redaction first; verify: caveman's store holds placeholders only, and placeholders survive compression in an end-to-end run
-- [ ] 3.6 Latency budget gate; verify: CI fails when p99 per request or per chunk exceeds the configured budget on the reference fixtures
+- [x] 3.6 Latency budget gate; verify: CI fails when p99 per request or per chunk exceeds the configured budget on the reference fixtures
 
 ## 4. Configuration
 
@@ -61,11 +61,11 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 7. Policy, approvals and grants
 
-- [ ] 7.1 Rule language and evaluation (allow, deny, ask, default); verify: rule table tests and a compiled snapshot used by the data plane
-- [ ] 7.2 Approval flow with timeout deny and single-use signed decision links; verify: replayed or expired links are refused
-- [ ] 7.3 ntfy notifier with action buttons and terminal `scrim approve`; verify: end-to-end approve and deny against a local ntfy in podman
-- [ ] 7.4 JIT grants (ttl, max ttl, scope, use count, revoke); verify: expiry and revocation take effect on the next request
-- [ ] 7.5 Break-glass deny-all switch; verify: every path refuses while it is set
+- [x] 7.1 Rule language and evaluation (allow, deny, ask, default); verify: rule table tests and a compiled snapshot used by the data plane
+- [x] 7.2 Approval flow with timeout deny and single-use signed decision links; verify: replayed or expired links are refused
+- [x] 7.3 ntfy notifier with action buttons and terminal `scrim approve`; verify: end-to-end approve and deny against a local ntfy in podman
+- [x] 7.4 JIT grants (ttl, max ttl, scope, use count, revoke); verify: expiry and revocation take effect on the next request
+- [x] 7.5 Break-glass deny-all switch; verify: every path refuses while it is set
 
 ## 8. Identity and agent tools
 
