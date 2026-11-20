@@ -132,8 +132,9 @@ Layers and their encodings (each returns the value unchanged when nothing needs 
 | unquoted shell word | single-quoted when not all `[A-Za-z0-9_@%+=:,./-]` |
 | single quotes | `'` becomes `'\''` |
 | double quotes | close, single-quote, reopen when it holds a backslash, `$`, a backtick, `"` or `!` |
-| quoted heredoc body | as is; refused with a line break |
-| unquoted heredoc body | backslash, `$` and backtick escaped with a backslash; refused with a line break |
+| quoted heredoc body | as is; refused with a line break, or where it would complete the delimiter line |
+| start of a `<<-` line | refused when it starts with a tab (the shell strips it) |
+| unquoted heredoc body | backslash, `$` and backtick escaped with a backslash; refused with a line break, or where it would complete the delimiter line |
 | argv element | as is; refused with NUL |
 | Python, JavaScript string | backslash escapes for `\`, the quote, line breaks and control characters (JS also U+2028/9) |
 | SQL string | `'` doubled |

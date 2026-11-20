@@ -219,6 +219,10 @@ struct Redirect {
     /// Heredoc body, and the placeholders in it as (global index, start, end) relative to it.
     body: String,
     body_phs: Vec<(usize, usize, usize)>,
+    /// `<<-`: leading tabs of body lines are removed.
+    strip_tabs: bool,
+    /// Heredoc delimiter.
+    delim: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -609,6 +613,8 @@ impl<'a> Lx<'a> {
             target,
             body: String::new(),
             body_phs: Vec::new(),
+            strip_tabs: false,
+            delim: String::new(),
         });
         Ok(j)
     }
@@ -633,6 +639,8 @@ impl<'a> Lx<'a> {
             target,
             body: String::new(),
             body_phs: Vec::new(),
+            strip_tabs,
+            delim: delim.clone(),
         });
         self.pending.push(Pending {
             depth: self.depth,
@@ -906,14 +914,33 @@ impl Analyzer<'_> {
                     };
                     let spans: Vec<_> = r.body_phs.iter().map(|&(_, s, e)| (s, e)).collect();
                     let fmt = files::body_layers(out_format, &r.body, &spans);
-                    for (&(k, s, _), f) in r.body_phs.iter().zip(fmt) {
+                    for (&(k, s, e), f) in r.body_phs.iter().zip(fmt) {
                         let before = r.body[..s].chars().next_back();
                         let site = if !quoted && matches!(before, Some('\\' | '$')) {
                             Err(Refusal::Adjacent)
                         } else {
-                            f.map(|l| match l {
-                                Some(l) => Site::of(l).within(hd),
-                                None => Site::of(hd),
+                            let line_start = r.body[..s].rfind('\n').map_or(0, |n| n + 1);
+                            let line_end = r.body[e..].find('\n').map_or(r.body.len(), |n| e + n);
+                            let mut before = &r.body[line_start..s];
+                            if r.strip_tabs {
+                                before = before.trim_start_matches('\t');
+                            }
+                            let after = &r.body[e..line_end];
+                            let at_line_start = r.strip_tabs && before.is_empty();
+                            // What the value would have to be for the line to equal the
+                            // delimiter.
+                            let forbidden = (r.delim.len() >= before.len() + after.len()
+                                && r.delim.starts_with(before)
+                                && r.delim.ends_with(after))
+                            .then(|| r.delim[before.len()..r.delim.len() - after.len()].into());
+                            f.map(|l| {
+                                let mut site = l.map_or_else(Site::default, Site::of);
+                                if at_line_start {
+                                    site = site.within(Layer::StrippedLineStart);
+                                }
+                                let mut site = site.within(hd);
+                                site.heredoc_forbidden = forbidden;
+                                site
                             })
                         };
                         self.set(k, site);
@@ -1321,9 +1348,20 @@ mod tests {
             run("cat <<EOF\na PH $HOME\nEOF\n"),
             vec![ok(&[Layer::HeredocUnquoted])]
         );
+        let spans = [(12, 14)];
+        let site = analyze_script("cat <<'EOF'\nPH\nEOF\n", &spans, &BuiltinCommands)
+            .remove(0)
+            .unwrap();
+        assert_eq!(site.heredoc_forbidden.as_deref(), Some("EOF"));
+        assert!(super::super::escape(&site, b"EOF").is_err());
+        assert_eq!(super::super::escape(&site, b"EOFX").unwrap(), "EOFX");
+        let site = analyze_script("cat <<'EOF'\nx PH\nEOF\n", &[(14, 16)], &BuiltinCommands)
+            .remove(0)
+            .unwrap();
+        assert_eq!(site.heredoc_forbidden, None);
         assert_eq!(
             run("cat <<-\"X\"\n\tPH\n\tX\n"),
-            vec![ok(&[Layer::HeredocQuoted])]
+            vec![ok(&[Layer::StrippedLineStart, Layer::HeredocQuoted])]
         );
         assert_eq!(
             run("cat <<EOF\n\\PH $PH\nEOF\n"),

@@ -27,6 +27,7 @@ fn layer() -> impl Strategy<Value = Layer> {
         any::<bool>().prop_map(|w| Layer::Argv { word_start: w }),
         Just(Layer::HeredocQuoted),
         Just(Layer::HeredocUnquoted),
+        Just(Layer::StrippedLineStart),
         prop::sample::select(&['\'', '"'][..]).prop_map(|q| Layer::Python { quote: q }),
         prop::sample::select(&['\'', '"'][..]).prop_map(|q| Layer::JavaScript { quote: q }),
         Just(Layer::SqlString),
@@ -58,7 +59,7 @@ proptest! {
 
     #[test]
     fn traits_match_escape(v in value(), layers in prop::collection::vec(layer(), 0..3)) {
-        let site = Site { layers };
+        let site = Site { layers, heredoc_forbidden: None };
         let identity = escape(&site, &v).is_ok_and(|e| e.as_bytes() == v.as_slice());
         prop_assert_eq!(ValueTraits::of(&v).raw_is_safe(&site), identity, "site {:?}", site);
     }
@@ -144,6 +145,15 @@ fn spans(s: &str) -> Vec<(usize, usize)> {
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: 20000, ..ProptestConfig::default() })]
+
+    #[test]
+    fn heredoc_guard_is_conservative(v in value(), forbid in prop::sample::select(&["EOF", "", "a", "X"][..])) {
+        let site = Site { layers: vec![Layer::HeredocQuoted], heredoc_forbidden: Some(forbid.into()) };
+        prop_assert!(!ValueTraits::of(&v).raw_is_safe(&site));
+        if v == forbid.as_bytes() {
+            prop_assert!(escape(&site, &v).is_err());
+        }
+    }
 
     #[test]
     fn shell_analyser_is_total(s in script()) {

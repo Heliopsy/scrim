@@ -49,6 +49,9 @@ pub enum Layer {
     },
     /// A heredoc body with a quoted delimiter (`<<'EOF'`): no expansion.
     HeredocQuoted,
+    /// The start of a `<<-` heredoc line, whose leading tabs the shell removes: a value
+    /// starting with a tab is refused.
+    StrippedLineStart,
     /// A heredoc body with an unquoted delimiter: `$`, `` ` `` and `\` are active.
     HeredocUnquoted,
     /// A Python string literal (not raw, not an f-string, not bytes).
@@ -89,18 +92,26 @@ impl Layer {
 pub struct Site {
     /// Innermost first.
     pub layers: Vec<Layer>,
+    /// Text the encoding must not equal when it reaches a heredoc layer: the part of the
+    /// heredoc delimiter the rest of the placeholder's line leaves open. A body line equal to
+    /// the delimiter would end the heredoc early and run the following lines as commands.
+    pub heredoc_forbidden: Option<Box<str>>,
 }
 
 impl Site {
     /// A site with no escaping.
     pub fn verbatim() -> Site {
-        Site { layers: Vec::new() }
+        Site {
+            layers: Vec::new(),
+            heredoc_forbidden: None,
+        }
     }
 
     /// A site with one layer.
     pub fn of(layer: Layer) -> Site {
         Site {
             layers: vec![layer],
+            heredoc_forbidden: None,
         }
     }
 
@@ -266,6 +277,12 @@ fn escape_one(layer: Layer, v: &str) -> Result<String, Refusal> {
             }
             out.push_str(v);
         }
+        Layer::StrippedLineStart => {
+            if v.starts_with('\t') {
+                return Err(Refusal::Position);
+            }
+            out.push_str(v);
+        }
         Layer::HeredocQuoted | Layer::HeredocUnquoted => {
             if v.contains('\0') {
                 return Err(Refusal::Nul);
@@ -384,6 +401,11 @@ pub fn escape(site: &Site, value: &[u8]) -> Result<String, Refusal> {
         if layer.shell_word_start() == Some(true) && i == 0 && cur.starts_with('-') {
             return Err(Refusal::LeadingDash);
         }
+        if matches!(layer, Layer::HeredocQuoted | Layer::HeredocUnquoted)
+            && site.heredoc_forbidden.as_deref() == Some(cur.as_str())
+        {
+            return Err(Refusal::LineBreak);
+        }
         cur = escape_one(*layer, &cur)?;
     }
     Ok(cur)
@@ -419,6 +441,7 @@ const T_BARE_OK: u32 = 1 << 12;
 const T_YAML_PLAIN_OK: u32 = 1 << 13;
 const T_LEADING_DASH: u32 = 1 << 14;
 const T_C0: u32 = 1 << 15;
+const T_LEADING_TAB: u32 = 1 << 16;
 
 impl ValueTraits {
     /// Computes the traits of `value`.
@@ -433,6 +456,7 @@ impl ValueTraits {
             }
         };
         set(T_LEADING_DASH, v.starts_with('-'));
+        set(T_LEADING_TAB, v.starts_with('\t'));
         set(T_BARE_OK, !v.is_empty() && v.chars().all(shell_bare_char));
         set(T_YAML_PLAIN_OK, yaml_plain_ok(v));
         for c in v.chars() {
@@ -474,6 +498,7 @@ impl ValueTraits {
             }
             Layer::SqlString => !self.has(T_SQ | T_NUL),
             Layer::Argv { .. } => !self.has(T_NUL),
+            Layer::StrippedLineStart => !self.has(T_LEADING_TAB),
             Layer::JsonString => !self.has(T_DQ | T_BACKSLASH | T_C0),
             Layer::YamlDouble => {
                 !self.has(T_DQ | T_BACKSLASH | T_C0_DEL_NOT_TAB | T_TAB | T_LS_PS | T_NEL)
@@ -484,7 +509,8 @@ impl ValueTraits {
 
     /// Whether inserting the raw value at `site` is exactly what [`escape`] would produce.
     pub fn raw_is_safe(self, site: &Site) -> bool {
-        if !self.has(T_TEXT) {
+        if !self.has(T_TEXT) || site.heredoc_forbidden.is_some() {
+            // The traits cannot tell whether the value equals the forbidden text.
             return false;
         }
         if site
@@ -509,6 +535,7 @@ mod tests {
         escape(
             &Site {
                 layers: layers.to_vec(),
+                heredoc_forbidden: None,
             },
             v.as_bytes(),
         )
@@ -608,6 +635,7 @@ mod tests {
             Layer::ShellDouble { word_start: true },
             Layer::HeredocQuoted,
             Layer::HeredocUnquoted,
+            Layer::StrippedLineStart,
             Layer::Argv { word_start: true },
             Layer::Argv { word_start: false },
             Layer::Python { quote: '\'' },
@@ -623,7 +651,10 @@ mod tests {
             let t = ValueTraits::of(v.as_bytes());
             for a in layers {
                 for site in [vec![a], vec![a, SQ], vec![a, BARE0]] {
-                    let site = Site { layers: site };
+                    let site = Site {
+                        layers: site,
+                        heredoc_forbidden: None,
+                    };
                     let raw = escape(&site, v.as_bytes()).as_deref() == Ok(v);
                     assert_eq!(t.raw_is_safe(&site), raw, "{v:?} at {site:?}");
                 }

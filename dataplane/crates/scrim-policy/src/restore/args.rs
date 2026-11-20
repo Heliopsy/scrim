@@ -527,6 +527,7 @@ mod tests {
             verdicts(&s.tool("shell"), &input),
             vec![
                 Verdict::Escape(Site {
+                    heredoc_forbidden: None,
                     layers: vec![
                         Layer::ShellSingle { word_start: true },
                         Layer::Argv { word_start: false }

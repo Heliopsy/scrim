@@ -298,6 +298,11 @@ target or comment, never right after a backslash or `$`, and never starting a wo
 - **WHEN** a placeholder is the first word of a shell command
 - **THEN** the value stays a placeholder
 
+#### Scenario: Value that would end a heredoc
+
+- **WHEN** a placeholder fills a heredoc line and the value would make that line equal the delimiter
+- **THEN** the value stays a placeholder
+
 #### Scenario: Value read as an option
 
 - **WHEN** a display value starts with `-` and its placeholder starts an argument
