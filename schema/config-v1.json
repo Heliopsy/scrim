@@ -10,6 +10,83 @@
         "scrim.dev/v1"
       ]
     },
+    "catalog": {
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "additionalProperties": {
+            "properties": {},
+            "type": "object"
+          },
+          "description": "Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools. References only, never values.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+          },
+          "type": "object",
+          "x-scrim-collection": true,
+          "x-scrim-env": "SCRIM_CATALOG_ENTRIES",
+          "x-scrim-restart-required": false
+        },
+        "environment": {
+          "default": "",
+          "description": "Catalog environment that selects per-environment references.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_CATALOG_ENVIRONMENT",
+          "x-scrim-flag": "--catalog-environment",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "files": {
+          "default": [],
+          "description": "Catalog files to load, in order. Each is a YAML document with `kind: Catalog` and an `entries` map. Reloaded when they change.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_CATALOG_FILES",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "metadata-from": {
+          "default": [],
+          "description": "Store prefixes (for example bao://kv/agents) whose secrets' metadata labels are read as catalog entries.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_CATALOG_METADATA_FROM",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "metadata-prefix": {
+          "default": "scrim.",
+          "description": "Prefix of the store metadata keys read as catalog bindings: <prefix>hosts, <prefix>placeholder, <prefix>profiles, <prefix>name, <prefix>class, <prefix>field.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_CATALOG_METADATA_PREFIX",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "profile": {
+          "default": "",
+          "description": "Catalog profile (for example dev or prod) that selects per-profile references.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_CATALOG_PROFILE",
+          "x-scrim-flag": "--catalog-profile",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "reload-interval": {
+          "default": "5s",
+          "description": "How often catalog files are checked for changes.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_CATALOG_RELOAD_INTERVAL",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
     "config": {
       "additionalProperties": false,
       "properties": {

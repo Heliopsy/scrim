@@ -336,8 +336,21 @@ session and a production secret in another. The selection SHALL be visible in `s
 
 - **WHEN** `SCRIM_DB_PASSWORD` maps to `bao://kv/dev/db#password` for profile `dev` and to
   `aws-sm://prod/db#password` for profile `prod`
-- **THEN** a session started with `--profile dev` injects the development password and never the
+- **THEN** a session started with catalog profile `dev` (`--catalog-profile dev`) injects the development password and never the
   production one
+
+#### Scenario: No mapping for the selected profile
+
+- **WHEN** `SCRIM_DB_PASSWORD` maps references only for profiles `dev` and `prod` and has no default,
+  and a session runs with profile `staging`
+- **THEN** the placeholder is unresolved in that session and nothing is injected for it
+- **AND** scrim does not fall back to either profile's reference
+
+#### Scenario: Two variants match equally
+
+- **WHEN** an entry has one variant for profile `prod` and another for namespace `build`, and a
+  session has both
+- **THEN** catalog validation fails for that session, naming the entry
 
 ### Requirement: Bulk mapping by prefix
 
@@ -363,6 +376,13 @@ and conflicts SHALL be reported.
 - **WHEN** an OpenBao secret has custom metadata `scrim.hosts=api.github.com`
 - **THEN** it is bound to `api.github.com` without a catalog file entry
 
+#### Scenario: Metadata disagrees with the catalog file
+
+- **WHEN** a catalog file binds a secret to `api.github.com` and the secret's metadata says
+  `scrim.hosts=evil.example`
+- **THEN** the catalog file's binding is used
+- **AND** the disagreement is reported as a warning
+
 ### Requirement: Catalog sources
 
 The catalog SHALL be loadable from the configuration file, separate catalog files, environment
@@ -373,6 +393,12 @@ and SHALL be reloaded without restart. A catalog SHALL never contain secret valu
 
 - **WHEN** a catalog entry contains something that looks like a literal secret instead of a reference
 - **THEN** validation fails and the catalog is not loaded
+- **AND** the error names the entry and field without quoting the literal
+
+#### Scenario: Invalid catalog on reload
+
+- **WHEN** a catalog file is edited while scrim runs and the new version fails validation
+- **THEN** the previous catalog stays in effect and the rejection is logged
 
 ### Requirement: Catalog suggestions
 
