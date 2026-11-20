@@ -311,6 +311,8 @@ suite against your setup, see [docs/leak-assurance.md](docs/leak-assurance.md).
 The wrapper, base URL and forward proxy modes rely on the agent using the settings it is given. The
 transparent, managed and Kubernetes modes enforce them.
 
+Setup, coverage, gaps and CA trust for each method: [docs/interception.md](docs/interception.md).
+
 ## Configuration
 
 Every setting has one dotted key, settable in the config file, as a `SCRIM_*` environment variable

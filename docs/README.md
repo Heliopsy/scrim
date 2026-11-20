@@ -9,6 +9,7 @@ to start. The behaviour contract, with every requirement and scenario, is the Op
 | Page | Covers |
 | --- | --- |
 | [architecture.md](architecture.md) | Components, the data plane boundary, request, tool, approval and snapshot flows, trust boundaries and deployments, with diagrams |
+| [interception.md](interception.md) | The seven ways agent traffic reaches scrim, managed settings as enforcement, CA trust per runtime, choosing and combining methods, verifying |
 
 ## Getting started
 
