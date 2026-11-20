@@ -18,6 +18,15 @@ linters:
     - wastedassign
 
   settings:
+    errorlint:
+      # Error kinds are sentinels kept in a field and compared by identity
+      # (stores.Error.Kind), and some code walks error trees itself, so only
+      # the %w check is enforced.
+      comparison: false
+      asserts: false
+    misspell:
+      # Deliberate typos in tests of "did you mean" suggestions.
+      ignore-rules: [adress, levle, aprovals]
     forbidigo:
       forbid:
         - pattern: '^fmt\.Print(f|ln)?$'
