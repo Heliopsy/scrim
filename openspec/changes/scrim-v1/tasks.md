@@ -64,6 +64,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 6.3b Per-environment and bulk prefix mapping with collision checks; verify: one placeholder resolves to different references per profile and colliding templates fail
 - [x] 6.3c Catalog from store metadata, catalog files, environment and hot reload, with `scrim catalog show` and `scrim catalog suggest`; verify: OpenBao custom metadata binds a host and suggestions are printed, never applied
 - [x] 6.4 Store outage behaviour (last known set, fail closed for injection, degraded status); verify: tests that stop the store mid-run
+- [x] 6.5 Redact target globs (`APP_*` on env and file) and per-target value counts; a target that loads nothing stops start-up unless `redaction.allow-empty-targets` is on, and status never reports redaction active with an empty target; verify: the README quickstart config redacts `SCRIM_SECRET_X` through the real data plane, an empty target stops the daemon naming it, and with the setting the store is degraded with the target at 0 values
 
 ## 7. Policy, approvals and grants
 
@@ -93,6 +94,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 - [x] 10.1 Host binding for credentials in configuration and policy; verify: a placeholder toward an unbound host is refused and audited
 - [x] 10.2 HTTPS tool proxy with CA generation, rotation and trust installation; verify: injection works toward bound hosts for curl, git and a Node client
+- [x] 10.1a Unresolved placeholders toward bound hosts refused with `credential_unavailable` (unknown generated or reference placeholders, and declared placeholders of catalog credentials whose value has not loaded, sent as `Snapshot.unavailable`); verify: scrim-toolproxy and the data plane end-to-end test refuse every form and nothing reaches the host, look-alike text passes
 - [x] 10.2a User-declared placeholders mapped to references and bound hosts; verify: a config file with `SCRIM_ACME_KEY` works against a fake API and duplicate declarations fail validation
 - [x] 10.2b Substitution in URL, headers, cookies, form, JSON and multipart bodies with decompression, length, digest and re-signing; verify: gzip, chunked and HTTP/2 fixtures reach the fake upstream valid and unsupported encodings are refused
 - [x] 10.2c Redaction of tool-proxy responses, including streamed and compressed bodies; verify: an echoing fake API and a create-resource fake return only placeholders to the agent
@@ -133,6 +135,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 - [x] 12.1 Postgres-notify events for multiple replicas; verify: two replicas sharing one PostgreSQL agree on grants and approvals
 - [x] 12.2 Kubernetes service account identity; verify: TokenReview-based identity in kind
+- [x] 12.2e Verified service account tokens in the redaction set until they expire, redaction only; verify: a pod's token in a tool result reaches the fake provider as `⟦scrim:scrim-kubernetes-credential:…⟧` through the real data plane, and the default JWT detector matches a projected token's shape
 - [ ] 12.2a scrim as identity provider: per-session signed tokens, discovery document, signing keys, rotation; verify: OpenBao JWT auth accepts scrim tokens and rejects expired or wrong-audience ones
 - [ ] 12.2b Per-agent store identity with token exchange (Vault and OpenBao JWT, AWS web identity, Google federation, Azure federated credentials, Infisical OIDC) and the intersection rule; verify: one agent is denied by store policy that another passes, and CloudTrail-style audit shows the agent's session name against LocalStack
 - [x] 12.2c Kubernetes service account passthrough and static per-agent fallback reported in doctor; verify: two agent pods with different service accounts get different OpenBao policies in kind

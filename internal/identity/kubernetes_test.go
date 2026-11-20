@@ -5,6 +5,7 @@ package identity
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/heliopsy/scrim/internal/identity/kube"
 	"github.com/heliopsy/scrim/internal/policy"
@@ -112,5 +113,32 @@ func TestClaimWithKubernetesToken(t *testing.T) {
 	r.Kubernetes = &KubeResolver{Reviewer: reviewer{"eyJa.b.c": {Namespace: "n", ServiceAccount: "s"}}}
 	if id, err := r.Resolve(ctx, unix, []byte("eyJa.b.c")); err != nil || id.Agent != "n/s" {
 		t.Fatalf("bearer JWT: %+v %v", id, err)
+	}
+}
+
+// TestKubeResolveReportsVerifiedTokens: every token the cluster accepts,
+// mapped or not, reaches OnVerified with its expiry, so the daemon can
+// redact it; a refused token does not.
+func TestKubeResolveReportsVerifiedTokens(t *testing.T) {
+	exp := time.Now().Add(time.Hour).Truncate(time.Second)
+	var got []string
+	var gotExp []time.Time
+	k := &KubeResolver{
+		Reviewer: reviewer{"t-good": {Namespace: "agents", ServiceAccount: "a", ExpiresAt: exp}},
+		Unmapped: UnmappedUnknown,
+		OnVerified: func(tok []byte, e time.Time) {
+			got = append(got, string(tok))
+			gotExp = append(gotExp, e)
+		},
+	}
+	ctx := context.Background()
+	if _, err := k.Resolve(ctx, []byte("t-good")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.Resolve(ctx, []byte("t-refused")); err == nil {
+		t.Fatal("refused token accepted")
+	}
+	if len(got) != 1 || got[0] != "t-good" || !gotExp[0].Equal(exp) {
+		t.Fatalf("OnVerified saw %d tokens", len(got))
 	}
 }

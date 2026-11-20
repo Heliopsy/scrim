@@ -813,7 +813,7 @@
           "properties": {
             "dir": {
               "default": "",
-              "description": "Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture DIR` sets it.",
+              "description": "Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture=DIR` sets it.",
               "type": "string",
               "x-scrim-env": "SCRIM_PROXY_CAPTURE_DIR",
               "x-scrim-flag": "--proxy-capture-dir",
@@ -929,6 +929,14 @@
     "redaction": {
       "additionalProperties": false,
       "properties": {
+        "allow-empty-targets": {
+          "default": false,
+          "description": "Start even when a store's redact target matches no secret on the first load. Off, such a target stops start-up with an error naming it, since it usually means a misspelt name or pattern and redaction would protect nothing. On, the store starts and status reports the target as degraded with 0 values.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_REDACTION_ALLOW_EMPTY_TARGETS",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": true
+        },
         "min-value-length": {
           "default": 8,
           "description": "Shortest value matched in free text; shorter values are matched only in exact and encoded forms.",

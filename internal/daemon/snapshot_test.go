@@ -363,3 +363,49 @@ func TestAskTimeoutMillis(t *testing.T) {
 		t.Errorf("zero must not mean the data plane default: %d", got)
 	}
 }
+
+// TestSnapshotListsUnavailableCredentials: a catalog credential bound to a
+// host whose value no store holds yet goes to Snapshot.unavailable with its
+// binding and declared placeholder and no value, so the tool proxy refuses
+// its placeholder instead of forwarding it as text. A loaded one does not.
+func TestSnapshotListsUnavailableCredentials(t *testing.T) {
+	cur := seed(t, "cur-")
+	src := &fakeValues{store: "bao", vals: []fakeValue{
+		{refresh.Source{Ref: stores.MustParseRef("bao://kv/agents/github#token")}, secret.FromString(cur)},
+	}}
+	cfg := buildConfig(t, `catalog:
+  entries:
+    github:
+      ref: bao://kv/agents/github#token
+      hosts: [api.github.com]
+      placeholder: SCRIM_GITHUB_TOKEN
+    later:
+      ref: bao://kv/agents/later#token
+      hosts: [api.later.test]
+      placeholder: SCRIM_LATER_TOKEN
+      inject: ["header:Authorization"]
+    nohost:
+      ref: bao://kv/agents/nohost#token
+`)
+	cat, err := catalog.Load(context.Background(), cfg, nil, catalog.SelectionFrom(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &SnapshotBuilder{Config: func() *config.Config { return cfg }, Values: []ValueSource{src},
+		Catalog: func() *catalog.Catalog { return cat }}
+	b.SetKeys(testRing(t))
+	s, err := b.Build(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := s.GetUnavailable()
+	if len(u) != 1 {
+		t.Fatalf("unavailable = %v", u)
+	}
+	if u[0].GetRef() != "bao://kv/agents/later#token" || u[0].GetName() != "later" || len(u[0].GetValue()) != 0 ||
+		strings.Join(u[0].GetBoundHosts(), ",") != "api.later.test" ||
+		strings.Join(u[0].GetDeclaredPlaceholders(), ",") != "SCRIM_LATER_TOKEN" ||
+		strings.Join(u[0].GetInjectLocations(), ",") != "header:Authorization" {
+		t.Fatalf("unavailable entry = %v", u[0])
+	}
+}

@@ -1134,3 +1134,99 @@ async fn the_injection_policy_decides_per_request_after_the_binding() {
     );
     assert_no_values(&w.texts(&got));
 }
+
+/// A placeholder-shaped token no credential resolves (a generated placeholder whose value has
+/// not loaded, a reference placeholder of an unknown reference) is refused toward a bound host
+/// with `credential_unavailable`, audited, and nothing is sent.
+#[tokio::test]
+async fn unresolved_placeholders_toward_bound_host_are_refused() {
+    use base64::Engine as _;
+    let w = world(echo_handler()).await;
+    let unknown = "\u{27e6}scrim:not-loaded:01a1b2c3d4e5f60718\u{27e7}";
+    let pct = unknown
+        .replace('\u{27e6}', "%E2%9F%A6")
+        .replace('\u{27e7}', "%E2%9F%A7");
+    let basic = base64::engine::general_purpose::STANDARD.encode(format!("x:{unknown}"));
+    let cases: Vec<(&str, String, Vec<(&str, String)>, Option<String>)> = vec![
+        (
+            "header",
+            "/".into(),
+            vec![("x-api-key", unknown.to_owned())],
+            None,
+        ),
+        ("query", format!("/v1/x?key={pct}"), vec![], None),
+        (
+            "basic",
+            "/".into(),
+            vec![("authorization", format!("Basic {basic}"))],
+            None,
+        ),
+        (
+            "body",
+            "/v1/items".into(),
+            vec![("content-type", "application/json".into())],
+            Some(r#"{"token":"{{scrim:env://NOT_LOADED}}"}"#.into()),
+        ),
+        (
+            "known and unknown",
+            "/".into(),
+            vec![
+                ("authorization", "Bearer SCRIM_ACME_KEY".into()),
+                ("x-other", unknown.to_owned()),
+            ],
+            None,
+        ),
+    ];
+    for (name, path, headers, payload) in cases {
+        let method = if payload.is_some() { "POST" } else { "GET" };
+        let mut b = req(method, "api.acme.test", w.port(), &path);
+        for (k, v) in &headers {
+            b = b.header(*k, v.as_str());
+        }
+        let r = b.body(body(payload.unwrap_or_default())).unwrap();
+        let got = w.client.send("api.acme.test", w.port(), r).await.unwrap();
+        assert_eq!(
+            got.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{name}: {}",
+            got.text()
+        );
+        assert_eq!(
+            got.error_code().as_deref(),
+            Some("credential_unavailable"),
+            "{name}"
+        );
+    }
+    assert!(w.up.seen().is_empty(), "something reached the bound host");
+    let refused = w
+        .proxy
+        .audit
+        .events()
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                AuditEvent::RequestRefused {
+                    code: ErrorCode::CredentialUnavailable,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(refused, 5);
+    assert_no_values(&w.texts(&w.get("api.acme.test", "/", &[]).await));
+
+    // Text that only looks similar passes, and so does an unknown placeholder toward a host
+    // nothing is bound to.
+    for v in [
+        "scrim is fine",
+        "\u{27e6}scrim:acme\u{27e7}",
+        "{{scrim:not a ref}}",
+        "\u{27e6}scrim:withheld:capture-failed\u{27e7}",
+    ] {
+        let got = w.get("api.acme.test", "/", &[("x-note", v)]).await;
+        assert_eq!(got.status, StatusCode::OK, "{v}: {}", got.text());
+    }
+    let got = w.get("evil.test", "/", &[("x-api-key", unknown)]).await;
+    assert_eq!(got.status, StatusCode::OK, "{}", got.text());
+}

@@ -286,6 +286,7 @@ is out of date.
 | [`proxy.upstream.chatgpt`](#proxyupstreamchatgpt) | string | `https://chatgpt.com` | hot |
 | [`proxy.upstream.chatgpt-ab`](#proxyupstreamchatgpt-ab) | string | `https://ab.chatgpt.com` | hot |
 | [`proxy.upstream.openai`](#proxyupstreamopenai) | string | `https://api.openai.com` | hot |
+| [`redaction.allow-empty-targets`](#redactionallow-empty-targets) | bool | `false` | restart required |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
 | [`restore.allow-reveal-credentials`](#restoreallow-reveal-credentials) | list | `[]` | hot |
@@ -1180,7 +1181,7 @@ Built-in preset of defaults for a deployment shape: `local` for a laptop or VM, 
 
 #### `proxy.capture.dir`
 
-Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture DIR` sets it.
+Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture=DIR` sets it.
 
 | | |
 |---|---|
@@ -1312,6 +1313,19 @@ Base URL OpenAI Chat Completions and Responses requests are forwarded to after r
 | Reload | hot |
 
 ### redaction
+
+#### `redaction.allow-empty-targets`
+
+Start even when a store's redact target matches no secret on the first load. Off, such a target stops start-up with an error naming it, since it usually means a misspelt name or pattern and redaction would protect nothing. On, the store starts and status reports the target as degraded with 0 values.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_REDACTION_ALLOW_EMPTY_TARGETS` |
+| Flag | none |
+| Reload | restart required |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
 
 #### `redaction.min-value-length`
 

@@ -213,6 +213,29 @@ in the audit log without any value.
 - **THEN** the agent receives status 403 with code `unbound_destination` and the credential alias,
   and the audit entry names the alias and destination
 
+### Requirement: Unresolved placeholders are refused
+
+A request toward a host with bound credentials that carries a placeholder no credential with a
+value resolves (generated in any form the proxy reads, reference, or declared for a catalog
+credential not loaded yet) SHALL be refused with 503 `credential_unavailable`, audited, and SHALL
+send nothing upstream. Only the exact placeholder grammar SHALL count.
+
+#### Scenario: Store not loaded yet
+
+- **WHEN** a catalog credential bound to `api.acme.test` with placeholder `SCRIM_ACME_KEY` has no value yet and a tool sends `SCRIM_ACME_KEY` to `api.acme.test`
+- **THEN** the request is refused with 503 `credential_unavailable` and audited
+- **AND** nothing reaches `api.acme.test`, so the placeholder is never sent as text
+
+#### Scenario: Unknown generated or reference placeholder
+
+- **WHEN** a request toward a bound host carries `⟦scrim:<slug>:<code>⟧` (or its percent form) or `{{scrim:<ref>}}` that matches no credential with a value
+- **THEN** it is refused with 503 `credential_unavailable` and nothing is sent
+
+#### Scenario: Look-alike text passes
+
+- **WHEN** a request toward a bound host carries text such as `⟦scrim:acme⟧`, `{{scrim:not a ref}}` or the word scrim
+- **THEN** it is forwarded unchanged
+
 ### Requirement: Bodies too large to rewrite
 
 Request bodies above the configured buffering limit SHALL be streamed unmodified and cut off if a

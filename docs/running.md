@@ -9,7 +9,7 @@ and friends through the admin API.
 ```sh
 scrim proxy                        # until SIGINT or SIGTERM
 scrim proxy --capture              # capture mode into $XDG_STATE_HOME/scrim/capture
-scrim proxy --capture ~/scrim-cap  # or into a directory of your choice
+scrim proxy --capture="$HOME/scrim-cap"  # or into a directory of your choice
 ANTHROPIC_BASE_URL=http://127.0.0.1:9790/anthropic claude
 ```
 
@@ -66,7 +66,7 @@ Besides the endpoints in [approvals.md](approvals.md) the admin API serves:
 
 | Method and path | Result |
 | --- | --- |
-| `GET /v1/daemon` | Process ID, version, readiness with failing checks, every address, the capture directory, the data plane's status and the runtime report (interception modes from bound listeners and open `scrim run` sessions, protections, providers) that `scrim status` and `scrim doctor` print |
+| `GET /v1/daemon` | Process ID, version, readiness with failing checks, every address, the capture directory, the data plane's status and the runtime report (interception modes from bound listeners and open `scrim run` sessions, protections, providers), and every store with the values each redact target holds, that `scrim status` and `scrim doctor` print |
 | `GET /v1/ca` | The tool-proxy CA certificates clients must trust, PEM (public, no operator needed) |
 
 The same information is written to `daemon.json` next to the admin socket (mode 0600) and removed on
@@ -124,9 +124,10 @@ changed key collection is picked up on reload. Key material is never logged.
 
 ## Capture mode
 
-`scrim proxy --capture DIR` (or `proxy.capture.dir`; `--capture` alone uses
-`$XDG_STATE_HOME/scrim/capture`) writes every provider request exactly as it
-left, and the response as received, to `DIR`, so you can check what the provider saw. The directory
+`scrim proxy --capture=DIR` (or `proxy.capture.dir`; `--capture` alone uses
+`$XDG_STATE_HOME/scrim/capture`; the value is optional, so it needs the `=` form) writes every
+provider request exactly as it left, and the response as received, to `DIR`, so you can check what
+the provider saw. The directory
 is created with mode 0700 and the daemon refuses to start if group or others can access it. The
 agent's own `authorization` and `x-api-key` headers are masked in captures; bodies are byte for byte
 what the provider received. Files older than `proxy.capture.retention` (7 days) are deleted.

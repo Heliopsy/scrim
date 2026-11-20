@@ -502,6 +502,44 @@ mod tests {
         assert_eq!(hits(&d, r#"{"t":"line\nAKIAABCDEFGHIJKLMNOP"}"#).len(), 1);
     }
 
+    /// A projected Kubernetes service account token is a JWT signed RS256 with the cluster's
+    /// issuer in its payload. The default `jwt` rule catches it whole, even before scrim has
+    /// verified it and added it to the exact redaction set.
+    #[test]
+    fn kubernetes_service_account_token_is_a_jwt() {
+        fn b64(s: &[u8]) -> String {
+            const A: &[u8; 64] =
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+            let mut out = String::new();
+            for c in s.chunks(3) {
+                let n = c
+                    .iter()
+                    .enumerate()
+                    .fold(0u32, |n, (i, &b)| n | u32::from(b) << (16 - 8 * i));
+                for i in 0..=c.len() {
+                    out.push(A[(n >> (18 - 6 * i) & 63) as usize] as char);
+                }
+            }
+            out
+        }
+        let header = b64(br#"{"alg":"RS256","kid":"Nt3g0rBq1JGk5fSmW2vX7yAbCdEfGhIjKlMnOpQrStU"}"#);
+        let payload = b64(
+            br#"{"aud":["scrim"],"exp":1795000000,"iat":1794996400,"iss":"https://kubernetes.default.svc.cluster.local","kubernetes.io":{"namespace":"agents","pod":{"name":"agent-a-0","uid":"5b7e"},"serviceaccount":{"name":"agent-a","uid":"9c1d"}},"nbf":1794996400,"sub":"system:serviceaccount:agents:agent-a"}"#,
+        );
+        let sig = b64(&[0x5a; 256]);
+        let tok = format!("{header}.{payload}.{sig}");
+        let d = Detectors::build(&DetectorConfig::default()).unwrap();
+        for text in [
+            tok.clone(),
+            format!("token: {tok}\n"),
+            format!(r#"{{"content":"{tok}"}}"#),
+        ] {
+            let h = hits(&d, &text);
+            assert_eq!(h.len(), 1, "{text}");
+            assert_eq!(h[0], ("jwt", tok.clone()));
+        }
+    }
+
     #[test]
     fn pem_escaped_and_truncated() {
         let d = all_on();

@@ -6,7 +6,9 @@ use std::sync::Arc;
 use scrim_proto::v1;
 
 use crate::capture::{CaptureRule, CaptureRuleSpec};
-use crate::credential::{BindingSpec, CredentialSet, CredentialSpec, ValidationError};
+use crate::credential::{
+    BindingSpec, CredentialSet, CredentialSetBuilder, CredentialSpec, ValidationError,
+};
 use crate::engine::Snapshot;
 use crate::redactor::{Redactor, ValueRedactor};
 use crate::secret::SecretValue;
@@ -90,6 +92,7 @@ impl Snapshot {
             };
             builder.add(spec, Some(value), generated);
         }
+        add_unavailable(&mut builder, snapshot);
         let credentials = builder.build()?;
         let capture_rules = snapshot
             .capture_rules
@@ -122,6 +125,56 @@ impl Snapshot {
             redactor: Some(redactor),
             injection: None,
         })
+    }
+}
+
+/// Adds the snapshot's `unavailable` entries as credentials without a value, so their declared
+/// and reference placeholders are refused with `credential_unavailable` toward their bound hosts.
+/// An entry that shares a name, reference or declared placeholder with a value entry, or has no
+/// bound host, adds nothing: it could never be injected and must not fail the snapshot.
+fn add_unavailable(builder: &mut CredentialSetBuilder, snapshot: &v1::Snapshot) {
+    let mut taken: HashSet<&str> = HashSet::new();
+    for e in &snapshot.values {
+        taken.insert(e.r#ref.as_str());
+        if !e.name.is_empty() {
+            taken.insert(e.name.as_str());
+        }
+        taken.extend(e.declared_placeholders.iter().map(String::as_str));
+    }
+    for e in &snapshot.unavailable {
+        let name = if e.name.is_empty() { &e.r#ref } else { &e.name };
+        if e.class() == v1::ValueClass::Display
+            || e.bound_hosts.is_empty()
+            || e.r#ref.is_empty()
+            || !e.value.is_empty()
+            || taken.contains(e.r#ref.as_str())
+            || taken.contains(name.as_str())
+            || e.declared_placeholders
+                .iter()
+                .any(|p| taken.contains(p.as_str()))
+        {
+            continue;
+        }
+        taken.insert(e.r#ref.as_str());
+        taken.insert(name.as_str());
+        taken.extend(e.declared_placeholders.iter().map(String::as_str));
+        let spec = CredentialSpec {
+            name: name.clone(),
+            reference: e.r#ref.clone(),
+            placeholders: e.declared_placeholders.clone(),
+            binding: Some(BindingSpec {
+                hosts: e.bound_hosts.clone(),
+                methods: e.bound_methods.clone(),
+                paths: e.bound_paths.clone(),
+                allow_plaintext_http: e.allow_plaintext_http,
+            }),
+            inject: if e.inject_locations.is_empty() {
+                vec!["header".to_owned()]
+            } else {
+                e.inject_locations.clone()
+            },
+        };
+        builder.add(spec, None, Vec::new());
     }
 }
 
@@ -237,6 +290,50 @@ mod tests {
         ]);
         let e = Snapshot::from_proto(&s, |_| vec![]).err().unwrap();
         assert!(matches!(e, ValidationError::DuplicateName(_)));
+    }
+
+    #[test]
+    fn unavailable_entries_become_credentials_without_a_value() {
+        let mut s = snap(vec![entry(
+            "bao://kv/acme#key",
+            "acme",
+            "acme-value-123",
+            &["api.acme.test"],
+            &["SCRIM_ACME_KEY"],
+        )]);
+        let mut later = entry(
+            "bao://kv/later#key",
+            "later",
+            "",
+            &["api.later.test"],
+            &["SCRIM_LATER_KEY"],
+        );
+        later.bound_methods = vec!["POST".into()];
+        // Shares a name, a reference or a placeholder with a value: ignored.
+        let dup_name = entry("bao://kv/other", "acme", "", &["x.test"], &[]);
+        let dup_ref = entry("bao://kv/acme#key", "acme2", "", &["x.test"], &[]);
+        let dup_ph = entry("bao://kv/p", "p", "", &["x.test"], &["SCRIM_ACME_KEY"]);
+        let unbound = entry("bao://kv/u", "u", "", &[], &["SCRIM_UNBOUND"]);
+        let with_value = entry("bao://kv/v", "v", "oops-a-value", &["x.test"], &[]);
+        s.unavailable = vec![later, dup_name, dup_ref, dup_ph, unbound, with_value];
+        let out = Snapshot::from_proto(&s, |_| vec![]).unwrap();
+        let creds = out.credentials.credentials();
+        assert_eq!(creds.len(), 2, "{creds:?}");
+        assert_eq!(creds[1].name, "later");
+        assert!(creds[1].value.is_none());
+        assert!(creds[1].binding.is_some());
+        assert!(
+            creds[1]
+                .placeholders
+                .iter()
+                .any(|p| p.text == "SCRIM_LATER_KEY")
+        );
+        assert!(
+            creds[1]
+                .placeholders
+                .iter()
+                .any(|p| p.text == "{{scrim:bao://kv/later#key}}")
+        );
     }
 
     #[test]

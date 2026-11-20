@@ -9,6 +9,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -282,5 +283,36 @@ func TestWeakenedFromConfigManager(t *testing.T) {
 	r := Collect(context.Background(), fixtures()["config-weakened"])
 	if len(r.Weakened) != 1 || r.Weakened[0].Key != "policy.default" || r.Profile != "ci" {
 		t.Fatalf("report = %+v", r)
+	}
+}
+
+// TestEmptyRedactTargetIsReported: a target with 0 values is printed as
+// empty, the store is degraded and doctor warns that it protects nothing.
+func TestEmptyRedactTargetIsReported(t *testing.T) {
+	r := Collect(context.Background(), Sources{Stores: fakeStores{{
+		Name: "local", Kind: "env", Reachable: true, Degraded: true, Reason: "redact target local://X_* holds no values",
+		Targets: []StoreTarget{{Target: "local://X_*", Values: 0}, {Target: "local://Y", Values: 1}},
+	}}})
+	var human bytes.Buffer
+	if err := WriteHuman(&human, r); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(human.String(), "redact local://X_*") || !strings.Contains(human.String(), "EMPTY") {
+		t.Fatalf("human output:\n%s", human.String())
+	}
+	if !slices.ContainsFunc(r.Degraded, func(c Component) bool { return c.Name == "store:local" }) {
+		t.Fatalf("degraded = %+v", r.Degraded)
+	}
+	var found bool
+	for _, c := range ReportChecks(r) {
+		if c.Name != "store:local" {
+			continue
+		}
+		for _, f := range c.Run(context.Background()) {
+			found = found || (f.Outcome == Warn && strings.Contains(f.Message, "local://X_* holds 0 values"))
+		}
+	}
+	if !found {
+		t.Fatal("doctor does not warn about the empty target")
 	}
 }

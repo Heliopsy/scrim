@@ -12,6 +12,8 @@
 //! - A placeholder toward a destination its credential is not bound to is refused with
 //!   [`ErrorCode::UnboundDestination`] and audited. Nothing is sent upstream.
 //! - A placeholder in an undeclared location (a header-only credential in a body) is refused.
+//! - Toward a bound host, a placeholder no credential resolves (a value not loaded yet, an
+//!   unknown reference) is refused with [`ErrorCode::CredentialUnavailable`], never sent as text.
 //! - Substitution covers the URL, headers (Basic credentials decoded and re-encoded), cookies,
 //!   JSON, form, XML and multipart bodies, through gzip, deflate, br and zstd, with
 //!   `Content-Length` and digest headers recomputed. A body that cannot be rewritten safely is
@@ -67,6 +69,7 @@ mod redactor;
 mod request;
 mod response;
 mod secret;
+mod unresolved;
 mod upstream;
 
 pub use audit::{AuditEvent, AuditSink, ChannelAuditSink, MemoryAuditSink, TracingAuditSink};

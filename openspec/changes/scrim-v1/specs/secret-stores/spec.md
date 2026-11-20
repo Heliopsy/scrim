@@ -60,6 +60,55 @@ forwarded with an incomplete redaction set.
 - **THEN** the request is refused with an error saying redaction is not ready
 - **AND** nothing is forwarded to the provider
 
+### Requirement: Redact targets name secrets, folders or globs
+
+A redact target SHALL be one secret, every secret under a folder (`<folder>/*`), or a glob: a
+target ending in `*` right after part of a name, matching every secret whose path starts with the
+text before the `*`. A `*` anywhere else SHALL be refused at configuration time, so a pattern is
+never read as a literal secret name. A glob SHALL be accepted only on a store that declares glob
+listing (env and file).
+
+#### Scenario: Name-prefix glob on the env store
+
+- **WHEN** an env store with `prefix: SCRIM_SECRET_` has `redact: [local://SCRIM_SECRET_*]` and `SCRIM_SECRET_X` is set
+- **THEN** the value of `SCRIM_SECRET_X` is loaded into the redaction set and redacted from provider requests
+- **AND** variables outside the prefix, such as `SCRIM_SECRETX` or `HOME`, are not loaded
+
+#### Scenario: Glob on a store that cannot expand it
+
+- **WHEN** an OpenBao store has `redact: [bao://kv/app-*]`
+- **THEN** `scrim config validate` and start-up fail with an error naming the target and saying the store does not match names by a trailing `*`
+
+### Requirement: Empty redact targets refuse start-up
+
+Every redact target SHALL report how many values it holds. A target that holds no value after the
+store's first successful load SHALL keep the store not ready and fail start-up with an error naming
+the target, unless the weakening setting `redaction.allow-empty-targets` is on. An unreachable store
+is an outage, not an empty target, and keeps the not-ready behaviour.
+
+#### Scenario: A target that matches nothing
+
+- **WHEN** a store has `redact: [env://SCRIM_SECRET_NOTHING_*]` and no variable matches
+- **THEN** start-up fails with an error naming `env://SCRIM_SECRET_NOTHING_*` and the setting that allows it
+- **AND** no provider request is forwarded
+
+#### Scenario: Empty target explicitly allowed
+
+- **WHEN** the same configuration runs with `redaction.allow-empty-targets: true`
+- **THEN** scrim starts and logs a warning for the weakening setting
+- **AND** `scrim status` lists the setting under weakened protections and the store as degraded with the target at 0 values
+
+### Requirement: Status never claims redaction for an empty target
+
+`scrim status` and `scrim doctor` SHALL show the value count of every redact target, and SHALL NOT
+report redaction as active, or a store as healthy, while one of its targets holds 0 values.
+
+#### Scenario: Status with an empty target
+
+- **WHEN** a daemon runs with an empty target allowed by `redaction.allow-empty-targets`
+- **THEN** `scrim status` shows the target at 0 values, the store as degraded and the redaction protection as inactive, naming the target
+- **AND** `scrim doctor` warns that the target protects nothing
+
 ### Requirement: Values are held in memory only
 
 The system SHALL keep secret values only in process memory. Values SHALL NOT be written to the state
@@ -125,6 +174,11 @@ a stale value past its configured staleness limit, or the placeholder itself tow
   staleness limit, and an outbound request needs it
 - **THEN** the request is refused with an error naming the reference
 - **AND** the value is still redacted
+
+#### Scenario: Placeholder of a value that has not loaded
+
+- **WHEN** a store has not delivered a catalog credential yet and a tool request toward its bound host carries its placeholder
+- **THEN** the request is refused with `credential_unavailable` and the placeholder is not forwarded as text
 
 ### Requirement: Agents see names, never values
 
@@ -354,7 +408,7 @@ keyring. Several instances of one adapter SHALL be configurable side by side und
 ### Requirement: Adapters declare their capabilities
 
 Every adapter SHALL declare which operations it supports (read, list, watch, write, generate, dynamic
-credentials). An operation the target store does not support SHALL be refused with an error naming
+credentials, glob listing). An operation the target store does not support SHALL be refused with an error naming
 the store and the operation, before any partial write, and `scrim doctor` SHALL show the capability
 matrix of every configured store.
 

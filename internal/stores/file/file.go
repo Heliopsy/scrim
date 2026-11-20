@@ -158,7 +158,7 @@ func (a *Adapter) Name() string { return a.name }
 
 // Capabilities implements stores.Adapter: read, list and watch.
 func (a *Adapter) Capabilities() stores.Capabilities {
-	return stores.CapRead | stores.CapList | stores.CapWatch
+	return stores.CapRead | stores.CapList | stores.CapWatch | stores.CapGlob
 }
 
 func (a *Adapter) err(op stores.Op, ref stores.Ref, kind error, detail string, cause error) error {
@@ -354,30 +354,59 @@ func (a *Adapter) walk(prefix string) ([]entry, error) {
 	return out, err
 }
 
-func (a *Adapter) prefixPath(op stores.Op, prefix stores.Ref) (string, error) {
+// scope is what a List or Watch prefix covers: everything walked from dir
+// whose path starts with glob (empty: everything).
+type scope struct{ dir, glob string }
+
+func (s scope) match(p string) bool { return strings.HasPrefix(p, s.glob) }
+
+// prefixPath turns a List or Watch prefix into a scope. `dir` and `dir/*`
+// cover the folder; a trailing `*` after part of a name (`dir/app-*`,
+// `app*`) is a glob (stores.CapGlob): every file whose path under the root
+// starts with the text before it, walked from its folder.
+func (a *Adapter) prefixPath(op stores.Op, prefix stores.Ref) (scope, error) {
 	if a.isClosed() {
-		return "", a.err(op, prefix, stores.ErrUnavailable, "closed", nil)
+		return scope{}, a.err(op, prefix, stores.ErrUnavailable, "closed", nil)
 	}
-	p, ok := clean(strings.TrimSuffix(strings.TrimSuffix(prefix.Path, "*"), "/"))
+	bad := a.err(op, prefix, stores.ErrInvalidRef, "path must be relative to the store root without .. segments", nil)
+	p := prefix.Path
+	if text, ok := strings.CutSuffix(p, "*"); ok && text != "" && !strings.HasSuffix(text, "/") {
+		dir := "."
+		if i := strings.LastIndexByte(text, '/'); i >= 0 {
+			dir = text[:i]
+		}
+		d, ok := clean(dir)
+		if !ok || strings.Contains(text, "*") {
+			return scope{}, bad
+		}
+		if _, ok := clean(text); !ok {
+			return scope{}, bad
+		}
+		return scope{dir: d, glob: text}, nil
+	}
+	d, ok := clean(strings.TrimSuffix(strings.TrimSuffix(p, "*"), "/"))
 	if !ok {
-		return "", a.err(op, prefix, stores.ErrInvalidRef, "path must be relative to the store root without .. segments", nil)
+		return scope{}, bad
 	}
-	return p, nil
+	return scope{dir: d}, nil
 }
 
 // List implements stores.Adapter. Field names are not reported, since that
 // would need reading every file's content.
 func (a *Adapter) List(_ context.Context, prefix stores.Ref) ([]stores.Metadata, error) {
-	p, err := a.prefixPath(stores.OpList, prefix)
+	sc, err := a.prefixPath(stores.OpList, prefix)
 	if err != nil {
 		return nil, err
 	}
-	entries, err := a.walk(p)
+	entries, err := a.walk(sc.dir)
 	if err != nil {
 		return nil, a.classify(stores.OpList, prefix, err)
 	}
 	out := make([]stores.Metadata, 0, len(entries))
 	for _, e := range entries {
+		if !sc.match(e.path) {
+			continue
+		}
 		out = append(out, stores.Metadata{
 			Ref:       stores.Ref{Scheme: prefix.Scheme, Path: e.path},
 			Version:   version(e.fi),
@@ -392,13 +421,16 @@ type state struct {
 	digest  [sha256.Size]byte
 }
 
-func (a *Adapter) snapshot(prefix string) (map[string]state, error) {
-	entries, err := a.walk(prefix)
+func (a *Adapter) snapshot(sc scope) (map[string]state, error) {
+	entries, err := a.walk(sc.dir)
 	if err != nil {
 		return nil, err
 	}
 	out := make(map[string]state, len(entries))
 	for _, e := range entries {
+		if !sc.match(e.path) {
+			continue
+		}
 		st := state{version: version(e.fi)}
 		if buf, _, err := a.readFile(stores.OpWatch, stores.Ref{}, e.path); err == nil {
 			m := hmac.New(sha256.New, a.key)

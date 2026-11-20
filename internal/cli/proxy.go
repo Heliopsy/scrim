@@ -36,11 +36,22 @@ func (Commands) Proxy(e *Env) *cobra.Command {
 			"metrics.listen.\n\n" +
 			"Traffic is refused until the data plane holds its first snapshot. The configuration reloads on SIGHUP " +
 			"and on file changes; listener addresses need a restart.\n\n" +
-			"--capture DIR turns on capture mode: every provider request exactly as it left, and the response as " +
-			"received, is written to DIR (mode 0700; --capture alone uses $XDG_STATE_HOME/scrim/capture) so you can check what the provider saw. Agent credentials are " +
+			"--capture=DIR turns on capture mode: every provider request exactly as it left, and the response as " +
+			"received, is written to DIR (mode 0700; --capture alone uses $XDG_STATE_HOME/scrim/capture) so you can check what the provider saw. " +
+			"The value is optional, so it needs the = form; a directory after a space is refused as an extra argument. Agent credentials are " +
 			"masked in captured headers.",
-		Example: "  scrim proxy\n  scrim proxy --metrics\n  scrim proxy --capture ~/scrim-capture\n  ANTHROPIC_BASE_URL=http://127.0.0.1:9790/anthropic claude",
-		Args:    cobra.NoArgs,
+		Example: "  scrim proxy\n  scrim proxy --metrics\n  scrim proxy --capture\n  scrim proxy --capture=\"$HOME/scrim-capture\"\n  ANTHROPIC_BASE_URL=http://127.0.0.1:9790/anthropic claude",
+		Args: func(_ *cobra.Command, args []string) error {
+			// Both flags take an optional value, so a value after a space
+			// arrives as an argument; say which form to use.
+			if len(args) > 0 && capture == captureDefault {
+				return fmt.Errorf("unexpected argument %q: --capture takes its directory as --capture=DIR", args[0])
+			}
+			if len(args) > 0 && metrics == metricsDefault {
+				return fmt.Errorf("unexpected argument %q: --metrics takes its address as --metrics=ADDR", args[0])
+			}
+			return cobra.NoArgs(nil, args)
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if capture == captureDefault {
 				cfg, err := e.Config()
@@ -84,7 +95,7 @@ func (Commands) Proxy(e *Env) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&capture, "capture", "", "capture mode: write every provider request and response to this directory (proxy.capture.dir); --capture alone uses $XDG_STATE_HOME/scrim/capture")
+	cmd.Flags().StringVar(&capture, "capture", "", "capture mode: write every provider request and response to this directory, given as --capture=DIR (proxy.capture.dir); --capture alone uses $XDG_STATE_HOME/scrim/capture")
 	cmd.Flags().Lookup("capture").NoOptDefVal = captureDefault
 	cmd.Flags().StringVar(&metrics, "metrics", "", "serve Prometheus metrics (metrics.enabled); --metrics=ADDR also sets metrics.listen")
 	cmd.Flags().Lookup("metrics").NoOptDefVal = metricsDefault

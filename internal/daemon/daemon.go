@@ -56,6 +56,7 @@ import (
 	"github.com/heliopsy/scrim/internal/placeholder"
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/secret"
+	"github.com/heliopsy/scrim/internal/status"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/refresh"
 	"github.com/heliopsy/scrim/internal/version"
@@ -129,6 +130,9 @@ type Info struct {
 	DataPlane *DataPlaneInfo `json:"data_plane,omitempty"`
 	// Runtime is what the daemon protects right now.
 	Runtime Runtime `json:"runtime"`
+	// Stores is every store's freshness and the values each redact target
+	// holds.
+	Stores []status.Store `json:"stores"`
 }
 
 // DataPlaneInfo summarises the data plane's status. Counts and references,
@@ -157,18 +161,21 @@ func dataPlaneInfo(st *pb.StatusResponse) *DataPlaneInfo {
 
 // Daemon is a running control plane.
 type Daemon struct {
-	app      *app.App
-	sup      *dataplane.Supervisor
-	builder  *SnapshotBuilder
-	catalog  *catalog.Manager
-	runtime  *agentapi.Runtime
-	tokens   *sessionTokens
-	pusher   *pusher
-	log      *slog.Logger
-	started  time.Time
-	capture  string
-	infoPath string
-	trust    func() string
+	app     *app.App
+	sup     *dataplane.Supervisor
+	builder *SnapshotBuilder
+	catalog *catalog.Manager
+	runtime *agentapi.Runtime
+	tokens  *sessionTokens
+	// kubeTokens are the service account tokens scrim verified, redacted
+	// until they expire.
+	kubeTokens *sessionTokens
+	pusher     *pusher
+	log        *slog.Logger
+	started    time.Time
+	capture    string
+	infoPath   string
+	trust      func() string
 
 	mu        sync.Mutex
 	addrs     Addrs
@@ -280,13 +287,15 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		d.trust = m.TrustBundlePEM
 	}
 
-	d.tokens = newSessionTokens(func() { d.pusher.Trigger() })
+	d.tokens = newSessionTokens(sessionTokenStore, func() { d.pusher.Trigger() })
 	d.cleanup = append(d.cleanup, d.tokens.close)
+	d.kubeTokens = newSessionTokens(kubeTokenStore, func() { d.pusher.Trigger() })
+	d.cleanup = append(d.cleanup, d.kubeTokens.close)
 	values := make([]ValueSource, 0, len(a.Refreshers)+1)
 	for _, r := range a.Refreshers {
 		values = append(values, r)
 	}
-	values = append(values, d.tokens)
+	values = append(values, d.tokens, d.kubeTokens)
 	pp := a.PolicyParts
 	// Per-agent store identity: the gate checks it on every use of a
 	// governed store's secrets, and the snapshot sends those uses to the
@@ -356,7 +365,8 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	if notices == nil {
 		notices = logw
 	}
-	d.runtime, err = agentapi.New(a, agentapi.Options{Stderr: notices, Placeholders: placeholders{d.builder}, OnMint: d.tokens.add})
+	d.runtime, err = agentapi.New(a, agentapi.Options{Stderr: notices, Placeholders: placeholders{d.builder}, OnMint: d.tokens.add,
+		OnKubeToken: d.kubeTokens.addKube})
 	if err != nil {
 		return nil, err
 	}
@@ -374,6 +384,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 
 	// Everything is bound: start the loops.
 	a.Start(runCtx)
+	d.watchFirstLoads(runCtx)
 	d.goRun("policy", func() error { a.RunPolicy(runCtx); return nil })
 	d.goRun("catalog", func() error { return ignoreCanceled(d.catalog.Run(runCtx)) })
 	d.goRun("agent API", func() error { return ignoreCanceled(d.runtime.Serve(runCtx)) })
@@ -711,7 +722,7 @@ func (d *Daemon) sweepSessions(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		if d.tokens.prune() {
+		if a, b := d.tokens.prune(), d.kubeTokens.prune(); a || b {
 			d.pusher.Trigger()
 		}
 		if gone, err := d.runtime.Sessions.Sweep(ctx); err != nil {
@@ -752,6 +763,7 @@ func (d *Daemon) Info() Info {
 	in.DataPlane = dataPlaneInfo(d.dpStatus)
 	d.mu.Unlock()
 	in.Runtime = d.runtimeInfo(ctx, in.Ready)
+	in.Stores = d.storeStatus()
 	for k, v := range rep.Checks {
 		if v != "ok" {
 			if in.Problems == nil {

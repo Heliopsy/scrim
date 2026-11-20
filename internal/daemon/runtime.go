@@ -56,9 +56,12 @@ func (d *Daemon) runtimeInfo(ctx context.Context, ready bool) Runtime {
 		}
 		rt.Providers = append(rt.Providers, status.Provider{Name: r.GetName(), Upstream: up})
 	}
+	// A store target with 0 values protects nothing: redaction is not
+	// reported active while one exists.
+	empty := emptyTargets(d.storeStatus())
 	bg := d.app.PolicyParts.BreakGlass.Active()
 	rt.Protections = []status.Protection{
-		{Name: "redaction", Active: dpUp, Detail: detail(dpUp, "every provider request is redacted and checked by the guard", "data plane not ready: provider traffic is refused")},
+		{Name: "redaction", Active: dpUp && len(empty) == 0, Detail: redactionDetail(dpUp, empty)},
 		{Name: "credential injection", Active: dpUp && (a.ForwardProxy != "" || a.ToolProxy != "") && !bg,
 			Detail: detail(a.ForwardProxy != "" || a.ToolProxy != "", "through the tool proxy toward bound hosts", "no forward or tool proxy listener: tools never receive injected credentials")},
 		{Name: "direct egress blocked", Active: false, Detail: "no enforcing interception mode (transparent, eBPF, network policy) is active; an agent can still reach providers directly"},

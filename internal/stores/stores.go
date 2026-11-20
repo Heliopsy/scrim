@@ -32,6 +32,12 @@ const (
 	CapWrite
 	CapGenerate
 	CapDynamic
+	// CapGlob: List and Watch accept a prefix whose last character is `*`
+	// right after part of a name (`APP_*`, `dir/app-*`) and match every
+	// secret whose path starts with the text before it. Without it a
+	// redact target such as `env://APP_*` is refused instead of loading
+	// nothing.
+	CapGlob
 )
 
 var capNames = []struct {
@@ -40,6 +46,7 @@ var capNames = []struct {
 }{
 	{CapRead, "read"}, {CapList, "list"}, {CapWatch, "watch"},
 	{CapWrite, "write"}, {CapGenerate, "generate"}, {CapDynamic, "dynamic"},
+	{CapGlob, "glob"},
 }
 
 // Capabilities is a set of [Capability].
