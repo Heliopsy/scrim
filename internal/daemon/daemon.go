@@ -56,6 +56,7 @@ import (
 	"github.com/heliopsy/scrim/internal/placeholder"
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/secret"
+	"github.com/heliopsy/scrim/internal/status"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/refresh"
 	"github.com/heliopsy/scrim/internal/version"
@@ -129,6 +130,9 @@ type Info struct {
 	DataPlane *DataPlaneInfo `json:"data_plane,omitempty"`
 	// Runtime is what the daemon protects right now.
 	Runtime Runtime `json:"runtime"`
+	// Stores is every store's freshness and the values each redact target
+	// holds.
+	Stores []status.Store `json:"stores"`
 }
 
 // DataPlaneInfo summarises the data plane's status. Counts and references,
@@ -374,6 +378,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 
 	// Everything is bound: start the loops.
 	a.Start(runCtx)
+	d.watchFirstLoads(runCtx)
 	d.goRun("policy", func() error { a.RunPolicy(runCtx); return nil })
 	d.goRun("catalog", func() error { return ignoreCanceled(d.catalog.Run(runCtx)) })
 	d.goRun("agent API", func() error { return ignoreCanceled(d.runtime.Serve(runCtx)) })
@@ -752,6 +757,7 @@ func (d *Daemon) Info() Info {
 	in.DataPlane = dataPlaneInfo(d.dpStatus)
 	d.mu.Unlock()
 	in.Runtime = d.runtimeInfo(ctx, in.Ready)
+	in.Stores = d.storeStatus()
 	for k, v := range rep.Checks {
 		if v != "ok" {
 			if in.Problems == nil {

@@ -210,7 +210,7 @@ func TestRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Name() != "local-env" || a.Capabilities() != stores.CapRead|stores.CapList {
+	if a.Name() != "local-env" || a.Capabilities() != stores.CapRead|stores.CapList|stores.CapGlob {
 		t.Errorf("registered adapter: %s %s", a.Name(), a.Capabilities())
 	}
 }

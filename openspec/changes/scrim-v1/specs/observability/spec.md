@@ -232,6 +232,12 @@ effect, in human and machine-readable form.
 - **WHEN** a component such as the data plane cannot be checked by the process running `scrim status`
 - **THEN** it is reported as not reported and degraded, never as healthy
 
+#### Scenario: Status shows values per redact target
+
+- **WHEN** a daemon is running
+- **THEN** `scrim status` lists each store with the number of values each of its redact targets holds
+- **AND** a target with 0 values is shown as empty and marks the store degraded, and the redaction protection is not reported active
+
 #### Scenario: Status shows weakened protection
 
 - **WHEN** a weakening setting is active

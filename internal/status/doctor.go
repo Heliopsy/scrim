@@ -152,11 +152,21 @@ func ReportChecks(r Report) []Check {
 	}
 	for _, s := range r.Stores {
 		checks = append(checks, Check{Name: "store:" + s.Name, Run: func(context.Context) []Finding {
-			switch {
-			case !s.Reachable:
+			if !s.Reachable {
 				return []Finding{{Outcome: Fail, Message: orDefault(s.Reason, "store is unreachable"),
 					Fix: "check the store's address and credentials in the stores." + s.Name + " settings"}}
-			case s.Degraded:
+			}
+			var out []Finding
+			for _, t := range s.Targets {
+				if t.Values == 0 {
+					out = append(out, Finding{Outcome: Warn, Message: "redact target " + t.Target + " holds 0 values: it protects nothing",
+						Fix: "check the target's name, glob and the store's prefix or allow list in stores." + s.Name + ".redact"})
+				}
+			}
+			if len(out) > 0 {
+				return out
+			}
+			if s.Degraded {
 				return []Finding{{Outcome: Warn, Message: orDefault(s.Reason, "store values are stale"),
 					Fix: "check the store's reachability; values are refreshed on the next successful poll"}}
 			}

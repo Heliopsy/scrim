@@ -66,7 +66,7 @@ Besides the endpoints in [approvals.md](approvals.md) the admin API serves:
 
 | Method and path | Result |
 | --- | --- |
-| `GET /v1/daemon` | Process ID, version, readiness with failing checks, every address, the capture directory, the data plane's status and the runtime report (interception modes from bound listeners and open `scrim run` sessions, protections, providers) that `scrim status` and `scrim doctor` print |
+| `GET /v1/daemon` | Process ID, version, readiness with failing checks, every address, the capture directory, the data plane's status and the runtime report (interception modes from bound listeners and open `scrim run` sessions, protections, providers), and every store with the values each redact target holds, that `scrim status` and `scrim doctor` print |
 | `GET /v1/ca` | The tool-proxy CA certificates clients must trust, PEM (public, no operator needed) |
 
 The same information is written to `daemon.json` next to the admin socket (mode 0600) and removed on
