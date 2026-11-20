@@ -174,6 +174,11 @@ a stale value past its configured staleness limit, or the placeholder itself tow
 - **THEN** the request is refused with an error naming the reference
 - **AND** the value is still redacted
 
+#### Scenario: Placeholder of a value that has not loaded
+
+- **WHEN** a store has not delivered a catalog credential yet and a tool request toward its bound host carries its placeholder
+- **THEN** the request is refused with `credential_unavailable` and the placeholder is not forwarded as text
+
 ### Requirement: Agents see names, never values
 
 The system SHALL expose to agents only references, names and non-secret metadata (store, type,

@@ -1001,6 +1001,81 @@ async fn break_glass_injects_nothing_and_restores_nothing() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A tool request toward a bound host that carries a placeholder no credential resolves is
+/// refused with `credential_unavailable`, through the real data plane: a declared placeholder of
+/// a catalog credential whose value has not loaded (`unavailable`), a generated placeholder of an
+/// unknown value and a reference placeholder of an unknown reference. Nothing reaches the host.
+#[tokio::test(flavor = "multi_thread")]
+async fn unresolved_placeholders_toward_bound_hosts_are_refused() {
+    let s = Secrets::new();
+    let dir = test_dir("unres");
+    let ca = upstream_ca();
+    let ca_file = dir.join("upstream-ca.pem");
+    std::fs::write(&ca_file, ca.0.pem()).unwrap();
+    let unix = dir.join("llm.sock");
+    let provider = FakeUpstream::start_with(provider_stream).await;
+    let api = tool_api(&ca).await;
+    let mut dp = DataPlane::launch(&ca_file).await;
+
+    let mut snap = snapshot(&s, &provider, api.port, &unix);
+    let mut later = v1::ValueEntry::default();
+    later.r#ref = "bao://kv/app#later_key".into();
+    later.slug = "later".into();
+    later.name = "later".into();
+    later.class = v1::ValueClass::Credential.into();
+    later.bound_hosts = vec![format!("localhost:{}", api.port)];
+    later.declared_placeholders = vec!["SCRIM_LATER_KEY".into()];
+    later.inject_locations = vec!["header:x-api-key".into()];
+    snap.unavailable = vec![later];
+    dp.client.apply_snapshot(snap).await.unwrap();
+    let st = dp.status().await;
+    assert!(st.ready, "{}", s.scrub(&format!("{st:?}")));
+    let proxy = DataPlane::listener(&st, "proxy");
+
+    for ph in [
+        "SCRIM_LATER_KEY",
+        "{{scrim:bao://kv/app#later_key}}",
+        "\u{27e6}scrim:not-loaded:01a1b2c3d4e5f60718\u{27e7}",
+        "{{scrim:bao://kv/app#never_heard_of}}",
+    ] {
+        let value = ph
+            .replace('\u{27e6}', "%E2%9F%A6")
+            .replace('\u{27e7}', "%E2%9F%A7");
+        let req = http::Request::get("/v1/items")
+            .header("host", format!("localhost:{}", api.port))
+            .header("x-api-key", value)
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        let got = via_proxy(&proxy, &st.ca_trust_bundle_pem, "localhost", api.port, req).await;
+        assert_eq!(got.status, 503, "{ph}: {}", s.scrub(&got.body));
+        assert_eq!(
+            got.headers
+                .get("x-scrim-error")
+                .map(http::HeaderValue::as_bytes),
+            Some(&b"credential_unavailable"[..]),
+            "{ph}"
+        );
+        s.assert_absent("refusal", &got.body);
+    }
+    assert!(
+        api.seen.lock().unwrap().is_empty(),
+        "an unresolved placeholder reached the bound host"
+    );
+
+    // The loaded credential still injects.
+    let req = http::Request::get("/v1/items")
+        .header("host", format!("localhost:{}", api.port))
+        .header("x-api-key", &s.api_ph)
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let got = via_proxy(&proxy, &st.ca_trust_bundle_pem, "localhost", api.port, req).await;
+    assert_eq!(got.status, 200, "{}", s.scrub(&got.body));
+    assert_eq!(api.seen.lock().unwrap().len(), 1);
+
+    dp.stop(&s).await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn engines_refuse_before_the_first_snapshot() {
     let shared = Arc::new(scrim_dataplane::engine::Shared::new().unwrap());

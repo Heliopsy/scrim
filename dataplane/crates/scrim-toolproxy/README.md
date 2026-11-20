@@ -18,7 +18,10 @@ Spec: `openspec/changes/scrim-v1/specs/credential-injection` and the forward-pro
   ends. Only the public trust bundle is exported; installing it is the control plane's job.
 - **Placeholders.** Generated (`⟦scrim:acme:…⟧`), user-declared (`SCRIM_ACME_KEY`) and reference
   placeholders (`{{scrim:bao://kv/agents/acme#key}}`), found as written, percent-encoded and
-  JSON `\u`-escaped. Declared word-like placeholders only match as whole words.
+  JSON `\u`-escaped. Declared word-like placeholders only match as whole words. Toward a host
+  with bound credentials, a token in exact placeholder grammar that nothing resolves (a value not
+  loaded yet, a credential listed in the snapshot's `unavailable`, an unknown reference) is
+  refused with `credential_unavailable` instead of being sent as text.
 - **Binding.** Hosts (`api.example.com`, `*.example.com`, optional `:port` or `:*`), methods and
   path globs (matched after removing dot segments). Plain HTTP only with `allow_plaintext_http`.
   The Host header or `:authority` and the TLS server name must name the connection's destination.
@@ -50,7 +53,7 @@ alias and never contain a value.
 | `unbound_credential` | 403 | the credential has no binding |
 | `unbound_destination` | 403 | host, port, scheme, method or path not bound |
 | `undeclared_location` | 403 | placeholder in a location the credential does not declare |
-| `credential_unavailable` | 503 | the store has not delivered the value |
+| `credential_unavailable` | 503 | the store has not delivered the value, or a placeholder toward a bound host matches no credential with a value |
 | `unrepresentable_value` | 422 | the value cannot be written there (line break in a header) |
 | `unsupported_encoding` | 415 | body coding scrim cannot rewrite, toward a bound host |
 | `malformed_body` | 400 | body could not be decoded or parsed |

@@ -92,6 +92,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 - [x] 10.1 Host binding for credentials in configuration and policy; verify: a placeholder toward an unbound host is refused and audited
 - [ ] 10.2 HTTPS tool proxy with CA generation, rotation and trust installation; verify: injection works toward bound hosts for curl, git and a Node client
+- [x] 10.1a Unresolved placeholders toward bound hosts refused with `credential_unavailable` (unknown generated or reference placeholders, and declared placeholders of catalog credentials whose value has not loaded, sent as `Snapshot.unavailable`); verify: scrim-toolproxy and the data plane end-to-end test refuse every form and nothing reaches the host, look-alike text passes
 - [x] 10.2a User-declared placeholders mapped to references and bound hosts; verify: a config file with `SCRIM_ACME_KEY` works against a fake API and duplicate declarations fail validation
 - [x] 10.2b Substitution in URL, headers, cookies, form, JSON and multipart bodies with decompression, length, digest and re-signing; verify: gzip, chunked and HTTP/2 fixtures reach the fake upstream valid and unsupported encodings are refused
 - [x] 10.2c Redaction of tool-proxy responses, including streamed and compressed bodies; verify: an echoing fake API and a create-resource fake return only placeholders to the agent
