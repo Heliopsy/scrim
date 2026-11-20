@@ -1,0 +1,293 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! Proxy configuration.
+//!
+//! The control plane owns the configuration file, environment and flags (configuration spec);
+//! the data plane receives the resolved values. Field names follow the canonical keys under
+//! `proxy.` in kebab case, so a YAML or JSON fragment of the effective configuration
+//! deserialises directly.
+
+use std::path::PathBuf;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+
+use crate::codec::Api;
+
+/// Which provider family a route serves. The API within the family follows from the path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Provider {
+    /// Anthropic: Messages on paths ending in `/messages` or `/messages/count_tokens`.
+    Anthropic,
+    /// `OpenAI`: Chat Completions on `/chat/completions`, Responses on `/responses` and
+    /// `/responses/compact`.
+    Openai,
+}
+
+impl Provider {
+    /// The API a request speaks, from its method and the path after the route prefix.
+    pub fn api_for(self, method: &http::Method, path: &str) -> Api {
+        if method != http::Method::POST {
+            return Api::Generic;
+        }
+        let path = path.trim_end_matches('/');
+        match self {
+            Provider::Anthropic
+                if path.ends_with("/messages") || path.ends_with("/messages/count_tokens") =>
+            {
+                Api::AnthropicMessages
+            }
+            Provider::Openai if path.ends_with("/chat/completions") => Api::OpenAiChat,
+            Provider::Openai
+                if path.ends_with("/responses") || path.ends_with("/responses/compact") =>
+            {
+                Api::OpenAiResponses
+            }
+            _ => Api::Generic,
+        }
+    }
+}
+
+/// What to do when a chained upstream cannot be reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OnUnavailable {
+    /// Refuse the request (default).
+    #[default]
+    Fail,
+    /// Send the already-redacted request to the provider directly and audit the skip.
+    Direct,
+}
+
+/// A chained upstream, such as a context-compression proxy. It receives the redacted request in
+/// place of the provider.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ChainConfig {
+    /// Base URL of the chained proxy (`http` or `https`).
+    pub url: String,
+    /// Behaviour when it is unreachable.
+    #[serde(default)]
+    pub on_unavailable: OnUnavailable,
+}
+
+/// One route: requests whose path starts with `prefix` go to `upstream`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct RouteConfig {
+    /// Route name, used in audit entries and errors.
+    pub name: String,
+    /// Path prefix, matched on whole segments (`/anthropic` matches `/anthropic/v1/messages`,
+    /// not `/anthropic2`).
+    pub prefix: String,
+    /// Provider base URL. The path after the prefix is appended.
+    pub upstream: String,
+    /// Provider family.
+    pub provider: Provider,
+    /// Remove the prefix before appending the path to the upstream (default `true`).
+    #[serde(default = "yes")]
+    pub strip_prefix: bool,
+    /// Optional chained upstream.
+    #[serde(default)]
+    pub chain: Option<ChainConfig>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Byte limits. The memory held per stream is at most
+/// `max-event + open blocks * (placeholder max length - 1) + max-buffered-tool-input`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
+pub struct Limits {
+    /// Largest request body accepted; larger bodies are refused with 413 (`proxy.limits.max-request-body`).
+    pub max_request_body: usize,
+    /// Largest non-streaming JSON response restored in memory; larger ones pass through
+    /// unresolved (`proxy.limits.max-response-body`).
+    pub max_response_body: usize,
+    /// Largest single SSE event parsed; a larger one passes through unresolved
+    /// (`proxy.limits.max-event`).
+    pub max_event: usize,
+    /// Tool-call arguments held per stream for policies that need complete arguments
+    /// (`proxy.limits.max-buffered-tool-input`).
+    pub max_buffered_tool_input: usize,
+    /// Bodies at least this large are redacted on the blocking pool instead of the I/O thread
+    /// (`proxy.limits.offload-threshold`).
+    pub offload_threshold: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            max_request_body: 32 << 20,
+            max_response_body: 32 << 20,
+            max_event: 16 << 20,
+            max_buffered_tool_input: 1 << 20,
+            offload_threshold: 1 << 20,
+        }
+    }
+}
+
+/// Capture mode (leak-assurance spec): every outgoing request and the response as received.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct CaptureConfig {
+    /// Directory; created with mode 0700 if missing, refused if accessible to others.
+    pub dir: PathBuf,
+    /// Delete captures older than this many seconds (`proxy.capture.retention`, default 7 days).
+    #[serde(default = "week")]
+    pub retention_secs: u64,
+}
+
+fn week() -> u64 {
+    7 * 24 * 3600
+}
+
+/// Trust roots for upstream TLS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Roots {
+    /// Mozilla roots compiled in (webpki-roots).
+    Webpki,
+    /// The operating system's store.
+    Native,
+    /// Both (default).
+    #[default]
+    Both,
+}
+
+/// Upstream TLS settings.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
+pub struct TlsConfig {
+    /// Root set.
+    pub roots: Roots,
+    /// Extra PEM bundle to trust, for corporate proxies and tests.
+    pub extra_ca_file: Option<PathBuf>,
+}
+
+/// Everything the proxy needs besides the snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
+pub struct ProxyConfig {
+    /// Routes; longest matching prefix wins.
+    pub routes: Vec<RouteConfig>,
+    /// Limits.
+    pub limits: Limits,
+    /// Capture mode, off when absent.
+    pub capture: Option<CaptureConfig>,
+    /// Upstream TLS.
+    pub tls: TlsConfig,
+    /// Upstream connect timeout in milliseconds.
+    pub connect_timeout_ms: u64,
+    /// Idle upstream connections kept per host.
+    pub pool_max_idle_per_host: usize,
+}
+
+impl Default for ProxyConfig {
+    fn default() -> Self {
+        Self {
+            routes: default_routes(),
+            limits: Limits::default(),
+            capture: None,
+            tls: TlsConfig::default(),
+            connect_timeout_ms: 10_000,
+            pool_max_idle_per_host: 32,
+        }
+    }
+}
+
+impl ProxyConfig {
+    /// Connect timeout.
+    pub fn connect_timeout(&self) -> Duration {
+        Duration::from_millis(self.connect_timeout_ms)
+    }
+}
+
+/// `/anthropic` to `https://api.anthropic.com` and `/openai` to `https://api.openai.com`.
+///
+/// Agents use base URLs such as `ANTHROPIC_BASE_URL=http://127.0.0.1:9790/anthropic` and
+/// `OPENAI_BASE_URL=http://127.0.0.1:9790/openai/v1`.
+pub fn default_routes() -> Vec<RouteConfig> {
+    vec![
+        RouteConfig {
+            name: "anthropic".into(),
+            prefix: "/anthropic".into(),
+            upstream: "https://api.anthropic.com".into(),
+            provider: Provider::Anthropic,
+            strip_prefix: true,
+            chain: None,
+        },
+        RouteConfig {
+            name: "openai".into(),
+            prefix: "/openai".into(),
+            upstream: "https://api.openai.com".into(),
+            provider: Provider::Openai,
+            strip_prefix: true,
+            chain: None,
+        },
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_detection() {
+        let p = http::Method::POST;
+        assert_eq!(
+            Provider::Anthropic.api_for(&p, "/v1/messages"),
+            Api::AnthropicMessages
+        );
+        assert_eq!(
+            Provider::Anthropic.api_for(&p, "/v1/messages/count_tokens"),
+            Api::AnthropicMessages
+        );
+        assert_eq!(
+            Provider::Anthropic.api_for(&p, "/v1/complete"),
+            Api::Generic
+        );
+        assert_eq!(
+            Provider::Anthropic.api_for(&http::Method::GET, "/v1/messages"),
+            Api::Generic
+        );
+        assert_eq!(
+            Provider::Openai.api_for(&p, "/v1/chat/completions"),
+            Api::OpenAiChat
+        );
+        assert_eq!(
+            Provider::Openai.api_for(&p, "/v1/responses"),
+            Api::OpenAiResponses
+        );
+        assert_eq!(
+            Provider::Openai.api_for(&p, "/v1/responses/compact"),
+            Api::OpenAiResponses
+        );
+        assert_eq!(Provider::Openai.api_for(&p, "/v1/embeddings"), Api::Generic);
+    }
+
+    #[test]
+    fn deserialises_kebab_case() {
+        let c: ProxyConfig = serde_json::from_str(
+            r#"{"routes":[{"name":"a","prefix":"/a","upstream":"http://x","provider":"anthropic",
+                "chain":{"url":"http://c","on-unavailable":"direct"}}],
+                "limits":{"max-event":1024},"capture":{"dir":"/tmp/c"},"connect-timeout-ms":5}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            c.routes[0].chain.as_ref().unwrap().on_unavailable,
+            OnUnavailable::Direct
+        );
+        assert!(c.routes[0].strip_prefix);
+        assert_eq!(c.limits.max_event, 1024);
+        assert_eq!(
+            c.limits.max_request_body,
+            Limits::default().max_request_body
+        );
+        assert_eq!(c.capture.unwrap().retention_secs, 7 * 24 * 3600);
+        assert!(serde_json::from_str::<ProxyConfig>(r#"{"bogus":1}"#).is_err());
+    }
+}
