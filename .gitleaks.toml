@@ -93,3 +93,15 @@ names the agent API socket path; it is a path, not a key.
 paths = ['''^internal/install/units\.go$''']
 matchCondition = "AND"
 regexes = ['''"SCRIM_API_SOCKET=" \+ SystemRuntimeDir''']
+
+[[allowlists]]
+description = """
+The Kubernetes end-to-end test sends placeholders and made-up keys on curl
+command lines: the agent's placeholder SCRIM_TOOL_TOKEN (which scrim replaces
+with a value it generates at run time) and the provider key agent-own-key.
+Neither is a credential.
+"""
+paths = ['''^test/k8s/e2e\.sh$''']
+matchCondition = "AND"
+regexTarget = "line"
+regexes = ['''Authorization: Bearer SCRIM_TOOL_TOKEN''', '''x-api-key: agent-own-key''']

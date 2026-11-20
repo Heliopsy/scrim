@@ -117,10 +117,11 @@ networkPolicy:
     - ports: [{port: 443, protocol: TCP}]           # providers, GitHub, OpenBao
 ```
 
-The OpenBao role `scrim` binds scrim's service account (`scrim-proxy` in namespace `scrim` for the release `scrim`) with audience
-`openbao` ([stores/openbao.md](stores/openbao.md#kubernetes-auth)); in sidecar mode it must also bind
-the agent pods' service accounts, since each in-pod scrim logs in as its pod. Infisical works the
-same way with `auth.method: kubernetes-auth`.
+The OpenBao role `scrim` binds scrim's service account (`<release>-scrim-proxy`, so `scrim-proxy`
+in namespace `scrim` here) with audience `openbao`
+([stores/openbao.md](stores/openbao.md#kubernetes-auth)); in sidecar mode it must also bind the
+agent pods' service accounts, since each in-pod scrim logs in as its pod. Infisical works the same
+way with `auth.method: kubernetes-auth`.
 
 `config` takes scrim's configuration file as it is; the chart adds `apiVersion` and `kind`. Secret
 values never go into values: settings that hold a credential take a `file:` reference to a Secret
