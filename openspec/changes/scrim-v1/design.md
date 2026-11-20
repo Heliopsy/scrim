@@ -272,6 +272,17 @@ data plane acknowledges the version it applied. The data plane streams audit eve
 sends "ask" decisions, the only call that waits, and only for requests a rule sends to a human.
 Every message carries the protocol version; a mismatch refuses to start.
 
+Metrics follow the same rule. With `metrics.enabled` the data plane aggregates its own counters and
+fixed-bucket histograms in process (atomics only on the request path, one route lookup per request)
+and the control plane reads them with the `Metrics` call once per Prometheus scrape, then serves
+them next to its own on its one endpoint, scrubbed with the rest. A separate loopback `/metrics` on
+the data plane was rejected: it would be a second listener in the process that holds the values, a
+second port to authenticate and scrape, and a second place to scrub. Pull per scrape keeps the cost
+off the hot path (nothing is formatted or sent between scrapes) and needs no new stream. The call
+is additive: an older data plane answers UNIMPLEMENTED, which the control plane reads as "no data
+plane metrics", so the protocol stays 1. Labels are bounded by construction (routes, codecs, codes,
+enumerations, a cap per series set) and checked again by the control plane against an allowlist.
+
 ### D13. Matching stays near constant speed as the secret set grows
 
 Aho-Corasick slows from GB/s to about 100 MB/s as the set grows past a few hundred values. Since

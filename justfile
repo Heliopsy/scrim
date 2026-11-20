@@ -61,7 +61,7 @@ fuzz:
 # ---------------------------------------------------------------- gates
 
 # The pre-push gate.
-check: fmt-check lint md test spec proto-check vuln
+check: fmt-check lint md test spec proto-check vuln monitoring
 
 fmt:
     gofmt -w .
@@ -79,6 +79,10 @@ lint:
 # Lint the Markdown .markdownlint-cli2.yaml selects, with the rules in .markdownlint.yaml.
 md:
     npx --yes markdownlint-cli2@0.24.1
+
+# Alert rules, their tests, the Prometheus configs and the dashboard (deploy/monitoring).
+monitoring:
+    scripts/monitoring-check.sh
 
 # Validate every OpenSpec change and spec.
 spec:
@@ -139,6 +143,25 @@ leak *args: leak-selftest
 fakeprovider *args:
     go run ./internal/testing/fakeprovider/cmd/scrim-fakeprovider {{args}}
 
+# End to end with the real scrim binary inside test/e2e/sandbox.sh: a network namespace with
+# loopback only and the test hosts in its own /etc/hosts. Extra arguments go to the test binary,
+# for example `-test.run TestTools/git`. See "Tests" in docs/run.md.
+#
+# Real curl, git, Node.js fetch and Python requests under scrim run (tasks.md 10.2).
+e2e-tools *args:
+    test/e2e/run.sh tools {{args}}
+
+# scrim chained to caveman, a context compression proxy (tasks.md 3.5); skipped without caveman-proxy.
+e2e-chain *args:
+    test/e2e/run.sh chain {{args}}
+
+# A realistic Claude Code session under scrim run; skipped without claude.
+e2e-session *args:
+    test/e2e/run.sh session {{args}}
+
+# Every end-to-end run above.
+e2e: e2e-tools e2e-chain e2e-session
+
 ntfy_image := "docker.io/binwiederhier/ntfy:v2.38.1"
 
 # End-to-end approve and deny through a local ntfy in rootless podman, on a
@@ -155,6 +178,12 @@ e2e-ntfy port="":
     trap 'podman rm -f -v "$name" >/dev/null' EXIT
     for _ in $(seq 50); do curl -fsS "http://127.0.0.1:$port/v1/health" >/dev/null 2>&1 && break; sleep 0.2; done
     SCRIM_TEST_NTFY_URL="http://127.0.0.1:$port" go test -race -count=1 -run TestEndToEndAgainstNtfy -v ./internal/notify/ntfy/
+
+# VM test of `scrim install` and `scrim uninstall` in a disposable systemd host under rootless
+# podman (test/service/vm-test.sh). SCRIM_SVC_BIN names a binary with the data plane embedded;
+# without it `just build` runs first.
+service-vm-test:
+    test/service/vm-test.sh
 
 clean:
     rm -rf bin/ dist/ {{embed}}

@@ -28,6 +28,9 @@ import (
 type StartOptions struct {
 	// Mlock is passed as SCRIM_DP_MLOCK: "auto" or "require".
 	Mlock string
+	// UpstreamCAFile is passed as SCRIM_DP_EXTRA_CA_FILE when set: extra
+	// roots for upstream TLS.
+	UpstreamCAFile string
 	// LogFilter is passed as SCRIM_DP_LOG; default "info".
 	LogFilter string
 	// Log receives the data plane's log lines, tagged component=dataplane.
@@ -108,10 +111,14 @@ func spawn(exe *executable, o StartOptions, log *slog.Logger) (*Process, error) 
 	if filter == "" {
 		filter = "info"
 	}
+	env := []string{"SCRIM_DP_FD=" + strconv.Itoa(ChildFD), "SCRIM_DP_MLOCK=" + mlock, "SCRIM_DP_LOG=" + filter}
+	if o.UpstreamCAFile != "" {
+		env = append(env, "SCRIM_DP_EXTRA_CA_FILE="+o.UpstreamCAFile)
+	}
 	cmd := &exec.Cmd{
 		Path:       exe.path,
 		Args:       []string{"scrim-dataplane", "--fd", strconv.Itoa(ChildFD)},
-		Env:        append([]string{"SCRIM_DP_FD=" + strconv.Itoa(ChildFD), "SCRIM_DP_MLOCK=" + mlock, "SCRIM_DP_LOG=" + filter}, o.ExtraEnv...),
+		Env:        append(env, o.ExtraEnv...),
 		ExtraFiles: []*os.File{theirs}, // fd 3
 	}
 	// A plain pipe rather than StderrPipe, so Wait does not race the relay

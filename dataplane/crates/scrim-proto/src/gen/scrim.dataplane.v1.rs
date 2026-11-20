@@ -740,6 +740,59 @@ pub struct ListenerStatus {
     #[prost(enumeration = "ListenerKind", tag = "5")]
     pub kind: i32,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MetricsRequest {
+    #[prost(uint32, tag = "1")]
+    pub protocol: u32,
+}
+/// MetricsResponse carries metric families in Prometheus' data model. Names
+/// start with `scrim_dataplane_`; label values are route names, provider
+/// codecs, refusal codes and other enumerations, never a reference, a
+/// placeholder or a value.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MetricsResponse {
+    #[prost(uint32, tag = "1")]
+    pub protocol: u32,
+    /// enabled is false when the data plane was started without metrics.
+    #[prost(bool, tag = "2")]
+    pub enabled: bool,
+    #[prost(message, repeated, tag = "3")]
+    pub families: ::prost::alloc::vec::Vec<MetricFamily>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MetricFamily {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub help: ::prost::alloc::string::String,
+    #[prost(enumeration = "MetricType", tag = "3")]
+    pub r#type: i32,
+    #[prost(string, repeated, tag = "4")]
+    pub label_names: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// bucket_bounds are the histogram upper bounds in base units, ascending,
+    /// without +Inf.
+    #[prost(double, repeated, tag = "5")]
+    pub bucket_bounds: ::prost::alloc::vec::Vec<f64>,
+    #[prost(message, repeated, tag = "6")]
+    pub samples: ::prost::alloc::vec::Vec<MetricSample>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MetricSample {
+    /// label_values match MetricFamily.label_names by position.
+    #[prost(string, repeated, tag = "1")]
+    pub label_values: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// value is the counter or gauge value.
+    #[prost(double, tag = "2")]
+    pub value: f64,
+    /// bucket_counts are cumulative counts per bucket bound (histograms).
+    #[prost(uint64, repeated, tag = "3")]
+    pub bucket_counts: ::prost::alloc::vec::Vec<u64>,
+    /// count and sum are the histogram's observation count and sum.
+    #[prost(uint64, tag = "4")]
+    pub count: u64,
+    #[prost(double, tag = "5")]
+    pub sum: f64,
+}
 /// ProtocolVersion is the boundary protocol version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -1082,6 +1135,38 @@ impl EventKind {
         }
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum MetricType {
+    Unspecified = 0,
+    Counter = 1,
+    Gauge = 2,
+    Histogram = 3,
+}
+impl MetricType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "METRIC_TYPE_UNSPECIFIED",
+            Self::Counter => "METRIC_TYPE_COUNTER",
+            Self::Gauge => "METRIC_TYPE_GAUGE",
+            Self::Histogram => "METRIC_TYPE_HISTOGRAM",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "METRIC_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "METRIC_TYPE_COUNTER" => Some(Self::Counter),
+            "METRIC_TYPE_GAUGE" => Some(Self::Gauge),
+            "METRIC_TYPE_HISTOGRAM" => Some(Self::Histogram),
+            _ => None,
+        }
+    }
+}
 /// Generated client implementations.
 pub mod data_plane_client {
     #![allow(
@@ -1320,6 +1405,36 @@ pub mod data_plane_client {
                 .insert(GrpcMethod::new("scrim.dataplane.v1.DataPlane", "Captures"));
             self.inner.streaming(req, path, codec).await
         }
+        /// Metrics returns the data plane's own counters and histograms, which it
+        /// aggregates locally (atomics, fixed buckets) off the request path. The
+        /// control plane calls it once per scrape of its metrics endpoint and
+        /// exposes the families next to its own. A data plane started without
+        /// metrics answers with enabled false and no families; one older than this
+        /// call answers UNIMPLEMENTED, which the control plane treats the same way.
+        pub async fn metrics(
+            &mut self,
+            request: impl tonic::IntoRequest<super::MetricsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::MetricsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/scrim.dataplane.v1.DataPlane/Metrics",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("scrim.dataplane.v1.DataPlane", "Metrics"));
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -1398,6 +1513,16 @@ pub mod data_plane_server {
             &self,
             request: tonic::Request<tonic::Streaming<super::CaptureResult>>,
         ) -> std::result::Result<tonic::Response<Self::CapturesStream>, tonic::Status>;
+        /// Metrics returns the data plane's own counters and histograms, which it
+        /// aggregates locally (atomics, fixed buckets) off the request path. The
+        /// control plane calls it once per scrape of its metrics endpoint and
+        /// exposes the families next to its own. A data plane started without
+        /// metrics answers with enabled false and no families; one older than this
+        /// call answers UNIMPLEMENTED, which the control plane treats the same way.
+        async fn metrics(
+            &self,
+            request: tonic::Request<super::MetricsRequest>,
+        ) -> std::result::Result<tonic::Response<super::MetricsResponse>, tonic::Status>;
     }
     #[derive(Debug)]
     pub struct DataPlaneServer<T> {
@@ -1738,6 +1863,49 @@ pub mod data_plane_server {
                                 max_encoding_message_size,
                             );
                         let res = grpc.streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/scrim.dataplane.v1.DataPlane/Metrics" => {
+                    #[allow(non_camel_case_types)]
+                    struct MetricsSvc<T: DataPlane>(pub Arc<T>);
+                    impl<T: DataPlane> tonic::server::UnaryService<super::MetricsRequest>
+                    for MetricsSvc<T> {
+                        type Response = super::MetricsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::MetricsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as DataPlane>::metrics(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = MetricsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)

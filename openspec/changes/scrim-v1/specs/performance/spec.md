@@ -28,6 +28,11 @@ without a recorded reason.
 - **WHEN** the benchmark measures a 1 MB body with 1,000 secrets
 - **THEN** the p99 added latency is below the configured target
 
+#### Scenario: Budget met with metrics on
+
+- **WHEN** the benchmark measures the same request and chunk paths with metrics enabled
+- **THEN** the p99 added latency is still below the configured targets, and the report shows the difference to metrics off
+
 #### Scenario: Budget met with a large set
 
 - **WHEN** the benchmark measures a 1 MB body with 10,000 secrets

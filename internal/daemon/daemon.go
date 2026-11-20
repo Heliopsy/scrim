@@ -51,6 +51,7 @@ import (
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/dataplane"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
+	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/placeholder"
 	"github.com/heliopsy/scrim/internal/policy"
@@ -175,6 +176,8 @@ type Daemon struct {
 	dpProblem string
 	dpStatus  *pb.StatusResponse
 
+	control *controlMetrics
+
 	cancel  context.CancelFunc
 	servers []*http.Server
 	wg      sync.WaitGroup
@@ -262,6 +265,9 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	}
 	d.cleanup = append(d.cleanup, d.catalog.Close)
 
+	// ownCA is the daemon's own CA, whose generations are fresh copies the
+	// metrics collector may wipe.
+	var ownCA func() []CAGeneration
 	if o.CA == nil {
 		m, err := ca.Open(ctx, cfg, obs.WithComponent(a.Log, "ca"))
 		if err != nil {
@@ -270,6 +276,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		}
 		d.cleanup = append(d.cleanup, m.Close)
 		o.CA, o.CARun = caGenerations(m), m.Run
+		ownCA = o.CA
 		d.trust = m.TrustBundlePEM
 	}
 
@@ -330,15 +337,17 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		d.sup.Options.ExtraEnv = append(d.sup.Options.ExtraEnv, "SCRIM_DP_CAPTURE_DIR="+d.capture,
 			fmt.Sprintf("SCRIM_DP_CAPTURE_RETENTION_SECS=%d", int64(CaptureRetention.Get(cfg).Seconds())))
 	}
-	if f := dataplane.ExtraCAFile.Get(cfg); f != "" {
-		d.sup.Options.ExtraEnv = append(d.sup.Options.ExtraEnv, "SCRIM_DP_EXTRA_CA_FILE="+f)
-	}
 	d.sup.Options.ExtraEnv = append(d.sup.Options.ExtraEnv, o.DataPlaneEnv...)
 	d.sup.OnAsk = pp.Gate.Answer
 	sink := &eventSink{state: a.State, inst: a.Instruments, log: d.log}
 	d.sup.OnEvents = sink.record
 	cw := &captureWriter{gate: pp.Gate, refreshers: d.refresherFor, placeholder: d.builder.Placeholder, state: a.State, log: d.log}
 	d.sup.OnCapture = cw.capture
+	if obs.MetricsEnabled.Get(cfg) {
+		// The data plane aggregates its own metrics only when asked to.
+		d.sup.Options.ExtraEnv = append(d.sup.Options.ExtraEnv, "SCRIM_DP_METRICS=1")
+		d.wireMetrics(a, ownCA)
+	}
 
 	d.pusher = newPusher(d.sup, func() time.Duration { return PushDebounce.Get(a.Config.Current()) }, d.log)
 	d.subscribe(runCtx)
@@ -352,6 +361,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		return nil, err
 	}
 	d.addrs.AgentAPI, d.addrs.EntryPage = d.runtime.Socket, d.runtime.EntryURL
+	d.runtime.SetEndpoints(d.agentEndpoints)
 	// Asks name their caller by transport; the gate verifies sessions and
 	// maps peers with the agent API's resolver. Set before anything runs.
 	pp.Gate.Callers = d.runtime.Resolver
@@ -501,7 +511,7 @@ func (d *Daemon) refresherFor(ref stores.Ref) (*refresh.Refresher, error) {
 
 // listenControl binds the admin, decision and metrics listeners.
 func (d *Daemon) listenControl(cfg *config.Config) error {
-	a, pp := d.app, d.app.PolicyParts
+	pp := d.app.PolicyParts
 	tok, _ := cfg.Secret(AdminToken)
 	adm, err := listenAdmin(approval.AdminURL.Get(cfg), tok)
 	if err != nil {
@@ -526,14 +536,48 @@ func (d *Daemon) listenControl(cfg *config.Config) error {
 		d.addrs.Decision = ln.Addr().String()
 		d.serve("decision", ln, dm, nil)
 	}
-	if addr := obs.MetricsListen.Get(cfg); addr != "" {
-		ln, err := net.Listen("tcp", addr)
-		if err != nil {
-			return fmt.Errorf("metrics.listen: %w", err)
-		}
-		d.addrs.Metrics = ln.Addr().String()
-		d.serve("metrics", ln, obs.Mux(a.Health, a.Metrics), nil)
+	return d.listenMetrics(cfg)
+}
+
+// listenMetrics binds metrics.listen. With metrics.enabled it serves the
+// health endpoints and metrics.path; with metrics.enabled false and
+// metrics.listen set explicitly, the health endpoints only (as before the
+// feature flag existed); otherwise nothing.
+func (d *Daemon) listenMetrics(cfg *config.Config) error {
+	a := d.app
+	enabled := obs.MetricsEnabled.Get(cfg)
+	addr := obs.MetricsListen.Get(cfg)
+	explicit := false
+	if e, ok := cfg.Entry(obs.MetricsListen.Name()); ok {
+		explicit = e.Source.Kind != config.SourceDefault
 	}
+	switch {
+	case enabled && addr == "":
+		return errors.New("metrics.enabled is true but metrics.listen is empty: set an address such as " + obs.DefaultMetricsListen)
+	case !enabled && (!explicit || addr == ""):
+		return nil
+	}
+	var mux *http.ServeMux
+	if enabled {
+		tok, _ := cfg.Secret(obs.MetricsToken)
+		if err := obs.CheckMetricsAuth(addr, tok, obs.MetricsAllowUnauthenticatedRemote.Get(cfg)); err != nil {
+			return err
+		}
+		mux = obs.Mux(a.Health, a.Metrics, obs.MuxOptions{Path: obs.MetricsPath.Get(cfg), Token: tok})
+	} else {
+		mux = obs.Mux(a.Health, nil, obs.MuxOptions{})
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("metrics.listen: %w", err)
+	}
+	d.addrs.Metrics = ln.Addr().String()
+	if enabled {
+		d.log.Info("metrics enabled", "listen", d.addrs.Metrics, "path", obs.MetricsPath.Get(cfg))
+	} else {
+		d.log.Info("metrics.enabled is false: metrics.listen serves the health endpoints only", "listen", d.addrs.Metrics)
+	}
+	d.serve("metrics", ln, mux, nil)
 	return nil
 }
 
@@ -717,6 +761,19 @@ func (d *Daemon) Info() Info {
 		}
 	}
 	return in
+}
+
+// agentEndpoints is what the agent API tells callers that did not start
+// this daemon and cannot reach the admin API (agents of other users when
+// scrim runs as a system service). Public material only.
+func (d *Daemon) agentEndpoints() localapi.Endpoints {
+	in := d.Info()
+	ep := localapi.Endpoints{Ready: in.Ready, Problems: in.Problems, BaseURL: in.Addrs.BaseURL,
+		ForwardProxy: in.Addrs.ForwardProxy, Bypass: in.Bypass}
+	if d.trust != nil {
+		ep.CAPEM = d.trust()
+	}
+	return ep
 }
 
 // WaitReady blocks until the daemon is ready, it stops, or ctx ends.

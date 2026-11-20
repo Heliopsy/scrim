@@ -32,7 +32,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 3.2 Streaming restorer with per-block holdback, split placeholders and byte-identical thinking and signature content; verify: property test restore(redact(x)) and recorded stream fixtures
 - [x] 3.3 Fail-closed error path; verify: injected redaction or guard errors return the documented error and nothing reaches the fake upstream
 - [x] 3.4 Capture mode; verify: captured requests are byte-identical to what the fake upstream received
-- [ ] 3.5 Upstream chaining through caveman with redaction first; verify: caveman's store holds placeholders only, and placeholders survive compression in an end-to-end run
+- [x] 3.5 Upstream chaining through caveman with redaction first; verify: caveman's store holds placeholders only, and placeholders survive compression in an end-to-end run
 - [x] 3.6 Latency budget gate; verify: CI fails when p99 per request or per chunk exceeds the configured budget on the reference fixtures
 - [x] 3.7 Request target and headers redacted and guarded like the body, only `authorization` and `x-api-key` passed through; verify: the leak gate's `header` and `query` rows are redacted for every transform the guard decodes, and an end-to-end request with secrets in a custom header and a percent-encoded query parameter reaches the fake provider with placeholders only
 - [x] 3.8 Placeholders in header values leave in percent form (`%E2%9F%A6...%E2%9F%A7`), which resolves, restores percent-encoded and is read by the guard; verify: a header redacted or guard-repaired holds only visible ASCII and a fake provider that rejects obs-text accepts it
@@ -52,6 +52,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 5.2 Audit log (metadata only) written with the state change it records; verify: a failure between the two writes leaves neither
 - [x] 5.3 Structured logs, metrics, traces and health endpoints with a secret-free type for values; verify: a test that seeds known values and greps every log, metric and trace output for them
 - [x] 5.4 `scrim status` and `scrim doctor`; verify: reports active protections, interception mode, degraded stores and weakened settings in fixture setups
+- [x] 5.5 Prometheus monitoring behind `metrics.enabled`: control-plane metrics, data plane metrics over the `Metrics` call, bearer token for non-loopback listeners; verify: daemon end-to-end test scrapes the expected series after traffic through the real data plane and greps the page for every seeded value and encoding
+- [x] 5.6 Monitoring assets (alert rules with promtool tests, Grafana dashboard, scrape config) and runbooks in `docs/monitoring.md`; verify: `scripts/monitoring-check.sh` in CI
 
 ## 6. OpenBao and Infisical adapters
 
@@ -90,7 +92,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 ## 10. Credential injection
 
 - [x] 10.1 Host binding for credentials in configuration and policy; verify: a placeholder toward an unbound host is refused and audited
-- [ ] 10.2 HTTPS tool proxy with CA generation, rotation and trust installation; verify: injection works toward bound hosts for curl, git and a Node client
+- [x] 10.2 HTTPS tool proxy with CA generation, rotation and trust installation; verify: injection works toward bound hosts for curl, git and a Node client
 - [x] 10.2a User-declared placeholders mapped to references and bound hosts; verify: a config file with `SCRIM_ACME_KEY` works against a fake API and duplicate declarations fail validation
 - [x] 10.2b Substitution in URL, headers, cookies, form, JSON and multipart bodies with decompression, length, digest and re-signing; verify: gzip, chunked and HTTP/2 fixtures reach the fake upstream valid and unsupported encodings are refused
 - [x] 10.2c Redaction of tool-proxy responses, including streamed and compressed bodies; verify: an echoing fake API and a create-resource fake return only placeholders to the agent
@@ -141,12 +143,13 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 13. Local service and persistent interception (M2 exit)
 
-- [ ] 13.1 systemd unit and Quadlet with a dedicated user, `scrim install` and `scrim uninstall`; verify: uninstall leaves no trace in a VM test
+- [x] 13.1 systemd unit and Quadlet with a dedicated user, `scrim install` and `scrim uninstall`; verify: uninstall leaves no trace in a VM test (`test/service/vm-test.sh`: system and user units in a systemd container; Quadlet in unit tests)
 - [x] 13.2 Forward proxy listener; verify: an agent with HTTPS_PROXY set is redacted
 - [x] 13.2a `chatgpt.com` and `ab.chatgpt.com` routed to the LLM proxy (Responses codec for `/responses`, generic JSON elsewhere); verify: CONNECT to either through the forward proxy reaches the fake provider with placeholders only
 - [ ] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
 - [ ] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
 - [ ] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
+  - progress: the system trust store (`update-ca-certificates`, `update-ca-trust`) is installed and reverted by `scrim install --system`, and a system-store client trusts scrim through the forward proxy in the VM test; Java truststore and transparent mode open
 
 ## 14. Large deployments
 

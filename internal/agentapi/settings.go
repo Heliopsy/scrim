@@ -42,6 +42,14 @@ var (
 		},
 	})
 
+	// SocketGroup gives the socket to a group, so agents of other users
+	// in that group can connect (with api.permissions 0660).
+	SocketGroup = config.Register(config.Spec[string]{
+		Key:             "api.group",
+		Description:     "Group (name or ID) the API socket belongs to, so members can connect with api.permissions 0660. scrim must be a member. Empty keeps the group of the process.",
+		RestartRequired: true,
+	})
+
 	// Peers maps local users and groups to agents.
 	Peers = config.Register(config.Spec[map[string]string]{
 		Key: "identity.peers",

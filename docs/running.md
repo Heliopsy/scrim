@@ -43,11 +43,11 @@ restarts it with backoff and traffic is refused until it is back.
 | LLM proxy on a Unix socket | `proxy.socket` | off | Same routes, for clients that can use a socket. |
 | Forward proxy | `proxy.forward-listen` | `127.0.0.1:9791` | `HTTPS_PROXY=http://<addr>` (`scrim run` sets it with the CA for the child): provider hosts, including `chatgpt.com` and `ab.chatgpt.com` for Codex, go to the LLM proxy; other hosts to the tool proxy with credential injection. |
 | Tool proxy | `tool-proxy.listen` | off | HTTPS tool proxy alone. |
-| Agent API | `api.socket` | `$XDG_RUNTIME_DIR/scrim/api.sock` | Mode `api.permissions` (0600). Callers are identified by peer credentials and session tokens ([identity.md](identity.md)). |
+| Agent API | `api.socket` | `$XDG_RUNTIME_DIR/scrim/api.sock` | Mode `api.permissions` (0600), group `api.group` (the system service: 0660, `scrim-agents`). Callers are identified by peer credentials and session tokens ([identity.md](identity.md)). |
 | Entry page | `entry.listen` | `127.0.0.1:0` | Where a human types a value for `secret_ask_human`. |
 | Admin API | `admin.url` | `unix:$XDG_RUNTIME_DIR/scrim/admin.sock` | Operator commands ([approvals.md](approvals.md)). |
 | Decision links | `approvals.listen` | off | Only the decision endpoint, for `approvals.public-url` to point at through a TLS proxy. |
-| Metrics and health | `metrics.listen` | off | `/metrics`, `/livez`, `/readyz`. |
+| Metrics and health | `metrics.listen` (`127.0.0.1:9792`) | off; on with `metrics.enabled` or `--metrics` | `metrics.path`, `/healthz`, `/livez`, `/readyz`; health only when `metrics.listen` is set without the flag. See [monitoring.md](monitoring.md). |
 
 Listener addresses need a restart; a reload that changes one keeps the running listener and lists the
 setting under pending restart in `scrim status`.
@@ -152,27 +152,17 @@ invalid reload is rejected and the previous configuration stays in force.
 
 ## Running it as a service
 
-Until `scrim install` lands (tasks 13.1), a systemd user unit is enough:
+`scrim install` sets the daemon up as a service and `scrim uninstall` removes it again
+([service.md](service.md)):
 
-```ini
-# ~/.config/systemd/user/scrim.service
-[Unit]
-Description=scrim
-
-[Service]
-ExecStart=%h/.local/bin/scrim proxy
-ExecReload=/bin/kill -HUP $MAINPID
-Restart=on-failure
-LimitMEMLOCK=infinity
-NoNewPrivileges=yes
-
-[Install]
-WantedBy=default.target
+```sh
+scrim install --user            # systemd user unit, sockets in $XDG_RUNTIME_DIR/scrim/
+sudo scrim install --system     # dedicated user scrim, hardened unit, sockets in /run/scrim/
+scrim install --quadlet         # the container image under rootless podman
 ```
 
-`systemctl --user enable --now scrim`. `LimitMEMLOCK` lets the data plane lock its memory so values
-are never swapped; without it the data plane warns. `$XDG_RUNTIME_DIR` is set for user units, so the
-sockets land in `/run/user/<uid>/scrim/`.
+`scrim run` finds a running service on its own: this user's daemon first, then the system
+service's agent API at `/run/scrim/api.sock`, and starts a private daemon only when neither runs.
 
 ## From Go: `scrim run` and tests
 
@@ -186,6 +176,9 @@ err = d.Shutdown(ctx)
 
 info, d, err := daemon.Ensure(ctx, daemon.Options{Config: opts}) // reuse a running daemon or start one here
 info, err := daemon.Connect(ctx, cfg)                            // ask the running daemon, ErrNotRunning if none
+l, err := daemon.Acquire(ctx, daemon.Options{Config: opts})       // what scrim run uses: Ensure, or the system service
 ```
 
 `Ensure` returns `d == nil` when it found a running daemon; otherwise the caller owns `d`.
+`Acquire` with nothing configured tries this user's admin socket, then the system service through
+its agent API (`GET /v1/endpoints`), then starts a daemon in the process.

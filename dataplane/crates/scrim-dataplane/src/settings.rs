@@ -9,6 +9,8 @@
 //! - `SCRIM_DP_CAPTURE_DIR` and `SCRIM_DP_CAPTURE_RETENTION_SECS`: capture mode (leak-assurance
 //!   "Capture mode"); every provider request as it left and the response as received are written
 //!   to the directory, which must not be accessible to group or others. Off when unset.
+//! - `SCRIM_DP_METRICS`: `1` aggregates metrics for the control plane's Metrics call
+//!   (`metrics.enabled`). Off otherwise: nothing is measured.
 
 use std::path::PathBuf;
 
@@ -22,6 +24,8 @@ pub const EXTRA_CA_FILE: &str = "SCRIM_DP_EXTRA_CA_FILE";
 pub const CAPTURE_DIR: &str = "SCRIM_DP_CAPTURE_DIR";
 /// Environment variable with the capture retention in seconds.
 pub const CAPTURE_RETENTION: &str = "SCRIM_DP_CAPTURE_RETENTION_SECS";
+/// Environment variable that turns metrics on.
+pub const METRICS: &str = "SCRIM_DP_METRICS";
 
 /// Settings read once at start-up.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -30,6 +34,8 @@ pub struct Settings {
     pub extra_ca_file: Option<PathBuf>,
     /// Capture mode, off when `None`.
     pub capture: Option<CaptureConfig>,
+    /// Aggregate metrics for the control plane.
+    pub metrics: bool,
 }
 
 impl Settings {
@@ -49,6 +55,7 @@ impl Settings {
                         .filter(|&n| n > 0)
                         .unwrap_or(7 * 24 * 3600),
                 }),
+            metrics: std::env::var(METRICS).is_ok_and(|v| v == "1" || v == "true"),
         }
     }
 

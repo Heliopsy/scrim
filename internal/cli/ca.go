@@ -27,8 +27,9 @@ var (
 	caSysRoots  []string
 	caNow       func() time.Time
 	errNoScope  = errors.New("choose --user (per-user trust stores)")
-	errSystemCA = errors.New("--system is not supported yet; add the bundle from `scrim ca export` to the system trust store " +
-		"with your OS tool (update-ca-certificates or update-ca-trust on Linux, `security add-trusted-cert -d` on macOS)")
+	errSystemCA = errors.New("--system is not supported here; `scrim install --system` adds the CA to the system trust store " +
+		"(update-ca-certificates or update-ca-trust) and `scrim uninstall --system` removes it. Elsewhere, add the bundle from " +
+		"`scrim ca export` with your OS tool (`security add-trusted-cert -d` on macOS)")
 )
 
 // CA manages the tool proxy's interception CA
@@ -115,7 +116,7 @@ type caScope struct{ user, system, dryRun bool }
 
 func (s *caScope) bind(c *cobra.Command) {
 	c.Flags().BoolVar(&s.user, "user", false, "use the per-user trust stores")
-	c.Flags().BoolVar(&s.system, "system", false, "use the system trust store (not supported yet)")
+	c.Flags().BoolVar(&s.system, "system", false, "use the system trust store (done by scrim install --system)")
 	c.Flags().BoolVar(&s.dryRun, "dry-run", false, "show the changes without making them")
 }
 

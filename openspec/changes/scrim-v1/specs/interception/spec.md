@@ -58,6 +58,13 @@ proxy. The session token SHALL never appear on a command line or in `scrim run`'
 - **WHEN** a user runs `scrim run --print-env -- claude`
 - **THEN** every variable, argument and file is shown, the token as a secret marker, and no session is minted
 
+#### Scenario: git through the forward proxy
+
+- **WHEN** git runs in a `scrim run` session and fetches from a host a credential is bound to
+- **THEN** git sends the session's proxy credentials with its `CONNECT` (`GIT_HTTP_PROXY_AUTHMETHOD=basic`)
+  instead of waiting for a challenge the forward proxy never sends, so its requests are identified and
+  the credential is injected
+
 ### Requirement: Agent presets
 
 `scrim run` SHALL add what each supported agent needs for the session only: for Claude Code an MCP
@@ -274,6 +281,18 @@ to the processes that mode covers, and SHALL remove every trust change it made o
 
 - **WHEN** transparent mode is installed for a Node-based agent
 - **THEN** the agent trusts scrim's certificate without manual configuration
+
+#### Scenario: System service trusts the CA system-wide
+
+- **WHEN** `scrim install --system` installs the system service on Debian, Ubuntu, Fedora or RHEL
+- **THEN** the CA is added to the system trust store with `update-ca-certificates` or `update-ca-trust` and recorded in the install manifest
+- **AND** a client that trusts only the system store connects through the forward proxy
+- **AND** `scrim uninstall --system` removes it and rebuilds the store
+
+#### Scenario: User service trusts the CA for the user
+
+- **WHEN** `scrim install --user` installs the user service
+- **THEN** the CA is trusted through `scrim ca install --user` and `scrim uninstall --user` reverts it
 
 #### Scenario: Per-user trust installation
 

@@ -4,6 +4,8 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
 
 	"github.com/heliopsy/scrim/internal/dataplane"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
@@ -21,9 +23,16 @@ func (a *App) DataPlane() (*dataplane.Supervisor, error) {
 	if err != nil {
 		return nil, err
 	}
+	caFile := dataplane.UpstreamCAFile.Get(cfg)
+	if caFile != "" {
+		// Resolved here so the data plane reads the file the operator named.
+		if caFile, err = filepath.Abs(caFile); err != nil {
+			return nil, fmt.Errorf("dataplane.upstream-ca-file: %w", err)
+		}
+	}
 	s := &dataplane.Supervisor{
 		Binary:       bin,
-		Options:      dataplane.StartOptions{Mlock: dataplane.MlockSetting.Get(cfg)},
+		Options:      dataplane.StartOptions{Mlock: dataplane.MlockSetting.Get(cfg), UpstreamCAFile: caFile},
 		Log:          obs.WithComponent(a.Log, "dataplane"),
 		Snapshot:     a.SnapshotSource,
 		StartTimeout: dataplane.StartTimeout.Get(cfg),

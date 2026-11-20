@@ -57,7 +57,8 @@ func isolated(t *testing.T, env ...string) config.Options {
 
 func TestSQLiteBackendWired(t *testing.T) {
 	var logs bytes.Buffer
-	a, err := app.New(context.Background(), isolated(t, "SCRIM_STATE_BACKEND=sqlite"), &logs)
+	// Metrics on: the test checks the state backend is instrumented.
+	a, err := app.New(context.Background(), isolated(t, "SCRIM_STATE_BACKEND=sqlite", "SCRIM_METRICS_ENABLED=true"), &logs)
 	if err != nil {
 		t.Fatal(err)
 	}

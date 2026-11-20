@@ -147,29 +147,17 @@ value was loaded), and the finished line is scrubbed again.
 
 ## Metrics and health
 
-`metrics.listen` (empty disables) serves:
+The health endpoints are served on `metrics.listen` (default `127.0.0.1:9792`) whenever metrics
+are enabled (`metrics.enabled`, `scrim proxy --metrics`) or `metrics.listen` is set explicitly:
 
 | Path | Meaning |
 | --- | --- |
 | `/healthz`, `/livez` | the process answers |
 | `/readyz` | scrim can redact safely; failing checks are named, 503 otherwise |
-| `/metrics` | Prometheus text format, scrubbed as a whole |
+| `metrics.path` (`/metrics`) | Prometheus text format, scrubbed as a whole; only while `metrics.enabled` |
 
-| Metric | Labels |
-| --- | --- |
-| `scrim_redaction_replacements_total` | provider, rule, agent |
-| `scrim_guard_repairs_total` | provider, rule, agent |
-| `scrim_guard_refusals_total` | provider, agent |
-| `scrim_detector_fallback_hits_total` | provider, rule, agent |
-| `scrim_proxy_added_latency_seconds` | provider, stage (redaction, guard, resolution) |
-| `scrim_proxy_chunk_added_latency_seconds` | provider, stage |
-| `scrim_store_up`, `scrim_store_degraded`, `scrim_store_values_loaded`, `scrim_store_last_refresh_timestamp_seconds` | store |
-| `scrim_approval_outcomes_total` | rule, notifier, outcome |
-| `scrim_approval_wait_seconds` | rule, notifier |
-| `scrim_audit_delivered_total`, `scrim_audit_dropped_total` | sink |
-| `scrim_state_up` | backend |
-| `scrim_state_transaction_seconds` | backend, kind (view, update) |
-| `scrim_config_weakened_settings` | setting |
+Every metric, the data plane's included, its labels, the alert rules with their runbooks, the
+dashboard and the security of the endpoint are in [monitoring.md](monitoring.md).
 
 ## Traces
 

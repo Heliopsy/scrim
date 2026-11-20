@@ -18,6 +18,7 @@ import (
 	"github.com/heliopsy/scrim/internal/notify/ntfy"
 	"github.com/heliopsy/scrim/internal/notify/terminal"
 	"github.com/heliopsy/scrim/internal/notify/webhook"
+	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/secret"
 )
@@ -86,6 +87,10 @@ func (a *App) initPolicy(ctx context.Context, cfg *config.Config) error {
 		p.Notifiers = append(p.Notifiers, n)
 	}
 
+	var metrics *obs.Metrics
+	if obs.MetricsEnabled.Get(cfg) {
+		metrics = a.Metrics
+	}
 	p.Approvals, err = approval.New(approval.Options{
 		State: a.State, Notifiers: p.Notifiers, Signer: signer, BreakGlass: bg,
 		PublicURL: approval.PublicURL.Get(cfg), Timeout: approval.Timeout.Get(cfg), PollInterval: approval.PollInterval.Get(cfg),
@@ -93,7 +98,7 @@ func (a *App) initPolicy(ctx context.Context, cfg *config.Config) error {
 			r, _ := live.Rule(rule)
 			return limits(r.Grant), r.Grant
 		},
-		Log: a.Log, Metrics: a.Metrics,
+		Log: a.Log, Metrics: metrics,
 	})
 	if err != nil {
 		return err
