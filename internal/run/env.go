@@ -296,6 +296,11 @@ func (b *builder) proxy() {
 		for _, v := range proxyVars {
 			b.setWithToken(v, tmpl, tmpl, "tool traffic through scrim's forward proxy, identified by the session")
 		}
+		// git asks libcurl for any proxy authentication method, so it sends
+		// the session credentials only after a 407 challenge, which scrim's
+		// forward proxy never sends: its tunnels would be unidentified and
+		// injection refused. Basic sends them with the CONNECT.
+		b.setVar("GIT_HTTP_PROXY_AUTHMETHOD", "basic", "git sends the session's proxy credentials with every CONNECT")
 	} else {
 		for _, v := range proxyVars {
 			b.setVar(v, ep.ForwardProxy, "tool traffic through scrim's forward proxy")

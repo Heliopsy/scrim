@@ -55,21 +55,22 @@ func TestBuildCommonEnvironment(t *testing.T) {
 	}
 	v := vars(p)
 	want := map[string]string{
-		"ANTHROPIC_BASE_URL":  "http://127.0.0.1:9790/anthropic",
-		"OPENAI_BASE_URL":     "http://127.0.0.1:9790/openai/v1",
-		"HTTPS_PROXY":         "http://s1:<session-token>@127.0.0.1:9791",
-		"https_proxy":         "http://s1:<session-token>@127.0.0.1:9791",
-		"HTTP_PROXY":          "http://s1:<session-token>@127.0.0.1:9791",
-		"http_proxy":          "http://s1:<session-token>@127.0.0.1:9791",
-		"NO_PROXY":            "localhost,127.0.0.1,::1,127.0.0.1:8787",
-		"no_proxy":            "localhost,127.0.0.1,::1,127.0.0.1:8787",
-		"NODE_EXTRA_CA_CERTS": "/run/user/1000/scrim/run/s1/scrim-ca.pem",
-		"SSL_CERT_FILE":       "/run/user/1000/scrim/run/s1/ca-bundle.pem",
-		"REQUESTS_CA_BUNDLE":  "/run/user/1000/scrim/run/s1/ca-bundle.pem",
-		"CURL_CA_BUNDLE":      "/run/user/1000/scrim/run/s1/ca-bundle.pem",
-		"GIT_SSL_CAINFO":      "/run/user/1000/scrim/run/s1/ca-bundle.pem",
-		localapi.EnvSocket:    "/run/user/1000/scrim/api.sock",
-		EnvSessionID:          "s1",
+		"ANTHROPIC_BASE_URL":        "http://127.0.0.1:9790/anthropic",
+		"OPENAI_BASE_URL":           "http://127.0.0.1:9790/openai/v1",
+		"HTTPS_PROXY":               "http://s1:<session-token>@127.0.0.1:9791",
+		"https_proxy":               "http://s1:<session-token>@127.0.0.1:9791",
+		"HTTP_PROXY":                "http://s1:<session-token>@127.0.0.1:9791",
+		"http_proxy":                "http://s1:<session-token>@127.0.0.1:9791",
+		"NO_PROXY":                  "localhost,127.0.0.1,::1,127.0.0.1:8787",
+		"no_proxy":                  "localhost,127.0.0.1,::1,127.0.0.1:8787",
+		"NODE_EXTRA_CA_CERTS":       "/run/user/1000/scrim/run/s1/scrim-ca.pem",
+		"SSL_CERT_FILE":             "/run/user/1000/scrim/run/s1/ca-bundle.pem",
+		"REQUESTS_CA_BUNDLE":        "/run/user/1000/scrim/run/s1/ca-bundle.pem",
+		"CURL_CA_BUNDLE":            "/run/user/1000/scrim/run/s1/ca-bundle.pem",
+		"GIT_SSL_CAINFO":            "/run/user/1000/scrim/run/s1/ca-bundle.pem",
+		"GIT_HTTP_PROXY_AUTHMETHOD": "basic",
+		localapi.EnvSocket:          "/run/user/1000/scrim/api.sock",
+		EnvSessionID:                "s1",
 	}
 	for k, w := range want {
 		if v[k].Value != w {
@@ -88,8 +89,12 @@ func TestBuildCommonEnvironment(t *testing.T) {
 	// Without a session the proxy carries no credentials.
 	anon := input("/opt/bin/myagent")
 	anon.Token, anon.SessionID = false, ""
-	if got := vars(mustBuild(t, anon))["HTTPS_PROXY"]; got.Value != "http://127.0.0.1:9791" || got.Secret {
+	anonVars := vars(mustBuild(t, anon))
+	if got := anonVars["HTTPS_PROXY"]; got.Value != "http://127.0.0.1:9791" || got.Secret {
 		t.Errorf("anonymous proxy %+v", got)
+	}
+	if _, ok := anonVars["GIT_HTTP_PROXY_AUTHMETHOD"]; ok {
+		t.Error("GIT_HTTP_PROXY_AUTHMETHOD set without proxy credentials")
 	}
 	if _, ok := v["CODEX_CA_CERTIFICATE"]; ok {
 		t.Error("generic preset set a Codex variable")
