@@ -54,9 +54,9 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 6.1 Store adapter contract, capability declaration, reference scheme parser and the shared conformance suite; verify: the suite runs against a fake adapter and fails on a deliberately broken one
 - [x] 6.2 OpenBao adapter (AppRole, KV v2 read, list, watch, write without read); verify: contract suite against OpenBao dev mode in podman
 - [x] 6.3 Infisical adapter (Universal Auth, read, list, watch, write); verify: contract suite against a local Infisical in podman
-- [ ] 6.3a Secret catalog: logical names, bindings, declared placeholders, reference placeholders without a catalog; verify: rules, profiles and MCP tools accept catalog names and a literal value in a catalog fails validation
-- [ ] 6.3b Per-environment and bulk prefix mapping with collision checks; verify: one placeholder resolves to different references per profile and colliding templates fail
-- [ ] 6.3c Catalog from store metadata, catalog files, environment and hot reload, with `scrim catalog show` and `scrim catalog suggest`; verify: OpenBao custom metadata binds a host and suggestions are printed, never applied
+- [x] 6.3a Secret catalog: logical names, bindings, declared placeholders, reference placeholders without a catalog; verify: rules, profiles and MCP tools accept catalog names and a literal value in a catalog fails validation
+- [x] 6.3b Per-environment and bulk prefix mapping with collision checks; verify: one placeholder resolves to different references per profile and colliding templates fail
+- [x] 6.3c Catalog from store metadata, catalog files, environment and hot reload, with `scrim catalog show` and `scrim catalog suggest`; verify: OpenBao custom metadata binds a host and suggestions are printed, never applied
 - [x] 6.4 Store outage behaviour (last known set, fail closed for injection, degraded status); verify: tests that stop the store mid-run
 
 ## 7. Policy, approvals and grants
