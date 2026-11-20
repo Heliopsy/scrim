@@ -1,4 +1,5 @@
-//! A value embedded in any context, raw or encoded, never leaves protect() in that form.
+//! A value embedded in any context, raw or encoded (hex, base64, URL, JSON nested in JSON strings),
+//! never leaves protect() in that form.
 #![no_main]
 
 mod common;
@@ -31,7 +32,7 @@ fuzz_target!(|data: &[u8]| {
     };
     let mid = rest.len() / 2;
     let (pre, post) = rest.split_at(mid);
-    let form = rest.first().copied().unwrap_or(0) % 4;
+    let form = rest.first().copied().unwrap_or(0) % 6;
     let enc: Vec<u8> = match form {
         0 => v.clone(),
         1 => v
@@ -43,6 +44,17 @@ fuzz_target!(|data: &[u8]| {
             let mut d = vec![b'#'; off];
             d.extend_from_slice(v);
             b64(&d)
+        }
+        // Nested JSON the redactor compiles: inner^k outer^(d-k), outer one of minimal, Go,
+        // Python, depth 2 or 3.
+        4 | 5 => {
+            let sel = rest.get(1).copied().unwrap_or(0);
+            let inner = [0u8, 1, 2, 3][usize::from(sel % 4)];
+            let outer = [0u8, 1, 2][usize::from((sel / 4) % 3)];
+            let d = 2 + usize::from(form == 5);
+            let k = 1 + usize::from((sel / 12) % 2).min(d - 2);
+            let styles: Vec<u8> = (0..d).map(|i| if i < k { inner } else { outer }).collect();
+            common::json_nested(v, &styles)
         }
         _ => v
             .iter()
@@ -59,10 +71,10 @@ fuzz_target!(|data: &[u8]| {
     let mut ws = Workspace::new();
     if let Ok(p) = s.protect(&body, &mut ws) {
         assert!(!common::contains_outside(&s, p.bytes, v), "raw value left");
-        if form == 1 {
+        if form == 1 || form >= 4 {
             assert!(
                 !common::contains_outside(&s, p.bytes, &enc),
-                "hex form left"
+                "encoded form left"
             );
         }
     }
