@@ -54,6 +54,10 @@ type TransportClaim struct {
 	// the kernel's credentials then.
 	UnixPeer bool
 	Peer     Peer
+	// KubernetesToken is the service account token the request carried
+	// instead of a session (`AskCaller.kubernetes_token`). The caller owns
+	// and wipes it.
+	KubernetesToken []byte
 }
 
 // ResolveClaim turns a transport claim into an identity.
@@ -65,6 +69,9 @@ type TransportClaim struct {
 //   - A Unix peer without a session is the innermost active session of the
 //     same user whose process tree it is in (the agent `scrim run` started),
 //     else its identity.peers mapping, else unknown.
+//   - A Kubernetes service account token, when no session is named, is the
+//     service account the cluster verifies it as, or nothing: a refused
+//     token never falls back to the peer identity either.
 //   - Nothing at all is unknown.
 func (r Resolver) ResolveClaim(ctx context.Context, c TransportClaim) (Identity, error) {
 	peer := Peer{}
@@ -73,6 +80,16 @@ func (r Resolver) ResolveClaim(ctx context.Context, c TransportClaim) (Identity,
 	}
 	if c.SessionID != "" {
 		return r.verifyClaim(ctx, c, peer)
+	}
+	if len(c.KubernetesToken) > 0 {
+		id, err := r.Kubernetes.Resolve(ctx, c.KubernetesToken)
+		if err != nil {
+			return Unknown(peer), err
+		}
+		if c.UnixPeer && id.Known() {
+			id.Peer = peer
+		}
+		return id, nil
 	}
 	if !c.UnixPeer {
 		return Unknown(peer), nil

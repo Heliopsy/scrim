@@ -165,3 +165,32 @@ type Adapter interface {
 	// Close releases connections. The adapter is unusable afterwards.
 	Close() error
 }
+
+// AgentCredential is an agent's own identity toward a store (specs/
+// agent-identity "Agents act on stores with their own identity"). Exactly
+// one of KubernetesJWT and Token is set. The adapter borrows the values and
+// never keeps them past the call, except a login token derived from them,
+// which it may cache for the agent until it expires.
+type AgentCredential struct {
+	// Agent is the agent's principal, used as a cache key and in errors.
+	Agent string
+	// KubernetesJWT is the agent pod's service account token, for a store
+	// that trusts the cluster (OpenBao Kubernetes auth), with the role and
+	// auth mount to log in at.
+	KubernetesJWT secret.Value
+	Role          string
+	Mount         string
+	// Token is a static store credential held for this agent.
+	Token secret.Value
+}
+
+// AgentAccess is implemented by adapters that can check what an agent's own
+// store identity may do, so scrim's rules and the store's permissions for
+// the agent are intersected (specs/agent-identity "Effective permission is
+// the intersection").
+type AgentAccess interface {
+	// AgentCan returns nil when cred may perform op (OpRead or OpWrite) on
+	// ref, an error of kind [ErrPermission] when the store refuses it, and
+	// another kind when the check itself failed. Errors never hold a value.
+	AgentCan(ctx context.Context, cred AgentCredential, op Op, ref Ref) error
+}

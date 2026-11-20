@@ -237,7 +237,17 @@ is out of date.
 | [`entry.listen`](#entrylisten) | string | `127.0.0.1:0` | restart required |
 | [`grants.default-ttl`](#grantsdefault-ttl) | duration | `30m0s` | hot |
 | [`grants.max-ttl`](#grantsmax-ttl) | duration | `8h0m0s` | hot |
+| [`identity.kubernetes.agents`](#identitykubernetesagents) | map | `{}` | restart required |
+| [`identity.kubernetes.api-server`](#identitykubernetesapi-server) | string | `""` | restart required |
+| [`identity.kubernetes.audience`](#identitykubernetesaudience) | string | `scrim` | restart required |
+| [`identity.kubernetes.ca-file`](#identitykubernetesca-file) | string | `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` | restart required |
+| [`identity.kubernetes.cache-ttl`](#identitykubernetescache-ttl) | duration | `1m0s` | restart required |
+| [`identity.kubernetes.enabled`](#identitykubernetesenabled) | bool | `false` | restart required |
+| [`identity.kubernetes.token-file`](#identitykubernetestoken-file) | string | `/var/run/secrets/kubernetes.io/serviceaccount/token` | restart required |
+| [`identity.kubernetes.unmapped`](#identitykubernetesunmapped) | string | `derive` | restart required |
 | [`identity.peers`](#identitypeers) | map | `{}` | restart required |
+| [`identity.store-credentials`](#identitystore-credentials) | map | `{}` | restart required |
+| [`identity.store-login`](#identitystore-login) | map | `{}` | restart required |
 | [`log.format`](#logformat) | string | `text` | hot |
 | [`log.level`](#loglevel) | string | `info` | hot |
 | [`metrics.listen`](#metricslisten) | string | `""` | restart required |
@@ -677,6 +687,104 @@ Longest grant any rule or approver can create. A rule's grant.max_ttl can only l
 
 ### identity
 
+#### `identity.kubernetes.agents`
+
+Agents by service account: agent name to space-separated selectors sa:NAMESPACE/NAME (globs allowed), scope:SCOPE, label:K=V. A service account no rule maps is the agent NAMESPACE/NAME, or unknown with identity.kubernetes.unmapped: unknown.
+
+| | |
+|---|---|
+| Type | map of strings (env: JSON object or `k=v,k2=v2`; one entry: variable plus `_ENTRY`) |
+| Default | `{}` |
+| Environment | `SCRIM_IDENTITY_KUBERNETES_AGENTS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.kubernetes.api-server`
+
+Base URL of the Kubernetes API server for TokenReview. Empty uses the in-cluster address (KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT).
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_IDENTITY_KUBERNETES_API_SERVER` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.kubernetes.audience`
+
+Audience an agent's projected service account token must carry. Tokens for any other audience, such as a pod's default API token, are refused.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `scrim` |
+| Environment | `SCRIM_IDENTITY_KUBERNETES_AUDIENCE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.kubernetes.ca-file`
+
+CA bundle that verifies the API server.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` |
+| Environment | `SCRIM_IDENTITY_KUBERNETES_CA_FILE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.kubernetes.cache-ttl`
+
+How long a verified token is trusted before the cluster is asked again, capped at the token's expiry. A deleted pod or service account is refused within this bound.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `1m0s` |
+| Environment | `SCRIM_IDENTITY_KUBERNETES_CACHE_TTL` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.kubernetes.enabled`
+
+Identify in-cluster callers by projected service account tokens, verified with the TokenReview API. Pods send the token as the password of the proxy user k8s or as the value of x-scrim-session. On in the k8s profile.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_IDENTITY_KUBERNETES_ENABLED` |
+| Flag | none |
+| Reload | restart required |
+| Profiles | k8s: `true` |
+
+#### `identity.kubernetes.token-file`
+
+scrim's own service account token, which authorises TokenReview calls (RBAC: create tokenreviews, for example by binding system:auth-delegator). Re-read on every call, since the kubelet rotates it.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `/var/run/secrets/kubernetes.io/serviceaccount/token` |
+| Environment | `SCRIM_IDENTITY_KUBERNETES_TOKEN_FILE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.kubernetes.unmapped`
+
+What a verified service account no identity.kubernetes.agents rule maps becomes: derive names the agent NAMESPACE/NAME, unknown treats it as an unknown caller.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `derive` |
+| Environment | `SCRIM_IDENTITY_KUBERNETES_UNMAPPED` |
+| Flag | none |
+| Reload | restart required |
+| Values | `derive`, `unknown` |
+
 #### `identity.peers`
 
 Agents by local user or group: agent name to space-separated selectors uid:N, user:NAME, gid:N, group:NAME, scope:SCOPE, label:K=V. Empty maps the user scrim runs as to one agent named after it.
@@ -686,6 +794,30 @@ Agents by local user or group: agent name to space-separated selectors uid:N, us
 | Type | map of strings (env: JSON object or `k=v,k2=v2`; one entry: variable plus `_ENTRY`) |
 | Default | `{}` |
 | Environment | `SCRIM_IDENTITY_PEERS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.store-credentials`
+
+Static per-agent store credentials: `<store>/<agent>` to a reference (env:, file:, cred: or a store reference) of a store token held for that agent. The fallback for agents without Kubernetes passthrough; a store listed here refuses agents that have none.
+
+| | |
+|---|---|
+| Type | map of strings (env: JSON object or `k=v,k2=v2`; one entry: variable plus `_ENTRY`) |
+| Default | `{}` |
+| Environment | `SCRIM_IDENTITY_STORE_CREDENTIALS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.store-login`
+
+Per-agent store login, by store instance: `kubernetes role:<template> [mount:<path>]` logs in to the store (OpenBao Kubernetes auth) with the calling pod's own service account token at the role the template names; {namespace}, {service_account} and {agent} are replaced. A store listed here refuses agents that have no usable identity of their own.
+
+| | |
+|---|---|
+| Type | map of strings (env: JSON object or `k=v,k2=v2`; one entry: variable plus `_ENTRY`) |
+| Default | `{}` |
+| Environment | `SCRIM_IDENTITY_STORE_LOGIN` |
 | Flag | none |
 | Reload | restart required |
 

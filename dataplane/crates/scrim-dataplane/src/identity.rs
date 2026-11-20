@@ -9,8 +9,8 @@
 //! | Transport | What the data plane reads |
 //! | --- | --- |
 //! | Unix socket listener | the kernel's peer credentials (uid, gid, pid) |
-//! | forward proxy | the session named in `Proxy-Authorization: Basic` (user name), and the verifier of the session token sent as the password |
-//! | base-URL listener | the `x-scrim-session` header (stripped before forwarding): a session token, or a bare session id |
+//! | forward proxy | the session named in `Proxy-Authorization: Basic` (user name), and the verifier of the session token sent as the password; or a Kubernetes service account token as the password of the user `k8s` |
+//! | base-URL listener | the `x-scrim-session` header (stripped before forwarding): a session token, a bare session id, or a Kubernetes service account token |
 //!
 //! A request that carries none of these is an unknown caller: `agent.known` is false, decided
 //! locally, so a rule such as `deny when !agent.known` refuses it without a round trip. A
@@ -19,13 +19,19 @@
 //! the ask carries what the transport said ([`v1::AskCaller`]) for the control plane to resolve
 //! and verify. A session token is never kept, logged or forwarded: it is reduced to its verifier
 //! ([`SessionVerifier`]) on arrival, and an ask carries only a proof derived from that verifier
-//! and bound to the ask (`AskCaller.session_proof`, design D14). A restore cannot wait for an answer, so a restore rule on the agent keeps the
-//! placeholder for such a request.
+//! and bound to the ask (`AskCaller.session_proof`, design D14). A Kubernetes service account
+//! token cannot be reduced that way, since the control plane must see it to verify it: it is
+//! held in a zeroed type for the request (or the proxy connection) and sent in the ask
+//! (`AskCaller.kubernetes_token`), never logged or forwarded. A restore cannot wait for an
+//! answer, so a restore rule on the agent keeps the placeholder for such a request.
 
 use scrim_llm::server::UnixPeer;
 use scrim_policy::{Agent, Caller, FieldSet, Request};
 use scrim_proto::v1;
-use scrim_toolproxy::{ClientInfo, SessionVerifier, is_session_id, parse_session_token};
+use scrim_toolproxy::{
+    ClientInfo, KubernetesToken, SessionVerifier, is_session_id, parse_kubernetes_token,
+    parse_session_token,
+};
 
 /// What one request's transport said about its sender.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -37,6 +43,8 @@ pub struct Identity {
     /// The verifier of the session token the request carried, if it carried the token of
     /// `session`.
     pub verifier: Option<SessionVerifier>,
+    /// The Kubernetes service account token the request carried instead of a session.
+    pub kubernetes_token: Option<KubernetesToken>,
 }
 
 impl Identity {
@@ -47,30 +55,33 @@ impl Identity {
         let peer = extensions.get::<UnixPeer>().copied();
         if let Some(c) = extensions
             .get::<ClientInfo>()
-            .filter(|c| c.session.is_some())
+            .filter(|c| c.session.is_some() || c.kubernetes_token.is_some())
         {
             return Self {
                 session: c.session.clone(),
                 peer,
                 verifier: c.verifier.clone(),
+                kubernetes_token: c.kubernetes_token.clone(),
             };
         }
-        let (session, verifier) = match headers
+        let mut id = Self {
+            peer,
+            ..Self::default()
+        };
+        if let Some(v) = headers
             .get(scrim_llm::SESSION_HEADER)
             .map(http::HeaderValue::as_bytes)
         {
-            Some(v) => match parse_session_token(v) {
-                Some((id, ver)) => (Some(id), Some(ver)),
-                None if is_session_id(v) => (Some(String::from_utf8_lossy(v).into_owned()), None),
-                None => (None, None),
-            },
-            None => (None, None),
-        };
-        Self {
-            session,
-            peer,
-            verifier,
+            if let Some((sid, ver)) = parse_session_token(v) {
+                id.session = Some(sid);
+                id.verifier = Some(ver);
+            } else if let Some(t) = parse_kubernetes_token(v) {
+                id.kubernetes_token = Some(t);
+            } else if is_session_id(v) {
+                id.session = Some(String::from_utf8_lossy(v).into_owned());
+            }
         }
+        id
     }
 
     /// The identity of a request through the tool proxy: the session of its proxy connection.
@@ -80,12 +91,13 @@ impl Identity {
             session: c.and_then(|c| c.session.clone()),
             peer: None,
             verifier: c.and_then(|c| c.verifier.clone()),
+            kubernetes_token: c.and_then(|c| c.kubernetes_token.clone()),
         }
     }
 
     /// Whether the transport carried nothing: an unknown caller.
     pub fn is_anonymous(&self) -> bool {
-        self.session.is_none() && self.peer.is_none()
+        self.session.is_none() && self.peer.is_none() && self.kubernetes_token.is_none()
     }
 
     /// The restore engine's caller: an unknown caller (`agent.known` false) when the transport
@@ -117,6 +129,10 @@ impl Identity {
             peer_gid: self.peer.map_or(0, |p| p.gid),
             peer_pid: self.peer.and_then(|p| p.pid).unwrap_or(0),
             session_proof: Vec::new(),
+            kubernetes_token: self
+                .kubernetes_token
+                .as_ref()
+                .map_or_else(Vec::new, |t| t.as_bytes().to_vec()),
         })
     }
 }
@@ -143,6 +159,7 @@ mod tests {
             peer: None,
             session: Some("from-proxy".into()),
             verifier: None,
+            kubernetes_token: None,
         });
         let id = Identity::of_llm(&h, &ext);
         assert_eq!(id.session.as_deref(), Some("from-proxy"));
@@ -162,6 +179,31 @@ mod tests {
         assert_eq!(id.session.as_deref(), Some("abcdefghijklmn23"));
         assert!(id.verifier.is_some());
         assert!(!format!("{id:?}").contains(&token[26..]));
+
+        // A Kubernetes service account token in the header: no session, the token goes to the
+        // control plane in the ask and nowhere else.
+        let jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJlLWJ5dGVz";
+        h.insert(scrim_llm::SESSION_HEADER, jwt.parse().unwrap());
+        let id = Identity::of_llm(&h, &http::Extensions::new());
+        assert!(id.session.is_none() && !id.is_anonymous());
+        assert!(!format!("{id:?}").contains("eyJ"));
+        let ask = id.ask_caller().unwrap();
+        assert_eq!(ask.kubernetes_token, jwt.as_bytes());
+        assert_eq!(ask.session_id, "");
+        assert!(!format!("{ask:?}").contains("eyJ"));
+        let mut ext = http::Extensions::new();
+        ext.insert(ClientInfo {
+            peer: None,
+            session: None,
+            verifier: None,
+            kubernetes_token: parse_kubernetes_token(jwt.as_bytes()),
+        });
+        let id = Identity::of_tool(&ext);
+        assert_eq!(
+            id.ask_caller().unwrap().kubernetes_token,
+            jwt.as_bytes().to_vec()
+        );
+        assert!(!Identity::of_llm(&http::HeaderMap::new(), &ext).is_anonymous());
 
         let mut ext = http::Extensions::new();
         ext.insert(UnixPeer {

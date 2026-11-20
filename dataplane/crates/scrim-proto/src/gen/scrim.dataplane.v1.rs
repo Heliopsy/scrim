@@ -542,6 +542,7 @@ pub struct AskRequest {
 /// about. The data plane holds no session tokens and verifies none; the
 /// control plane decides what each part is worth.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[prost(skip_debug)]
 pub struct AskCaller {
     /// session_id is the scrim session the request names: the user name of
     /// `Proxy-Authorization: Basic` on the forward proxy, or the
@@ -575,6 +576,17 @@ pub struct AskCaller {
     /// token: such a caller is not verified and is evaluated as unknown.
     #[prost(bytes = "vec", tag = "6")]
     pub session_proof: ::prost::alloc::vec::Vec<u8>,
+    /// kubernetes_token is the projected Kubernetes service account token the
+    /// request carried instead of a session (design D14, "Kubernetes service
+    /// account tokens"): the password of `Proxy-Authorization: Basic k8s:<token>`
+    /// on the forward proxy, or a JWT as the value of `x-scrim-session` on a
+    /// base-URL listener. The control plane must see the token itself to verify
+    /// it (TokenReview), so unlike a session token it travels in the ask. It is
+    /// a secret field: redacted in Debug and zeroed on drop in scrim-proto,
+    /// wiped by the control plane after verification, never logged and never
+    /// forwarded. Empty when the request carried no such token.
+    #[prost(bytes = "vec", tag = "7")]
+    pub kubernetes_token: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AskAnswer {
