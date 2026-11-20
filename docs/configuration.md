@@ -267,6 +267,10 @@ is out of date.
 | [`proxy.upstream.openai`](#proxyupstreamopenai) | string | `https://api.openai.com` | hot |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
+| [`restore.allow-reveal-credentials`](#restoreallow-reveal-credentials) | list | `[]` | hot |
+| [`restore.allow-shell-data-commands`](#restoreallow-shell-data-commands) | list | `[]` | hot |
+| [`restore.builtin-tools`](#restorebuiltin-tools) | bool | `true` | hot |
+| [`restore.display-mode`](#restoredisplay-mode) | string | `values` | hot |
 | [`run.allow-unredacted-start`](#runallow-unredacted-start) | bool | `false` | hot |
 | [`run.mcp`](#runmcp) | bool | `true` | hot |
 | [`run.placeholder-env`](#runplaceholder-env) | bool | `true` | hot |
@@ -292,6 +296,7 @@ is out of date.
 | [`tracing.sample-ratio`](#tracingsample-ratio) | float | `1` | restart required |
 | [`catalog.entries.<name>.*`](#catalogentriesname) | collection | empty | hot |
 | [`redaction.placeholder-keys.<name>.*`](#redactionplaceholder-keysname) | collection | empty | hot |
+| [`restore.tools.<name>.*`](#restoretoolsname) | collection | empty | hot |
 | [`stores.<name>.*`](#storesname) | collection | empty | restart required |
 | [`tool-proxy.capture-rules.<name>.*`](#tool-proxycapture-rulesname) | collection | empty | hot |
 
@@ -315,6 +320,17 @@ Placeholder keys by name, each with `version` (1 to 255) and `key` (a reference 
 | Environment | `SCRIM_REDACTION_PLACEHOLDER_KEYS` (JSON object of instances, replaces the collection); `SCRIM_REDACTION_PLACEHOLDER_KEYS_<NAME>_<FIELD>` for one field |
 | Required fields | `version`, `key` |
 | Secret fields | `key` (references; a literal is warned about) |
+| Reload | hot |
+
+### `restore.tools.<name>`
+
+Tool aliases by name: `role` (none, read, search, shell, edit, write, network), optional `name` (the tool name exactly as the model calls it, default the instance name), `command-field` for shell, `old-fields` and `new-fields` for edit. An alias overrides the built-in table.
+
+| | |
+|---|---|
+| Type | collection of named instances (names: lower-case words with dashes) |
+| Environment | `SCRIM_RESTORE_TOOLS` (JSON object of instances, replaces the collection); `SCRIM_RESTORE_TOOLS_<NAME>_<FIELD>` for one field |
+| Required fields | `role` |
 | Reload | hot |
 
 ### `stores.<name>`
@@ -1038,6 +1054,59 @@ Directory of the generated placeholder key, used when redaction.placeholder-keys
 | Environment | `SCRIM_REDACTION_PLACEHOLDER_KEY_DIR` |
 | Flag | none |
 | Reload | restart required |
+
+### restore
+
+#### `restore.allow-reveal-credentials`
+
+Glob patterns over store references of credentials that scrim reveal may resolve locally. Empty means reveal never resolves a credential. Restore into responses never resolves credentials, whatever this holds.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_RESTORE_ALLOW_REVEAL_CREDENTIALS` |
+| Flag | none |
+| Reload | hot |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `restore.allow-shell-data-commands`
+
+Commands a shell-role restore may pass display values to, beyond the built-in list of commands that run no code. A listed command that interprets an argument as code turns a restored value into code.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_RESTORE_ALLOW_SHELL_DATA_COMMANDS` |
+| Flag | none |
+| Reload | hot |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `restore.builtin-tools`
+
+Use the built-in table of agent tool roles (Claude Code, Codex). When false only restore.tools have roles and every other tool is unknown, which restores nothing.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `true` |
+| Environment | `SCRIM_RESTORE_BUILTIN_TOOLS` |
+| Flag | none |
+| Reload | hot |
+
+#### `restore.display-mode`
+
+What the agent displays for display-class values: values resolves them in assistant text, placeholders keeps placeholders (for example while screen sharing). Tool arguments follow the tool roles either way; credentials are never restored.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `values` |
+| Environment | `SCRIM_RESTORE_DISPLAY_MODE` |
+| Flag | `--restore-display-mode` |
+| Reload | hot |
+| Values | `values`, `placeholders` |
 
 ### run
 

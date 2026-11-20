@@ -85,6 +85,13 @@ proxy:
   chain: {url: "http://127.0.0.1:9000", on-unavailable: direct}
 redaction:
   min-value-length: 12
+restore:
+  display-mode: placeholders
+  builtin-tools: false
+  allow-reveal-credentials: ["bao://kv/agents/*"]
+  tools:
+    run-shell: {name: run_shell, role: shell, command-field: cmd}
+    patch: {role: edit, old-fields: [before], new-fields: [after]}
 `)
 	cat, err := catalog.Load(context.Background(), cfg, nil, catalog.SelectionFrom(cfg))
 	if err != nil {
@@ -132,6 +139,17 @@ redaction:
 	}
 	if s.GetRedaction().GetMinValueLength() != 12 || s.GetPolicy().GetVersion() != 3 {
 		t.Fatalf("redaction %v policy %v", s.GetRedaction(), s.GetPolicy())
+	}
+	rs := s.GetRestore()
+	if rs.GetDisplayMode() != pb.DisplayMode_DISPLAY_MODE_PLACEHOLDERS || !rs.GetBuiltinToolsDisabled() ||
+		strings.Join(rs.GetRevealCredentialRefs(), ",") != "bao://kv/agents/*" || len(rs.GetTools()) != 2 {
+		t.Fatalf("restore = %v", rs)
+	}
+	for _, a := range rs.GetTools() {
+		if a.GetName() == "run_shell" && (a.GetRole() != pb.ToolRole_TOOL_ROLE_SHELL || a.GetCommandField() != "cmd") ||
+			a.GetName() == "patch" && (a.GetRole() != pb.ToolRole_TOOL_ROLE_EDIT || strings.Join(a.GetOldFields(), ",") != "before") {
+			t.Fatalf("alias = %v", a)
+		}
 	}
 	r := s.GetRoutes()[0]
 	if r.GetName() != "anthropic" || r.GetUpstream() != "https://api.anthropic.com" || r.GetPathPrefix() != "/anthropic" ||
@@ -288,4 +306,27 @@ func TestStoreWriteIsPushed(t *testing.T) {
 		e := valueFor(h.snapshot(t), "vault://agents/new#value")
 		return e != nil && string(e.GetValue()) == written
 	})
+}
+
+func TestRestoreDefaultsResolveValues(t *testing.T) {
+	r := restoreSettings(buildConfig(t, ""))
+	if r.GetDisplayMode() != pb.DisplayMode_DISPLAY_MODE_VALUES || r.GetBuiltinToolsDisabled() || len(r.GetRevealCredentialRefs()) != 0 || len(r.GetTools()) != 0 {
+		t.Fatalf("defaults = %v", r)
+	}
+}
+
+func TestRestoreAliasValidation(t *testing.T) {
+	for _, body := range []string{
+		"restore:\n  tools:\n    x: {role: fly}\n",
+		"restore:\n  tools:\n    x: {role: read, command-field: c}\n",
+		"restore:\n  tools:\n    x: {role: shell, colour: red}\n",
+	} {
+		p := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(p, []byte("apiVersion: "+config.APIVersion+"\nkind: Config\n"+body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := config.Build(config.Options{Registry: config.Default, ConfigPaths: []string{p}, Environ: []string{}}); err == nil {
+			t.Errorf("accepted %q", body)
+		}
+	}
 }

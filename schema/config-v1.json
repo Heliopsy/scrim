@@ -746,6 +746,72 @@
       },
       "type": "object"
     },
+    "restore": {
+      "additionalProperties": false,
+      "properties": {
+        "allow-reveal-credentials": {
+          "default": [],
+          "description": "Glob patterns over store references of credentials that scrim reveal may resolve locally. Empty means reveal never resolves a credential. Restore into responses never resolves credentials, whatever this holds.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_RESTORE_ALLOW_REVEAL_CREDENTIALS",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true
+        },
+        "allow-shell-data-commands": {
+          "default": [],
+          "description": "Commands a shell-role restore may pass display values to, beyond the built-in list of commands that run no code. A listed command that interprets an argument as code turns a restored value into code.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_RESTORE_ALLOW_SHELL_DATA_COMMANDS",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true
+        },
+        "builtin-tools": {
+          "default": true,
+          "description": "Use the built-in table of agent tool roles (Claude Code, Codex). When false only restore.tools have roles and every other tool is unknown, which restores nothing.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_RESTORE_BUILTIN_TOOLS",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "display-mode": {
+          "default": "values",
+          "description": "What the agent displays for display-class values: values resolves them in assistant text, placeholders keeps placeholders (for example while screen sharing). Tool arguments follow the tool roles either way; credentials are never restored.",
+          "enum": [
+            "values",
+            "placeholders"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_RESTORE_DISPLAY_MODE",
+          "x-scrim-flag": "--restore-display-mode",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "tools": {
+          "additionalProperties": {
+            "properties": {},
+            "required": [
+              "role"
+            ],
+            "type": "object"
+          },
+          "description": "Tool aliases by name: `role` (none, read, search, shell, edit, write, network), optional `name` (the tool name exactly as the model calls it, default the instance name), `command-field` for shell, `old-fields` and `new-fields` for edit. An alias overrides the built-in table.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+          },
+          "type": "object",
+          "x-scrim-collection": true,
+          "x-scrim-env": "SCRIM_RESTORE_TOOLS",
+          "x-scrim-restart-required": false
+        }
+      },
+      "type": "object"
+    },
     "run": {
       "additionalProperties": false,
       "properties": {

@@ -85,6 +85,11 @@ within `dataplane.push-debounce` (200ms) become one push. Pushes never block req
 swaps the snapshot atomically. A rotated or deleted value stays in the snapshot for redaction during
 the store's retention, but only the current value is injectable.
 
+The restore settings travel in every snapshot too: `restore.display-mode` (`values`, or
+`placeholders` while screen sharing), `restore.builtin-tools`, the `restore.tools` aliases and the
+weakening `restore.allow-shell-data-commands` and `restore.allow-reveal-credentials`. Changing one
+and reloading takes effect with the next push.
+
 Catalog entries whose secret no store's `redact` list loads are read once in the background so they
 are redacted and injectable too.
 

@@ -141,6 +141,7 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 		Redaction:    &pb.RedactionSettings{MinValueLength: uint32(MinValueLength.Get(cfg))}, //nolint:gosec // validated to 1..1024
 		CaptureRules: captureRulesPB(cfg),
 		Policy:       &pb.Policy{DefaultEffect: pb.Effect_EFFECT_DENY},
+		Restore:      restoreSettings(cfg),
 	}
 	if b.Policy != nil {
 		if p := b.Policy(); p != nil {
