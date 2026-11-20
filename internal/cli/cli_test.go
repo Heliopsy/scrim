@@ -58,7 +58,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestStubsSayNotImplemented(t *testing.T) {
-	for _, name := range []string{"run", "proxy", "approve", "catalog"} {
+	for _, name := range []string{"run", "proxy", "approve"} {
 		e, _, errb := newEnv()
 		if code := Run(context.Background(), e, []string{name, "--anything"}); code != 1 {
 			t.Errorf("%s: exit %d, want 1", name, code)
