@@ -1,0 +1,39 @@
+# gitleaks configuration for scrim.
+#
+# The default ruleset is kept in full. Each allowlist below records findings
+# that are deliberately not secrets and says why, confined by path and by the
+# shape of the match, so a real credential in the same file is still reported.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """
+Fake tokens in leak tests. A leak test seeds a value shaped like a real
+credential and checks it never reaches a database, log or response. The values
+carry the marker LEAKTEST so they cannot be mistaken for, or be, real tokens.
+"""
+paths = ['''_test\.go$''']
+matchCondition = "AND"
+regexTarget = "line"
+regexes = ['''LEAKTEST''']
+
+[[allowlists]]
+description = """
+SHA-256 digests of the redact-bench fixture files. They pin the fixture
+content; a digest is not a credential.
+"""
+paths = ['''^bench/redact-bench/fixtures/manifest\.sha256\.json$''']
+matchCondition = "AND"
+regexTarget = "line"
+regexes = ['''": "[0-9a-f]{64}",?$''']
+
+[[allowlists]]
+description = """
+The redact-bench fixture generator writes a PEM header around random bytes it
+generates at run time. The literal header is not a key.
+"""
+paths = ['''^bench/redact-bench/fixtures/gen/secrets\.go$''']
+matchCondition = "AND"
+regexTarget = "line"
+regexes = ['''-----BEGIN PRIVATE KEY-----''']
