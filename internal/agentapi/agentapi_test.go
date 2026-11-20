@@ -17,8 +17,11 @@ import (
 	"github.com/heliopsy/scrim/internal/agenttools"
 	"github.com/heliopsy/scrim/internal/agenttools/agenttoolstest"
 	"github.com/heliopsy/scrim/internal/app"
+	"github.com/heliopsy/scrim/internal/approval"
 	"github.com/heliopsy/scrim/internal/audit"
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/gate"
+	"github.com/heliopsy/scrim/internal/grant"
 	"github.com/heliopsy/scrim/internal/identity"
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/policy"
@@ -191,27 +194,44 @@ func TestAuditAdapter(t *testing.T) {
 func TestApprovalsAdapter(t *testing.T) {
 	st := memstate.New()
 	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
-	ap := Approvals{
+	clock := func() time.Time { return now }
+	grants := grant.NewService(st, nil)
+	grants.SetClock(clock)
+	approvals, err := approval.New(approval.Options{State: st, Signer: approval.RandomSigner(), Timeout: 10 * time.Minute,
+		PollInterval: 10 * time.Millisecond, Now: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &gate.Gate{
 		Engine: rules(
 			policy.Rule{Name: "agents", Match: under("bao://kv/agents/"), Effect: policy.Allow, GrantTTL: time.Hour},
+			policy.Rule{Name: "open", Match: under("bao://kv/open/"), Effect: policy.Allow},
 			policy.Rule{Name: "github", Match: under("bao://kv/ask/"), Effect: policy.Ask},
 		),
-		State: st, DefaultTTL: 15 * time.Minute, MaxTTL: 8 * time.Hour, ApprovalTimeout: 10 * time.Minute,
-		Now: func() time.Time { return now },
+		Grants: grants, Approvals: approvals, State: st, Now: clock,
 	}
+	ap := Approvals{Gate: g, DefaultTTL: 15 * time.Minute, MaxTTL: 8 * time.Hour, Now: clock}
 	a := agenttoolstest.Session("dev", "s1", 1000)
 	b := agenttoolstest.Session("dev", "s2", 1000)
 
-	g, err := ap.Request(ctx, a, agenttools.GrantRequest{Ref: "bao://kv/agents/x", Duration: 2 * time.Hour, Reason: "r"})
-	if err != nil || g.Status != agenttools.StatusGranted || !g.Capped || g.Duration != time.Hour || !g.ExpiresAt.Equal(now.Add(time.Hour)) {
-		t.Fatalf("grant: %+v %v", g, err)
+	// An allow rule with a TTL leaves its own grant behind; asking for more
+	// is capped at the rule's TTL.
+	gr, err := ap.Request(ctx, a, agenttools.GrantRequest{Ref: "bao://kv/agents/x", Duration: 2 * time.Hour, Reason: "r"})
+	if err != nil || gr.Status != agenttools.StatusGranted || !gr.Capped || gr.Duration != time.Hour || !gr.ExpiresAt.Equal(now.Add(time.Hour)) {
+		t.Fatalf("grant: %+v %v", gr, err)
 	}
-	g2, _ := ap.Request(ctx, a, agenttools.GrantRequest{Ref: "bao://kv/agents/y", Reason: "r"})
-	if g2.Duration != 15*time.Minute || g2.Capped {
+	// An allow rule without a TTL gets the requested or default duration,
+	// capped at tools.grant-max-ttl.
+	g2, _ := ap.Request(ctx, a, agenttools.GrantRequest{Ref: "bao://kv/open/y", Reason: "r"})
+	if g2.Status != agenttools.StatusGranted || g2.Duration != 15*time.Minute || g2.Capped {
 		t.Fatalf("default ttl: %+v", g2)
 	}
+	g3, _ := ap.Request(ctx, a, agenttools.GrantRequest{Ref: "bao://kv/open/z", Duration: 24 * time.Hour, Reason: "r"})
+	if g3.Duration != 8*time.Hour || !g3.Capped {
+		t.Fatalf("max ttl: %+v", g3)
+	}
 	gs, _ := ap.Grants(ctx, a)
-	if len(gs) != 2 {
+	if len(gs) != 3 {
 		t.Fatalf("A grants = %+v", gs)
 	}
 	if gs, _ := ap.Grants(ctx, b); len(gs) != 0 {
@@ -232,8 +252,17 @@ func TestApprovalsAdapter(t *testing.T) {
 	if _, err := ap.Approval(ctx, a, "apr_nope"); !errors.Is(err, agenttools.ErrNotFound) {
 		t.Fatalf("unknown approval: %v", err)
 	}
+	// The approval is the real one: the operator API decides it and the
+	// agent sees the grant it created.
+	if _, err := approvals.Decide(ctx, p.ApprovalID, approval.Decision{Approve: true, By: "user:op", Via: "api"}); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := ap.Approval(ctx, a, p.ApprovalID); s.Status != string(state.ApprovalApproved) || s.GrantID == "" {
+		t.Fatalf("after approval: %+v", s)
+	}
+	p2, _ := ap.Request(ctx, a, agenttools.GrantRequest{Ref: "bao://kv/ask/other", Reason: "PR"})
 	now = now.Add(11 * time.Minute)
-	if s, _ := ap.Approval(ctx, a, p.ApprovalID); s.Status != agenttools.ApprovalExpired {
+	if s, _ := ap.Approval(ctx, a, p2.ApprovalID); s.Status != agenttools.ApprovalExpired {
 		t.Fatalf("after timeout: %+v", s)
 	}
 	d, _ := ap.Request(ctx, a, agenttools.GrantRequest{Ref: "bao://kv/prod/x", Reason: "r"})
@@ -244,7 +273,7 @@ func TestApprovalsAdapter(t *testing.T) {
 	if d.Status != agenttools.StatusDenied {
 		t.Fatalf("invalid ref: %+v", d)
 	}
-	now = now.Add(2 * time.Hour)
+	now = now.Add(9 * time.Hour)
 	if gs, _ := ap.Grants(ctx, a); len(gs) != 0 {
 		t.Fatalf("expired grants listed: %+v", gs)
 	}

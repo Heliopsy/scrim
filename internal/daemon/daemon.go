@@ -44,6 +44,7 @@ import (
 	"github.com/heliopsy/scrim/internal/agentapi"
 	"github.com/heliopsy/scrim/internal/app"
 	"github.com/heliopsy/scrim/internal/approval"
+	"github.com/heliopsy/scrim/internal/ca"
 	"github.com/heliopsy/scrim/internal/catalog"
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/dataplane"
@@ -68,8 +69,8 @@ type Options struct {
 	// Capture, when set, turns on capture mode into this directory,
 	// overriding proxy.capture.dir.
 	Capture string
-	// CA supplies the tool-proxy CA generations; nil leaves the data plane
-	// to its own CA.
+	// CA supplies the tool-proxy CA generations; nil uses the CA the
+	// control plane keeps (tool-proxy.ca.*), opened by Start.
 	CA func() []CAGeneration
 	// CARun, when set, runs alongside the daemon and calls its argument
 	// after every CA change (rotation), so a new snapshot is pushed.
@@ -126,6 +127,7 @@ type Daemon struct {
 	started  time.Time
 	capture  string
 	infoPath string
+	trust    func() string
 
 	mu    sync.Mutex
 	addrs Addrs
@@ -216,6 +218,17 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		return nil, err
 	}
 	d.cleanup = append(d.cleanup, d.catalog.Close)
+
+	if o.CA == nil {
+		m, err := ca.Open(ctx, cfg, obs.WithComponent(a.Log, "ca"))
+		if err != nil {
+			ring.Wipe()
+			return nil, err
+		}
+		d.cleanup = append(d.cleanup, m.Close)
+		o.CA, o.CARun = caGenerations(m), m.Run
+		d.trust = m.TrustBundlePEM
+	}
 
 	values := make([]ValueSource, len(a.Refreshers))
 	for i, r := range a.Refreshers {
@@ -417,7 +430,7 @@ func (d *Daemon) listenControl(cfg *config.Config) error {
 	}
 	d.addrs.Admin = adm.addr
 	admin := approval.AdminHandler(pp.Approvals, pp.Grants, pp.BreakGlass, adm.operator)
-	mux := adminMux(adminServices{admin: admin, decision: pp.Approvals.DecisionHandler()}, adm.operator, d.Info)
+	mux := adminMux(adminServices{admin: admin, decision: pp.Approvals.DecisionHandler(), trust: d.trust}, adm.operator, d.Info)
 	d.serve("admin", adm.ln, mux, localConnContext(adm.addr))
 
 	if addr := DecisionListen.Get(cfg); addr != "" {
@@ -641,6 +654,26 @@ func (d *Daemon) runCleanup() {
 		d.cleanup[i]()
 	}
 	d.cleanup = nil
+}
+
+// TrustBundlePEM returns the tool-proxy CA certificates clients must trust,
+// or "" when the CA was supplied by the caller. Public material.
+func (d *Daemon) TrustBundlePEM() string {
+	if d.trust == nil {
+		return ""
+	}
+	return d.trust()
+}
+
+func caGenerations(m *ca.Manager) func() []CAGeneration {
+	return func() []CAGeneration {
+		gens := m.Generations()
+		out := make([]CAGeneration, len(gens))
+		for i, g := range gens {
+			out[i] = CAGeneration{CertPEM: g.CertPEM, Key: g.Key, Current: g.Current}
+		}
+		return out
+	}
 }
 
 // placeholders adapts the builder to the agent API.

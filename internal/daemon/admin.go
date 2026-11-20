@@ -95,6 +95,19 @@ func tokenOperator(token secret.Value) func(*http.Request) (string, bool) {
 // info endpoint.
 func adminMux(svcs adminServices, operator func(*http.Request) (string, bool), info func() Info) *http.ServeMux {
 	mux := http.NewServeMux()
+	if svcs.trust != nil {
+		// Public certificates only; anyone who reaches the listener may
+		// read what their clients must trust.
+		mux.HandleFunc("GET /v1/ca", func(w http.ResponseWriter, _ *http.Request) {
+			pem := svcs.trust()
+			if pem == "" {
+				writeJSON(w, http.StatusNotFound, approval.ErrorBody{Error: "no CA held by the control plane", Code: "not_found"})
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-pem-file")
+			_, _ = w.Write([]byte(pem))
+		})
+	}
 	if svcs.decision != nil {
 		// Decision links carry their own signed token; no operator needed.
 		mux.Handle("GET /v1/approvals/{id}/decide", svcs.decision)
@@ -115,6 +128,7 @@ func adminMux(svcs adminServices, operator func(*http.Request) (string, bool), i
 type adminServices struct {
 	admin    http.Handler
 	decision http.Handler
+	trust    func() string
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

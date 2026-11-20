@@ -92,16 +92,24 @@ func New(a *app.App, o Options) (*Runtime, error) {
 		notifier = &TerminalNotifier{W: w}
 	}
 	auditor := Audit{State: a.State}
+	if a.PolicyParts == nil || a.PolicyParts.Gate == nil {
+		_ = entryLn.Close()
+		return nil, errors.New("agentapi: the composition root has no policy gate")
+	}
+	// The agent tools decide with a.Policy (what callers may replace in
+	// tests), through the same grants, approvals and break-glass.
+	gv := *a.PolicyParts.Gate
+	gv.Engine = a.Policy
+	g := &gv
 	svc, err := agenttools.New(agenttools.Deps{
-		Policy: Policy{Engine: a.Policy},
-		Approvals: Approvals{Engine: a.Policy, State: a.State, Notifier: a.Notifier,
-			DefaultTTL: GrantDefaultTTL.Get(cfg), MaxTTL: GrantMaxTTL.Get(cfg), ApprovalTimeout: ApprovalTimeout.Get(cfg)},
-		Catalog:  Stores{Set: a.Stores, Placeholders: o.Placeholders},
-		Store:    Stores{Set: a.Stores, Placeholders: o.Placeholders},
-		Auditor:  auditor,
-		Notifier: notifier,
-		Links:    links,
-		Logger:   a.Log,
+		Policy:    Policy{Engine: a.Policy},
+		Approvals: Approvals{Gate: g, DefaultTTL: GrantDefaultTTL.Get(cfg), MaxTTL: GrantMaxTTL.Get(cfg)},
+		Catalog:   Stores{Set: a.Stores, Placeholders: o.Placeholders},
+		Store:     Stores{Set: a.Stores, Placeholders: o.Placeholders, Refreshers: a.Refreshers},
+		Auditor:   auditor,
+		Notifier:  notifier,
+		Links:     links,
+		Logger:    a.Log,
 	})
 	if err != nil {
 		_ = entryLn.Close()
