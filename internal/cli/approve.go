@@ -29,13 +29,13 @@ func adminClient(e *Env) (*approval.Client, error) {
 	return approval.NewClient(approval.AdminURL.Get(cfg))
 }
 
-// printer writes formatted output and keeps the first write error.
-type printer struct {
+// outWriter writes formatted output and keeps the first write error.
+type outWriter struct {
 	w   io.Writer
 	err error
 }
 
-func (p *printer) f(format string, a ...any) {
+func (p *outWriter) f(format string, a ...any) {
 	if p.err == nil {
 		_, p.err = fmt.Fprintf(p.w, format, a...)
 	}
@@ -72,7 +72,7 @@ func decideCommand(e *Env, approve bool) *cobra.Command {
 		Short: short,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			o := &printer{w: e.Stdout}
+			o := &outWriter{w: e.Stdout}
 			cl, err := adminClient(e)
 			if err != nil {
 				return err
@@ -121,7 +121,7 @@ func (Commands) Approvals(e *Env) *cobra.Command {
 		Short: "List approvals (pending by default)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			o := &printer{w: e.Stdout}
+			o := &outWriter{w: e.Stdout}
 			cl, err := adminClient(e)
 			if err != nil {
 				return err
@@ -141,7 +141,7 @@ func (Commands) Approvals(e *Env) *cobra.Command {
 				return o.err
 			}
 			tw := tabwriter.NewWriter(e.Stdout, 0, 4, 2, ' ', 0)
-			t := &printer{w: tw}
+			t := &outWriter{w: tw}
 			t.f("ID\tSTATUS\tAGENT\tSECRET\tDESTINATION\tRULE\tEXPIRES\n")
 			for _, a := range as {
 				t.f("%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.ID, a.Status, a.Agent, dash(a.Ref), dash(destination(a)), a.Rule,
@@ -183,13 +183,6 @@ func destination(a approval.ApprovalView) string {
 	return a.Provider
 }
 
-func dash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
-}
-
 // Grants lists and revokes just-in-time grants.
 func (Commands) Grants(e *Env) *cobra.Command {
 	c := &cobra.Command{Use: "grants", Short: "List and revoke just-in-time grants"}
@@ -204,7 +197,7 @@ func (Commands) Grants(e *Env) *cobra.Command {
 		Short: "List active grants",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			o := &printer{w: e.Stdout}
+			o := &outWriter{w: e.Stdout}
 			cl, err := adminClient(e)
 			if err != nil {
 				return err
@@ -221,7 +214,7 @@ func (Commands) Grants(e *Env) *cobra.Command {
 				return o.err
 			}
 			tw := tabwriter.NewWriter(e.Stdout, 0, 4, 2, ' ', 0)
-			t := &printer{w: tw}
+			t := &outWriter{w: tw}
 			t.f("ID\tAGENT\tSECRET\tSCOPE\tUSES\tEXPIRES\tACTIVE\n")
 			for _, g := range gs {
 				uses := fmt.Sprint(g.Uses)
@@ -243,7 +236,7 @@ func (Commands) Grants(e *Env) *cobra.Command {
 		Short: "Revoke a grant at once",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			o := &printer{w: e.Stdout}
+			o := &outWriter{w: e.Stdout}
 			cl, err := adminClient(e)
 			if err != nil {
 				return err
@@ -270,7 +263,7 @@ func (Commands) DenyAll(e *Env) *cobra.Command {
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: []string{"on", "off", "status"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			o := &printer{w: e.Stdout}
+			o := &outWriter{w: e.Stdout}
 			cl, err := adminClient(e)
 			if err != nil {
 				return err
