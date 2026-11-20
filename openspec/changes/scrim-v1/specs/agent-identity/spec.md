@@ -54,6 +54,11 @@ configuration.
 - **WHEN** a user starts two agents with `scrim run`
 - **THEN** each gets its own session token and identity, and their grants are separate
 
+#### Scenario: Many session tokens in one snapshot
+
+- **WHEN** several session tokens are live at once, from concurrent or earlier `scrim run` sessions
+- **THEN** every token is in the redaction set and the data plane accepts the snapshot that carries them
+
 #### Scenario: Token used from outside the session's process tree
 
 - **WHEN** a process of the same user that did not descend from the `scrim run` that minted a token

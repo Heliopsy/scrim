@@ -58,6 +58,13 @@ proxy. The session token SHALL never appear on a command line or in `scrim run`'
 - **WHEN** a user runs `scrim run --print-env -- claude`
 - **THEN** every variable, argument and file is shown, the token as a secret marker, and no session is minted
 
+#### Scenario: git through the forward proxy
+
+- **WHEN** git runs in a `scrim run` session and fetches from a host a credential is bound to
+- **THEN** git sends the session's proxy credentials with its `CONNECT` (`GIT_HTTP_PROXY_AUTHMETHOD=basic`)
+  instead of waiting for a challenge the forward proxy never sends, so its requests are identified and
+  the credential is injected
+
 ### Requirement: Agent presets
 
 `scrim run` SHALL add what each supported agent needs for the session only: for Claude Code an MCP

@@ -49,6 +49,7 @@ name could be read as a flag. `scrim run` flags go before it:
 | `ANTHROPIC_BASE_URL` | `http://127.0.0.1:<port>/anthropic` | Anthropic SDKs and Claude Code send Messages requests to scrim's LLM proxy. |
 | `OPENAI_BASE_URL` | `http://127.0.0.1:<port>/openai/v1` | OpenAI SDKs (and older Codex releases) send requests to scrim's LLM proxy. |
 | `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, `http_proxy` | `http://<session id>:<token>@127.0.0.1:<port>`, scrim's forward proxy | Tool traffic (curl, git, SDKs) goes through scrim for credential injection and response redaction. The user info identifies the session: clients send it as `Proxy-Authorization`, which ends at the proxy, so policy and grants apply to this agent. `--print-env` shows `<session-token>` in its place. |
+| `GIT_HTTP_PROXY_AUTHMETHOD` | `basic` | git otherwise sends proxy credentials only after a `407` challenge, which scrim's forward proxy never sends, so its tunnels would carry no session and injection toward bound hosts would be refused. Set only when the proxy URL carries the session. |
 | `NO_PROXY`, `no_proxy` | `localhost,127.0.0.1,::1` plus chained local upstreams | Loopback, including the LLM base URL, is reached directly. |
 | `NODE_EXTRA_CA_CERTS` | `<session>/scrim-ca.pem` | Node.js adds scrim's CA to its bundled roots. |
 | `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `AWS_CA_BUNDLE`, `PIP_CERT`, `NPM_CONFIG_CAFILE`, `CARGO_HTTP_CAINFO`, `DENO_CERT` | `<session>/ca-bundle.pem` | Runtimes that replace their trust store get the system roots plus scrim's CA. |
@@ -226,6 +227,33 @@ set
   redactor. `TestRunPrintEnvWithRealDaemon` (in `internal/cli`, with `SCRIM_TEST_DATAPLANE`) runs
   `scrim run --print-env` against a daemon started in process with the real data plane, and
   `TestEndToEndRealDataPlane` (in `internal/daemon`) checks what the provider receives through it.
+- `just e2e-tools`, `just e2e-chain` and `just e2e-session` (`test/e2e/`) run the real `scrim`
+  binary and data plane, started as `scrim proxy` with temporary directories, memory state and a
+  file store of generated values. They run inside `test/e2e/sandbox.sh`: unprivileged user,
+  network and mount namespaces with loopback only (no request can reach a real provider or any
+  other host) and their own `/etc/hosts`, so the test hosts `api.scrim.test`, `git.scrim.test`
+  and `other.scrim.test` resolve to loopback addresses and are bound by name, on port 443.
+  - `e2e-tools`: curl (a placeholder in a header and in a JSON body), `git clone` and `git push`
+    with placeholder credentials in `~/.git-credentials` against `git http-backend` behind TLS and
+    Basic authentication, Node.js `fetch` with `NODE_USE_ENV_PROXY=1` and Python `requests`, each
+    under `scrim run` against TLS test APIs with a private CA (`dataplane.upstream-ca-file`). The
+    APIs receive the real values, echoed values come back as placeholders, an unbound host gets
+    `403 unbound_destination`, and after `scrim ca rotate` clients trusting only the previous CA,
+    only the new CA, or a new session's bundle all keep working. CI runs it on GitHub-hosted
+    Ubuntu with `SCRIM_E2E_REQUIRE_TOOLS=1`, so a missing client fails instead of skipping.
+  - `e2e-chain`: scrim with caveman as its chained upstream (`proxy.chain.url`), caveman with its
+    own HOME, data directory and port, pointed at the fake provider. caveman's stores hold
+    placeholders only, placeholders survive its compression and are restored in the response, and
+    every request reached the fake provider through caveman. Skipped without `caveman-proxy`
+    (`SCRIM_E2E_CAVEMAN` names it).
+  - `e2e-session`: Claude Code under `scrim run` with an empty `HOME` and a fake key reads a `.env`
+    of seeded secrets, cats a config, runs `git diff` on a file with a key in it, calls a bound tool
+    API through `HTTPS_PROXY` with `SCRIM_API_TOKEN`, and calls `secrets_list`. Every provider
+    request and scrim's capture of it are checked with the leak suite's checker. Skipped without
+    `claude`.
+
+  Each needs unprivileged user namespaces; on Ubuntu 24.04 with AppArmor's restriction on, run
+  `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` first.
 
 ## Which scrim serves the run
 

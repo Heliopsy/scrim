@@ -185,6 +185,12 @@ impl CertificateAuthority {
         p.not_before = OffsetDateTime::now_utc() - time::Duration::minutes(5);
         p.not_after = self.not_after.min(newer.not_after);
         p.serial_number = Some(random_serial()?);
+        // Chain builders that match issuers by key identifier (OpenSSL, so curl, git, Python and
+        // Node) accept the cross certificate as the leaf's issuer only when its subject key
+        // identifier is the one the leaf's authority key identifier names: the newer CA's own,
+        // which a CA loaded from disk may have computed another way.
+        p.key_identifier_method = newer.issuer.params().key_identifier_method.clone();
+        p.use_authority_key_identifier_extension = true;
         Ok(p.signed_by(&newer.key, &self.issuer, &self.key)?
             .der()
             .clone())
@@ -587,6 +593,48 @@ mod tests {
         assert_eq!(ring.cached_leaves(), 2);
         assert!(!Arc::ptr_eq(&a, &ring.leaf_for("a.test").unwrap()));
         ring.leaf_for("127.0.0.1").unwrap();
+    }
+
+    /// A CA whose subject key identifier is not the one rcgen computes, as with a CA
+    /// certificate the control plane generated and the data plane loads from PEM.
+    fn ca_with_key_id(id: u8) -> CertificateAuthority {
+        let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut p = ca_params(&CaOptions::default(), OffsetDateTime::now_utc()).unwrap();
+        p.key_identifier_method = rcgen::KeyIdMethod::PreSpecified(vec![id; 20]);
+        let cert = p.self_signed(&key).unwrap();
+        CertificateAuthority::from_pem(&cert.pem(), &key.serialize_pem()).unwrap()
+    }
+
+    fn key_ids(der: &[u8]) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+        use x509_parser::extensions::ParsedExtension;
+        let (_, c) = x509_parser::parse_x509_certificate(der).unwrap();
+        let (mut ski, mut aki) = (None, None);
+        for ext in c.extensions() {
+            match ext.parsed_extension() {
+                ParsedExtension::SubjectKeyIdentifier(k) => ski = Some(k.0.to_vec()),
+                ParsedExtension::AuthorityKeyIdentifier(a) => {
+                    aki = a.key_identifier.as_ref().map(|k| k.0.to_vec());
+                }
+                _ => {}
+            }
+        }
+        (ski, aki)
+    }
+
+    #[test]
+    fn cross_certificate_carries_the_newer_key_identifier() {
+        let ring = CaRing::new(ca_with_key_id(0x11), LeafSettings::default());
+        ring.rotate(ca_with_key_id(0x22), Duration::from_secs(3600))
+            .unwrap();
+        let leaf = ring.leaf_for("a.test").unwrap();
+        let (_, leaf_aki) = key_ids(&leaf.cert[0]);
+        let (cross_ski, cross_aki) = key_ids(&leaf.cert[1]);
+        assert_eq!(leaf_aki, Some(vec![0x22; 20]));
+        assert_eq!(
+            cross_ski, leaf_aki,
+            "the cross certificate is the leaf's issuer"
+        );
+        assert_eq!(cross_aki, Some(vec![0x11; 20]), "the previous CA issued it");
     }
 
     #[test]

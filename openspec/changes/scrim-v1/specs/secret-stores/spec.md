@@ -83,6 +83,7 @@ refreshed redaction set SHALL take effect for new requests without a restart.
 - **THEN** within one refresh interval plus jitter, both the new value and the previous value are
   redacted
 - **AND** the previous value stays in the redaction set for a configurable retention period
+- **AND** only the new value is injectable, and the data plane accepts the snapshot that carries both
 
 #### Scenario: Refreshes are spread out
 

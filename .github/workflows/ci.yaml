@@ -214,6 +214,44 @@ jobs:
         env:
           SCRIM_TEST_DATAPLANE: ${{ github.workspace }}/dataplane/target/debug/scrim-dataplane
 
+  # GitHub-hosted: test/e2e/sandbox.sh needs unprivileged user and network
+  # namespaces, which the ho-z10 pods do not allow. Real curl, git (with git
+  # http-backend behind TLS), Node.js fetch and Python requests under
+  # `scrim run` against a real `scrim proxy` (tasks.md 10.2); the network
+  # namespace has loopback only, so nothing leaves the runner.
+  e2e-tools:
+    name: Tool clients end-to-end
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      # NODE_USE_ENV_PROXY needs Node.js 24.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 24
+      - run: rustup toolchain install && cargo --version
+        working-directory: dataplane
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          workspaces: dataplane
+          save-if: false
+      - name: Allow unprivileged user namespaces and install Python requests
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          python3 -c 'import requests' 2>/dev/null || sudo apt-get install -y --no-install-recommends python3-requests
+          curl --version | head -1; git --version; node --version; python3 -c 'import requests; print("requests", requests.__version__)'
+      # SCRIM_E2E_REQUIRE_TOOLS turns a missing client into a failure.
+      - run: test/e2e/run.sh tools
+        env:
+          SCRIM_E2E_REQUIRE_TOOLS: "1"
+
   proto:
     name: Generated code up to date
     runs-on: ho-z10

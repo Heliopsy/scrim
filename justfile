@@ -143,6 +143,25 @@ leak *args: leak-selftest
 fakeprovider *args:
     go run ./internal/testing/fakeprovider/cmd/scrim-fakeprovider {{args}}
 
+# End to end with the real scrim binary inside test/e2e/sandbox.sh: a network namespace with
+# loopback only and the test hosts in its own /etc/hosts. Extra arguments go to the test binary,
+# for example `-test.run TestTools/git`. See "Tests" in docs/run.md.
+#
+# Real curl, git, Node.js fetch and Python requests under scrim run (tasks.md 10.2).
+e2e-tools *args:
+    test/e2e/run.sh tools {{args}}
+
+# scrim chained to caveman, a context compression proxy (tasks.md 3.5); skipped without caveman-proxy.
+e2e-chain *args:
+    test/e2e/run.sh chain {{args}}
+
+# A realistic Claude Code session under scrim run; skipped without claude.
+e2e-session *args:
+    test/e2e/run.sh session {{args}}
+
+# Every end-to-end run above.
+e2e: e2e-tools e2e-chain e2e-session
+
 ntfy_image := "docker.io/binwiederhier/ntfy:v2.38.1"
 
 # End-to-end approve and deny through a local ntfy in rootless podman, on a
