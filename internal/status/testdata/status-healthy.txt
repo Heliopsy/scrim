@@ -1,0 +1,34 @@
+scrim 0.1.0
+profile: laptop
+overall: ok
+
+Interception
+  base-url
+  wrapper
+
+Protections
+  credential-injection     active  3 host-bound credentials
+  guard                    active  independent outbound check
+  redaction                active  known-value matcher over 42 values
+  unknown-field-redaction  active
+
+Providers
+  anthropic  https://api.anthropic.com
+
+Stores
+  bao  openbao  ok  42 values  refreshed 2026-11-20T09:30:00Z
+
+State
+  sqlite at /home/u/.local/state/scrim/state.db, schema 1, healthy
+
+Audit sinks
+  db  policy block  ok  0 dropped
+
+Data plane
+  running, pid 4242, version 0.1.0, up 3h2m0s, healthy
+
+Degraded
+  none
+
+Weakened protections
+  none

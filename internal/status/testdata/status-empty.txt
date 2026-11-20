@@ -1,0 +1,32 @@
+scrim 0.1.0
+overall: DEGRADED (2 degraded, 0 weakened)
+
+Interception
+  none active
+
+Protections
+  none
+
+Providers
+  none
+
+Stores
+  none
+
+State
+  unknown, schema 0, UNHEALTHY
+  state backend not reported
+
+Audit sinks
+  none
+
+Data plane
+  NOT RUNNING
+  data plane not reported
+
+Degraded
+  data-plane: data plane not reported
+  state:unknown: state backend not reported
+
+Weakened protections
+  none

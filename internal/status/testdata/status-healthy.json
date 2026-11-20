@@ -1,0 +1,68 @@
+{
+  "version": "0.1.0",
+  "profile": "laptop",
+  "interception_modes": [
+    "base-url",
+    "wrapper"
+  ],
+  "protections": [
+    {
+      "name": "credential-injection",
+      "active": true,
+      "detail": "3 host-bound credentials"
+    },
+    {
+      "name": "guard",
+      "active": true,
+      "detail": "independent outbound check"
+    },
+    {
+      "name": "redaction",
+      "active": true,
+      "detail": "known-value matcher over 42 values"
+    },
+    {
+      "name": "unknown-field-redaction",
+      "active": true
+    }
+  ],
+  "providers": [
+    {
+      "name": "anthropic",
+      "upstream": "https://api.anthropic.com"
+    }
+  ],
+  "stores": [
+    {
+      "name": "bao",
+      "kind": "openbao",
+      "reachable": true,
+      "last_refresh": "2026-11-20T09:30:00Z",
+      "values": 42,
+      "degraded": false
+    }
+  ],
+  "state": {
+    "backend": "sqlite",
+    "location": "/home/u/.local/state/scrim/state.db",
+    "schema_version": 1,
+    "healthy": true
+  },
+  "audit_sinks": [
+    {
+      "name": "db",
+      "policy": "block",
+      "degraded": false,
+      "dropped": 0
+    }
+  ],
+  "data_plane": {
+    "running": true,
+    "pid": 4242,
+    "version": "0.1.0",
+    "uptime_seconds": 10920,
+    "healthy": true
+  },
+  "degraded": [],
+  "weakened_protections": []
+}

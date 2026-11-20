@@ -1,0 +1,6 @@
+[pass] audit:db: ok
+[pass] data-plane: ok
+[pass] state: ok
+[pass] store:bao: ok
+
+all checks passed
