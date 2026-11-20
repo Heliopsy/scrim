@@ -1446,6 +1446,7 @@ dependencies = [
  "rustls-native-certs",
  "rustls-pemfile",
  "scrim-proto",
+ "scrim-redact",
  "serde",
  "serde_json",
  "serde_yaml",
