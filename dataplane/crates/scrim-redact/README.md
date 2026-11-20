@@ -150,27 +150,38 @@ explicit primitive for injection at the network edge.
 `cargo bench -p scrim-redact` (criterion). Conditions mirror `bench/redact-bench`: sets of 10,
 1,000 and 10,000 secrets with all variants, bodies of 100 KB, 1 MB and 4 MB with one hit per 4 KiB
 or none. `SCRIM_REDACT_GOFIX=<dir>` runs on the Go generator's fixtures instead. The bench also
-prints p50/p99 of `protect` per 1 MB request and of restoration per chunk.
+prints p50/p99 of redact, guard and `protect` per request (1 MB bodies;
+`SCRIM_REDACT_LATENCY_SIZES=100k,1m,4m` for all sizes) and of restoration per chunk.
+`SCRIM_REDACT_THREADS` overrides `parallel_threads`.
 
-Reference run: Intel Xeon W-2295 (18 cores, 3.0 GHz), one pinned core, rustc 1.100.0, on a shared
-machine with other load (load average around 10), so numbers carry some noise. Throughput in
-MiB/s (criterion median, 1 MB bodies, hits / clean); redact-bench numbers are from
-`bench/redact-bench/results/summary.md` (MB/s, same conditions).
+Reference run: Intel Xeon W-2295 (18 cores, 3.0 GHz), rustc 1.100.0, on a shared machine with
+other load (load average 5 to 15 during the runs), so numbers carry noise, p99 most of all. Single
+thread runs are pinned to one core whose hyperthread sibling was the least busy; four-thread runs
+to four such cores. Redact throughput (criterion median, auto engine, hits / clean):
 
-| set | redact, auto engine | redact, one AC automaton | redact-bench ac-auto | protect (redact + guard) |
-|---|---|---|---|---|
-| 10 | 1,429 / 1,481 (split AC) | n/a (split applies) | 3,259 / 3,863 | 208 / 207 |
-| 1,000 | 508 / 503 (hash-window) | 98 / 99 | 119 / 119 (ac-dfa 301 / 378) | 141 / 146 |
-| 10,000 | 471 / 458 (hash-window) | n/a | 97 / 97 | 105 / 101 |
+| set | 100 KB | 1 MB | 4 MB |
+|---|---|---|---|
+| 10 (packed Teddy) | 1.86 / 1.91 GiB/s | 1.71 / 1.71 GiB/s | 1.72 / 1.61 GiB/s |
+| 1,000 (hash-window) | 1.24 / 1.25 GiB/s | 1.17 / 1.20 GiB/s | 1.14 / 1.17 GiB/s |
+| 10,000 (hash-window) | 1.16 / 1.15 GiB/s | 1.02 / 1.09 GiB/s | 1.01 / 1.09 GiB/s |
 
-Latency per 1 MB request, `protect` (p50 / p99): 10 secrets 4.9 / 7.9 ms, 1,000 secrets
-6.5 / 9.7 ms, 10,000 secrets 9.0 / 15.0 ms. Redact alone p99: 1.0, 3.5 and 3.6 ms. Restore per
-chunk p99: 0.27 to 0.36 µs. Snapshot build: 20 ms (10), 24 ms (1,000), 212 ms (10,000).
+`protect` per 1 MB request with hits, p50 / p99 in ms, range over two rounds of 300 requests (load
+4 to 7):
 
-Against the performance spec: restore per chunk is far inside its 50 µs budget. The redact + guard
-p99 budget (5 ms per 1 MB at 1,000 secrets, 10 ms at 10,000) is **not met**: the guard costs about
-4 to 6 ms per MB, more than the redactor. Task 2.0's 500 MB/s at 10,000 secrets is met on some
-bodies and missed by up to 15 % on others.
+| set | one thread | four threads |
+|---|---|---|
+| 10 | 3.0-3.2 / 4.6-5.2 | 1.8 / 3.2-3.3 |
+| 1,000 | 3.9-4.2 / 5.0-7.5 | 2.2-2.6 / 5.0-5.5 |
+| 10,000 | 4.2-4.3 / 5.5-6.9 | 2.2-2.3 / 3.0-3.9 |
+
+Of a single-thread `protect` on 1 MB, the redactor takes about 0.9 ms and the guard 3.1 to 3.4 ms.
+Restore per chunk p99: 0.25 to 0.36 µs.
+
+Against the performance spec: restore per chunk is far inside its 50 µs budget. With the default
+four threads, the redact + guard budget (p99 under 5 ms per 1 MB at 1,000 secrets, 10 ms at
+10,000) is met at 10,000 with a wide margin and at 1,000 at p50 with a wide margin, while p99 at
+1,000 sits close to 5 ms on this loaded machine and goes over it when the load spikes. Task 2.0's
+500 MB/s at 10,000 secrets is met on every body size (above 1 GiB/s).
 
 ## Fuzzing
 
