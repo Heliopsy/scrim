@@ -16,10 +16,10 @@ use tokio_stream::{Stream, StreamExt};
 use tonic::transport::server::Connected;
 use tonic::{Request, Response, Status, Streaming};
 
+use crate::VERSION;
 use crate::engine::Shared;
 use crate::harden::Hardening;
 use crate::snapshot::Applied;
-use crate::{VERSION, listeners};
 
 /// Serves the control plane on `stream` until the control plane closes its
 /// end, then returns. Returning means the process must exit: a data plane
@@ -27,7 +27,8 @@ use crate::{VERSION, listeners};
 pub async fn run(stream: std::os::unix::net::UnixStream, hardening: Hardening) -> io::Result<()> {
     stream.set_nonblocking(true)?;
     let stream = UnixStream::from_std(stream)?;
-    serve(stream, Arc::new(Shared::default()), hardening).await
+    let shared = Shared::new().map_err(io::Error::other)?;
+    serve(stream, Arc::new(shared), hardening).await
 }
 
 /// Serves `stream` with the given shared state. Used by [`run`] and tests.
@@ -55,7 +56,9 @@ pub async fn serve(
             let _ = closed_rx.await;
         })
         .await;
+    shared.listeners.stop_all();
     shared.asks.detach();
+    shared.captures.detach();
     shared.snapshot.store(None); // drop the dictionary now, zeroing it
     result.map_err(io::Error::other)
 }
@@ -152,12 +155,27 @@ impl DataPlane for Service {
     ) -> Result<Response<v1::ApplySnapshotResponse>, Status> {
         let snap = req.into_inner();
         check(snap.protocol)?;
-        let applied = Applied::from_proto(snap, self.applied_version()).map_err(|e| {
-            tracing::warn!(reason = %e, "snapshot rejected");
-            Status::invalid_argument(e.to_string())
-        })?;
+        let reject = |e: String| {
+            tracing::warn!(reason = e.as_str(), "snapshot rejected");
+            Status::invalid_argument(e)
+        };
+        // Build the tool proxy's view before the dictionary takes the
+        // values out of the message. Generated placeholders come from the
+        // redaction core once it exists; until then the proxy shows declared
+        // or reference placeholders.
+        let proxy_snapshot = scrim_toolproxy::Snapshot::from_proto(&snap, |_| Vec::new())
+            .map_err(|e| reject(format!("tool proxy: {e}")))?;
+        let applied =
+            Applied::from_proto(snap, self.applied_version()).map_err(|e| reject(e.to_string()))?;
+        self.shared
+            .tool_proxy
+            .apply(proxy_snapshot)
+            .map_err(|e| reject(format!("tool proxy: {e}")))?;
         let version = applied.version;
         let count = u32::try_from(applied.values.len()).unwrap_or(u32::MAX);
+        self.shared
+            .listeners
+            .reconcile(&applied.listeners, &self.shared.tool_proxy);
         self.shared.snapshot.store(Some(Arc::new(applied)));
         tracing::info!(version, values = count, "snapshot applied");
         Ok(Response::new(v1::ApplySnapshotResponse {
@@ -214,12 +232,18 @@ impl DataPlane for Service {
     ) -> Result<Response<v1::StatusResponse>, Status> {
         check(req.into_inner().protocol)?;
         let snap = self.shared.snapshot.load_full();
-        let listeners = snap
-            .as_ref()
-            .map_or_else(Vec::new, |s| listeners::status(&s.listeners));
+        let listeners = self.shared.listeners.status();
+        let proxy = self.shared.tool_proxy.status();
+        let proxy_ok = proxy.ready || !self.shared.listeners.serves_tool_proxy();
+        let tool_proxy = v1::ToolProxyStatus {
+            ready: proxy.ready,
+            snapshot_version: proxy.snapshot_version.unwrap_or(0),
+            unsupported_destinations: proxy.unsupported_destinations.into_iter().collect(),
+            cached_leaves: u32::try_from(proxy.cached_leaves).unwrap_or(u32::MAX),
+        };
         Ok(Response::new(v1::StatusResponse {
             protocol: v1::PROTOCOL,
-            ready: snap.is_some() && listeners.iter().all(|l| l.bound),
+            ready: snap.is_some() && proxy_ok && listeners.iter().all(|l| l.bound),
             applied_snapshot_version: snap.as_ref().map_or(0, |s| s.version),
             value_count: snap
                 .as_ref()
@@ -228,7 +252,34 @@ impl DataPlane for Service {
             dumpable: self.hardening.dumpable,
             listeners,
             data_plane_version: VERSION.to_owned(),
+            ca_trust_bundle_pem: self.shared.tool_proxy.ca().trust_bundle_pem(),
+            tool_proxy: Some(tool_proxy),
         }))
+    }
+
+    type CapturesStream = BoxStream<v1::CaptureRequest>;
+
+    async fn captures(
+        &self,
+        req: Request<Streaming<v1::CaptureResult>>,
+    ) -> Result<Response<Self::CapturesStream>, Status> {
+        let mut results = req.into_inner();
+        let rx = self
+            .shared
+            .captures
+            .attach()
+            .ok_or_else(|| Status::failed_precondition("captures already attached"))?;
+        let shared = Arc::clone(&self.shared);
+        tokio::spawn(async move {
+            while let Some(Ok(r)) = results.next().await {
+                if r.protocol == v1::PROTOCOL {
+                    shared.captures.result(r);
+                }
+            }
+            shared.captures.detach();
+        });
+        let out = tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok);
+        Ok(Response::new(Box::pin(out)))
     }
 }
 

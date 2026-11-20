@@ -14,6 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 scrim-proto.workspace = true
+scrim-toolproxy = { path = "../scrim-toolproxy" }
 arc-swap.workspace = true
 prost.workspace = true
 rustix = { workspace = true, features = ["process", "mm", "fs", "std"] }

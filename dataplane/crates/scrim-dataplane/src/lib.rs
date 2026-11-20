@@ -12,13 +12,17 @@
 //!
 //! - [`engine`]: redactor, guard, restorer and injector read the current
 //!   snapshot through [`engine::Engine`].
-//! - [`listeners`]: the base-URL, forward-proxy, transparent and tool-proxy
-//!   listeners, bound from the snapshot's listener list.
+//! - [`listeners`]: the listeners bound from the snapshot's listener list.
+//!   Tool-proxy and forward-proxy listeners serve `scrim-toolproxy`; its audit
+//!   events and captures reach the control plane through [`audit`] and
+//!   [`captures`]. Base-URL and transparent listeners are still to come.
 //!
 //! The process exits when the control plane's end of the socket closes, so a
 //! dead control plane never leaves a data plane serving traffic.
 
 pub mod asks;
+pub mod audit;
+pub mod captures;
 pub mod engine;
 pub mod events;
 pub mod harden;

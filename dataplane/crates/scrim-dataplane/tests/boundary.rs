@@ -20,7 +20,7 @@ type Served = JoinHandle<std::io::Result<()>>;
 
 async fn connect() -> (DataPlaneClient<Channel>, Arc<Shared>, Served) {
     let (ours, theirs) = UnixStream::pair().unwrap();
-    let shared = Arc::new(Shared::default());
+    let shared = Arc::new(Shared::new().unwrap());
     let server = tokio::spawn(scrim_dataplane::server::serve(
         theirs,
         Arc::clone(&shared),
@@ -190,4 +190,95 @@ async fn asks_round_trip_and_deny_on_disconnect() {
         )
         .await;
     assert!(!denied.allowed);
+}
+
+#[tokio::test]
+async fn tool_proxy_listener_ca_and_captures() {
+    let (mut c, shared, _server) = connect().await;
+    let mut snap = snapshot(1);
+    snap.listeners = vec![
+        v1::Listener {
+            name: "tools".into(),
+            kind: v1::ListenerKind::ToolProxy.into(),
+            address: "127.0.0.1:0".into(),
+        },
+        v1::Listener {
+            name: "llm".into(),
+            kind: v1::ListenerKind::BaseUrl.into(),
+            address: "127.0.0.1:0".into(),
+        },
+    ];
+    c.apply_snapshot(snap).await.unwrap();
+
+    let status = c
+        .status(v1::StatusRequest {
+            protocol: v1::PROTOCOL,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(
+        status
+            .ca_trust_bundle_pem
+            .starts_with("-----BEGIN CERTIFICATE-----")
+    );
+    let tools = status.listeners.iter().find(|l| l.name == "tools").unwrap();
+    assert!(tools.bound, "{tools:?}");
+    assert!(!tools.address.ends_with(":0"), "the bound port is reported");
+    let llm = status.listeners.iter().find(|l| l.name == "llm").unwrap();
+    assert!(!llm.bound && llm.error.contains("not implemented"));
+    assert!(
+        !status.ready,
+        "an unbound listener keeps the data plane not ready"
+    );
+    assert_eq!(status.tool_proxy.map(|t| t.snapshot_version), Some(1));
+
+    // A captured value goes to the control plane, which answers with the
+    // placeholder.
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    let mut captures = c
+        .captures(tokio_stream::wrappers::ReceiverStream::new(rx))
+        .await
+        .unwrap()
+        .into_inner();
+    let broker = Arc::clone(&shared.captures);
+    let pending = tokio::spawn(async move {
+        broker
+            .capture(
+                scrim_toolproxy::CaptureRequest {
+                    rule: "issued".into(),
+                    reference: "mem://captured#token".into(),
+                    destination: "https://api.example:443".into(),
+                    value: scrim_toolproxy::SecretValue::new("issued-by-a-fake-api"),
+                },
+                Duration::from_secs(5),
+            )
+            .await
+    });
+    let req = captures.message().await.unwrap().unwrap();
+    assert_eq!(req.value, b"issued-by-a-fake-api");
+    assert!(!format!("{req:?}").contains("issued-by-a-fake-api"));
+    tx.send(v1::CaptureResult {
+        protocol: v1::PROTOCOL,
+        id: req.id,
+        placeholder: "SCRIM_CAPTURED_TOKEN".into(),
+        error: String::new(),
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        pending.await.unwrap().ok().as_deref(),
+        Some("SCRIM_CAPTURED_TOKEN")
+    );
+
+    // Removing the listener stops it.
+    c.apply_snapshot(snapshot(2)).await.unwrap();
+    let status = c
+        .status(v1::StatusRequest {
+            protocol: v1::PROTOCOL,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(status.listeners.is_empty() && status.ready);
 }

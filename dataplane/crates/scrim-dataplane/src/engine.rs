@@ -10,20 +10,50 @@ use std::time::Duration;
 
 use arc_swap::ArcSwapOption;
 use scrim_proto::v1;
+use scrim_toolproxy::{BuildError, ToolProxy};
 
 use crate::asks::{Answer, Broker};
 use crate::events::Bus;
+use crate::listeners::Listeners;
 use crate::snapshot::Applied;
+use crate::{audit, captures};
 
 /// Shared state between the control-plane service and the traffic path.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Shared {
     /// The snapshot in force, swapped atomically on apply.
     pub snapshot: ArcSwapOption<Applied>,
     /// Outgoing events.
-    pub events: Bus,
+    pub events: Arc<Bus>,
     /// Outgoing asks.
     pub asks: Broker,
+    /// Outgoing captures.
+    pub captures: Arc<captures::Broker>,
+    /// The HTTPS tool proxy (task 10.2), fed by every snapshot.
+    pub tool_proxy: ToolProxy,
+    /// Bound listeners.
+    pub listeners: Listeners,
+}
+
+impl Shared {
+    /// Builds the shared state, with the tool proxy's audit and capture
+    /// sinks wired to the control plane.
+    pub fn new() -> Result<Self, BuildError> {
+        let events = Arc::new(Bus::default());
+        let captures = Arc::new(captures::Broker::default());
+        let tool_proxy = ToolProxy::builder()
+            .audit(Arc::new(audit::Sink(Arc::clone(&events))))
+            .capture_sink(Arc::new(captures::Sink(Arc::clone(&captures))))
+            .build()?;
+        Ok(Self {
+            snapshot: ArcSwapOption::empty(),
+            events,
+            asks: Broker::default(),
+            captures,
+            tool_proxy,
+            listeners: Listeners::default(),
+        })
+    }
 }
 
 /// A handle the traffic path uses. Cheap to clone.
