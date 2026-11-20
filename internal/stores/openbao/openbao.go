@@ -63,6 +63,8 @@ type Adapter struct {
 	// (Vault), so List stops trying it.
 	detailed atomicBool
 	jitter   func(time.Duration) time.Duration
+	// agents caches Kubernetes passthrough logins (agent.go).
+	agents agentLogins
 }
 
 // New builds an adapter for inst without contacting the store.
@@ -97,6 +99,7 @@ func (a *Adapter) Credentials() []secret.Value { return a.c.credentials() }
 
 // Close implements stores.Adapter.
 func (a *Adapter) Close() error {
+	a.agents.close()
 	a.c.close()
 	return nil
 }
