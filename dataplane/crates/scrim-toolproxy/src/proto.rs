@@ -1,5 +1,6 @@
 //! Building a [`Snapshot`] from the control plane's protobuf snapshot (`scrim-proto`).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use scrim_proto::v1;
@@ -31,6 +32,24 @@ impl Snapshot {
         }
         let mut builder = CredentialSet::builder();
         let mut redact: Vec<(SecretValue, Vec<u8>)> = Vec::new();
+        // Names and references of the bound entries. A value with no binding that shares one
+        // (a rotated value retained beside its current one, a second session token, a store's
+        // second own credential) can never be injected, so it is redacted only and adds no
+        // credential: two credentials of one name or reference would fail validation and the
+        // whole snapshot with them.
+        let credential_name = |e: &v1::ValueEntry| {
+            if e.name.is_empty() {
+                e.r#ref.clone()
+            } else {
+                e.name.clone()
+            }
+        };
+        let mut taken: HashSet<String> = snapshot
+            .values
+            .iter()
+            .filter(|e| !e.bound_hosts.is_empty() && e.class() != v1::ValueClass::Display)
+            .flat_map(|e| [credential_name(e), e.r#ref.clone()])
+            .collect();
         for entry in &snapshot.values {
             let value = SecretValue::new(entry.value.clone());
             let generated = placeholders_of(entry);
@@ -42,6 +61,14 @@ impl Snapshot {
             redact.push((value.clone(), shown.into_bytes()));
             if entry.class() == v1::ValueClass::Display {
                 continue;
+            }
+            if entry.bound_hosts.is_empty() {
+                let name = credential_name(entry);
+                let fresh_ref = name == entry.r#ref || taken.insert(entry.r#ref.clone());
+                let fresh_name = taken.insert(name);
+                if !(fresh_name && fresh_ref) {
+                    continue;
+                }
             }
             let binding = (!entry.bound_hosts.is_empty()).then(|| BindingSpec {
                 hosts: entry.bound_hosts.clone(),
@@ -55,11 +82,7 @@ impl Snapshot {
                 entry.inject_locations.clone()
             };
             let spec = CredentialSpec {
-                name: if entry.name.is_empty() {
-                    entry.r#ref.clone()
-                } else {
-                    entry.name.clone()
-                },
+                name: credential_name(entry),
                 reference: entry.r#ref.clone(),
                 placeholders: entry.declared_placeholders.clone(),
                 binding,
@@ -162,6 +185,58 @@ mod tests {
         r.find(b"x display-value-123 acme-value-123", &mut m)
             .unwrap();
         assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn unbound_values_sharing_a_name_are_redacted_only() {
+        // A rotated value retained next to its current one, and two values
+        // of the same store with no reference (session tokens, a store's own
+        // credentials), share a name and reference.
+        let s = snap(vec![
+            entry("bao://kv/acme#key", "acme", "acme-old-value-1", &[], &[]),
+            entry(
+                "bao://kv/acme#key",
+                "acme",
+                "acme-new-value-1",
+                &["api.acme.test"],
+                &["SCRIM_ACME_KEY"],
+            ),
+            entry("store:scrim-sessions", "", "session-token-one", &[], &[]),
+            entry("store:scrim-sessions", "", "session-token-two", &[], &[]),
+        ]);
+        let out = Snapshot::from_proto(&s, |e| {
+            vec![format!(
+                "⟦scrim:{}:{}⟧",
+                e.name,
+                e.value.len() + e.value[4] as usize
+            )]
+        })
+        .unwrap();
+        let creds = out.credentials.credentials();
+        assert_eq!(creds.len(), 2);
+        assert_eq!(creds[0].name, "acme");
+        assert!(creds[0].binding.is_some(), "the current value stays bound");
+        assert!(creds[0].value.is_some());
+        assert_eq!(creds[1].name, "store:scrim-sessions");
+        let mut m = Vec::new();
+        out.redactor
+            .unwrap()
+            .find(
+                b"acme-old-value-1 acme-new-value-1 session-token-one session-token-two",
+                &mut m,
+            )
+            .unwrap();
+        assert_eq!(m.len(), 4, "every value is still redacted");
+    }
+
+    #[test]
+    fn bound_values_sharing_a_name_fail() {
+        let s = snap(vec![
+            entry("env://A", "a", "value-a-12345", &["a.test"], &[]),
+            entry("env://B", "a", "value-b-12345", &["b.test"], &[]),
+        ]);
+        let e = Snapshot::from_proto(&s, |_| vec![]).err().unwrap();
+        assert!(matches!(e, ValidationError::DuplicateName(_)));
     }
 
     #[test]
