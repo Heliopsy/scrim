@@ -62,3 +62,17 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+
+  llm-latency-gate:
+    name: LLM proxy latency gate
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: dataplane
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - run: rustup show active-toolchain || rustup toolchain install
+      # Fails, naming the measurement, when a p99 exceeds crates/scrim-llm/benches/budget.json.
+      - run: cargo bench --locked -p scrim-llm --bench latency_gate
