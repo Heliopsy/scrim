@@ -152,6 +152,22 @@ restore:
 			t.Fatalf("alias = %v", a)
 		}
 	}
+	hosts := map[string]string{}
+	for _, rt := range s.GetRoutes() {
+		for _, h := range rt.GetHosts() {
+			hosts[h] = rt.GetName() + " " + rt.GetProvider() + " " + rt.GetUpstream()
+		}
+	}
+	for h, want := range map[string]string{
+		"api.anthropic.com": "anthropic anthropic https://api.anthropic.com",
+		"api.openai.com":    "openai openai https://api.openai.com",
+		"chatgpt.com":       "chatgpt openai https://chatgpt.com",
+		"ab.chatgpt.com":    "chatgpt-ab openai https://ab.chatgpt.com",
+	} {
+		if hosts[h] != want {
+			t.Fatalf("host %s routed to %q, want %q", h, hosts[h], want)
+		}
+	}
 	r := s.GetRoutes()[0]
 	if r.GetName() != "anthropic" || r.GetUpstream() != "https://api.anthropic.com" || r.GetPathPrefix() != "/anthropic" ||
 		r.GetChain().GetUrl() != "http://127.0.0.1:9000" || !r.GetChain().GetDirectOnUnavailable() {

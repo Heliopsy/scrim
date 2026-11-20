@@ -34,6 +34,8 @@ pub enum RefusalReason {
     /// The request gate ([`crate::RequestGate`]) refused it: a rule denied it, or an approval
     /// was denied or did not come in time.
     PolicyDenied,
+    /// A protocol upgrade (WebSocket): the upgraded stream cannot be redacted.
+    UpgradeUnsupported,
 }
 
 impl RefusalReason {
@@ -53,6 +55,7 @@ impl RefusalReason {
             Self::ChainUnavailable => "chain_unavailable",
             Self::UpstreamUnavailable => "upstream_unavailable",
             Self::PolicyDenied => "policy_denied",
+            Self::UpgradeUnsupported => "upgrade_unsupported",
         }
     }
 }

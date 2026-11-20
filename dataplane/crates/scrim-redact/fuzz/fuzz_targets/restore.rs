@@ -50,7 +50,7 @@ fuzz_target!(|data: &[u8]| {
             end += 1;
         }
         b.push(s.resolver(), &RestoreDisplay, &red[at..end], &mut chunked);
-        assert!(b.held_len() < MAX_PLACEHOLDER_LEN);
+        assert!(b.held_len() < MAX_PERCENT_PLACEHOLDER_LEN);
         at = end;
     }
     b.finish(&mut chunked);

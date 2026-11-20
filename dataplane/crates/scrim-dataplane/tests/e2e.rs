@@ -881,9 +881,20 @@ async fn secrets_never_reach_the_provider_and_credentials_reach_only_bound_hosts
         let v = String::from_utf8_lossy(rec.headers[name].as_bytes()).into_owned();
         s.assert_absent(name, &v);
     }
+    // Header values carry placeholders in percent form: visible ASCII, which the strict fake
+    // provider requires (it answers 400 to obs-text).
     let ctx = String::from_utf8_lossy(rec.headers["x-debug-context"].as_bytes()).into_owned();
     assert!(
-        ctx == format!("db=\"{}\"; key={}", s.db_ph, s.api_ph),
+        ctx == format!(
+            "db=\"{}\"; key={}",
+            rc::percent_form(&s.db_ph),
+            rc::percent_form(&s.api_ph)
+        ),
+        "{}",
+        s.scrub(&ctx)
+    );
+    assert!(
+        scrim_llm::testing::is_strict_field_value(ctx.as_bytes()),
         "{}",
         s.scrub(&ctx)
     );

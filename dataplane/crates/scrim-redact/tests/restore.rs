@@ -19,7 +19,7 @@ fn restore_chunks(s: &Snapshot, policy: &dyn RestorePolicy, chunks: &[&str]) -> 
     let mut out = String::new();
     for c in chunks {
         b.push(s.resolver(), policy, c, &mut out);
-        assert!(b.held_len() < MAX_PLACEHOLDER_LEN);
+        assert!(b.held_len() < MAX_PERCENT_PLACEHOLDER_LEN);
     }
     b.finish(&mut out);
     out
@@ -137,7 +137,7 @@ fn holdback_is_bounded() {
     let mut b = BlockRestorer::new();
     let mut out = String::new();
     b.push(s.resolver(), &RestoreDisplay, &long_prefix, &mut out);
-    assert!(b.held_len() < MAX_PLACEHOLDER_LEN);
+    assert!(b.held_len() < MAX_PERCENT_PLACEHOLDER_LEN);
     b.push(s.resolver(), &RestoreDisplay, "a", &mut out);
     // 49 slug characters cannot be a placeholder: released.
     assert_eq!(b.held_len(), 0);
@@ -233,4 +233,84 @@ fn next_placeholder_and_meta() {
         "api-token"
     );
     assert!(s.resolver().meta(EntryId(9)).is_none());
+}
+
+#[test]
+fn percent_form_resolves_and_restores_percent_encoded() {
+    let s = Snapshot::build(
+        vec![
+            Entry::new(
+                1,
+                RefSlug::new("note").unwrap(),
+                ValueClass::Display,
+                SecretValue::from_slice(b"a b/c&d=e"),
+            ),
+            Entry::new(
+                2,
+                RefSlug::new("api-token").unwrap(),
+                ValueClass::Credential,
+                SecretValue::from_slice(b"tok_credential_123456"),
+            ),
+        ],
+        keyring(),
+        &no_detectors(),
+    )
+    .unwrap();
+    let raw = ph(&s, b"a b/c&d=e");
+    let pct = percent_form(&raw);
+    assert!(pct.bytes().all(|b| b.is_ascii_graphic()), "{pct}");
+    assert!(pct.starts_with("%E2%9F%A6scrim:note:") && pct.ends_with("%E2%9F%A7"));
+    assert!(pct.len() <= MAX_PERCENT_PLACEHOLDER_LEN);
+    // Both forms, and lower-case bracket hex, name the same entry.
+    let lower = pct
+        .replace("%E2%9F%A6", "%e2%9f%a6")
+        .replace("%E2%9F%A7", "%e2%9f%a7");
+    for p in [&raw, &pct, &lower] {
+        let r = s.resolver().resolve(p.as_bytes()).expect("resolves");
+        assert_eq!(r.meta.slug.as_str(), "note");
+        assert_eq!(r.expose(), b"a b/c&d=e");
+    }
+    // A tampered percent placeholder does not.
+    assert!(
+        s.resolver()
+            .resolve(pct.replace("note", "nope").as_bytes())
+            .is_none()
+    );
+
+    let text = format!("GET /x?q={pct}&r=1");
+    assert_eq!(
+        next_placeholder(text.as_bytes()),
+        Some(PlaceholderAt::Complete {
+            start: 9,
+            end: 9 + pct.len()
+        })
+    );
+    for cut in 10..9 + pct.len() {
+        assert_eq!(
+            next_placeholder(&text.as_bytes()[..cut]),
+            Some(PlaceholderAt::Partial { start: 9 }),
+            "cut {cut}"
+        );
+    }
+    assert_eq!(find_placeholders(text.as_bytes()).count(), 1);
+
+    // Restored percent-encoded, at every split, and the stream holds back no more than the
+    // longest percent form.
+    let want = "GET /x?q=a%20b%2Fc%26d%3De&r=1";
+    for i in 0..=text.len() {
+        let back = restore_chunks(&s, &RestoreDisplay, &[&text[..i], &text[i..]]);
+        assert_eq!(back, want, "split at {i}");
+    }
+    let mut sub = Vec::new();
+    assert_eq!(
+        s.resolver()
+            .substitute_into(text.as_bytes(), &mut sub, &|_| true),
+        1
+    );
+    assert_eq!(sub, want.as_bytes());
+
+    // A credential in percent form is kept, as in raw form.
+    let cred = percent_form(&ph(&s, b"tok_credential_123456"));
+    let t = format!("k={cred}");
+    assert_eq!(restore_chunks(&s, &RestoreDisplay, &[&t]), t);
 }

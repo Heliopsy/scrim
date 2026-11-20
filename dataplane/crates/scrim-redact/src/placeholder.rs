@@ -11,6 +11,13 @@
 //! The longest placeholder is [`MAX_PLACEHOLDER_LEN`] bytes. Nothing in it needs escaping in JSON
 //! strings, shell words (quoted or not), YAML plain scalars, Markdown or source-code string
 //! literals, and it contains no whitespace, so tokenisers and compressors keep it whole.
+//!
+//! Percent form (ASCII): `%E2%9F%A6scrim:<slug>:<vv><tag>%E2%9F%A7`, the same placeholder with
+//! its two brackets percent-encoded (hex digits of the brackets in either case). It is what an
+//! HTTP request target or header value carries, since those are visible ASCII. It names the same
+//! entry, so everything that parses placeholders here accepts both forms; where a percent-form
+//! placeholder is replaced by its value, the value is percent-encoded too. The longest one is
+//! [`MAX_PERCENT_PLACEHOLDER_LEN`] bytes.
 
 use std::fmt;
 
@@ -27,6 +34,14 @@ pub(crate) const OPEN: &[u8] = "\u{27e6}scrim:".as_bytes();
 pub(crate) const CLOSE: &[u8] = "\u{27e7}".as_bytes();
 /// First byte of `⟦`, used to find candidate placeholders quickly.
 pub(crate) const LEAD: u8 = 0xE2;
+/// `%E2%9F%A6scrim:`, the opening of the percent form.
+const PCT_OPEN: &[u8] = b"%E2%9F%A6scrim:";
+/// `%E2%9F%A7`, the closing of the percent form.
+const PCT_CLOSE: &[u8] = b"%E2%9F%A7";
+/// First byte of the percent form.
+pub(crate) const PCT_LEAD: u8 = b'%';
+/// Leading bytes of each delimiter whose hex digits may be in either case.
+const PCT_FOLD: usize = 9;
 /// Hex digits after the slug separator: 2 for the version, 16 for the tag.
 pub(crate) const CODE_LEN: usize = 18;
 const TAG_BYTES: usize = 8;
@@ -37,6 +52,10 @@ const HEX: &[u8; 16] = b"0123456789abcdef";
 pub const MAX_PLACEHOLDER_LEN: usize = OPEN.len() + RefSlug::MAX_LEN + 1 + CODE_LEN + CLOSE.len();
 /// Length in bytes of the shortest possible placeholder (one-byte slug).
 pub const MIN_PLACEHOLDER_LEN: usize = OPEN.len() + 1 + 1 + CODE_LEN + CLOSE.len();
+/// Length in bytes of the longest possible placeholder in percent form. Streaming callers that
+/// accept both forms hold back at most this many bytes minus one.
+pub const MAX_PERCENT_PLACEHOLDER_LEN: usize =
+    PCT_OPEN.len() + RefSlug::MAX_LEN + 1 + CODE_LEN + PCT_CLOSE.len();
 
 /// One version of the placeholder key. The key bytes are wiped on drop and never printed.
 pub struct PlaceholderKey {
@@ -126,6 +145,26 @@ impl Keyring {
     }
 }
 
+/// Appends `value` percent-encoded (every byte but RFC 3986 unreserved characters): what a
+/// percent-form placeholder is replaced with.
+pub(crate) fn percent_encode_into(out: &mut Vec<u8>, value: &[u8]) {
+    const UPPER: &[u8; 16] = b"0123456789ABCDEF";
+    for &b in value {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b);
+        } else {
+            out.extend_from_slice(&[b'%', UPPER[usize::from(b >> 4)], UPPER[usize::from(b & 15)]]);
+        }
+    }
+}
+
+/// The percent form of a placeholder: its brackets percent-encoded, everything else as is.
+pub fn percent_form(placeholder: &str) -> String {
+    placeholder
+        .replace('\u{27e6}', "%E2%9F%A6")
+        .replace('\u{27e7}', "%E2%9F%A7")
+}
+
 /// Writes the placeholder for `value` under `slug` with `key` into `out`.
 pub(crate) fn write_placeholder(
     out: &mut Vec<u8>,
@@ -169,6 +208,8 @@ pub struct ParsedPlaceholder<'a> {
     pub version: u8,
     /// Truncated HMAC tag.
     pub tag: [u8; TAG_BYTES],
+    /// `true` for the percent form (`%E2%9F%A6...%E2%9F%A7`).
+    pub percent: bool,
 }
 
 /// Result of parsing at a position.
@@ -190,18 +231,36 @@ fn hex_val(c: u8) -> Option<u8> {
     }
 }
 
-/// Parses a placeholder starting at `b[0]`.
+/// Matches delimiter `pat` at the start of `b`; the first `fold` bytes compare ASCII
+/// case-insensitively. `None` when it does not match, `Some(false)` when `b` ends inside it.
+fn delim(b: &[u8], pat: &[u8], fold: usize) -> Option<bool> {
+    let n = b.len().min(pat.len());
+    let ok = b[..n].iter().zip(pat).enumerate().all(|(i, (&x, &p))| {
+        if i < fold {
+            x.to_ascii_uppercase() == p
+        } else {
+            x == p
+        }
+    });
+    ok.then_some(n == pat.len())
+}
+
+/// Parses a placeholder, in either form, starting at `b[0]`.
 pub(crate) fn parse(b: &[u8]) -> Parse<'_> {
+    let percent = b.first() == Some(&PCT_LEAD);
+    let (open, close, fold) = if percent {
+        (PCT_OPEN, PCT_CLOSE, PCT_FOLD)
+    } else {
+        (OPEN, CLOSE, 0)
+    };
     // Opening delimiter and `scrim:`.
-    let n = b.len().min(OPEN.len());
-    if b[..n] != OPEN[..n] {
-        return Parse::Invalid;
-    }
-    if b.len() < OPEN.len() {
-        return Parse::Prefix;
+    match delim(b, open, fold) {
+        None => return Parse::Invalid,
+        Some(false) => return Parse::Prefix,
+        Some(true) => {}
     }
     // Slug up to ':'.
-    let mut i = OPEN.len();
+    let mut i = open.len();
     let slug_start = i;
     while i < b.len() && i - slug_start <= RefSlug::MAX_LEN && is_slug_byte(b[i]) {
         i += 1;
@@ -231,13 +290,10 @@ pub(crate) fn parse(b: &[u8]) -> Parse<'_> {
         i += 1;
     }
     // Closing delimiter.
-    let rest = &b[i..];
-    let n = rest.len().min(CLOSE.len());
-    if rest[..n] != CLOSE[..n] {
-        return Parse::Invalid;
-    }
-    if rest.len() < CLOSE.len() {
-        return Parse::Prefix;
+    match delim(&b[i..], close, fold) {
+        None => return Parse::Invalid,
+        Some(false) => return Parse::Prefix,
+        Some(true) => {}
     }
     let version = (code[0] << 4) | code[1];
     if version == 0 {
@@ -248,18 +304,19 @@ pub(crate) fn parse(b: &[u8]) -> Parse<'_> {
         *t = (code[2 + 2 * k] << 4) | code[3 + 2 * k];
     }
     Parse::Complete(ParsedPlaceholder {
-        len: i + CLOSE.len(),
+        len: i + close.len(),
         slug,
         version,
         tag,
+        percent,
     })
 }
 
-/// Finds every syntactically valid placeholder in `b`, in order, without overlaps.
+/// Finds every syntactically valid placeholder in `b`, either form, in order, without overlaps.
 pub fn find_placeholders(b: &[u8]) -> impl Iterator<Item = (usize, ParsedPlaceholder<'_>)> {
     let mut pos = 0;
     std::iter::from_fn(move || {
-        while let Some(off) = memchr::memchr(LEAD, &b[pos..]) {
+        while let Some(off) = memchr::memchr2(LEAD, PCT_LEAD, &b[pos..]) {
             let at = pos + off;
             if let Parse::Complete(p) = parse(&b[at..]) {
                 pos = at + p.len;
@@ -289,11 +346,12 @@ pub enum PlaceholderAt {
     },
 }
 
-/// The first complete placeholder in `b`, or the trailing bytes that could still become one,
-/// whichever comes first. For streaming callers that keep their own holdback.
+/// The first complete placeholder in `b` (either form), or the trailing bytes that could still
+/// become one, whichever comes first. For streaming callers that keep their own holdback of up
+/// to [`MAX_PERCENT_PLACEHOLDER_LEN`]` - 1` bytes.
 pub fn next_placeholder(b: &[u8]) -> Option<PlaceholderAt> {
     let mut i = 0;
-    while let Some(off) = memchr::memchr(LEAD, &b[i..]) {
+    while let Some(off) = memchr::memchr2(LEAD, PCT_LEAD, &b[i..]) {
         let at = i + off;
         match parse(&b[at..]) {
             Parse::Complete(p) => {
@@ -390,6 +448,43 @@ mod tests {
         assert_eq!(parse("\u{27e6}scrim:a:0g".as_bytes()), Parse::Invalid);
         let too_long = format!("\u{27e6}scrim:{}", "a".repeat(RefSlug::MAX_LEN + 1));
         assert_eq!(parse(too_long.as_bytes()), Parse::Invalid);
+    }
+
+    #[test]
+    fn percent_form_parses() {
+        let p = placeholder_for(&key(3), &RefSlug::new("k-1").unwrap(), b"some value here");
+        let pct = percent_form(&p);
+        assert_eq!(pct.len(), p.len() + 12);
+        assert!(pct.is_ascii());
+        match parse(pct.as_bytes()) {
+            Parse::Complete(x) => {
+                assert!(x.percent && x.len == pct.len() && x.version == 3 && x.slug == b"k-1");
+                let Parse::Complete(r) = parse(p.as_bytes()) else {
+                    panic!("raw form")
+                };
+                assert!(!r.percent);
+                assert_eq!((r.tag, r.version, r.slug), (x.tag, x.version, x.slug));
+            }
+            other => panic!("{other:?}"),
+        }
+        let b = pct.as_bytes();
+        for cut in 1..b.len() {
+            assert_eq!(parse(&b[..cut]), Parse::Prefix, "cut {cut}");
+        }
+        // Only the bracket hex folds case; `scrim` and the code do not.
+        let lower = pct.to_ascii_lowercase();
+        assert!(matches!(parse(lower.as_bytes()), Parse::Complete(_)));
+        let upper = pct.replace("scrim", "SCRIM");
+        assert_eq!(parse(upper.as_bytes()), Parse::Invalid);
+        assert_eq!(parse(b"%E2%9F%A6scrim:k-1:"), Parse::Prefix);
+        assert_eq!(parse(b"%41"), Parse::Invalid);
+        assert_eq!(parse(b"%E2%9F%A7"), Parse::Invalid);
+        // Mixed forms are not a placeholder.
+        let mixed = format!("{}{}", &pct[..pct.len() - 9], "\u{27e7}");
+        assert_eq!(parse(mixed.as_bytes()), Parse::Invalid);
+        let long = "a".repeat(RefSlug::MAX_LEN);
+        let p = placeholder_for(&key(9), &RefSlug::new(&long).unwrap(), b"x");
+        assert_eq!(percent_form(&p).len(), MAX_PERCENT_PLACEHOLDER_LEN);
     }
 
     #[test]

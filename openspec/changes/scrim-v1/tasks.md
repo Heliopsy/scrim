@@ -35,6 +35,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [ ] 3.5 Upstream chaining through caveman with redaction first; verify: caveman's store holds placeholders only, and placeholders survive compression in an end-to-end run
 - [x] 3.6 Latency budget gate; verify: CI fails when p99 per request or per chunk exceeds the configured budget on the reference fixtures
 - [x] 3.7 Request target and headers redacted and guarded like the body, only `authorization` and `x-api-key` passed through; verify: the leak gate's `header` and `query` rows are redacted for every transform the guard decodes, and an end-to-end request with secrets in a custom header and a percent-encoded query parameter reaches the fake provider with placeholders only
+- [x] 3.8 Placeholders in header values leave in percent form (`%E2%9F%A6...%E2%9F%A7`), which resolves, restores percent-encoded and is read by the guard; verify: a header redacted or guard-repaired holds only visible ASCII and a fake provider that rejects obs-text accepts it
+- [x] 3.9 WebSocket and other protocol upgrades refused with 501 `upgrade_unsupported` before anything else; verify: a handshake by base URL or through the forward proxy is refused in under 100 ms and the fake provider receives nothing
 
 ## 4. Configuration
 
@@ -141,6 +143,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 - [ ] 13.1 systemd unit and Quadlet with a dedicated user, `scrim install` and `scrim uninstall`; verify: uninstall leaves no trace in a VM test
 - [x] 13.2 Forward proxy listener; verify: an agent with HTTPS_PROXY set is redacted
+- [x] 13.2a `chatgpt.com` and `ab.chatgpt.com` routed to the LLM proxy (Responses codec for `/responses`, generic JSON elsewhere); verify: CONNECT to either through the forward proxy reaches the fake provider with placeholders only
 - [ ] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
 - [ ] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
 - [ ] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
