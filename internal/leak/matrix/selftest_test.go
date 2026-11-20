@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/heliopsy/scrim/internal/leak"
@@ -35,6 +36,36 @@ func newHarness(t *testing.T, proxy func(*url.URL) *httptest.Server) *harness {
 	}}
 }
 
+// runSharded runs the matrix on several independent harnesses at once. Each
+// harness has its own fake provider and proxy, so captures never mix.
+func runSharded(t *testing.T, proxy func(*url.URL) *httptest.Server, seeds []leak.Seed) []matrix.Result {
+	t.Helper()
+	rows := matrix.Rows()
+	const shards = 8
+	out := make([][]matrix.Result, shards)
+	var wg sync.WaitGroup
+	for i := range shards {
+		h := newHarness(t, proxy)
+		var part []matrix.Row
+		for j := i; j < len(rows); j += shards {
+			part = append(part, rows[j])
+		}
+		wg.Go(func() {
+			res, err := h.runner.Run(context.Background(), part, seeds)
+			if err != nil {
+				t.Error(err)
+			}
+			out[i] = res
+		})
+	}
+	wg.Wait()
+	var all []matrix.Result
+	for _, r := range out {
+		all = append(all, r...)
+	}
+	return all
+}
+
 func isTruncation(id string) bool {
 	return strings.HasPrefix(id, "truncated-") || id == "sql-substring"
 }
@@ -50,12 +81,8 @@ func fragmentTooShort(s leak.Seed) bool {
 // for every seed: this proves the checker sees every transform and placement
 // in the catalogue.
 func TestPassThroughLeaksEverything(t *testing.T) {
-	h := newHarness(t, func(u *url.URL) *httptest.Server { return httptest.NewServer(stub.PassThrough(u)) })
 	seeds := leak.GenerateSet()
-	results, err := h.runner.Run(context.Background(), matrix.Rows(), seeds)
-	if err != nil {
-		t.Fatal(err)
-	}
+	results := runSharded(t, func(u *url.URL) *httptest.Server { return httptest.NewServer(stub.PassThrough(u)) }, seeds)
 	for _, r := range results {
 		if r.Outcome == matrix.OutcomeError {
 			t.Errorf("%s", r.Describe())
@@ -88,11 +115,7 @@ func TestPassThroughLeaksEverything(t *testing.T) {
 // The suite must see it redact the verbatim rows and report everything else.
 func TestNaiveRedactorPattern(t *testing.T) {
 	seeds := leak.GenerateSet()
-	h := newHarness(t, func(u *url.URL) *httptest.Server { return httptest.NewServer(stub.Naive(u, seeds)) })
-	results, err := h.runner.Run(context.Background(), matrix.Rows(), seeds)
-	if err != nil {
-		t.Fatal(err)
-	}
+	results := runSharded(t, func(u *url.URL) *httptest.Server { return httptest.NewServer(stub.Naive(u, seeds)) }, seeds)
 	get := func(row, kind string) matrix.Result {
 		for _, r := range results {
 			if r.Row == row && string(r.Seed.Kind) == kind {

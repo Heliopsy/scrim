@@ -387,21 +387,38 @@ func (c *Checker) views(cp Capture) []view {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber()
 	if err := dec.Decode(&doc); err == nil {
-		var all []string
-		walkJSON(doc, "", 0, func(path, s string) {
+		var all, content []string
+		walkJSON(doc, "", "", 0, func(path, key, s string, isKey bool) {
 			vs = append(vs, view{loc: "body:" + path, enc: "json", text: s})
+			if isKey {
+				return
+			}
 			all = append(all, s)
+			if contentKeys[key] {
+				content = append(content, s)
+			}
 		})
-		// Joined strings catch a value split across fields or messages.
-		vs = append(vs, view{loc: "body:<all strings joined>", enc: "json>joined", text: strings.Join(all, ""), final: true})
+		// Joined strings catch a value split across fields, blocks or
+		// messages: every string value in order, and the message content
+		// strings alone, which brings halves in separate tool results
+		// together.
+		vs = append(vs,
+			view{loc: "body:<all strings joined>", enc: "json>joined", text: strings.Join(all, ""), final: true},
+			view{loc: "body:<content joined>", enc: "json>content-joined", text: strings.Join(content, "")},
+		)
 		raw.final = true
 	}
 	return append(vs, raw)
 }
 
-// walkJSON calls fn for every string in v, keys included. Strings that are
-// themselves JSON documents (tool call arguments) are walked too.
-func walkJSON(v any, path string, depth int, fn func(path, s string)) {
+// contentKeys are the JSON keys that hold message content in the supported
+// provider APIs.
+var contentKeys = map[string]bool{"content": true, "text": true, "output": true, "data": true, "input": true}
+
+// walkJSON calls fn for every string in v, keys included, with the key the
+// string sits under. Strings that are themselves JSON documents (tool call
+// arguments) are walked too.
+func walkJSON(v any, path, key string, depth int, fn func(path, key, s string, isKey bool)) {
 	switch t := v.(type) {
 	case map[string]any:
 		keys := make([]string, 0, len(t))
@@ -414,26 +431,26 @@ func walkJSON(v any, path string, depth int, fn func(path, s string)) {
 			if path == "" {
 				p = k
 			}
-			fn(p+"<key>", k)
-			walkJSON(t[k], p, depth, fn)
+			fn(p+"<key>", k, k, true)
+			walkJSON(t[k], p, k, depth, fn)
 		}
 	case []any:
 		for i, e := range t {
-			walkJSON(e, path+"["+strconv.Itoa(i)+"]", depth, fn)
+			walkJSON(e, path+"["+strconv.Itoa(i)+"]", key, depth, fn)
 		}
 	case string:
-		fn(path, t)
+		fn(path, key, t, false)
 		if depth < 2 {
 			s := strings.TrimSpace(t)
 			if len(s) > 1 && (s[0] == '{' || s[0] == '[') {
 				var inner any
 				if json.Unmarshal([]byte(s), &inner) == nil {
-					walkJSON(inner, path+"<json>", depth+1, fn)
+					walkJSON(inner, path+"<json>", key, depth+1, fn)
 				}
 			}
 		}
 	case json.Number:
-		fn(path, t.String())
+		fn(path, key, t.String(), false)
 	}
 }
 
@@ -491,12 +508,12 @@ func (c *Checker) collapse(seq int, hits []hit) []Finding {
 	encs := map[key]map[string]bool{}
 	specific := map[int]bool{}
 	for _, h := range hits {
-		if strings.HasPrefix(h.loc, "body:") && h.loc != "body:<all strings joined>" {
+		if strings.HasPrefix(h.loc, "body:") && !strings.HasPrefix(h.loc, "body:<") {
 			specific[h.seed] = true
 		}
 	}
 	for _, h := range hits {
-		if specific[h.seed] && (h.loc == "body" || h.loc == "body:<all strings joined>") {
+		if specific[h.seed] && (h.loc == "body" || strings.HasPrefix(h.loc, "body:<")) {
 			continue
 		}
 		k := key{h.seed, h.loc}

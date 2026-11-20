@@ -5,6 +5,7 @@ package matrix
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -156,6 +157,11 @@ func (r *Runner) RunRow(ctx context.Context, row Row, seed leak.Seed) Result {
 			placeholder = true
 		}
 	}
+	// A value split across requests (server-side conversation state) is
+	// only visible with the requests side by side.
+	if len(res.Findings) == 0 && len(ex) > 1 {
+		res.Findings = append(res.Findings, checker.Check(merged(ex))...)
+	}
 	switch {
 	case len(res.Findings) > 0:
 		res.Outcome = OutcomeLeaked
@@ -171,6 +177,25 @@ func (r *Runner) RunRow(ctx context.Context, row Row, seed leak.Seed) Result {
 	}
 	res.Pass = row.Expect.Accepts(res.Outcome)
 	return res
+}
+
+// merged joins the bodies of several exchanges into one JSON array.
+func merged(ex []fp.Exchange) leak.Capture {
+	var b bytes.Buffer
+	b.WriteByte('[')
+	for i, e := range ex {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		if json.Valid(e.Body) {
+			b.Write(e.Body)
+		} else {
+			q, _ := json.Marshal(string(e.Body))
+			b.Write(q)
+		}
+	}
+	b.WriteByte(']')
+	return leak.Capture{Seq: 0, Body: b.Bytes()}
 }
 
 func headerMatch(re *regexp.Regexp, h http.Header) bool {

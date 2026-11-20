@@ -38,6 +38,7 @@ const minDecoded = 6
 const maxDecodedPerView = 4096
 
 var decoders = []decoder{
+	{"hexdump", decodeHexDump},
 	{"base64", decodeBase64Runs},
 	{"base32", decodeBase32Runs},
 	{"hex", decodeHexRuns},
@@ -77,18 +78,29 @@ func keep(out []decoded, enc string, b []byte) []decoded {
 		out = append(out, decoded{enc: enc, text: string(b)})
 	}
 	// Compressed payloads are decompressed in place, so gzip+base64 and
-	// zlib+base64 are one decoding step for the caller.
-	if len(b) > 2 && b[0] == 0x1f && b[1] == 0x8b {
-		if zr, err := gzip.NewReader(bytes.NewReader(b)); err == nil {
+	// zlib+base64 are one decoding step for the caller. The header is looked
+	// for near the start, because a run decoded with a few bytes of
+	// surrounding text in front starts with noise.
+	for off := 0; ; {
+		i := bytes.Index(b[off:], []byte{0x1f, 0x8b, 0x08})
+		if i < 0 {
+			break
+		}
+		if zr, err := gzip.NewReader(bytes.NewReader(b[off+i:])); err == nil {
 			if u, _ := io.ReadAll(io.LimitReader(zr, 1<<20)); len(u) >= minDecoded {
 				out = append(out, decoded{enc: enc + ">gzip", text: string(u)})
+				break
 			}
 		}
+		off += i + 1
 	}
-	if len(b) > 2 && b[0] == 0x78 && (b[1] == 0x01 || b[1] == 0x5e || b[1] == 0x9c || b[1] == 0xda) {
-		if zr, err := zlib.NewReader(bytes.NewReader(b)); err == nil {
-			if u, _ := io.ReadAll(io.LimitReader(zr, 1<<20)); len(u) >= minDecoded {
-				out = append(out, decoded{enc: enc + ">zlib", text: string(u)})
+	head := b[:min(len(b), 64)]
+	for i := 0; i+1 < len(head); i++ {
+		if b[i] == 0x78 && (b[i+1] == 0x01 || b[i+1] == 0x5e || b[i+1] == 0x9c || b[i+1] == 0xda) {
+			if zr, err := zlib.NewReader(bytes.NewReader(b[i:])); err == nil {
+				if u, _ := io.ReadAll(io.LimitReader(zr, 1<<20)); len(u) >= minDecoded {
+					out = append(out, decoded{enc: enc + ">zlib", text: string(u)})
+				}
 			}
 		}
 	}
@@ -168,8 +180,13 @@ var b32std = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 func decodeBase32Runs(s string) []decoded {
 	var out []decoded
+	var pieces []string
 	for _, r := range runs(s, 16, isB32, isSpace) {
-		r = strings.ToUpper(strings.TrimRight(r, "="))
+		// Padding ends a base32 string; whatever follows is another one.
+		pieces = append(pieces, strings.FieldsFunc(r, func(c rune) bool { return c == '=' })...)
+	}
+	for _, r := range pieces {
+		r = strings.ToUpper(r)
 		for off := range 8 {
 			if off >= len(r) {
 				break
@@ -200,6 +217,54 @@ func decodeBase32Runs(s string) []decoded {
 
 func isHexRunByte(c byte) bool {
 	return isHex(c) || c == ' ' || c == '\t' || c == '\n' || c == ':' || c == ',' || c == '.' || c == '-' || c == '\'' || c == 'x' || c == 'X' || c == '\\' || c == '%' || c == 'u'
+}
+
+// decodeHexDump reads the canonical dump formats of xxd, hexdump -C and od
+// -A x -t x1z: an offset column, hex bytes, and an optional printable column.
+// It returns the bytes from the hex columns and, separately, the printable
+// columns joined, since either alone recovers the value.
+func decodeHexDump(s string) []decoded {
+	var hexBytes, ascii strings.Builder
+	lines := 0
+	for _, line := range strings.Split(s, "\n") {
+		off, rest, ok := strings.Cut(line, " ")
+		off = strings.TrimSuffix(off, ":")
+		if !ok || len(off) < 6 || !allHex(off) {
+			continue
+		}
+		rest = strings.TrimLeft(rest, " ")
+		cols := rest
+		text := ""
+		if i := strings.Index(rest, "|"); i >= 0 {
+			cols, text = rest[:i], strings.TrimSuffix(rest[i+1:], "|")
+		} else if i := strings.Index(rest, "  "); i >= 0 {
+			// xxd: hex groups, two spaces, then the printable column.
+			cols, text = rest[:i], strings.TrimLeft(rest[i:], " ")
+		}
+		var digits strings.Builder
+		for _, f := range strings.Fields(cols) {
+			if !allHex(f) || len(f)%2 != 0 {
+				break
+			}
+			digits.WriteString(f)
+		}
+		b, err := hex.DecodeString(digits.String())
+		if err != nil || len(b) == 0 {
+			continue
+		}
+		lines++
+		hexBytes.Write(b)
+		// The printable column shows exactly the line's bytes; keep it only
+		// when it has that length, so trailing text is not mistaken for it.
+		if len(text) >= len(b) {
+			ascii.WriteString(text[:len(b)])
+		}
+	}
+	if lines == 0 {
+		return nil
+	}
+	out := keep(nil, "hexdump", []byte(hexBytes.String()))
+	return keep(out, "hexdump-text", []byte(ascii.String()))
 }
 
 func decodeHexRuns(s string) []decoded {
