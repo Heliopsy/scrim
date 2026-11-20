@@ -147,12 +147,12 @@ func TestSystemDryRunShowsEveryChange(t *testing.T) {
 			t.Errorf("dry run lacks %q:\n%s", w, out)
 		}
 	}
-	if !maps(before, treeOf(t, f.root)) || len(f.runner.calls) > 0 {
+	if !sameTree(before, treeOf(t, f.root)) || len(f.runner.calls) > 0 {
 		t.Errorf("dry run changed something: calls %q", f.runner.calls)
 	}
 }
 
-func maps(a, b map[string]string) bool {
+func sameTree(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
 	}

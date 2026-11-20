@@ -2771,9 +2771,19 @@ type AskCaller struct {
 	// bound to this one ask and reveals neither the token nor v, so it is not
 	// a secret field. Empty when the request named a session without its
 	// token: such a caller is not verified and is evaluated as unknown.
-	SessionProof  []byte `protobuf:"bytes,6,opt,name=session_proof,json=sessionProof,proto3" json:"session_proof,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	SessionProof []byte `protobuf:"bytes,6,opt,name=session_proof,json=sessionProof,proto3" json:"session_proof,omitempty"`
+	// kubernetes_token is the projected Kubernetes service account token the
+	// request carried instead of a session (design D14, "Kubernetes service
+	// account tokens"): the password of `Proxy-Authorization: Basic k8s:<token>`
+	// on the forward proxy, or a JWT as the value of `x-scrim-session` on a
+	// base-URL listener. The control plane must see the token itself to verify
+	// it (TokenReview), so unlike a session token it travels in the ask. It is
+	// a secret field: redacted in Debug and zeroed on drop in scrim-proto,
+	// wiped by the control plane after verification, never logged and never
+	// forwarded. Empty when the request carried no such token.
+	KubernetesToken []byte `protobuf:"bytes,7,opt,name=kubernetes_token,json=kubernetesToken,proto3" json:"kubernetes_token,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *AskCaller) Reset() {
@@ -2844,6 +2854,13 @@ func (x *AskCaller) GetPeerPid() int32 {
 func (x *AskCaller) GetSessionProof() []byte {
 	if x != nil {
 		return x.SessionProof
+	}
+	return nil
+}
+
+func (x *AskCaller) GetKubernetesToken() []byte {
+	if x != nil {
+		return x.KubernetesToken
 	}
 	return nil
 }
@@ -3998,7 +4015,7 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x04rule\x18\x04 \x01(\tR\x04rule\x12\x16\n" +
 	"\x06reason\x18\x05 \x01(\tR\x06reason\x12,\n" +
 	"\x12deadline_unix_nano\x18\x06 \x01(\x03R\x10deadlineUnixNano\x125\n" +
-	"\x06caller\x18\a \x01(\v2\x1d.scrim.dataplane.v1.AskCallerR\x06caller\"\xbd\x01\n" +
+	"\x06caller\x18\a \x01(\v2\x1d.scrim.dataplane.v1.AskCallerR\x06caller\"\xe8\x01\n" +
 	"\tAskCaller\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -4006,7 +4023,8 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\bpeer_uid\x18\x03 \x01(\rR\apeerUid\x12\x19\n" +
 	"\bpeer_gid\x18\x04 \x01(\rR\apeerGid\x12\x19\n" +
 	"\bpeer_pid\x18\x05 \x01(\x05R\apeerPid\x12#\n" +
-	"\rsession_proof\x18\x06 \x01(\fR\fsessionProof\"\xd5\x01\n" +
+	"\rsession_proof\x18\x06 \x01(\fR\fsessionProof\x12)\n" +
+	"\x10kubernetes_token\x18\a \x01(\fR\x0fkubernetesToken\"\xd5\x01\n" +
 	"\tAskAnswer\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\x04R\x02id\x122\n" +

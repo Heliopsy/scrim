@@ -7,11 +7,14 @@
 package agentapi
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/identity"
+	"github.com/heliopsy/scrim/internal/identity/kube"
 )
 
 // Settings owned by the agent tools. They are read when the agent API starts,
@@ -122,4 +125,88 @@ func parseMode(s string) (uint32, error) {
 		return 0, fmt.Errorf("must be octal permission bits such as 0600, got %q", s)
 	}
 	return uint32(n), nil
+}
+
+// Kubernetes service account identity (specs/agent-identity "Kubernetes
+// service account identity"). Read when the agent API starts.
+var (
+	KubeEnabled = config.Register(config.Spec[bool]{
+		Key: "identity.kubernetes.enabled",
+		Description: "Identify in-cluster callers by projected service account tokens, verified with the TokenReview API. " +
+			"Pods send the token as the password of the proxy user k8s or as the value of x-scrim-session. On in the k8s profile.",
+		Profiles:        map[string]bool{"k8s": true},
+		RestartRequired: true,
+	})
+	KubeAudience = config.Register(config.Spec[string]{
+		Key:             "identity.kubernetes.audience",
+		Default:         kube.DefaultAudience,
+		Description:     "Audience an agent's projected service account token must carry. Tokens for any other audience, such as a pod's default API token, are refused.",
+		Validate:        nonEmpty,
+		RestartRequired: true,
+	})
+	KubeAPIServer = config.Register(config.Spec[string]{
+		Key:             "identity.kubernetes.api-server",
+		Description:     "Base URL of the Kubernetes API server for TokenReview. Empty uses the in-cluster address (KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT).",
+		RestartRequired: true,
+	})
+	KubeCAFile = config.Register(config.Spec[string]{
+		Key:             "identity.kubernetes.ca-file",
+		Default:         kube.DefaultCAFile,
+		Description:     "CA bundle that verifies the API server.",
+		RestartRequired: true,
+	})
+	KubeTokenFile = config.Register(config.Spec[string]{
+		Key:     "identity.kubernetes.token-file",
+		Default: kube.DefaultTokenFile,
+		Description: "scrim's own service account token, which authorises TokenReview calls (RBAC: create tokenreviews, " +
+			"for example by binding system:auth-delegator). Re-read on every call, since the kubelet rotates it.",
+		RestartRequired: true,
+	})
+	KubeCacheTTL = config.Register(config.Spec[time.Duration]{
+		Key:             "identity.kubernetes.cache-ttl",
+		Default:         time.Minute,
+		Description:     "How long a verified token is trusted before the cluster is asked again, capped at the token's expiry. A deleted pod or service account is refused within this bound.",
+		Validate:        positive,
+		RestartRequired: true,
+	})
+	KubeAgents = config.Register(config.Spec[map[string]string]{
+		Key: "identity.kubernetes.agents",
+		Description: "Agents by service account: agent name to space-separated selectors sa:NAMESPACE/NAME (globs allowed), scope:SCOPE, label:K=V. " +
+			"A service account no rule maps is the agent NAMESPACE/NAME, or unknown with identity.kubernetes.unmapped: unknown.",
+		RestartRequired: true,
+	})
+	KubeUnmapped = config.Register(config.Spec[string]{
+		Key:             "identity.kubernetes.unmapped",
+		Default:         identity.UnmappedDerive,
+		Enum:            []string{identity.UnmappedDerive, identity.UnmappedUnknown},
+		Description:     "What a verified service account no identity.kubernetes.agents rule maps becomes: derive names the agent NAMESPACE/NAME, unknown treats it as an unknown caller.",
+		RestartRequired: true,
+	})
+)
+
+func nonEmpty(s string) error {
+	if s == "" {
+		return errors.New("must not be empty")
+	}
+	return nil
+}
+
+// KubeResolver builds the Kubernetes identity resolver from cfg, nil when
+// identity.kubernetes.enabled is off.
+func KubeResolver(cfg *config.Config) (*identity.KubeResolver, error) {
+	if !KubeEnabled.Get(cfg) {
+		return nil, nil
+	}
+	rules, err := identity.KubeRulesFromMap(KubeAgents.Get(cfg))
+	if err != nil {
+		return nil, err
+	}
+	rev, err := kube.NewReviewer(kube.Options{
+		APIServer: KubeAPIServer.Get(cfg), CAFile: KubeCAFile.Get(cfg), TokenFile: KubeTokenFile.Get(cfg),
+		Audience: KubeAudience.Get(cfg), CacheTTL: KubeCacheTTL.Get(cfg),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &identity.KubeResolver{Reviewer: rev, Rules: rules, Unmapped: KubeUnmapped.Get(cfg)}, nil
 }

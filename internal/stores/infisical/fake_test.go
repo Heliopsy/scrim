@@ -33,6 +33,15 @@ type fake struct {
 	secrets      map[string]*fakeSecret
 	readOnlyEnv  string // writes to this environment are denied
 	lastRequests []string
+	issued       []string // every access token handed out
+
+	// Kubernetes Auth: the identity that has it, the service account
+	// tokens it accepts, and every JWT presented.
+	identityID string
+	jwts       map[string]bool
+	seenJWTs   []string
+	// echoJWT makes a refused Kubernetes login quote the JWT back.
+	echoJWT bool
 }
 
 type fakeSecret struct {
@@ -61,12 +70,15 @@ func newFake(t *testing.T) *fake {
 		folders:      map[string]bool{},
 		secrets:      map[string]*fakeSecret{},
 		readOnlyEnv:  "prod",
+		identityID:   "7f3c1a2e-0000-4000-8000-" + randID(6),
+		jwts:         map[string]bool{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, 200, map[string]any{"message": "Ok"})
 	})
 	mux.HandleFunc("POST /api/v1/auth/universal-auth/login", f.login)
+	mux.HandleFunc("POST /api/v1/auth/kubernetes-auth/login", f.kubernetesLogin)
 	mux.HandleFunc("GET /api/v1/projects/slug/{slug}", f.auth(f.project))
 	mux.HandleFunc("GET /api/v4/secrets", f.auth(f.list))
 	mux.HandleFunc("GET /api/v4/secrets/{name}", f.auth(f.get))
@@ -94,6 +106,12 @@ func newFake(t *testing.T) *fake {
 	}))
 	t.Cleanup(f.srv.Close)
 	return f
+}
+
+func (f *fake) loginCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.logins
 }
 
 func (f *fake) setDown(d bool) {
@@ -131,9 +149,44 @@ func (f *fake) login(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 401, "UnauthorizedError", "Invalid credentials")
 		return
 	}
+	f.issueLocked(w)
+}
+
+func (f *fake) issueLocked(w http.ResponseWriter) {
 	tok := "tok-" + randID(16)
 	f.tokens[tok] = time.Now().Add(time.Duration(f.tokenTTL) * time.Second)
+	f.issued = append(f.issued, tok)
 	writeJSON(w, 200, map[string]any{"accessToken": tok, "expiresIn": f.tokenTTL, "accessTokenMaxTTL": 7200, "tokenType": "Bearer"})
+}
+
+// kubernetesLogin answers as Infisical does after its TokenReview: an
+// unknown identity is 404, a rejected service account token 401.
+func (f *fake) kubernetesLogin(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		IdentityID string `json:"identityId"`
+		JWT        string `json:"jwt"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.IdentityID == "" || in.JWT == "" {
+		apiErr(w, 400, "BadRequest", "bad body")
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seenJWTs = append(f.seenJWTs, in.JWT)
+	if in.IdentityID != f.identityID {
+		apiErr(w, 404, "NotFound", "Kubernetes auth method not found for identity with ID "+in.IdentityID)
+		return
+	}
+	if !f.jwts[in.JWT] {
+		msg := "Access denied: service account token review failed"
+		if f.echoJWT {
+			msg = "Access denied: token " + in.JWT + " failed review"
+		}
+		apiErr(w, 401, "UnauthorizedError", msg)
+		return
+	}
+	f.logins++
+	f.issueLocked(w)
 }
 
 func (f *fake) auth(h http.HandlerFunc) http.HandlerFunc {

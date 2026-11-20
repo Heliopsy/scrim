@@ -145,7 +145,13 @@ func New(a *app.App, o Options) (*Runtime, error) {
 		_ = entryLn.Close()
 		return nil, err
 	}
-	resolver := &identity.Resolver{Peers: peers, Sessions: mgr}
+	kr, err := KubeResolver(cfg)
+	if err != nil {
+		_ = entryLn.Close()
+		_ = sockLn.Close()
+		return nil, err
+	}
+	resolver := &identity.Resolver{Peers: peers, Sessions: mgr, Kubernetes: kr}
 	api := &localapi.Server{Resolver: *resolver, Sessions: mgr, Tools: svc,
 		Auditor: auditor, Logger: a.Log, ServerVersion: version.Version}
 	return &Runtime{Socket: path, EntryURL: links.Base(), Service: svc, Sessions: mgr, Resolver: resolver,

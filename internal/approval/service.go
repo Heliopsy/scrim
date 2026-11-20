@@ -16,7 +16,8 @@
 // approval and every later one (a second button tap, a replayed link, a
 // second notifier) is refused. Waiting reads the state backend, so a
 // decision recorded by any replica or by `scrim approve` reaches the waiter
-// within approvals.poll-interval.
+// within approvals.poll-interval, and at once when the events backend
+// delivers the approval.decided event ([Service.Wake]).
 package approval
 
 import (
@@ -85,7 +86,7 @@ var (
 	PollInterval = config.Register(config.Spec[time.Duration]{
 		Key:         "approvals.poll-interval",
 		Default:     time.Second,
-		Description: "How often a waiting operation re-reads its approval from the state backend; bounds how long a decision recorded elsewhere takes to release it.",
+		Description: "How often a waiting operation re-reads its approval from the state backend; bounds how long a decision recorded on another replica takes to release it when no event announces it (events.backend).",
 		Validate:    between(10*time.Millisecond, time.Minute),
 	})
 )
@@ -701,6 +702,12 @@ func (s *Service) unsubscribe(id string, ch chan struct{}) {
 		s.waiters[id] = ws
 	}
 }
+
+// Wake makes every operation on this replica waiting on approval id read it
+// again now. The events backend calls it for approval.decided events, so a
+// decision recorded on another replica releases the waiter without waiting
+// for approvals.poll-interval. It never blocks.
+func (s *Service) Wake(id string) { s.wake(id) }
 
 func (s *Service) wake(id string) {
 	s.mu.Lock()

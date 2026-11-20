@@ -578,6 +578,16 @@ message AskCaller {
   // a secret field. Empty when the request named a session without its
   // token: such a caller is not verified and is evaluated as unknown.
   bytes session_proof = 6;
+  // kubernetes_token is the projected Kubernetes service account token the
+  // request carried instead of a session (design D14, "Kubernetes service
+  // account tokens"): the password of `Proxy-Authorization: Basic k8s:<token>`
+  // on the forward proxy, or a JWT as the value of `x-scrim-session` on a
+  // base-URL listener. The control plane must see the token itself to verify
+  // it (TokenReview), so unlike a session token it travels in the ask. It is
+  // a secret field: redacted in Debug and zeroed on drop in scrim-proto,
+  // wiped by the control plane after verification, never logged and never
+  // forwarded. Empty when the request carried no such token.
+  bytes kubernetes_token = 7;
 }
 
 message AskAnswer {

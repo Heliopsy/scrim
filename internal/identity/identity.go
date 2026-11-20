@@ -112,6 +112,10 @@ func (i Identity) Principal() string {
 		return ""
 	case i.Source == SourceSession:
 		return i.Agent + "/" + i.SessionID
+	case i.Source == SourceKubernetes:
+		// Derived agent names hold a slash; the prefix keeps them apart
+		// from a session principal.
+		return "k8s:" + i.Agent
 	default:
 		return i.Agent
 	}
@@ -140,6 +144,8 @@ func (i Identity) PolicyAgent() policy.Agent {
 		kind = policy.IdentityPeer
 	case SourceSession:
 		kind = policy.IdentitySession
+	case SourceKubernetes:
+		kind = policy.IdentityK8s
 	}
 	if !i.Known() {
 		kind = policy.IdentityUnknown
@@ -148,7 +154,9 @@ func (i Identity) PolicyAgent() policy.Agent {
 	if labels == nil {
 		labels = map[string]string{}
 	}
-	labels["uid"] = strconv.FormatUint(uint64(i.Peer.UID), 10)
+	if i.Source != SourceKubernetes {
+		labels["uid"] = strconv.FormatUint(uint64(i.Peer.UID), 10)
+	}
 	if i.SessionName != "" {
 		labels["session_name"] = i.SessionName
 	}

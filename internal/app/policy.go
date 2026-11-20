@@ -127,6 +127,7 @@ func (a *App) initPolicy(ctx context.Context, cfg *config.Config) error {
 		}
 		bg.SetConfigured(breakglass.DenyAll.Get(cur))
 	})
+	a.subscribeEvents(p)
 	a.Health.Ready("policy", func(context.Context) error {
 		if _, err := live.Health(); err != nil {
 			return fmt.Errorf("last policy reload rejected: %w", err)
@@ -136,12 +137,17 @@ func (a *App) initPolicy(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-// RunPolicy runs the approval sweeper and the break-glass refresh until ctx
-// ends. The control plane server calls it; one-shot CLI commands do not.
+// RunPolicy runs the events bus, the approval sweeper and the break-glass
+// refresh until ctx ends, after announcing this replica's configuration
+// digest. The control plane server calls it; one-shot CLI commands do not.
 func (a *App) RunPolicy(ctx context.Context) {
 	p := a.PolicyParts
 	if p == nil {
 		return
+	}
+	if a.Events != nil {
+		go a.Events.Run(ctx)
+		a.announceConfig(ctx, "start", 0)
 	}
 	go p.Approvals.Run(ctx, time.Second)
 	p.BreakGlass.Run(ctx, breakglass.RefreshInterval.Get(a.Config.Current()), func(err error) {

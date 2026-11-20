@@ -10,17 +10,20 @@ import (
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
 	"github.com/heliopsy/scrim/internal/identity"
 	"github.com/heliopsy/scrim/internal/policy"
+	"github.com/heliopsy/scrim/internal/secret"
+	"github.com/heliopsy/scrim/internal/stores"
 )
 
 // How an ask's caller was identified, in the decision's audit attribute
 // "caller".
 const (
-	CallerNone     = "none"     // the transport carried nothing: unknown
-	CallerSession  = "session"  // a verified session
-	CallerPeer     = "peer"     // a Unix peer mapped by identity.peers
-	CallerUnmapped = "unmapped" // a Unix peer no session or mapping covers
-	CallerRefused  = "refused"  // a named session that could not be verified
-	CallerError    = "error"    // resolving the caller failed
+	CallerNone     = "none"       // the transport carried nothing: unknown
+	CallerSession  = "session"    // a verified session
+	CallerKube     = "kubernetes" // a verified Kubernetes service account token
+	CallerPeer     = "peer"       // a Unix peer mapped by identity.peers
+	CallerUnmapped = "unmapped"   // a Unix peer no session or mapping covers
+	CallerRefused  = "refused"    // a named session that could not be verified
+	CallerError    = "error"      // resolving the caller failed
 )
 
 // Answer handles one ask from the data plane: the data plane sends a request
@@ -46,9 +49,22 @@ func (g *Gate) Answer(ctx context.Context, a *pb.AskRequest) *pb.AskAnswer {
 		ans.Reason = "invalid request"
 		return ans
 	}
-	agent, attrs := g.caller(ctx, a)
-	req.Agent = agent
-	v := g.Check(ctx, req, Options{Wait: true, RequestID: "dp-" + strconv.FormatUint(a.GetId(), 10), Attrs: attrs})
+	// The service account token is a secret field: it is used to verify the
+	// caller and, for passthrough, to log in to a store as that caller, and
+	// wiped when the ask is answered.
+	kubeToken := a.GetCaller().GetKubernetesToken()
+	defer secret.WipeBytes(kubeToken)
+	who, attrs := g.caller(ctx, a)
+	req.Agent = who.PolicyAgent()
+	o := Options{Wait: true, RequestID: "dp-" + strconv.FormatUint(a.GetId(), 10), Attrs: attrs}
+	if g.StoreAccess != nil && usesValue(req.Action) && req.Ref.Scheme != "" {
+		o.Confirm = func(ctx context.Context) error {
+			src, err := g.StoreAccess.Check(ctx, who, kubeToken, stores.OpRead, req.Ref)
+			attrs["store_identity"] = src
+			return err
+		}
+	}
+	v := g.Check(ctx, req, o)
 	ans.Reason = v.Reason
 	if v.Allowed() {
 		ans.Effect = pb.Effect_EFFECT_ALLOW
@@ -65,14 +81,15 @@ func (g *Gate) Answer(ctx context.Context, a *pb.AskRequest) *pb.AskAnswer {
 // caller is what the transport said, verified here, or unknown. A caller
 // that names a session it cannot prove is unknown (deny-leaning), never its
 // peer mapping, and the refusal is recorded in the decision's audit entry.
-func (g *Gate) caller(ctx context.Context, a *pb.AskRequest) (policy.Agent, map[string]string) {
+func (g *Gate) caller(ctx context.Context, a *pb.AskRequest) (identity.Identity, map[string]string) {
 	c := a.GetCaller()
 	if c == nil {
-		return identity.Unknown(identity.Peer{}).PolicyAgent(), map[string]string{"caller": CallerNone}
+		return identity.Unknown(identity.Peer{}), map[string]string{"caller": CallerNone}
 	}
 	claim := identity.TransportClaim{
 		SessionID: c.GetSessionId(), Proof: c.GetSessionProof(), AskID: a.GetId(), Deadline: a.GetDeadlineUnixNano(),
 		UnixPeer: c.GetUnixPeer(), Peer: identity.Peer{UID: c.GetPeerUid(), GID: c.GetPeerGid(), PID: c.GetPeerPid()},
+		KubernetesToken: c.GetKubernetesToken(),
 	}
 	attrs := map[string]string{}
 	if claim.SessionID != "" {
@@ -84,7 +101,7 @@ func (g *Gate) caller(ctx context.Context, a *pb.AskRequest) (policy.Agent, map[
 	if g.Callers == nil {
 		attrs["caller"] = CallerError
 		attrs["caller_reason"] = "no identity resolver"
-		return identity.Unknown(claim.Peer).PolicyAgent(), attrs
+		return identity.Unknown(claim.Peer), attrs
 	}
 	id, err := g.Callers.ResolveClaim(ctx, claim)
 	if err != nil {
@@ -94,15 +111,36 @@ func (g *Gate) caller(ctx context.Context, a *pb.AskRequest) (policy.Agent, map[
 			attrs["caller"], attrs["caller_reason"] = CallerError, "identity could not be resolved"
 			g.logErr("resolving an ask's caller failed; evaluating it as unknown", err)
 		}
-		return identity.Unknown(claim.Peer).PolicyAgent(), attrs
+		if len(claim.KubernetesToken) > 0 && claim.SessionID == "" {
+			attrs["caller_token"] = CallerKube
+		}
+		return identity.Unknown(claim.Peer), attrs
 	}
 	switch {
 	case !id.Known():
 		attrs["caller"] = CallerUnmapped
 	case id.Source == identity.SourceSession:
 		attrs["caller"] = CallerSession
+	case id.Source == identity.SourceKubernetes:
+		attrs["caller"] = CallerKube
+		attrs["namespace"] = id.Labels[identity.LabelNamespace]
+		attrs["service_account"] = id.Labels[identity.LabelServiceAccount]
+		if p := id.Labels[identity.LabelPod]; p != "" {
+			attrs["pod"] = p
+		}
 	default:
 		attrs["caller"] = CallerPeer
 	}
-	return id.PolicyAgent(), attrs
+	return id, attrs
+}
+
+// usesValue reports whether an action puts a secret's value to use, so the
+// agent's own store identity must allow reading it.
+func usesValue(a policy.Action) bool {
+	return a == policy.ActionInject || a == policy.ActionRestore
+}
+
+// StoreAccess checks an agent's own store identity ([agentstore.Checker]).
+type StoreAccess interface {
+	Check(ctx context.Context, who identity.Identity, kubeToken []byte, op stores.Op, ref stores.Ref) (string, error)
 }

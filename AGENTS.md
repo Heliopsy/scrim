@@ -108,9 +108,10 @@ an emulator in podman. State backends follow the same shape with `state.Register
 - Adding a field is compatible. Removing, renumbering or changing the meaning of a field, or
   adding a call an older peer would get wrong, bumps `PROTOCOL_VERSION_CURRENT`, and both sides
   and their tests change in the same commit.
-- `ValueEntry.value`, `PlaceholderKey.key`, `CaptureRequest.value` and `CaCertificate.key_pem` are
-  the only secret fields. Keep it that way: a new secret field needs a redacting `Debug` in
-  `scrim-proto` and a wipe in `internal/dataplane`.
+- `ValueEntry.value`, `PlaceholderKey.key`, `CaptureRequest.value`, `CaCertificate.key_pem` and
+  `AskCaller.kubernetes_token` are the only secret fields. Keep it that way: a new secret field
+  needs a redacting `Debug` in `scrim-proto` and a wipe in `internal/dataplane` (the control plane
+  wipes `kubernetes_token` in `gate.Answer`).
 
 ## Configuration
 

@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/heliopsy/scrim/internal/agentapi"
+	"github.com/heliopsy/scrim/internal/agentstore"
 	"github.com/heliopsy/scrim/internal/app"
 	"github.com/heliopsy/scrim/internal/approval"
 	"github.com/heliopsy/scrim/internal/ca"
@@ -53,6 +54,7 @@ import (
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/placeholder"
+	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/refresh"
@@ -286,6 +288,22 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	}
 	values = append(values, d.tokens)
 	pp := a.PolicyParts
+	// Per-agent store identity: the gate checks it on every use of a
+	// governed store's secrets, and the snapshot sends those uses to the
+	// control plane.
+	access, err := agentstore.New(agentstore.Options{
+		Login: agentstore.Login.Get(cfg), Credentials: agentstore.Credentials.Get(cfg), Lookup: a.Stores.Lookup,
+		Resolve: func(ctx context.Context, ref config.SecretRef) (secret.Value, error) {
+			return a.Config.Current().ResolveRef(ctx, ref)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	governed := access.Governed()
+	if len(governed) > 0 {
+		pp.Gate.StoreAccess = access
+	}
 	d.builder = &SnapshotBuilder{
 		Config:    a.Config.Current,
 		Values:    values,
@@ -296,6 +314,9 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 			ver, _ := pp.Rules.Health()
 			rs := pp.Rules.RuleSet()
 			snap := rs.Snapshot(ver, pp.BreakGlass.Active())
+			if len(governed) > 0 {
+				snap.Rules = append([]policy.SnapshotRule{policy.StoreIdentityRule(governed)}, snap.Rules...)
+			}
 			p := snap.Proto()
 			p.AskTimeoutMillis = askTimeoutMillis(approval.Timeout.Get(a.Config.Current()), rs.Config())
 			return p
