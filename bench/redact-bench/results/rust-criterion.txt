@@ -1,0 +1,106 @@
+redact/engine=ac-auto/set=10/size=100k/hits
+                        time:   [27.313 µs 27.847 µs 28.339 µs]
+                        thrpt:  [3.5684 GiB/s 3.6314 GiB/s 3.7025 GiB/s]
+redact/engine=ac-auto/set=10/size=100k/clean
+                        time:   [22.180 µs 22.764 µs 23.454 µs]
+                        thrpt:  [3.9904 GiB/s 4.1113 GiB/s 4.2196 GiB/s]
+redact/engine=ac-auto/set=10/size=1m/hits
+                        time:   [310.83 µs 316.20 µs 322.19 µs]
+                        thrpt:  [3.0488 GiB/s 3.1066 GiB/s 3.1602 GiB/s]
+redact/engine=ac-auto/set=10/size=1m/clean
+                        time:   [265.05 µs 270.20 µs 276.35 µs]
+                        thrpt:  [3.5703 GiB/s 3.6516 GiB/s 3.7225 GiB/s]
+redact/engine=ac-auto/set=10/size=4m/hits
+                        time:   [1.2429 ms 1.2708 ms 1.3050 ms]
+                        thrpt:  [2.9941 GiB/s 3.0746 GiB/s 3.1439 GiB/s]
+redact/engine=ac-auto/set=10/size=4m/clean
+                        time:   [1.0392 ms 1.0670 ms 1.0950 ms]
+                        thrpt:  [3.5674 GiB/s 3.6608 GiB/s 3.7588 GiB/s]
+redact/engine=ac-dfa/set=10/size=100k/hits
+                        time:   [28.122 µs 28.858 µs 29.560 µs]
+                        thrpt:  [3.4210 GiB/s 3.5042 GiB/s 3.5959 GiB/s]
+redact/engine=ac-dfa/set=10/size=100k/clean
+                        time:   [21.824 µs 22.245 µs 22.788 µs]
+                        thrpt:  [4.1069 GiB/s 4.2073 GiB/s 4.2884 GiB/s]
+redact/engine=ac-dfa/set=10/size=1m/hits
+                        time:   [310.69 µs 316.82 µs 323.65 µs]
+                        thrpt:  [3.0351 GiB/s 3.1005 GiB/s 3.1617 GiB/s]
+redact/engine=ac-dfa/set=10/size=1m/clean
+                        time:   [270.33 µs 274.67 µs 280.13 µs]
+                        thrpt:  [3.5222 GiB/s 3.5921 GiB/s 3.6499 GiB/s]
+redact/engine=ac-dfa/set=10/size=4m/hits
+                        time:   [1.2451 ms 1.2762 ms 1.3072 ms]
+                        thrpt:  [2.9892 GiB/s 3.0618 GiB/s 3.1382 GiB/s]
+redact/engine=ac-dfa/set=10/size=4m/clean
+                        time:   [1.0400 ms 1.0572 ms 1.0736 ms]
+                        thrpt:  [3.6384 GiB/s 3.6947 GiB/s 3.7561 GiB/s]
+redact/engine=ac-auto/set=1000/size=100k/hits
+                        time:   [866.41 µs 893.26 µs 920.44 µs]
+                        thrpt:  [110.17 MiB/s 113.52 MiB/s 117.04 MiB/s]
+redact/engine=ac-auto/set=1000/size=100k/clean
+                        time:   [796.26 µs 808.61 µs 821.85 µs]
+                        thrpt:  [116.61 MiB/s 118.52 MiB/s 120.36 MiB/s]
+redact/engine=ac-auto/set=1000/size=1m/hits
+                        time:   [8.7458 ms 8.9138 ms 9.0935 ms]
+                        thrpt:  [110.31 MiB/s 112.54 MiB/s 114.70 MiB/s]
+redact/engine=ac-auto/set=1000/size=1m/clean
+                        time:   [8.7521 ms 8.9395 ms 9.1233 ms]
+                        thrpt:  [110.74 MiB/s 113.02 MiB/s 115.44 MiB/s]
+redact/engine=ac-auto/set=1000/size=4m/hits
+                        time:   [35.478 ms 36.255 ms 37.046 ms]
+                        thrpt:  [108.15 MiB/s 110.51 MiB/s 112.93 MiB/s]
+redact/engine=ac-auto/set=1000/size=4m/clean
+                        time:   [34.322 ms 34.990 ms 35.703 ms]
+                        thrpt:  [112.03 MiB/s 114.32 MiB/s 116.54 MiB/s]
+redact/engine=ac-dfa/set=1000/size=100k/hits
+                        time:   [287.14 µs 291.77 µs 297.15 µs]
+                        thrpt:  [341.25 MiB/s 347.54 MiB/s 353.15 MiB/s]
+redact/engine=ac-dfa/set=1000/size=100k/clean
+                        time:   [240.85 µs 247.31 µs 254.34 µs]
+                        thrpt:  [376.79 MiB/s 387.51 MiB/s 397.90 MiB/s]
+redact/engine=ac-dfa/set=1000/size=1m/hits
+                        time:   [3.4647 ms 3.5210 ms 3.5872 ms]
+                        thrpt:  [279.65 MiB/s 284.90 MiB/s 289.53 MiB/s]
+redact/engine=ac-dfa/set=1000/size=1m/clean
+                        time:   [2.7571 ms 2.8207 ms 2.8829 ms]
+                        thrpt:  [350.47 MiB/s 358.19 MiB/s 366.46 MiB/s]
+redact/engine=ac-dfa/set=1000/size=4m/hits
+                        time:   [16.402 ms 17.403 ms 18.444 ms]
+                        thrpt:  [217.23 MiB/s 230.22 MiB/s 244.28 MiB/s]
+redact/engine=ac-dfa/set=1000/size=4m/clean
+                        time:   [10.969 ms 11.155 ms 11.347 ms]
+                        thrpt:  [352.49 MiB/s 358.59 MiB/s 364.65 MiB/s]
+redact/engine=ac-auto/set=10000/size=100k/hits
+                        time:   [1.1564 ms 1.1778 ms 1.2000 ms]
+                        thrpt:  [83.242 MiB/s 84.808 MiB/s 86.379 MiB/s]
+redact/engine=ac-auto/set=10000/size=100k/clean
+                        time:   [968.96 µs 1.0045 ms 1.0407 ms]
+                        thrpt:  [92.089 MiB/s 95.404 MiB/s 98.906 MiB/s]
+redact/engine=ac-auto/set=10000/size=1m/hits
+                        time:   [10.584 ms 10.817 ms 11.024 ms]
+                        thrpt:  [91.015 MiB/s 92.760 MiB/s 94.798 MiB/s]
+redact/engine=ac-auto/set=10000/size=1m/clean
+                        time:   [10.687 ms 11.053 ms 11.380 ms]
+                        thrpt:  [88.781 MiB/s 91.412 MiB/s 94.543 MiB/s]
+redact/engine=ac-auto/set=10000/size=4m/hits
+                        time:   [43.200 ms 44.094 ms 45.081 ms]
+                        thrpt:  [88.797 MiB/s 90.783 MiB/s 92.662 MiB/s]
+redact/engine=ac-auto/set=10000/size=4m/clean
+                        time:   [43.259 ms 44.312 ms 45.431 ms]
+                        thrpt:  [88.043 MiB/s 90.267 MiB/s 92.463 MiB/s]
+restore/stream=2k/chunks=134
+                        time:   [716.92 µs 729.35 µs 740.94 µs]
+                        thrpt:  [334.02 MiB/s 339.33 MiB/s 345.22 MiB/s]
+restore/stream=20k/chunks=1258
+                        time:   [7.1456 ms 7.2650 ms 7.3842 ms]
+                        thrpt:  [331.15 MiB/s 336.58 MiB/s 342.21 MiB/s]
+build/engine=ac-auto/set=10
+                        time:   [9.6501 ms 9.9174 ms 10.240 ms]
+build/engine=ac-dfa/set=10
+                        time:   [9.5894 ms 9.8602 ms 10.168 ms]
+build/engine=ac-auto/set=1000
+                        time:   [78.617 ms 80.351 ms 82.247 ms]
+build/engine=ac-dfa/set=1000
+                        time:   [782.26 ms 793.13 ms 806.55 ms]
+build/engine=ac-auto/set=10000
+                        time:   [1.1030 s 1.1194 s 1.1367 s]

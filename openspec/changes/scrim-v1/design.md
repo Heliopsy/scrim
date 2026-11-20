@@ -53,17 +53,45 @@ The data plane handles every byte of agent traffic and must be fast and boring. 
 handles decisions, stores and people and changes often. Splitting them keeps the hot path small
 enough to fuzz exhaustively and lets each half use the language that suits it.
 
-**Language: pending the benchmark.** `redact-bench` implements the same redactor and stream
-restorer in Go and Rust and measures CPU per GB, p99 and p999 at proxy level. The rule agreed
-before seeing numbers: if Rust is at least 3x better on CPU per GB or clearly better on tail
-latency, the data plane is Rust and the control plane Go (the Linkerd split); otherwise everything
-is Go. The control plane is Go either way, to reuse tix's capability registry, store layer, auth,
-MCP and CI. The two halves talk over a versioned local protocol whether or not they share a
-language, so the split exists even in an all-Go build and the data plane can move later.
+**Language: Go control plane, Rust data plane.** `bench/redact-bench` implements the same
+redactor and stream restorer in Go and Rust, plus a combined variant (Go control plane driving a
+Rust data plane over the real boundary), and measures them single-core and at proxy level. Full
+results are in `bench/redact-bench/results/summary.md`. The rule agreed before seeing numbers: if
+Rust is at least 3x better on CPU per GB or clearly better on tail latency, the data plane is Rust
+and the control plane Go; otherwise everything is Go.
 
-Alternatives considered: all Rust (fastest, but rewrites everything tix already solved); a single
-Go process with no internal boundary (simplest, but welds the hot path to the control plane and
-removes the option to move it).
+| Input (10,000 secrets unless noted) | Go | Rust | Ratio |
+|---|---|---|---|
+| Redact, single core, 10 secrets | 225 to 245 MB/s | 3,300 to 4,450 MB/s | 16 to 18x |
+| Redact, single core, 1,000 secrets | 130 to 215 MB/s | 250 to 415 MB/s | 1.8 to 1.9x |
+| Redact, single core, 10,000 secrets | 27 to 32 MB/s | 87 to 102 MB/s | 3.0 to 3.5x |
+| Stream restore per chunk | 24 µs | 5.4 µs | 4.4x |
+| Proxy CPU per GB, paced streams, 10 / 1,000 conns | 96 / 37 s | 42 / 13.6 s | 2.3 / 2.7x |
+| Proxy CPU per GB, 1 MB bodies unpaced, 10 conns | 35.7 s | 12.2 s | 2.9x |
+| Added p99, paced streams, 10 conns | 57 ms | 12 ms | 4.8x |
+| Resident memory | 1.6 to 3.1 GB | 335 MB | about 5x |
+| 1 MB bodies unpaced, 1,000 conns | collapsed | 177 req/s | |
+
+CPU per GB lands just under 3x at proxy level; tail latency, memory and behaviour under overload
+are clearly better, so the rule selects the split. The combined variant ran at 95 to 106% of pure
+Rust throughput with equal CPU per GB when the data plane decides locally from a pushed snapshot
+and batches audit, so the boundary costs nothing measurable. Synchronous per-request calls across
+it cost 15 to 30% of throughput, which is why the data plane never waits on the control plane on
+the hot path (D7, D12).
+
+The control plane is Go to reuse tix's capability registry, store layer, auth, MCP and CI, and
+because most store clients (OpenBao, Vault, Infisical, Kubernetes, the cloud SDKs) are Go-first.
+
+Caveats recorded with the result: the benchmark machine carried unrelated load; the Go proxy
+buffered whole response bodies, which penalises Go at proxy level but not in the single-core
+numbers; and neither language met the first 1 ms per 1 MB target at 10,000 secrets (Rust about
+10 ms). That is an algorithm problem, addressed in D13; the performance spec now sets a budget
+that can be measured and tightened.
+
+Alternatives considered: all Rust (same data-plane speed as the split, but rewrites the control
+plane tix already solved and loses the Go store SDKs); all Go (simplest build, but 5x the memory
+per replica, slow matcher rebuilds and collapse under overload); Rust linked into the Go process
+through cgo (one process, but no isolation between the halves and no speed advantage over D11).
 
 ### D2. Match the raw bytes, never decode the request
 
@@ -152,6 +180,38 @@ flag > environment > file > default. The schema is versioned and published; `scr
 literals. Settings that weaken an invariant say so in their name and are reported at start-up and
 in status.
 
+### D11. One file to install, two processes at runtime
+
+The release binary `scrim` is the Go control plane with the Rust data plane binary embedded. On
+start it runs the data plane as a child process: on Linux from memory (`memfd_create` and
+`fexecve`), falling back to a file in `$XDG_RUNTIME_DIR` checked against the embedded hash when
+`vm.memfd_noexec` forbids it; on macOS from the user cache directory, also hash-checked. The child
+inherits one end of a socketpair and nothing else. Separate processes keep the halves isolated:
+the data plane holds the value dictionary, runs with fewer privileges and locked memory, and a
+crash on either side makes the other refuse traffic.
+
+The data plane is also published on its own (`scrim-dataplane` binary and image) for Kubernetes
+sidecars and edge forwarders, which need it and not a control plane per pod. Both come from the
+same build.
+
+### D12. The boundary is protobuf over the inherited socket, off the hot path
+
+The control plane and data plane talk gRPC over the inherited socketpair, schema in
+`proto/scrim/dataplane/v1`, generated code committed for Go and Rust. The control plane pushes
+versioned snapshots (value dictionary, placeholder keys, compiled policy, routes, bindings) and the
+data plane acknowledges the version it applied. The data plane streams audit events in batches and
+sends "ask" decisions, the only call that waits, and only for requests a rule sends to a human.
+Every message carries the protocol version; a mismatch refuses to start.
+
+### D13. Matching stays near constant speed as the secret set grows
+
+Aho-Corasick slows from GB/s to about 100 MB/s as the set grows past a few hundred values. Since
+every value is at least the minimum length (default 8 bytes), the matcher hashes each 8-byte
+window of the body, checks the hash against a set built from every value's and variant's first 8
+bytes, and verifies candidates exactly. The set check is a few instructions per byte whatever the
+set size. Aho-Corasick remains for small sets, where its SIMD prefilter is faster, and as the
+reference implementation in tests; the two must produce identical output on every fixture.
+
 ## Risks / Trade-offs
 
 - [An agent invents a transform the guard does not decode] → the bypass matrix grows with every
@@ -167,8 +227,10 @@ in status.
   sidecars; memory locked and wiped; dedicated agent accounts in stores limit blast radius.
 - [Short secrets cause false positives or are missed] → minimum length configurable; short values
   matched only in exact and encoded forms; documented.
-- [Two languages if the benchmark picks the split] → the boundary is a small versioned protocol,
-  tested from both sides; the data plane stays narrow.
+- [Two languages] → the boundary is a small versioned protocol, tested from both sides; the data
+  plane stays narrow.
+- [Running an embedded binary from memory is blocked by hardening] → hash-checked file fallback,
+  and the standalone data plane binary for locked-down hosts.
 - [Store outage] → keep the last known redaction set, fail closed for injection when a value is
   unavailable, report degraded.
 

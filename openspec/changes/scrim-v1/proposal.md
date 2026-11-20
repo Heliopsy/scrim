@@ -79,5 +79,5 @@ None. This is the first change.
   PostgreSQL, Valkey or NATS.
 - Changes nothing in agents themselves; agents are pointed at scrim through one of the interception
   modes.
-- The data-plane implementation language is decided by the benchmark in `heliopsy`'s
-  `redact-bench` work before product code; no requirement here depends on it.
+- Go control plane and Rust data plane, shipped as one file, decided by the benchmark in
+  `bench/redact-bench` (design D1, D11). No requirement depends on the language.

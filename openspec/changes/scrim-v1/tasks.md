@@ -4,14 +4,19 @@ Milestones: M0 proves the hot path (groups 1-3), M1 makes scrim usable for one a
 machine (groups 4-9), M2 covers more stores, providers and Kubernetes (groups 10-13), M3 adds large
 deployments and the remaining edge modes (groups 14-16).
 
+Release v0.1.0 ships M0 and M1 plus 10.1 to 10.3, 11.1, 11.2, the env and file sources of 11a.5
+and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
+
 ## 1. Language decision and toolchain
 
-- [ ] 1.1 Record the `redact-bench` result and the chosen language split in design.md D1; verify: the decision rule's inputs (CPU per GB, p99, p999) are quoted with a link to the benchmark README
+- [x] 1.1 Record the `redact-bench` result and the chosen language split in design.md D1; verify: the decision rule's inputs (CPU per GB, p99, p999) are quoted with a link to the benchmark README
 - [ ] 1.2 Add the build toolchain, `justfile` (`build`, `test`, `check`, `bench`, `fuzz`, `spec`) and language-specific sections of AGENTS.md; verify: `just check` passes on an empty skeleton
 - [ ] 1.3 Add CI: lint, unit tests, `openspec validate --all --strict`, gitleaks, CodeQL, dependency review, Scorecard, release-please, every action pinned by SHA; verify: CI green on a no-op PR
 - [ ] 1.4 Add the release pipeline (static binaries, container image, SBOM, signatures, provenance); verify: a pre-release tag produces signed artifacts that `cosign verify` accepts
 
 ## 2. Redaction core
+
+- [ ] 2.0 Hash-window prefilter matcher for large sets with Aho-Corasick for small sets (design D13); verify: identical output to the reference matcher on every fixture and at least 500 MB/s single core at 10,000 secrets
 
 - [ ] 2.1 Value dictionary with encoded variants (raw, JSON-escaped, base64 std/url at three alignments, hex, URL-encoded) and minimum-length rule; verify: table tests per variant and per edge length
 - [ ] 2.2 Multi-pattern matcher over raw request bytes with atomic rebuild and swap; verify: concurrent requests during rebuild never block and never miss a value present before and after the swap

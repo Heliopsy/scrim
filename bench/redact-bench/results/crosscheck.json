@@ -1,0 +1,2176 @@
+{
+ "checks": [
+  {
+   "check": "go/coregx/body-100k-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 100491, 'out_bytes': 100491}"
+  },
+  {
+   "check": "go/coregx/body-100k-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/coregx/body-100k-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/coregx/body-100k-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 26, 'remaining': 0, 'in_bytes': 108583, 'out_bytes': 103725}"
+  },
+  {
+   "check": "go/coregx/body-100k-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/coregx/body-100k-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "26 vs 26"
+  },
+  {
+   "check": "go/coregx/body-100k-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 17, 'remaining': 0, 'in_bytes': 106328, 'out_bytes': 105516}"
+  },
+  {
+   "check": "go/coregx/body-100k-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/coregx/body-100k-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "17 vs 17"
+  },
+  {
+   "check": "go/coregx/body-1m-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 1059425, 'out_bytes': 1059425}"
+  },
+  {
+   "check": "go/coregx/body-1m-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/coregx/body-1m-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/coregx/body-1m-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 206, 'remaining': 0, 'in_bytes': 1054741, 'out_bytes': 1002116}"
+  },
+  {
+   "check": "go/coregx/body-1m-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/coregx/body-1m-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "206 vs 206"
+  },
+  {
+   "check": "go/coregx/body-1m-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 239, 'remaining': 0, 'in_bytes': 1051873, 'out_bytes': 1034664}"
+  },
+  {
+   "check": "go/coregx/body-1m-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/coregx/body-1m-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "239 vs 239"
+  },
+  {
+   "check": "go/coregx/body-4m-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 4194194, 'out_bytes': 4194194}"
+  },
+  {
+   "check": "go/coregx/body-4m-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/coregx/body-4m-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/coregx/body-4m-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 880, 'remaining': 0, 'in_bytes': 4195536, 'out_bytes': 3984008}"
+  },
+  {
+   "check": "go/coregx/body-4m-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/coregx/body-4m-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "880 vs 880"
+  },
+  {
+   "check": "go/coregx/body-4m-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 866, 'remaining': 0, 'in_bytes': 4201256, 'out_bytes': 4111344}"
+  },
+  {
+   "check": "go/coregx/body-4m-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/coregx/body-4m-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "866 vs 866"
+  },
+  {
+   "check": "go/coregx/body-rt-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 57, 'remaining': 0, 'in_bytes': 272631, 'out_bytes': 269270}"
+  },
+  {
+   "check": "go/coregx/body-rt-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/coregx/body-rt-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "57 vs 57"
+  },
+  {
+   "check": "go/coregx/body-rt-s1000.json: restore(redact(x)) == x",
+   "pass": false,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-dfa/body-100k-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 100491, 'out_bytes': 100491}"
+  },
+  {
+   "check": "go/petar-dfa/body-100k-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-dfa/body-100k-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-dfa/body-100k-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 26, 'remaining': 0, 'in_bytes': 108583, 'out_bytes': 103725}"
+  },
+  {
+   "check": "go/petar-dfa/body-100k-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-dfa/body-100k-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "26 vs 26"
+  },
+  {
+   "check": "go/petar-dfa/body-100k-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 17, 'remaining': 0, 'in_bytes': 106328, 'out_bytes': 105516}"
+  },
+  {
+   "check": "go/petar-dfa/body-100k-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-dfa/body-100k-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "17 vs 17"
+  },
+  {
+   "check": "go/petar-dfa/body-1m-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 1059425, 'out_bytes': 1059425}"
+  },
+  {
+   "check": "go/petar-dfa/body-1m-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-dfa/body-1m-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-dfa/body-1m-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 206, 'remaining': 0, 'in_bytes': 1054741, 'out_bytes': 1002116}"
+  },
+  {
+   "check": "go/petar-dfa/body-1m-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-dfa/body-1m-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "206 vs 206"
+  },
+  {
+   "check": "go/petar-dfa/body-1m-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 239, 'remaining': 0, 'in_bytes': 1051873, 'out_bytes': 1034664}"
+  },
+  {
+   "check": "go/petar-dfa/body-1m-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-dfa/body-1m-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "239 vs 239"
+  },
+  {
+   "check": "go/petar-dfa/body-4m-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 4194194, 'out_bytes': 4194194}"
+  },
+  {
+   "check": "go/petar-dfa/body-4m-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-dfa/body-4m-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-dfa/body-4m-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 880, 'remaining': 0, 'in_bytes': 4195536, 'out_bytes': 3984008}"
+  },
+  {
+   "check": "go/petar-dfa/body-4m-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-dfa/body-4m-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "880 vs 880"
+  },
+  {
+   "check": "go/petar-dfa/body-4m-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 866, 'remaining': 0, 'in_bytes': 4201256, 'out_bytes': 4111344}"
+  },
+  {
+   "check": "go/petar-dfa/body-4m-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-dfa/body-4m-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "866 vs 866"
+  },
+  {
+   "check": "go/petar-dfa/body-rt-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 57, 'remaining': 0, 'in_bytes': 272631, 'out_bytes': 269269}"
+  },
+  {
+   "check": "go/petar-dfa/body-rt-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-dfa/body-rt-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "57 vs 57"
+  },
+  {
+   "check": "go/petar-dfa/body-rt-s1000.json: restore(redact(x)) == x",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-100k-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 100491, 'out_bytes': 100491}"
+  },
+  {
+   "check": "go/petar-nfa/body-100k-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-100k-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-100k-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 26, 'remaining': 0, 'in_bytes': 108583, 'out_bytes': 103725}"
+  },
+  {
+   "check": "go/petar-nfa/body-100k-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-100k-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "26 vs 26"
+  },
+  {
+   "check": "go/petar-nfa/body-100k-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 17, 'remaining': 0, 'in_bytes': 106328, 'out_bytes': 105516}"
+  },
+  {
+   "check": "go/petar-nfa/body-100k-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-100k-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "17 vs 17"
+  },
+  {
+   "check": "go/petar-nfa/body-100k-s10000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 18, 'remaining': 0, 'in_bytes': 104742, 'out_bytes': 104110}"
+  },
+  {
+   "check": "go/petar-nfa/body-100k-s10000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-100k-s10000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "18 vs 18"
+  },
+  {
+   "check": "go/petar-nfa/body-1m-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 1059425, 'out_bytes': 1059425}"
+  },
+  {
+   "check": "go/petar-nfa/body-1m-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-1m-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-1m-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 206, 'remaining': 0, 'in_bytes': 1054741, 'out_bytes': 1002116}"
+  },
+  {
+   "check": "go/petar-nfa/body-1m-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-1m-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "206 vs 206"
+  },
+  {
+   "check": "go/petar-nfa/body-1m-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 239, 'remaining': 0, 'in_bytes': 1051873, 'out_bytes': 1034664}"
+  },
+  {
+   "check": "go/petar-nfa/body-1m-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-1m-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "239 vs 239"
+  },
+  {
+   "check": "go/petar-nfa/body-1m-s10000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 232, 'remaining': 0, 'in_bytes': 1052118, 'out_bytes': 1031953}"
+  },
+  {
+   "check": "go/petar-nfa/body-1m-s10000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-1m-s10000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "232 vs 232"
+  },
+  {
+   "check": "go/petar-nfa/body-4m-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 4194194, 'out_bytes': 4194194}"
+  },
+  {
+   "check": "go/petar-nfa/body-4m-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-4m-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-4m-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 880, 'remaining': 0, 'in_bytes': 4195536, 'out_bytes': 3984008}"
+  },
+  {
+   "check": "go/petar-nfa/body-4m-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-4m-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "880 vs 880"
+  },
+  {
+   "check": "go/petar-nfa/body-4m-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 866, 'remaining': 0, 'in_bytes': 4201256, 'out_bytes': 4111344}"
+  },
+  {
+   "check": "go/petar-nfa/body-4m-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-4m-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "866 vs 866"
+  },
+  {
+   "check": "go/petar-nfa/body-4m-s10000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 879, 'remaining': 0, 'in_bytes': 4197451, 'out_bytes': 4142095}"
+  },
+  {
+   "check": "go/petar-nfa/body-4m-s10000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-4m-s10000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "879 vs 879"
+  },
+  {
+   "check": "go/petar-nfa/body-rt-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 57, 'remaining': 0, 'in_bytes': 272631, 'out_bytes': 269269}"
+  },
+  {
+   "check": "go/petar-nfa/body-rt-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/petar-nfa/body-rt-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "57 vs 57"
+  },
+  {
+   "check": "go/petar-nfa/body-rt-s1000.json: restore(redact(x)) == x",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-100k-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 100491, 'out_bytes': 100491}"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-100k-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-100k-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-100k-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 26, 'remaining': 0, 'in_bytes': 108583, 'out_bytes': 103725}"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-100k-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-100k-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "26 vs 26"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-100k-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 17, 'remaining': 0, 'in_bytes': 106328, 'out_bytes': 105516}"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-100k-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-100k-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "17 vs 17"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-100k-s10000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 18, 'remaining': 0, 'in_bytes': 104742, 'out_bytes': 104110}"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-100k-s10000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-100k-s10000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "18 vs 18"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-1m-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 1059425, 'out_bytes': 1059425}"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-1m-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-1m-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-1m-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 206, 'remaining': 0, 'in_bytes': 1054741, 'out_bytes': 1002116}"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-1m-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-1m-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "206 vs 206"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-1m-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 239, 'remaining': 0, 'in_bytes': 1051873, 'out_bytes': 1034664}"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-1m-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-1m-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "239 vs 239"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-1m-s10000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 232, 'remaining': 0, 'in_bytes': 1052118, 'out_bytes': 1031953}"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-1m-s10000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-1m-s10000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "232 vs 232"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-4m-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 4194194, 'out_bytes': 4194194}"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-4m-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-4m-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-4m-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 880, 'remaining': 0, 'in_bytes': 4195536, 'out_bytes': 3984008}"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-4m-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-4m-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "880 vs 880"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-4m-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 866, 'remaining': 0, 'in_bytes': 4201256, 'out_bytes': 4111344}"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-4m-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-4m-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "866 vs 866"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-4m-s10000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 879, 'remaining': 0, 'in_bytes': 4197451, 'out_bytes': 4142095}"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-4m-s10000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-4m-s10000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "879 vs 879"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-rt-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 57, 'remaining': 0, 'in_bytes': 272631, 'out_bytes': 269269}"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-rt-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/pgavlin-nfa/body-rt-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "57 vs 57"
+  },
+  {
+   "check": "go/pgavlin-nfa/body-rt-s1000.json: restore(redact(x)) == x",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-20k.sse: restored block content == original (192 blocks)",
+   "pass": true,
+   "detail": "bad blocks []"
+  },
+  {
+   "check": "go/stream-20k.sse: restored tool input parses as JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-20k.sse: signature_delta byte-identical",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-20k.sse: non-delta events byte-identical and in order",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-20k.sse: no known placeholder left in text",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-2k.sse: restored block content == original (17 blocks)",
+   "pass": true,
+   "detail": "bad blocks []"
+  },
+  {
+   "check": "go/stream-2k.sse: restored tool input parses as JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-2k.sse: signature_delta byte-identical",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-2k.sse: non-delta events byte-identical and in order",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-2k.sse: no known placeholder left in text",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-proxy-s10000.sse: restored block content == original (2 blocks)",
+   "pass": true,
+   "detail": "bad blocks []"
+  },
+  {
+   "check": "go/stream-proxy-s10000.sse: restored tool input parses as JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-proxy-s10000.sse: signature_delta byte-identical",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-proxy-s10000.sse: non-delta events byte-identical and in order",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-proxy-s10000.sse: no known placeholder left in text",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-proxy.sse: restored block content == original (2 blocks)",
+   "pass": true,
+   "detail": "bad blocks []"
+  },
+  {
+   "check": "go/stream-proxy.sse: restored tool input parses as JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-proxy.sse: signature_delta byte-identical",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-proxy.sse: non-delta events byte-identical and in order",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "go/stream-proxy.sse: no known placeholder left in text",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-100k-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 100491, 'out_bytes': 100491}"
+  },
+  {
+   "check": "rust/ac-auto/body-100k-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-100k-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-100k-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 26, 'remaining': 0, 'in_bytes': 108583, 'out_bytes': 103725}"
+  },
+  {
+   "check": "rust/ac-auto/body-100k-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-100k-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "26 vs 26"
+  },
+  {
+   "check": "rust/ac-auto/body-100k-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 17, 'remaining': 0, 'in_bytes': 106328, 'out_bytes': 105516}"
+  },
+  {
+   "check": "rust/ac-auto/body-100k-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-100k-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "17 vs 17"
+  },
+  {
+   "check": "rust/ac-auto/body-100k-s10000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 18, 'remaining': 0, 'in_bytes': 104742, 'out_bytes': 104110}"
+  },
+  {
+   "check": "rust/ac-auto/body-100k-s10000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-100k-s10000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "18 vs 18"
+  },
+  {
+   "check": "rust/ac-auto/body-1m-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 1059425, 'out_bytes': 1059425}"
+  },
+  {
+   "check": "rust/ac-auto/body-1m-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-1m-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-1m-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 206, 'remaining': 0, 'in_bytes': 1054741, 'out_bytes': 1002116}"
+  },
+  {
+   "check": "rust/ac-auto/body-1m-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-1m-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "206 vs 206"
+  },
+  {
+   "check": "rust/ac-auto/body-1m-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 239, 'remaining': 0, 'in_bytes': 1051873, 'out_bytes': 1034664}"
+  },
+  {
+   "check": "rust/ac-auto/body-1m-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-1m-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "239 vs 239"
+  },
+  {
+   "check": "rust/ac-auto/body-1m-s10000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 232, 'remaining': 0, 'in_bytes': 1052118, 'out_bytes': 1031953}"
+  },
+  {
+   "check": "rust/ac-auto/body-1m-s10000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-1m-s10000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "232 vs 232"
+  },
+  {
+   "check": "rust/ac-auto/body-4m-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 4194194, 'out_bytes': 4194194}"
+  },
+  {
+   "check": "rust/ac-auto/body-4m-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-4m-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-4m-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 880, 'remaining': 0, 'in_bytes': 4195536, 'out_bytes': 3984008}"
+  },
+  {
+   "check": "rust/ac-auto/body-4m-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-4m-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "880 vs 880"
+  },
+  {
+   "check": "rust/ac-auto/body-4m-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 866, 'remaining': 0, 'in_bytes': 4201256, 'out_bytes': 4111344}"
+  },
+  {
+   "check": "rust/ac-auto/body-4m-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-4m-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "866 vs 866"
+  },
+  {
+   "check": "rust/ac-auto/body-4m-s10000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 879, 'remaining': 0, 'in_bytes': 4197451, 'out_bytes': 4142095}"
+  },
+  {
+   "check": "rust/ac-auto/body-4m-s10000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-4m-s10000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "879 vs 879"
+  },
+  {
+   "check": "rust/ac-auto/body-rt-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 57, 'remaining': 0, 'in_bytes': 272631, 'out_bytes': 269269}"
+  },
+  {
+   "check": "rust/ac-auto/body-rt-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-auto/body-rt-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "57 vs 57"
+  },
+  {
+   "check": "rust/ac-auto/body-rt-s1000.json: restore(redact(x)) == x",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-dfa/body-100k-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 100491, 'out_bytes': 100491}"
+  },
+  {
+   "check": "rust/ac-dfa/body-100k-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-dfa/body-100k-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-dfa/body-100k-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 26, 'remaining': 0, 'in_bytes': 108583, 'out_bytes': 103725}"
+  },
+  {
+   "check": "rust/ac-dfa/body-100k-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-dfa/body-100k-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "26 vs 26"
+  },
+  {
+   "check": "rust/ac-dfa/body-100k-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 17, 'remaining': 0, 'in_bytes': 106328, 'out_bytes': 105516}"
+  },
+  {
+   "check": "rust/ac-dfa/body-100k-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-dfa/body-100k-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "17 vs 17"
+  },
+  {
+   "check": "rust/ac-dfa/body-1m-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 1059425, 'out_bytes': 1059425}"
+  },
+  {
+   "check": "rust/ac-dfa/body-1m-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-dfa/body-1m-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-dfa/body-1m-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 206, 'remaining': 0, 'in_bytes': 1054741, 'out_bytes': 1002116}"
+  },
+  {
+   "check": "rust/ac-dfa/body-1m-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-dfa/body-1m-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "206 vs 206"
+  },
+  {
+   "check": "rust/ac-dfa/body-1m-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 239, 'remaining': 0, 'in_bytes': 1051873, 'out_bytes': 1034664}"
+  },
+  {
+   "check": "rust/ac-dfa/body-1m-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-dfa/body-1m-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "239 vs 239"
+  },
+  {
+   "check": "rust/ac-dfa/body-4m-clean.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 0, 'remaining': 0, 'in_bytes': 4194194, 'out_bytes': 4194194}"
+  },
+  {
+   "check": "rust/ac-dfa/body-4m-clean.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-dfa/body-4m-clean.json: clean body has 0 matches and is unchanged",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-dfa/body-4m-s10.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 880, 'remaining': 0, 'in_bytes': 4195536, 'out_bytes': 3984008}"
+  },
+  {
+   "check": "rust/ac-dfa/body-4m-s10.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-dfa/body-4m-s10.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "880 vs 880"
+  },
+  {
+   "check": "rust/ac-dfa/body-4m-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 866, 'remaining': 0, 'in_bytes': 4201256, 'out_bytes': 4111344}"
+  },
+  {
+   "check": "rust/ac-dfa/body-4m-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-dfa/body-4m-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "866 vs 866"
+  },
+  {
+   "check": "rust/ac-dfa/body-rt-s1000.json: no variant left (rescan)",
+   "pass": true,
+   "detail": "{'matches': 57, 'remaining': 0, 'in_bytes': 272631, 'out_bytes': 269269}"
+  },
+  {
+   "check": "rust/ac-dfa/body-rt-s1000.json: output is valid JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/ac-dfa/body-rt-s1000.json: matches >= embedded hits",
+   "pass": true,
+   "detail": "57 vs 57"
+  },
+  {
+   "check": "rust/ac-dfa/body-rt-s1000.json: restore(redact(x)) == x",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-20k.sse: restored block content == original (192 blocks)",
+   "pass": true,
+   "detail": "bad blocks []"
+  },
+  {
+   "check": "rust/stream-20k.sse: restored tool input parses as JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-20k.sse: signature_delta byte-identical",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-20k.sse: non-delta events byte-identical and in order",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-20k.sse: no known placeholder left in text",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-2k.sse: restored block content == original (17 blocks)",
+   "pass": true,
+   "detail": "bad blocks []"
+  },
+  {
+   "check": "rust/stream-2k.sse: restored tool input parses as JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-2k.sse: signature_delta byte-identical",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-2k.sse: non-delta events byte-identical and in order",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-2k.sse: no known placeholder left in text",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-proxy-s10000.sse: restored block content == original (2 blocks)",
+   "pass": true,
+   "detail": "bad blocks []"
+  },
+  {
+   "check": "rust/stream-proxy-s10000.sse: restored tool input parses as JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-proxy-s10000.sse: signature_delta byte-identical",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-proxy-s10000.sse: non-delta events byte-identical and in order",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-proxy-s10000.sse: no known placeholder left in text",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-proxy.sse: restored block content == original (2 blocks)",
+   "pass": true,
+   "detail": "bad blocks []"
+  },
+  {
+   "check": "rust/stream-proxy.sse: restored tool input parses as JSON",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-proxy.sse: signature_delta byte-identical",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-proxy.sse: non-delta events byte-identical and in order",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "rust/stream-proxy.sse: no known placeholder left in text",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-100k-clean.json == rust/ac-auto/body-100k-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-100k-clean.json == rust/ac-dfa/body-100k-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-100k-s10.json == rust/ac-auto/body-100k-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-100k-s10.json == rust/ac-dfa/body-100k-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-100k-s1000.json == rust/ac-auto/body-100k-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-100k-s1000.json == rust/ac-dfa/body-100k-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-1m-clean.json == rust/ac-auto/body-1m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-1m-clean.json == rust/ac-dfa/body-1m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-1m-s10.json == rust/ac-auto/body-1m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-1m-s10.json == rust/ac-dfa/body-1m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-1m-s1000.json == rust/ac-auto/body-1m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-1m-s1000.json == rust/ac-dfa/body-1m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-4m-clean.json == rust/ac-auto/body-4m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-4m-clean.json == rust/ac-dfa/body-4m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-4m-s10.json == rust/ac-auto/body-4m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-4m-s10.json == rust/ac-dfa/body-4m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-4m-s1000.json == rust/ac-auto/body-4m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-4m-s1000.json == rust/ac-dfa/body-4m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-rt-s1000.json == rust/ac-auto/body-rt-s1000.json",
+   "pass": false,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/coregx/body-rt-s1000.json == rust/ac-dfa/body-rt-s1000.json",
+   "pass": false,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-100k-clean.json == rust/ac-auto/body-100k-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-100k-clean.json == rust/ac-dfa/body-100k-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-100k-s10.json == rust/ac-auto/body-100k-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-100k-s10.json == rust/ac-dfa/body-100k-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-100k-s1000.json == rust/ac-auto/body-100k-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-100k-s1000.json == rust/ac-dfa/body-100k-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-100k-s10000.json == rust/ac-auto/body-100k-s10000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-1m-clean.json == rust/ac-auto/body-1m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-1m-clean.json == rust/ac-dfa/body-1m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-1m-s10.json == rust/ac-auto/body-1m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-1m-s10.json == rust/ac-dfa/body-1m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-1m-s1000.json == rust/ac-auto/body-1m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-1m-s1000.json == rust/ac-dfa/body-1m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-1m-s10000.json == rust/ac-auto/body-1m-s10000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-4m-clean.json == rust/ac-auto/body-4m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-4m-clean.json == rust/ac-dfa/body-4m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-4m-s10.json == rust/ac-auto/body-4m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-4m-s10.json == rust/ac-dfa/body-4m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-4m-s1000.json == rust/ac-auto/body-4m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-4m-s1000.json == rust/ac-dfa/body-4m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-4m-s10000.json == rust/ac-auto/body-4m-s10000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-rt-s1000.json == rust/ac-auto/body-rt-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-nfa/body-rt-s1000.json == rust/ac-dfa/body-rt-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-100k-clean.json == rust/ac-auto/body-100k-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-100k-clean.json == rust/ac-dfa/body-100k-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-100k-s10.json == rust/ac-auto/body-100k-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-100k-s10.json == rust/ac-dfa/body-100k-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-100k-s1000.json == rust/ac-auto/body-100k-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-100k-s1000.json == rust/ac-dfa/body-100k-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-100k-s10000.json == rust/ac-auto/body-100k-s10000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-1m-clean.json == rust/ac-auto/body-1m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-1m-clean.json == rust/ac-dfa/body-1m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-1m-s10.json == rust/ac-auto/body-1m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-1m-s10.json == rust/ac-dfa/body-1m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-1m-s1000.json == rust/ac-auto/body-1m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-1m-s1000.json == rust/ac-dfa/body-1m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-1m-s10000.json == rust/ac-auto/body-1m-s10000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-4m-clean.json == rust/ac-auto/body-4m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-4m-clean.json == rust/ac-dfa/body-4m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-4m-s10.json == rust/ac-auto/body-4m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-4m-s10.json == rust/ac-dfa/body-4m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-4m-s1000.json == rust/ac-auto/body-4m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-4m-s1000.json == rust/ac-dfa/body-4m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-4m-s10000.json == rust/ac-auto/body-4m-s10000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-rt-s1000.json == rust/ac-auto/body-rt-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/pgavlin-nfa/body-rt-s1000.json == rust/ac-dfa/body-rt-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-100k-clean.json == rust/ac-auto/body-100k-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-100k-clean.json == rust/ac-dfa/body-100k-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-100k-s10.json == rust/ac-auto/body-100k-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-100k-s10.json == rust/ac-dfa/body-100k-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-100k-s1000.json == rust/ac-auto/body-100k-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-100k-s1000.json == rust/ac-dfa/body-100k-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-1m-clean.json == rust/ac-auto/body-1m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-1m-clean.json == rust/ac-dfa/body-1m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-1m-s10.json == rust/ac-auto/body-1m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-1m-s10.json == rust/ac-dfa/body-1m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-1m-s1000.json == rust/ac-auto/body-1m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-1m-s1000.json == rust/ac-dfa/body-1m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-4m-clean.json == rust/ac-auto/body-4m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-4m-clean.json == rust/ac-dfa/body-4m-clean.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-4m-s10.json == rust/ac-auto/body-4m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-4m-s10.json == rust/ac-dfa/body-4m-s10.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-4m-s1000.json == rust/ac-auto/body-4m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-4m-s1000.json == rust/ac-dfa/body-4m-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-rt-s1000.json == rust/ac-auto/body-rt-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck redact/petar-dfa/body-rt-s1000.json == rust/ac-dfa/body-rt-s1000.json",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck restore/stream-20k.sse",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck restore/stream-2k.sse",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck restore/stream-proxy-s10000.sse",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "check": "crosscheck restore/stream-proxy.sse",
+   "pass": true,
+   "detail": ""
+  }
+ ],
+ "crosscheck": [
+  {
+   "a": "coregx/body-100k-clean.json",
+   "b": "ac-auto/body-100k-clean.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-100k-clean.json",
+   "b": "ac-dfa/body-100k-clean.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-100k-s10.json",
+   "b": "ac-auto/body-100k-s10.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-100k-s10.json",
+   "b": "ac-dfa/body-100k-s10.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-100k-s1000.json",
+   "b": "ac-auto/body-100k-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-100k-s1000.json",
+   "b": "ac-dfa/body-100k-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-1m-clean.json",
+   "b": "ac-auto/body-1m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-1m-clean.json",
+   "b": "ac-dfa/body-1m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-1m-s10.json",
+   "b": "ac-auto/body-1m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-1m-s10.json",
+   "b": "ac-dfa/body-1m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-1m-s1000.json",
+   "b": "ac-auto/body-1m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-1m-s1000.json",
+   "b": "ac-dfa/body-1m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-4m-clean.json",
+   "b": "ac-auto/body-4m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-4m-clean.json",
+   "b": "ac-dfa/body-4m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-4m-s10.json",
+   "b": "ac-auto/body-4m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-4m-s10.json",
+   "b": "ac-dfa/body-4m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-4m-s1000.json",
+   "b": "ac-auto/body-4m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-4m-s1000.json",
+   "b": "ac-dfa/body-4m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "coregx/body-rt-s1000.json",
+   "b": "ac-auto/body-rt-s1000.json",
+   "identical": false
+  },
+  {
+   "a": "coregx/body-rt-s1000.json",
+   "b": "ac-dfa/body-rt-s1000.json",
+   "identical": false
+  },
+  {
+   "a": "petar-nfa/body-100k-clean.json",
+   "b": "ac-auto/body-100k-clean.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-100k-clean.json",
+   "b": "ac-dfa/body-100k-clean.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-100k-s10.json",
+   "b": "ac-auto/body-100k-s10.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-100k-s10.json",
+   "b": "ac-dfa/body-100k-s10.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-100k-s1000.json",
+   "b": "ac-auto/body-100k-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-100k-s1000.json",
+   "b": "ac-dfa/body-100k-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-100k-s10000.json",
+   "b": "ac-auto/body-100k-s10000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-1m-clean.json",
+   "b": "ac-auto/body-1m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-1m-clean.json",
+   "b": "ac-dfa/body-1m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-1m-s10.json",
+   "b": "ac-auto/body-1m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-1m-s10.json",
+   "b": "ac-dfa/body-1m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-1m-s1000.json",
+   "b": "ac-auto/body-1m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-1m-s1000.json",
+   "b": "ac-dfa/body-1m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-1m-s10000.json",
+   "b": "ac-auto/body-1m-s10000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-4m-clean.json",
+   "b": "ac-auto/body-4m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-4m-clean.json",
+   "b": "ac-dfa/body-4m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-4m-s10.json",
+   "b": "ac-auto/body-4m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-4m-s10.json",
+   "b": "ac-dfa/body-4m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-4m-s1000.json",
+   "b": "ac-auto/body-4m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-4m-s1000.json",
+   "b": "ac-dfa/body-4m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-4m-s10000.json",
+   "b": "ac-auto/body-4m-s10000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-rt-s1000.json",
+   "b": "ac-auto/body-rt-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-nfa/body-rt-s1000.json",
+   "b": "ac-dfa/body-rt-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-100k-clean.json",
+   "b": "ac-auto/body-100k-clean.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-100k-clean.json",
+   "b": "ac-dfa/body-100k-clean.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-100k-s10.json",
+   "b": "ac-auto/body-100k-s10.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-100k-s10.json",
+   "b": "ac-dfa/body-100k-s10.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-100k-s1000.json",
+   "b": "ac-auto/body-100k-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-100k-s1000.json",
+   "b": "ac-dfa/body-100k-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-100k-s10000.json",
+   "b": "ac-auto/body-100k-s10000.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-1m-clean.json",
+   "b": "ac-auto/body-1m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-1m-clean.json",
+   "b": "ac-dfa/body-1m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-1m-s10.json",
+   "b": "ac-auto/body-1m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-1m-s10.json",
+   "b": "ac-dfa/body-1m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-1m-s1000.json",
+   "b": "ac-auto/body-1m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-1m-s1000.json",
+   "b": "ac-dfa/body-1m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-1m-s10000.json",
+   "b": "ac-auto/body-1m-s10000.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-4m-clean.json",
+   "b": "ac-auto/body-4m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-4m-clean.json",
+   "b": "ac-dfa/body-4m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-4m-s10.json",
+   "b": "ac-auto/body-4m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-4m-s10.json",
+   "b": "ac-dfa/body-4m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-4m-s1000.json",
+   "b": "ac-auto/body-4m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-4m-s1000.json",
+   "b": "ac-dfa/body-4m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-4m-s10000.json",
+   "b": "ac-auto/body-4m-s10000.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-rt-s1000.json",
+   "b": "ac-auto/body-rt-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "pgavlin-nfa/body-rt-s1000.json",
+   "b": "ac-dfa/body-rt-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-100k-clean.json",
+   "b": "ac-auto/body-100k-clean.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-100k-clean.json",
+   "b": "ac-dfa/body-100k-clean.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-100k-s10.json",
+   "b": "ac-auto/body-100k-s10.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-100k-s10.json",
+   "b": "ac-dfa/body-100k-s10.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-100k-s1000.json",
+   "b": "ac-auto/body-100k-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-100k-s1000.json",
+   "b": "ac-dfa/body-100k-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-1m-clean.json",
+   "b": "ac-auto/body-1m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-1m-clean.json",
+   "b": "ac-dfa/body-1m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-1m-s10.json",
+   "b": "ac-auto/body-1m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-1m-s10.json",
+   "b": "ac-dfa/body-1m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-1m-s1000.json",
+   "b": "ac-auto/body-1m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-1m-s1000.json",
+   "b": "ac-dfa/body-1m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-4m-clean.json",
+   "b": "ac-auto/body-4m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-4m-clean.json",
+   "b": "ac-dfa/body-4m-clean.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-4m-s10.json",
+   "b": "ac-auto/body-4m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-4m-s10.json",
+   "b": "ac-dfa/body-4m-s10.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-4m-s1000.json",
+   "b": "ac-auto/body-4m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-4m-s1000.json",
+   "b": "ac-dfa/body-4m-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-rt-s1000.json",
+   "b": "ac-auto/body-rt-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "petar-dfa/body-rt-s1000.json",
+   "b": "ac-dfa/body-rt-s1000.json",
+   "identical": true
+  },
+  {
+   "a": "stream-20k.sse",
+   "b": "stream-20k.sse",
+   "identical": true
+  },
+  {
+   "a": "stream-2k.sse",
+   "b": "stream-2k.sse",
+   "identical": true
+  },
+  {
+   "a": "stream-proxy-s10000.sse",
+   "b": "stream-proxy-s10000.sse",
+   "identical": true
+  },
+  {
+   "a": "stream-proxy.sse",
+   "b": "stream-proxy.sse",
+   "identical": true
+  }
+ ],
+ "xfail": [
+  "go/coregx/body-rt-s1000.json: restore(redact(x)) == x: ",
+  "crosscheck redact/coregx/body-rt-s1000.json == rust/ac-auto/body-rt-s1000.json: ",
+  "crosscheck redact/coregx/body-rt-s1000.json == rust/ac-dfa/body-rt-s1000.json: "
+ ]
+}

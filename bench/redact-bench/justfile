@@ -1,0 +1,60 @@
+# redact-bench: Go vs Rust data plane for a secret-redacting LLM proxy.
+# Everything uses rootless podman for the load generator; nothing talks to a real provider.
+
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+results := "results"
+
+default: bench-quick
+
+# generate deterministic fixtures (and verify they match the recorded manifest hashes)
+fixtures:
+    cd fixtures/gen && go run . -out ../data
+    python3 -c "import json;a=json.load(open('fixtures/data/manifest.json'))['sha256'];b=json.load(open('fixtures/manifest.sha256.json'));bad=[k for k in b if a.get(k)!=b[k]];print('fixture hashes match manifest' if not bad else 'MISMATCH: '+str(bad));exit(1 if bad else 0)"
+
+build:
+    cd go && CGO_ENABLED=0 GOAMD64=v3 go build -o bin/ ./cmd/...
+    cd harness/upstream && CGO_ENABLED=0 GOAMD64=v3 go build -o ../../go/bin/upstream .
+    cd rust && cargo build --release --bins
+    test -x .bin/benchstat || GOBIN=$PWD/.bin go install golang.org/x/perf/cmd/benchstat@v0.0.0-20261117185222-4febdb082b2c
+
+# unit tests in both languages
+test: build
+    cd go && go vet ./... && go test ./...
+    cd rust && cargo test --release --lib
+
+# invariants + byte-identical Go/Rust cross-check over every fixture
+crosscheck: build
+    harness/run-cli.sh go scratch/xc/go
+    harness/run-cli.sh rust scratch/xc/rust
+    CHECK_REPORT={{results}}/crosscheck.json python3 harness/check.py fixtures/data scratch/xc/go scratch/xc/rust | tee {{results}}/crosscheck.txt
+
+env:
+    mkdir -p {{results}} && harness/env.sh | tee {{results}}/env.txt
+
+micro mode="quick": build
+    harness/microbench.sh {{mode}} {{results}}
+
+proxy mode="quick": build
+    python3 harness/proxybench.py --mode {{mode}} --out {{results}}/proxy.json
+
+proxy-secondary: build
+    RB_PROXY_SET=1000 python3 harness/proxybench.py --mode full --secondary --go-engine petar-dfa --out {{results}}/proxy-set1000.json
+
+report:
+    python3 harness/report.py {{results}} > /dev/null && echo "wrote {{results}}/summary.md"
+
+# ~6 min: subset of micro benchmarks, short proxy runs
+bench-quick: fixtures test crosscheck env (micro "quick") (proxy "quick") report cleanup-check
+
+# ~30 min: full matrix, count=10, proxy at c=10/100/1000 with 2 repetitions, combo arm, v2 subset
+bench-full: fixtures test crosscheck env (micro "full") (proxy "full") proxy-secondary report cleanup-check
+
+# list anything this project left behind (containers are --rm; the image stays cached unless removed)
+cleanup-check:
+    @podman ps -a --filter name=redact-bench- --format '{{"{{"}}.Names{{"}}"}}' | sed 's/^/leftover container: /' || true
+    @pgrep -af 'go/bin/(upstream|proxy|controlplane)|release/proxy' | grep -v pgrep | sed 's/^/leftover process: /' || true
+
+# remove the pulled load-generator image
+clean-image:
+    podman rmi -f ghcr.io/hatoo/oha:1.17.0 ghcr.io/hatoo/oha:latest 2>/dev/null || true

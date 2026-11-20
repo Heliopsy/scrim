@@ -1,0 +1,7 @@
+/fixtures/data/
+/go/bin/
+/rust/target/
+/scratch/
+/.bin/
+*.prof
+/rust/target-v2/

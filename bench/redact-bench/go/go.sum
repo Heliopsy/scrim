@@ -1,0 +1,6 @@
+github.com/coregx/ahocorasick v0.3.1 h1:1kG0szrBH+HBUaG6bRm2TWdJ+x6yJivmBsv6dfzk7ss=
+github.com/coregx/ahocorasick v0.3.1/go.mod h1:SDcS9KTiwLP8FHNpYSO3Q3mRqrK8SYJAYpygrhcIils=
+github.com/petar-dambovaliev/aho-corasick v0.0.0-20250424160509-463d218d4745 h1:Vpr4VgAizEgEZsaMohpw6JYDP+i9Of9dmdY4ufNP6HI=
+github.com/petar-dambovaliev/aho-corasick v0.0.0-20250424160509-463d218d4745/go.mod h1:EHPiTAKtiFmrMldLUNswFwfZ2eJIYBHktdaUTZxYWRw=
+github.com/pgavlin/aho-corasick v0.5.1 h1:ujv4DzpWK8G+MhoPAKYAir7znMHtcRQLDVa0cwFRvHw=
+github.com/pgavlin/aho-corasick v0.5.1/go.mod h1:UyKgVsAp5Un59BCpzrpFkPyETFMn1tGjdbRYvoq0l2g=

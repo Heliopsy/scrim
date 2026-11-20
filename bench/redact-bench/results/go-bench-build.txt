@@ -1,0 +1,55 @@
+goos: linux
+goarch: amd64
+pkg: redactbench/redact
+cpu: Intel(R) Xeon(R) W-2295 CPU @ 3.00GHz
+BenchmarkBuild/engine=petar-nfa/set=10         	       1	  10259330 ns/op	 9177792 B/op	   67775 allocs/op
+BenchmarkBuild/engine=petar-nfa/set=10         	       1	   8293077 ns/op	 9177792 B/op	   67775 allocs/op
+BenchmarkBuild/engine=petar-nfa/set=10         	       1	   8356303 ns/op	 9177792 B/op	   67775 allocs/op
+BenchmarkBuild/engine=petar-nfa/set=10         	       1	   8442041 ns/op	 9177792 B/op	   67775 allocs/op
+BenchmarkBuild/engine=petar-nfa/set=10         	       1	   7692464 ns/op	 9177776 B/op	   67775 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=10       	       1	   7637800 ns/op	 9177776 B/op	   67775 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=10       	       1	   8379453 ns/op	 9177776 B/op	   67775 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=10       	       1	   8294430 ns/op	 9177792 B/op	   67775 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=10       	       1	   7959475 ns/op	 9177792 B/op	   67775 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=10       	       1	   7658635 ns/op	 9177792 B/op	   67775 allocs/op
+BenchmarkBuild/engine=petar-dfa/set=10         	       1	 178398041 ns/op	111987992 B/op	 7226688 allocs/op
+BenchmarkBuild/engine=petar-dfa/set=10         	       1	 168621495 ns/op	111987944 B/op	 7226686 allocs/op
+BenchmarkBuild/engine=petar-dfa/set=10         	       1	 175554150 ns/op	111987928 B/op	 7226686 allocs/op
+BenchmarkBuild/engine=petar-dfa/set=10         	       1	 175948028 ns/op	111987928 B/op	 7226686 allocs/op
+BenchmarkBuild/engine=petar-dfa/set=10         	       1	 178671319 ns/op	111987944 B/op	 7226686 allocs/op
+BenchmarkBuild/engine=coregx/set=10            	       1	  15292307 ns/op	24400224 B/op	   21671 allocs/op
+BenchmarkBuild/engine=coregx/set=10            	       1	  15071394 ns/op	24400208 B/op	   21671 allocs/op
+BenchmarkBuild/engine=coregx/set=10            	       1	  15597410 ns/op	24400208 B/op	   21671 allocs/op
+BenchmarkBuild/engine=coregx/set=10            	       1	  15106824 ns/op	24400208 B/op	   21671 allocs/op
+BenchmarkBuild/engine=coregx/set=10            	       1	  15412448 ns/op	24400208 B/op	   21671 allocs/op
+BenchmarkBuild/engine=petar-nfa/set=1000       	       1	 466511192 ns/op	314219256 B/op	 2177774 allocs/op
+BenchmarkBuild/engine=petar-nfa/set=1000       	       1	 429000952 ns/op	314219208 B/op	 2177773 allocs/op
+BenchmarkBuild/engine=petar-nfa/set=1000       	       1	 438005493 ns/op	314219208 B/op	 2177773 allocs/op
+BenchmarkBuild/engine=petar-nfa/set=1000       	       1	 417889866 ns/op	314219208 B/op	 2177773 allocs/op
+BenchmarkBuild/engine=petar-nfa/set=1000       	       1	 453111848 ns/op	314219256 B/op	 2177774 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=1000     	       1	 437295662 ns/op	314219208 B/op	 2177773 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=1000     	       1	 443697208 ns/op	314219208 B/op	 2177773 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=1000     	       1	 437554949 ns/op	314219208 B/op	 2177773 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=1000     	       1	 424181391 ns/op	314219208 B/op	 2177773 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=1000     	       1	 445172902 ns/op	314219208 B/op	 2177773 allocs/op
+BenchmarkBuild/engine=petar-dfa/set=1000       	       1	6421289200 ns/op	3929020608 B/op	260699405 allocs/op
+BenchmarkBuild/engine=petar-dfa/set=1000       	       1	5911383370 ns/op	3929020592 B/op	260699405 allocs/op
+BenchmarkBuild/engine=petar-dfa/set=1000       	       1	6007339244 ns/op	3929020608 B/op	260699405 allocs/op
+BenchmarkBuild/engine=petar-dfa/set=1000       	       1	5885636628 ns/op	3929020592 B/op	260699405 allocs/op
+BenchmarkBuild/engine=petar-dfa/set=1000       	       1	6083030907 ns/op	3929020592 B/op	260699405 allocs/op
+BenchmarkBuild/engine=coregx/set=1000          	       1	1114131930 ns/op	915923248 B/op	  754955 allocs/op
+BenchmarkBuild/engine=coregx/set=1000          	       1	1134032849 ns/op	915923280 B/op	  754955 allocs/op
+BenchmarkBuild/engine=coregx/set=1000          	       1	1078912511 ns/op	915923264 B/op	  754955 allocs/op
+BenchmarkBuild/engine=coregx/set=1000          	       1	1163005254 ns/op	915923280 B/op	  754955 allocs/op
+BenchmarkBuild/engine=coregx/set=1000          	       1	1156138391 ns/op	915923280 B/op	  754955 allocs/op
+BenchmarkBuild/engine=petar-nfa/set=10000      	       1	6295569757 ns/op	3005321968 B/op	20219622 allocs/op
+BenchmarkBuild/engine=petar-nfa/set=10000      	       1	6173493290 ns/op	3005285040 B/op	20219618 allocs/op
+BenchmarkBuild/engine=petar-nfa/set=10000      	       1	6024800290 ns/op	3005321984 B/op	20219622 allocs/op
+BenchmarkBuild/engine=petar-nfa/set=10000      	       1	6089972422 ns/op	3005285056 B/op	20219618 allocs/op
+BenchmarkBuild/engine=petar-nfa/set=10000      	       1	6270807137 ns/op	3005358928 B/op	20219626 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=10000    	       1	6154809235 ns/op	3005395840 B/op	20219630 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=10000    	       1	6030410565 ns/op	3005285056 B/op	20219618 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=10000    	       1	6450245963 ns/op	3005543568 B/op	20219646 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=10000    	       1	6061487958 ns/op	3005285056 B/op	20219618 allocs/op
+BenchmarkBuild/engine=pgavlin-nfa/set=10000    	       1	5901332014 ns/op	3005395856 B/op	20219630 allocs/op
+PASS

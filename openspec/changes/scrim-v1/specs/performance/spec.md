@@ -19,12 +19,19 @@ recorded streaming responses chunked at realistic boundaries; and a documented m
 ### Requirement: Added request latency budget
 
 The latency scrim adds to a request (redaction and guard, excluding the upstream) SHALL stay below a
-configured p99 target, initially 1 ms for 1 MB bodies with 1,000 secrets on the reference machine.
+configured p99 target, initially 5 ms for 1 MB bodies with 1,000 secrets and 10 ms with 10,000
+secrets on the reference machine. The target tightens as the matcher improves and never loosens
+without a recorded reason.
 
 #### Scenario: Budget met
 
 - **WHEN** the benchmark measures a 1 MB body with 1,000 secrets
 - **THEN** the p99 added latency is below the configured target
+
+#### Scenario: Budget met with a large set
+
+- **WHEN** the benchmark measures a 1 MB body with 10,000 secrets
+- **THEN** the p99 added latency is below the configured large-set target
 
 ### Requirement: Streamed chunk budget
 

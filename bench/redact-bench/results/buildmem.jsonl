@@ -1,0 +1,16 @@
+{"lang":"go","engine":"petar-nfa","secrets":10,"build_ms":32.5,"retained_bytes":2315984,"build_alloc_bytes":9183096,"peak_rss_kb":12324}
+{"lang":"go","engine":"pgavlin-nfa","secrets":10,"build_ms":31.6,"retained_bytes":2315984,"build_alloc_bytes":9183096,"peak_rss_kb":11380}
+{"lang":"go","engine":"petar-dfa","secrets":10,"build_ms":283.3,"retained_bytes":14556696,"build_alloc_bytes":111993392,"peak_rss_kb":42452}
+{"lang":"go","engine":"coregx","secrets":10,"build_ms":61.2,"retained_bytes":10937064,"build_alloc_bytes":24405560,"peak_rss_kb":25752}
+{"lang":"rust","engine":"ac-auto","secrets":10,"build_ms":30.5,"retained_bytes":10839436,"automaton_bytes":10835120,"ac_kind":"DFA","peak_rss_kb":13784}
+{"lang":"rust","engine":"ac-dfa","secrets":10,"build_ms":15.1,"retained_bytes":10839436,"automaton_bytes":10835120,"ac_kind":"DFA","peak_rss_kb":13780}
+{"lang":"go","engine":"petar-nfa","secrets":1000,"build_ms":529.1,"retained_bytes":69949176,"build_alloc_bytes":314352352,"peak_rss_kb":189100}
+{"lang":"go","engine":"pgavlin-nfa","secrets":1000,"build_ms":577.9,"retained_bytes":69938520,"build_alloc_bytes":314341680,"peak_rss_kb":188752}
+{"lang":"go","engine":"petar-dfa","secrets":1000,"build_ms":6756.2,"retained_bytes":639727176,"build_alloc_bytes":3929153864,"peak_rss_kb":1460692}
+{"lang":"go","engine":"coregx","secrets":1000,"build_ms":1450.2,"retained_bytes":365746632,"build_alloc_bytes":916013864,"peak_rss_kb":773372}
+{"lang":"rust","engine":"ac-auto","secrets":1000,"build_ms":84.2,"retained_bytes":9223012,"automaton_bytes":9143844,"ac_kind":"ContiguousNFA","peak_rss_kb":39604}
+{"lang":"rust","engine":"ac-dfa","secrets":1000,"build_ms":759.3,"retained_bytes":361941344,"automaton_bytes":361798464,"ac_kind":"DFA","peak_rss_kb":378936}
+{"lang":"go","engine":"petar-nfa","secrets":10000,"build_ms":5882.1,"retained_bytes":648804400,"build_alloc_bytes":3005486784,"peak_rss_kb":1457096}
+{"lang":"go","engine":"pgavlin-nfa","secrets":10000,"build_ms":6014.2,"retained_bytes":648804624,"build_alloc_bytes":3005413200,"peak_rss_kb":1457744}
+{"lang":"rust","engine":"ac-auto","secrets":10000,"build_ms":1111.1,"retained_bytes":81598724,"automaton_bytes":80876180,"ac_kind":"ContiguousNFA","peak_rss_kb":341592}
+{"lang":"rust","engine":"ac-dfa","secrets":10000,"build_ms":9715.6,"retained_bytes":3359204384,"automaton_bytes":3357844672,"ac_kind":"DFA","peak_rss_kb":3501520}

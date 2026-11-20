@@ -1,0 +1,11 @@
+goos: linux
+goarch: amd64
+pkg: redactbench/redact
+cpu: Intel(R) Xeon(R) W-2295 CPU @ 3.00GHz
+BenchmarkRestore/stream=2k         	      56	   4098092 ns/op	  63.33 MB/s	        30.58 us/chunk	  587236 B/op	   15952 allocs/op
+BenchmarkRestore/stream=2k         	      62	   3745466 ns/op	  69.29 MB/s	        27.95 us/chunk	  587136 B/op	   15951 allocs/op
+BenchmarkRestore/stream=2k         	      80	   3541029 ns/op	  73.29 MB/s	        26.43 us/chunk	  587121 B/op	   15951 allocs/op
+BenchmarkRestore/stream=20k        	       6	  35810332 ns/op	  71.60 MB/s	        28.47 us/chunk	 5780061 B/op	  157150 allocs/op
+BenchmarkRestore/stream=20k        	       6	  35138418 ns/op	  72.97 MB/s	        27.93 us/chunk	 5780056 B/op	  157150 allocs/op
+BenchmarkRestore/stream=20k        	       6	  36269492 ns/op	  70.69 MB/s	        28.83 us/chunk	 5780053 B/op	  157150 allocs/op
+PASS
