@@ -27,3 +27,5 @@ proto:
       --go-grpc_out=. --go-grpc_opt=module={{module}} \
       proto/scrim/dataplane/v1/dataplane.proto
     cd dataplane/tools/protogen && cargo run --quiet --locked
+
+import "scripts/release/release.just"

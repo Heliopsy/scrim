@@ -1,0 +1,521 @@
+name: Release
+
+# Builds, signs and publishes one release: the scrim and scrim-dataplane
+# binaries for linux and darwin on amd64 and arm64, their SBOMs, a signed
+# checksums file, SLSA build provenance for every file, and the two multi-arch
+# images on ghcr.io, signed and attested. AGENTS.md (Release pipeline) says why
+# it is shaped this way; docs/install.md is how a user checks the result.
+#
+# Triggers:
+#
+# - A pushed v* tag. Used for hand-made pre-release tags.
+# - workflow_dispatch with the tag. release-please creates its tag and release
+#   with GITHUB_TOKEN, and GitHub does not start workflows for events caused by
+#   that token, so the release-please workflow dispatches this one (the one
+#   event GITHUB_TOKEN may fire). Dispatching by hand rebuilds an existing tag.
+# - A pull request that touches the pipeline: everything up to and including
+#   the image smoke tests runs, nothing is signed or published.
+#
+# Jobs that run third-party build code (cargo build scripts, go build) hold a
+# read-only token and no OIDC token. Signing, attesting and publishing happen in
+# separate jobs that only handle the built files. Nothing is restored from a
+# cache: a release is built from the lockfiles and pinned tools alone.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to build, for example v0.1.0.
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - .github/workflows/release.yaml
+      - scripts/release/**
+      - Containerfile
+      - Containerfile.dataplane
+
+permissions: {}
+
+env:
+  # The certificate identity keyless signing binds every signature to: this
+  # workflow file at the ref the run started from.
+  RELEASE_IDENTITY: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/release.yaml@${{ github.ref }}
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      commit: ${{ steps.plan.outputs.commit }}
+      epoch: ${{ steps.plan.outputs.epoch }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # refs/tags/ spelled out, so a branch that happens to share the tag's
+          # name can never be what gets built.
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || '' }}
+          persist-credentials: false
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          epoch=$(git log -1 --format=%ct HEAD)
+          if [ "$EVENT" = pull_request ]; then
+            tag="" version="0.0.0-pr.$PR" prerelease=true publish=false
+          else
+            tag=${INPUT_TAG:-$GITHUB_REF_NAME}
+            if ! [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::'$tag' is not a release tag (vMAJOR.MINOR.PATCH[-PRERELEASE])"
+              exit 1
+            fi
+            version=${tag#v}
+            prerelease=$([[ "$version" == *-* ]] && echo true || echo false)
+            publish=true
+          fi
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "commit=$commit"
+            echo "epoch=$epoch"
+            echo "prerelease=$prerelease"
+            echo "publish=$publish"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  dataplane:
+    name: Data plane (${{ matrix.platform }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Native runners for both Linux architectures, so the musl link is
+          # done by the host toolchain with no cross linker; one macOS runner
+          # builds both darwin targets with Apple's toolchain.
+          - {platform: linux-amd64, runner: ubuntu-24.04}
+          - {platform: linux-arm64, runner: ubuntu-24.04-arm}
+          - {platform: darwin-amd64, runner: macos-15}
+          - {platform: darwin-arm64, runner: macos-15}
+    env:
+      SCRIM_VERSION: ${{ needs.plan.outputs.version }}
+      SCRIM_COMMIT: ${{ needs.plan.outputs.commit }}
+      SOURCE_DATE_EPOCH: ${{ needs.plan.outputs.epoch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+      - name: Install musl tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends musl-tools
+      - name: Install cargo-auditable
+        run: |
+          scripts/release/tools.sh "$RUNNER_TEMP/tools" cargo-auditable
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - name: Build
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: scripts/release/dataplane.sh "$PLATFORM" "out/$PLATFORM/scrim-dataplane"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: dataplane-${{ matrix.platform }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 3
+
+  build:
+    name: Control plane and archives
+    needs: [plan, dataplane]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      SCRIM_VERSION: ${{ needs.plan.outputs.version }}
+      SCRIM_COMMIT: ${{ needs.plan.outputs.commit }}
+      SOURCE_DATE_EPOCH: ${{ needs.plan.outputs.epoch }}
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: dataplane-*
+          path: dist/bin
+          merge-multiple: true
+      - name: Build scrim with the data plane embedded
+        run: |
+          set -euo pipefail
+          for p in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+            scripts/release/controlplane.sh "$p" "dist/bin/$p/scrim-dataplane" "dist/bin/$p/scrim"
+          done
+          dist/bin/linux-amd64/scrim "$(sed -n 's/^SCRIM_VERSION_CMD=//p' scripts/release/release.env)"
+      - name: Install syft
+        run: |
+          scripts/release/tools.sh "$RUNNER_TEMP/tools" syft
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - name: Archives, SBOMs and checksums
+        run: scripts/release/package.sh dist/bin dist/release
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: bin
+          path: dist/bin/
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: release
+          path: dist/release/
+          if-no-files-found: error
+          retention-days: 3
+
+  # Rebuilds the linux-amd64 pair on a fresh runner, from nothing, and refuses
+  # the release unless every byte matches. A build that depends on the runner,
+  # the clock or the checkout path fails here instead of shipping.
+  reproduce:
+    name: Reproducibility (linux-amd64)
+    needs: [plan, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      SCRIM_VERSION: ${{ needs.plan.outputs.version }}
+      SCRIM_COMMIT: ${{ needs.plan.outputs.commit }}
+      SOURCE_DATE_EPOCH: ${{ needs.plan.outputs.epoch }}
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+          # A different checkout path from the build, so a path that leaked
+          # into a binary shows up as a mismatch.
+          path: elsewhere/scrim
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: elsewhere/scrim/go.mod
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: bin
+          path: first
+      - name: Rebuild and compare
+        working-directory: elsewhere/scrim
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends musl-tools
+          scripts/release/tools.sh "$RUNNER_TEMP/tools" cargo-auditable
+          export PATH="$RUNNER_TEMP/tools/bin:$PATH"
+          scripts/release/dataplane.sh linux-amd64 "$RUNNER_TEMP/again/scrim-dataplane"
+          scripts/release/controlplane.sh linux-amd64 "$RUNNER_TEMP/again/scrim-dataplane" "$RUNNER_TEMP/again/scrim"
+          for f in scrim-dataplane scrim; do
+            a=$(sha256sum "$GITHUB_WORKSPACE/first/linux-amd64/$f" | cut -d' ' -f1)
+            b=$(sha256sum "$RUNNER_TEMP/again/$f" | cut -d' ' -f1)
+            echo "$f: build $a, rebuild $b"
+            [ "$a" = "$b" ] || { echo "::error::$f is not reproducible"; exit 1; }
+          done
+
+  # Builds both images from the release binaries and runs them read-only, for
+  # pull requests. Releases do the same inside the image job below.
+  image-check:
+    name: Image check (${{ matrix.image }})
+    needs: [plan, build]
+    if: needs.plan.outputs.publish != 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        image: [scrim, scrim-dataplane]
+    env:
+      SCRIM_VERSION: ${{ needs.plan.outputs.version }}
+      SCRIM_COMMIT: ${{ needs.plan.outputs.commit }}
+      SOURCE_DATE_EPOCH: ${{ needs.plan.outputs.epoch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: bin
+          path: dist/bin
+      - name: Build and smoke test
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: scripts/release/image.sh build "$IMAGE" dist/bin
+
+  sign:
+    name: Sign and attest files
+    needs: [plan, build, reproduce]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+          sparse-checkout: scripts/release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: release
+          path: dist/release
+      - name: Install cosign
+        run: |
+          scripts/release/tools.sh "$RUNNER_TEMP/tools" cosign
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      # Keyless: the certificate binds the signature to this workflow at this
+      # ref, and the entry is in the public Rekor log. Not retried: a second
+      # cosign run makes a second key and a second log entry.
+      - name: Sign the checksums
+        working-directory: dist/release
+        run: |
+          set -euo pipefail
+          sha256sum --check --strict checksums.txt
+          cosign sign-blob --yes --bundle checksums.txt.sigstore.json checksums.txt
+      # SLSA v1 provenance for every archive and SBOM, stored in the
+      # repository's attestations and checkable with `gh attestation verify`.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-checksums: dist/release/checksums.txt
+      - name: Verify the signature before anything is published
+        working-directory: dist/release
+        run: |
+          cosign verify-blob \
+            --bundle checksums.txt.sigstore.json \
+            --certificate-identity "$RELEASE_IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            checksums.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: signed
+          path: dist/release/
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    name: GitHub release
+    needs: [plan, sign]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: signed
+          path: dist/release
+      # release-please has normally created the release with its notes
+      # already; a hand-pushed tag has none yet and gets generated notes. The
+      # assets are uploaded while the release is a draft, then it is published,
+      # so nobody resolves a release that has half its files.
+      - name: Upload and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            args=(--verify-tag --draft --title "$TAG" --generate-notes)
+            [ "$PRERELEASE" = true ] && args+=(--prerelease)
+            gh release create "$TAG" "${args[@]}"
+          fi
+          was_draft=$(gh release view "$TAG" --json isDraft --jq .isDraft)
+          [ "$was_draft" = true ] || gh release edit "$TAG" --draft=true
+          gh release upload "$TAG" --clobber dist/release/*
+          edit=(--draft=false)
+          if [ "$PRERELEASE" = true ]; then
+            edit+=(--prerelease --latest=false)
+          else
+            edit+=(--prerelease=false --latest)
+          fi
+          gh release edit "$TAG" "${edit[@]}"
+          gh release view "$TAG" --json url,isDraft,isPrerelease,assets \
+            --jq '{url, isDraft, isPrerelease, assets: [.assets[].name]}'
+
+  image:
+    name: Image (${{ matrix.image }})
+    needs: [plan, build, reproduce]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [scrim, scrim-dataplane]
+    env:
+      SCRIM_VERSION: ${{ needs.plan.outputs.version }}
+      SCRIM_COMMIT: ${{ needs.plan.outputs.commit }}
+      SOURCE_DATE_EPOCH: ${{ needs.plan.outputs.epoch }}
+      IMAGE: ${{ matrix.image }}
+      # One credentials file for podman, skopeo and cosign. cosign reads the
+      # docker-format file at this path; podman and skopeo use it through
+      # REGISTRY_AUTH_FILE instead of their own.
+      REGISTRY_AUTH_FILE: /home/runner/.docker/config.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: bin
+          path: dist/bin
+      - name: Install cosign and syft
+        run: |
+          scripts/release/tools.sh "$RUNNER_TEMP/tools" cosign syft
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - name: Build and smoke test
+        run: scripts/release/image.sh build "$IMAGE" dist/bin
+      - name: Log in to ghcr.io
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$(dirname "$REGISTRY_AUTH_FILE")"
+          printf '%s' "$TOKEN" | podman login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Push
+        id: push
+        run: |
+          set -euo pipefail
+          repo=$(sed -n 's/^SCRIM_IMAGE_REGISTRY=//p' scripts/release/release.env)/$IMAGE
+          digest=$(scripts/release/image.sh push "$IMAGE")
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "pushed $repo@$digest"
+      # --recursive signs the list and each architecture's manifest, so a
+      # signature exists for whichever one a pull on amd64 or arm64 resolves.
+      - name: Sign
+        env:
+          REF: ${{ steps.push.outputs.repo }}@${{ steps.push.outputs.digest }}
+        run: cosign sign --yes --recursive "$REF"
+      # One SBOM per architecture, attested to that architecture's digest as
+      # the registry stored it (read back, never taken from local storage).
+      - name: Attest an SBOM per architecture
+        env:
+          REPO: ${{ steps.push.outputs.repo }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            child=$(skopeo inspect --raw "docker://$REPO@$DIGEST" \
+              | jq -r --arg a "$arch" '.manifests[] | select(.platform.architecture == $a) | .digest')
+            [ -n "$child" ] && [ "$child" != null ] || { echo "::error::no $arch manifest in $REPO@$DIGEST"; exit 1; }
+            podman save --format oci-archive -o "$RUNNER_TEMP/image-$arch.tar" \
+              "localhost/scrim-rel/$IMAGE:${SCRIM_VERSION//+/_}-$arch"
+            SYFT_CHECK_FOR_APP_UPDATE=false syft scan --quiet "oci-archive:$RUNNER_TEMP/image-$arch.tar" \
+              --source-name "$REPO" --source-version "$SCRIM_VERSION" \
+              -o "spdx-json=$RUNNER_TEMP/sbom-$arch.spdx.json"
+            cosign attest --yes --type spdxjson --predicate "$RUNNER_TEMP/sbom-$arch.spdx.json" "$REPO@$child"
+            rm -f "$RUNNER_TEMP/image-$arch.tar"
+          done
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ${{ steps.push.outputs.repo }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: Verify what the registry holds
+        env:
+          REPO: ${{ steps.push.outputs.repo }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          # gh reads the attestations through the API.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          issuer=https://token.actions.githubusercontent.com
+          for tag in $(scripts/release/image.sh tags); do
+            got=$(skopeo inspect --raw "docker://$REPO:$tag" | sha256sum | cut -d' ' -f1)
+            [ "sha256:$got" = "$DIGEST" ] || { echo "::error::$REPO:$tag is sha256:$got, pushed $DIGEST"; exit 1; }
+            cosign verify --certificate-identity "$RELEASE_IDENTITY" \
+              --certificate-oidc-issuer "$issuer" "$REPO:$tag" >/dev/null
+            echo "signature verified: $REPO:$tag"
+          done
+          for arch in amd64 arm64; do
+            child=$(skopeo inspect --raw "docker://$REPO@$DIGEST" \
+              | jq -r --arg a "$arch" '.manifests[] | select(.platform.architecture == $a) | .digest')
+            cosign verify --certificate-identity "$RELEASE_IDENTITY" \
+              --certificate-oidc-issuer "$issuer" "$REPO@$child" >/dev/null
+            cosign verify-attestation --type spdxjson \
+              --certificate-identity "$RELEASE_IDENTITY" --certificate-oidc-issuer "$issuer" "$REPO@$child" >/dev/null
+            echo "signature and SBOM attestation verified: $arch $child"
+          done
+          gh attestation verify "oci://$REPO@$DIGEST" --repo "$GITHUB_REPOSITORY" >/dev/null
+          echo "provenance verified: $REPO@$DIGEST"
+      - name: Remove local images
+        if: always()
+        run: scripts/release/image.sh clean "$IMAGE"
+
+  # Checks the release the way docs/install.md tells a user to: from what was
+  # published, not from what this run believes it uploaded.
+  verify:
+    name: Verify the published release
+    needs: [plan, publish, image]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+          sparse-checkout: scripts/release
+      - name: Install cosign
+        run: |
+          scripts/release/tools.sh "$RUNNER_TEMP/tools" cosign
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - name: Download and verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/r" && cd "$RUNNER_TEMP/r"
+          gh release download "$TAG"
+          cosign verify-blob \
+            --bundle checksums.txt.sigstore.json \
+            --certificate-identity "$RELEASE_IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            checksums.txt
+          sha256sum --check --strict checksums.txt
+          for f in scrim_"${VERSION}"_*.tar.gz scrim-dataplane_"${VERSION}"_*.tar.gz; do
+            gh attestation verify "$f" --repo "$GH_REPO" \
+              --signer-workflow "$GH_REPO/.github/workflows/release.yaml" >/dev/null
+            echo "provenance verified: $f"
+          done
+          tar -xzf "scrim_${VERSION}_linux_amd64.tar.gz" ./scrim
+          cmd=$(sed -n 's/^SCRIM_VERSION_CMD=//p' "$GITHUB_WORKSPACE/scripts/release/release.env")
+          ./scrim "$cmd" | tee version.txt
+          grep -qF "$VERSION" version.txt
