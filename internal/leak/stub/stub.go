@@ -15,7 +15,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"strconv"
 	"strings"
@@ -23,12 +22,83 @@ import (
 	"github.com/heliopsy/scrim/internal/leak"
 )
 
-// PassThrough returns a reverse proxy that forwards every request unchanged.
+// PassThrough returns a proxy that forwards every request unchanged.
 func PassThrough(upstream *url.URL) http.Handler {
-	rp := httputil.NewSingleHostReverseProxy(upstream)
-	rp.Transport = transport()
-	rp.FlushInterval = -1
-	return rp
+	return &forwarder{upstream: upstream, client: &http.Client{Transport: transport()}}
+}
+
+// forwarder relays one request and streams the response back, flushing
+// after every read so streamed events pass through as they arrive.
+type forwarder struct {
+	upstream *url.URL
+	client   *http.Client
+	rewrite  func([]byte) []byte
+	restore  func([]byte) []byte
+}
+
+func (f *forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read request", http.StatusBadGateway)
+		return
+	}
+	if f.rewrite != nil {
+		body = f.rewrite(body)
+	}
+	u := *f.upstream
+	u.Path = strings.TrimRight(u.Path, "/") + r.URL.Path
+	u.RawQuery = r.URL.RawQuery
+	out, err := http.NewRequestWithContext(r.Context(), r.Method, u.String(), bytes.NewReader(body))
+	if err != nil {
+		http.Error(w, "build request", http.StatusBadGateway)
+		return
+	}
+	for k, vs := range r.Header {
+		if k == "Content-Length" || k == "Connection" {
+			continue
+		}
+		out.Header[k] = vs
+	}
+	resp, err := f.client.Do(out)
+	if err != nil {
+		http.Error(w, "upstream: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	for k, vs := range resp.Header {
+		if k == "Content-Length" {
+			continue
+		}
+		w.Header()[k] = vs
+	}
+	if f.restore != nil {
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return
+		}
+		b = f.restore(b)
+		w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(b)
+		return
+	}
+	w.WriteHeader(resp.StatusCode)
+	fl, _ := w.(http.Flusher)
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return
+			}
+			if fl != nil {
+				fl.Flush()
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
 }
 
 // transport gives each stand-in its own connection pool, so it never shares
@@ -45,7 +115,7 @@ func Placeholder(key []byte, s leak.Seed) string {
 	return "⟦scrim:" + slug + ":" + hex.EncodeToString(m.Sum(nil))[:16] + "⟧"
 }
 
-// Naive returns a reverse proxy that replaces each seed's verbatim and
+// Naive returns a proxy that replaces each seed's verbatim and
 // JSON-escaped forms in the request body with its placeholder, and restores
 // placeholders in response bodies. It matches nothing else.
 func Naive(upstream *url.URL, seeds []leak.Seed) http.Handler {
@@ -67,38 +137,20 @@ func Naive(upstream *url.URL, seeds []leak.Seed) http.Handler {
 		}
 		back = append(back, pair{[]byte(ph), jsonForm})
 	}
-	rp := &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) {
-		pr.SetURL(upstream)
-		pr.Out.Host = pr.In.Host
-		r := pr.Out
-		if r.Body == nil {
-			return
-		}
-		b, err := io.ReadAll(r.Body)
-		_ = r.Body.Close()
-		if err != nil {
-			b = nil
-		}
-		for _, p := range out {
-			b = bytes.ReplaceAll(b, p.from, p.to)
-		}
-		r.Body = io.NopCloser(bytes.NewReader(b))
-		r.ContentLength = int64(len(b))
-		r.Header.Set("Content-Length", strconv.Itoa(len(b)))
-	}, Transport: transport(), FlushInterval: -1}
-	rp.ModifyResponse = func(resp *http.Response) error {
-		b, err := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			return err
-		}
-		for _, p := range back {
-			b = bytes.ReplaceAll(b, p.from, p.to)
-		}
-		resp.Body = io.NopCloser(bytes.NewReader(b))
-		resp.ContentLength = int64(len(b))
-		resp.Header.Set("Content-Length", strconv.Itoa(len(b)))
-		return nil
+	return &forwarder{
+		upstream: upstream,
+		client:   &http.Client{Transport: transport()},
+		rewrite: func(b []byte) []byte {
+			for _, p := range out {
+				b = bytes.ReplaceAll(b, p.from, p.to)
+			}
+			return b
+		},
+		restore: func(b []byte) []byte {
+			for _, p := range back {
+				b = bytes.ReplaceAll(b, p.from, p.to)
+			}
+			return b
+		},
 	}
-	return rp
 }
