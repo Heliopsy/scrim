@@ -155,7 +155,8 @@ jobs:
         with:
           ref: ${{ needs.plan.outputs.commit }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-rust
+      - name: Set up rustup
+        run: scripts/ci-setup-rust.sh
       # Cargo's home and target directory under the job's temp directory: no
       # registry or build output from an earlier job is reused (the Mac keeps
       # its home between jobs), and the cleanup step below removes both.
@@ -262,7 +263,8 @@ jobs:
           # A different checkout path from the build, so a path that leaked
           # into a binary shows up as a mismatch.
           path: elsewhere/scrim
-      - uses: ./elsewhere/scrim/.github/actions/setup-rust
+      - name: Set up rustup
+        run: elsewhere/scrim/scripts/ci-setup-rust.sh
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
         with:
           go-version-file: elsewhere/scrim/go.mod
