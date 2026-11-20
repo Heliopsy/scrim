@@ -1,0 +1,204 @@
+{
+  "$id": "https://raw.githubusercontent.com/heliopsy/scrim/main/schema/config-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Generated from the scrim settings registry by `scrim config schema`. Do not edit.",
+  "properties": {
+    "apiVersion": {
+      "description": "Config file format version.",
+      "enum": [
+        "scrim.dev/v1"
+      ]
+    },
+    "config": {
+      "additionalProperties": false,
+      "properties": {
+        "strict": {
+          "default": true,
+          "description": "Reject config files containing keys scrim does not know. When false, unknown keys are reported as warnings instead.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_CONFIG_STRICT",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "watch": {
+          "default": true,
+          "description": "Reload the configuration when a config file or an included file changes. SIGHUP always triggers a reload.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_CONFIG_WATCH",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "include": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "optional": {
+                  "type": "boolean"
+                },
+                "path": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "items": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "optional": {
+                    "type": "boolean"
+                  },
+                  "path": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      ],
+      "description": "Files, globs or directories merged after this file, relative to it."
+    },
+    "kind": {
+      "const": "Config",
+      "description": "Document kind."
+    },
+    "log": {
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "default": "text",
+          "description": "Log record format: text (logfmt) or json, one object per line.",
+          "enum": [
+            "text",
+            "json"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_LOG_FORMAT",
+          "x-scrim-flag": "--log-format",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "level": {
+          "default": "info",
+          "description": "Minimum level of log records.",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_LOG_LEVEL",
+          "x-scrim-flag": "--log-level",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "metrics": {
+      "additionalProperties": false,
+      "properties": {
+        "listen": {
+          "default": "",
+          "description": "Address of the metrics and health endpoint (Prometheus format at /metrics, /livez, /readyz). Empty disables it; bind to loopback unless scraped remotely.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_METRICS_LISTEN",
+          "x-scrim-flag": "--metrics-listen",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "policy": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "default": "deny",
+          "description": "Decision applied when no rule matches. Anything other than deny is reported as a weakened protection.",
+          "enum": [
+            "deny",
+            "ask",
+            "allow"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_POLICY_DEFAULT",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true
+        }
+      },
+      "type": "object"
+    },
+    "profile": {
+      "default": "local",
+      "description": "Built-in preset of defaults for a deployment shape: `local` for a laptop or VM, `k8s` for Kubernetes, `ci` for throwaway runs. Any value a profile sets can be overridden.",
+      "enum": [
+        "local",
+        "k8s",
+        "ci"
+      ],
+      "type": "string",
+      "x-scrim-env": "SCRIM_PROFILE",
+      "x-scrim-flag": "--profile",
+      "x-scrim-restart-required": false,
+      "x-scrim-weakening": false
+    },
+    "state": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "default": "memory",
+          "description": "State backend for approvals, grants, sessions and audit metadata. memory writes nothing to disk.",
+          "enum": [
+            "memory",
+            "sqlite",
+            "postgres"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_STATE_BACKEND",
+          "x-scrim-flag": "--state-backend",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind"
+  ],
+  "title": "scrim configuration file (scrim.dev/v1)",
+  "type": "object"
+}

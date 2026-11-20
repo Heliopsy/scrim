@@ -52,12 +52,26 @@ type Env struct {
 }
 
 // Config returns the effective configuration, loaded once after flags are
-// parsed: defaults, then SCRIM_* environment, then flags.
+// parsed: defaults, profile, config files, SCRIM_* environment, then flags.
 func (e *Env) Config() (*config.Config, error) {
 	e.cfgOnce.Do(func() {
-		e.cfg, e.cfgErr = config.Load(e.Registry, config.EnvLayer(e.Environ), config.FlagLayer(e.root.PersistentFlags()))
+		e.cfg, e.cfgErr = config.Build(e.ConfigOptions())
 	})
 	return e.cfg, e.cfgErr
+}
+
+// ConfigOptions says where this invocation reads configuration from, for
+// [config.Build] and [config.NewManager].
+func (e *Env) ConfigOptions() config.Options {
+	var paths []string
+	if p, _ := e.root.PersistentFlags().GetString("config"); p != "" {
+		paths = []string{p}
+	}
+	environ := e.Environ
+	if environ == nil {
+		environ = []string{}
+	}
+	return config.Options{Registry: e.Registry, ConfigPaths: paths, Environ: environ, Flags: e.root.PersistentFlags()}
 }
 
 // App builds the composition root once. The root command closes it.

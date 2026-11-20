@@ -27,3 +27,8 @@ proto:
       --go-grpc_out=. --go-grpc_opt=module={{module}} \
       proto/scrim/dataplane/v1/dataplane.proto
     cd dataplane/tools/protogen && cargo run --quiet --locked
+
+# Regenerate the config JSON Schema and the settings reference from the registry.
+config-docs:
+    go run . config schema > schema/config-v1.json
+    go run . config docs --update docs/configuration.md
