@@ -4,6 +4,29 @@
   "additionalProperties": false,
   "description": "Generated from the scrim settings registry by `scrim config schema`. Do not edit.",
   "properties": {
+    "api": {
+      "additionalProperties": false,
+      "properties": {
+        "permissions": {
+          "default": "0600",
+          "description": "Permission bits of the API socket, octal. Widen (for example 0660) only to let agents running as other local users connect; their identity still comes from peer credentials.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_API_PERMISSIONS",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "socket": {
+          "default": "",
+          "description": "Unix socket of the local agent API. Empty uses $XDG_RUNTIME_DIR/scrim/api.sock.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_API_SOCKET",
+          "x-scrim-flag": "--api-socket",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
     "apiVersion": {
       "description": "Config file format version.",
       "enum": [
@@ -27,6 +50,37 @@
           "type": "boolean",
           "x-scrim-env": "SCRIM_CONFIG_WATCH",
           "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "entry": {
+      "additionalProperties": false,
+      "properties": {
+        "listen": {
+          "default": "127.0.0.1:0",
+          "description": "Loopback address of the page where a human enters a value for secret_ask_human. Port 0 picks a free port.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_ENTRY_LISTEN",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "identity": {
+      "additionalProperties": false,
+      "properties": {
+        "peers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Agents by local user or group: agent name to space-separated selectors uid:N, user:NAME, gid:N, group:NAME, scope:SCOPE, label:K=V. Empty maps the user scrim runs as to one agent named after it.",
+          "type": "object",
+          "x-scrim-env": "SCRIM_IDENTITY_PEERS",
+          "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         }
       },
@@ -174,6 +228,30 @@
       "x-scrim-restart-required": false,
       "x-scrim-weakening": false
     },
+    "session": {
+      "additionalProperties": false,
+      "properties": {
+        "max-ttl": {
+          "default": "168h0m0s",
+          "description": "Longest lifetime a session token can be minted with.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_SESSION_MAX_TTL",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "ttl": {
+          "default": "12h0m0s",
+          "description": "Default lifetime of a session token minted by scrim run. The token is revoked earlier when scrim run exits.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_SESSION_TTL",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
     "state": {
       "additionalProperties": false,
       "properties": {
@@ -247,6 +325,39 @@
             }
           },
           "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "tools": {
+      "additionalProperties": false,
+      "properties": {
+        "approval-timeout": {
+          "default": "15m0s",
+          "description": "How long a pending approval waits for a decision before it expires as denied.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_TOOLS_APPROVAL_TIMEOUT",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "grant-default-ttl": {
+          "default": "15m0s",
+          "description": "Duration of a grant when secret_request names none.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_TOOLS_GRANT_DEFAULT_TTL",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "grant-max-ttl": {
+          "default": "8h0m0s",
+          "description": "Longest grant secret_request can produce. Longer requests are capped and the result says so.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_TOOLS_GRANT_MAX_TTL",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
         }
       },
       "type": "object"

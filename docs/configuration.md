@@ -212,21 +212,56 @@ is out of date.
 
 | Key | Type | Default | Reload |
 |---|---|---|---|
+| [`api.permissions`](#apipermissions) | string | `0600` | restart required |
+| [`api.socket`](#apisocket) | string | `""` | restart required |
 | [`config.strict`](#configstrict) | bool | `true` | hot |
 | [`config.watch`](#configwatch) | bool | `true` | hot |
+| [`entry.listen`](#entrylisten) | string | `127.0.0.1:0` | restart required |
+| [`identity.peers`](#identitypeers) | map | `{}` | restart required |
 | [`log.format`](#logformat) | string | `text` | hot |
 | [`log.level`](#loglevel) | string | `info` | hot |
 | [`metrics.listen`](#metricslisten) | string | `""` | restart required |
 | [`policy.default`](#policydefault) | string | `deny` | hot |
 | [`profile`](#profile) | string | `local` | hot |
+| [`session.max-ttl`](#sessionmax-ttl) | duration | `168h0m0s` | restart required |
+| [`session.ttl`](#sessionttl) | duration | `12h0m0s` | restart required |
 | [`state.backend`](#statebackend) | string | `memory` | restart required |
 | [`state.postgres.connect-timeout`](#statepostgresconnect-timeout) | duration | `15s` | restart required |
 | [`state.postgres.dsn`](#statepostgresdsn) | secret-ref | empty | restart required |
 | [`state.postgres.max-conns`](#statepostgresmax-conns) | int | `16` | restart required |
 | [`state.sqlite.allow-network-filesystem`](#statesqliteallow-network-filesystem) | bool | `false` | restart required |
 | [`state.sqlite.path`](#statesqlitepath) | string | `""` | restart required |
+| [`tools.approval-timeout`](#toolsapproval-timeout) | duration | `15m0s` | restart required |
+| [`tools.grant-default-ttl`](#toolsgrant-default-ttl) | duration | `15m0s` | restart required |
+| [`tools.grant-max-ttl`](#toolsgrant-max-ttl) | duration | `8h0m0s` | restart required |
 | [`tracing.endpoint`](#tracingendpoint) | string | `""` | restart required |
 | [`tracing.sample-ratio`](#tracingsample-ratio) | float | `1` | restart required |
+
+### api
+
+#### `api.permissions`
+
+Permission bits of the API socket, octal. Widen (for example 0660) only to let agents running as other local users connect; their identity still comes from peer credentials.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `0600` |
+| Environment | `SCRIM_API_PERMISSIONS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `api.socket`
+
+Unix socket of the local agent API. Empty uses $XDG_RUNTIME_DIR/scrim/api.sock.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_API_SOCKET` |
+| Flag | `--api-socket` |
+| Reload | restart required |
 
 ### config
 
@@ -253,6 +288,34 @@ Reload the configuration when a config file or an included file changes. SIGHUP 
 | Environment | `SCRIM_CONFIG_WATCH` |
 | Flag | none |
 | Reload | hot |
+
+### entry
+
+#### `entry.listen`
+
+Loopback address of the page where a human enters a value for secret_ask_human. Port 0 picks a free port.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `127.0.0.1:0` |
+| Environment | `SCRIM_ENTRY_LISTEN` |
+| Flag | none |
+| Reload | restart required |
+
+### identity
+
+#### `identity.peers`
+
+Agents by local user or group: agent name to space-separated selectors uid:N, user:NAME, gid:N, group:NAME, scope:SCOPE, label:K=V. Empty maps the user scrim runs as to one agent named after it.
+
+| | |
+|---|---|
+| Type | map of strings (env: JSON object or `k=v,k2=v2`; one entry: variable plus `_ENTRY`) |
+| Default | `{}` |
+| Environment | `SCRIM_IDENTITY_PEERS` |
+| Flag | none |
+| Reload | restart required |
 
 ### log
 
@@ -326,6 +389,32 @@ Built-in preset of defaults for a deployment shape: `local` for a laptop or VM, 
 | Flag | `--profile` |
 | Reload | hot |
 | Values | `local`, `k8s`, `ci` |
+
+### session
+
+#### `session.max-ttl`
+
+Longest lifetime a session token can be minted with.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `168h0m0s` |
+| Environment | `SCRIM_SESSION_MAX_TTL` |
+| Flag | none |
+| Reload | restart required |
+
+#### `session.ttl`
+
+Default lifetime of a session token minted by scrim run. The token is revoked earlier when scrim run exits.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `12h0m0s` |
+| Environment | `SCRIM_SESSION_TTL` |
+| Flag | none |
+| Reload | restart required |
 
 ### state
 
@@ -401,6 +490,44 @@ SQLite state file. Empty means $XDG_STATE_HOME/scrim/state.db (~/.local/state/sc
 | Default | `""` |
 | Environment | `SCRIM_STATE_SQLITE_PATH` |
 | Flag | `--state-sqlite-path` |
+| Reload | restart required |
+
+### tools
+
+#### `tools.approval-timeout`
+
+How long a pending approval waits for a decision before it expires as denied.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `15m0s` |
+| Environment | `SCRIM_TOOLS_APPROVAL_TIMEOUT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `tools.grant-default-ttl`
+
+Duration of a grant when secret_request names none.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `15m0s` |
+| Environment | `SCRIM_TOOLS_GRANT_DEFAULT_TTL` |
+| Flag | none |
+| Reload | restart required |
+
+#### `tools.grant-max-ttl`
+
+Longest grant secret_request can produce. Longer requests are capped and the result says so.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `8h0m0s` |
+| Environment | `SCRIM_TOOLS_GRANT_MAX_TTL` |
+| Flag | none |
 | Reload | restart required |
 
 ### tracing
