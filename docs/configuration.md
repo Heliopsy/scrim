@@ -263,6 +263,7 @@ is out of date.
 | [`proxy.forward-listen`](#proxyforward-listen) | string | `127.0.0.1:9791` | restart required |
 | [`proxy.listen`](#proxylisten) | string | `127.0.0.1:9790` | restart required |
 | [`proxy.socket`](#proxysocket) | string | `""` | restart required |
+| [`proxy.upstream-ca-file`](#proxyupstream-ca-file) | string | `""` | restart required |
 | [`proxy.upstream.anthropic`](#proxyupstreamanthropic) | string | `https://api.anthropic.com` | hot |
 | [`proxy.upstream.chatgpt`](#proxyupstreamchatgpt) | string | `https://chatgpt.com` | hot |
 | [`proxy.upstream.chatgpt-ab`](#proxyupstreamchatgpt-ab) | string | `https://ab.chatgpt.com` | hot |
@@ -1006,6 +1007,18 @@ Unix socket path for the LLM proxy base URL, for agents that can connect to one.
 | Default | `""` |
 | Environment | `SCRIM_PROXY_SOCKET` |
 | Flag | `--proxy-socket` |
+| Reload | restart required |
+
+#### `proxy.upstream-ca-file`
+
+PEM bundle of extra roots trusted for upstream TLS by the LLM proxy and the tool proxy (private API hosts, corporate TLS inspection), on top of the system and Mozilla roots. Empty adds none.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_PROXY_UPSTREAM_CA_FILE` |
+| Flag | none |
 | Reload | restart required |
 
 #### `proxy.upstream.anthropic`

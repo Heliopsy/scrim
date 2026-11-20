@@ -303,12 +303,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		return nil, err
 	}
 	a.Health.Ready("dataplane listeners", d.listenersHealth)
-	if d.capture != "" {
-		// Capture mode is a data plane process setting: it is fixed for the
-		// data plane's life, so the setting needs a restart.
-		d.sup.Options.ExtraEnv = append(d.sup.Options.ExtraEnv, "SCRIM_DP_CAPTURE_DIR="+d.capture,
-			fmt.Sprintf("SCRIM_DP_CAPTURE_RETENTION_SECS=%d", int64(CaptureRetention.Get(cfg).Seconds())))
-	}
+	d.sup.Options.ExtraEnv = append(d.sup.Options.ExtraEnv, dataPlaneEnv(cfg, d.capture)...)
 	d.sup.Options.ExtraEnv = append(d.sup.Options.ExtraEnv, o.DataPlaneEnv...)
 	d.sup.OnAsk = pp.Gate.Answer
 	sink := &eventSink{state: a.State, inst: a.Instruments, log: d.log}
@@ -808,4 +803,21 @@ func prepareCaptureDir(dir string) error {
 		return fmt.Errorf("proxy.capture.dir: %s is accessible to group or others (mode %04o); use mode 0700", dir, fi.Mode().Perm())
 	}
 	return nil
+}
+
+// dataPlaneEnv is the data plane's process settings that the snapshot does
+// not carry. They are fixed for the data plane's life, so the settings behind
+// them need a restart.
+func dataPlaneEnv(cfg *config.Config, capture string) []string {
+	var env []string
+	if capture != "" {
+		env = append(env, "SCRIM_DP_CAPTURE_DIR="+capture,
+			fmt.Sprintf("SCRIM_DP_CAPTURE_RETENTION_SECS=%d", int64(CaptureRetention.Get(cfg).Seconds())))
+	}
+	if f := UpstreamCAFile.Get(cfg); f != "" {
+		// Read once at start-up; an unreadable file or one without a
+		// certificate stops the data plane, so missing trust is never silent.
+		env = append(env, "SCRIM_DP_EXTRA_CA_FILE="+f)
+	}
+	return env
 }

@@ -51,6 +51,13 @@ var (
 		RestartRequired: true,
 		Validate:        optionalHostPort,
 	})
+	// UpstreamCAFile is a PEM bundle of extra roots the data plane trusts
+	// for upstream TLS, on top of the system and Mozilla roots.
+	UpstreamCAFile = config.Register(config.Spec[string]{
+		Key:             "proxy.upstream-ca-file",
+		Description:     "PEM bundle of extra roots trusted for upstream TLS by the LLM proxy and the tool proxy (private API hosts, corporate TLS inspection), on top of the system and Mozilla roots. Empty adds none.",
+		RestartRequired: true,
+	})
 	// UpstreamAnthropic is where Anthropic requests are forwarded.
 	UpstreamAnthropic = config.Register(config.Spec[string]{
 		Key:         "proxy.upstream.anthropic",

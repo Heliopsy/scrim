@@ -722,6 +722,14 @@
             }
           },
           "type": "object"
+        },
+        "upstream-ca-file": {
+          "default": "",
+          "description": "PEM bundle of extra roots trusted for upstream TLS by the LLM proxy and the tool proxy (private API hosts, corporate TLS inspection), on top of the system and Mozilla roots. Empty adds none.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_PROXY_UPSTREAM_CA_FILE",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
         }
       },
       "type": "object"
