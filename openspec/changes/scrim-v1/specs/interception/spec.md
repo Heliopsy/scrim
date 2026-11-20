@@ -253,6 +253,12 @@ remove it on uninstall.
 - **WHEN** transparent mode is installed for a Node-based agent
 - **THEN** the agent trusts scrim's certificate without manual configuration
 
+#### Scenario: Per-user trust installation
+
+- **WHEN** a user runs `scrim ca install --user`
+- **THEN** each change to a trust store or bundle file is shown before it is made and recorded in a manifest
+- **AND** `scrim ca uninstall --user` reverts exactly the recorded changes and lists any it could not revert with the manual step
+
 ### Requirement: Local chained proxies are not intercepted
 
 When scrim is chained to a local upstream proxy, interception SHALL exclude that upstream's local

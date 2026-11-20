@@ -59,6 +59,21 @@ for trust installation.
 - **WHEN** a client that trusts only the previous CA connects during the overlap period
 - **THEN** the handshake succeeds through a cross certificate, and fails once the overlap ends
 
+#### Scenario: Restart during an overlap
+
+- **WHEN** scrim restarts while a rotation's overlap period is running
+- **THEN** it uses the same current CA and keeps the previous one until the recorded end of the overlap
+
+#### Scenario: Operator-supplied CA
+
+- **WHEN** `tool-proxy.ca.cert-file` and `tool-proxy.ca.key` name an operator's CA certificate and key reference
+- **THEN** scrim uses that CA, never rotates it, and warns before it expires
+
+#### Scenario: CA key readable by others
+
+- **WHEN** the generated CA's key file is readable by group or others
+- **THEN** scrim refuses to use it and names the file, without printing its content
+
 ### Requirement: Pinned certificates fail closed
 
 When a client refuses the interception certificate, scrim SHALL not fall back to passing the

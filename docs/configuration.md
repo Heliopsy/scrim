@@ -212,11 +212,9 @@ is out of date.
 
 | Key | Type | Default | Reload |
 |---|---|---|---|
-| [`admin.token`](#admintoken) | secret-ref | empty | hot |
 | [`admin.url`](#adminurl) | string | `""` | hot |
 | [`api.permissions`](#apipermissions) | string | `0600` | restart required |
 | [`api.socket`](#apisocket) | string | `""` | restart required |
-| [`approvals.listen`](#approvalslisten) | string | `""` | restart required |
 | [`approvals.poll-interval`](#approvalspoll-interval) | duration | `1s` | hot |
 | [`approvals.public-url`](#approvalspublic-url) | string | `""` | hot |
 | [`approvals.signing-key`](#approvalssigning-key) | secret-ref | empty | hot |
@@ -231,7 +229,6 @@ is out of date.
 | [`config.watch`](#configwatch) | bool | `true` | hot |
 | [`dataplane.memory-lock`](#dataplanememory-lock) | string | `auto` | restart required |
 | [`dataplane.path`](#dataplanepath) | string | `""` | restart required |
-| [`dataplane.push-debounce`](#dataplanepush-debounce) | duration | `200ms` | hot |
 | [`dataplane.restart-max-backoff`](#dataplanerestart-max-backoff) | duration | `30s` | hot |
 | [`dataplane.start-timeout`](#dataplanestart-timeout) | duration | `10s` | hot |
 | [`entry.listen`](#entrylisten) | string | `127.0.0.1:0` | restart required |
@@ -255,17 +252,6 @@ is out of date.
 | [`policy.deny-all-refresh`](#policydeny-all-refresh) | duration | `1s` | hot |
 | [`policy.rules-file`](#policyrules-file) | string | `""` | hot |
 | [`profile`](#profile) | string | `local` | hot |
-| [`proxy.capture.dir`](#proxycapturedir) | string | `""` | hot |
-| [`proxy.capture.retention`](#proxycaptureretention) | duration | `168h0m0s` | hot |
-| [`proxy.chain.on-unavailable`](#proxychainon-unavailable) | string | `fail` | hot |
-| [`proxy.chain.url`](#proxychainurl) | string | `""` | hot |
-| [`proxy.forward-listen`](#proxyforward-listen) | string | `""` | restart required |
-| [`proxy.listen`](#proxylisten) | string | `127.0.0.1:9790` | restart required |
-| [`proxy.socket`](#proxysocket) | string | `""` | restart required |
-| [`proxy.upstream.anthropic`](#proxyupstreamanthropic) | string | `https://api.anthropic.com` | hot |
-| [`proxy.upstream.openai`](#proxyupstreamopenai) | string | `https://api.openai.com` | hot |
-| [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
-| [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
 | [`session.max-ttl`](#sessionmax-ttl) | duration | `168h0m0s` | restart required |
 | [`session.ttl`](#sessionttl) | duration | `12h0m0s` | restart required |
 | [`state.backend`](#statebackend) | string | `memory` | restart required |
@@ -274,16 +260,19 @@ is out of date.
 | [`state.postgres.max-conns`](#statepostgresmax-conns) | int | `16` | restart required |
 | [`state.sqlite.allow-network-filesystem`](#statesqliteallow-network-filesystem) | bool | `false` | restart required |
 | [`state.sqlite.path`](#statesqlitepath) | string | `""` | restart required |
-| [`tool-proxy.listen`](#tool-proxylisten) | string | `""` | restart required |
+| [`tool-proxy.ca.cert-file`](#tool-proxycacert-file) | string | `""` | restart required |
+| [`tool-proxy.ca.dir`](#tool-proxycadir) | string | `""` | restart required |
+| [`tool-proxy.ca.key`](#tool-proxycakey) | secret-ref | empty | restart required |
+| [`tool-proxy.ca.overlap`](#tool-proxycaoverlap) | duration | `168h0m0s` | restart required |
+| [`tool-proxy.ca.rotate-before`](#tool-proxycarotate-before) | duration | `720h0m0s` | restart required |
+| [`tool-proxy.ca.validity`](#tool-proxycavalidity) | duration | `17520h0m0s` | restart required |
 | [`tools.approval-timeout`](#toolsapproval-timeout) | duration | `15m0s` | restart required |
 | [`tools.grant-default-ttl`](#toolsgrant-default-ttl) | duration | `15m0s` | restart required |
 | [`tools.grant-max-ttl`](#toolsgrant-max-ttl) | duration | `8h0m0s` | restart required |
 | [`tracing.endpoint`](#tracingendpoint) | string | `""` | restart required |
 | [`tracing.sample-ratio`](#tracingsample-ratio) | float | `1` | restart required |
 | [`catalog.entries.<name>.*`](#catalogentriesname) | collection | empty | hot |
-| [`redaction.placeholder-keys.<name>.*`](#redactionplaceholder-keysname) | collection | empty | hot |
 | [`stores.<name>.*`](#storesname) | collection | empty | restart required |
-| [`tool-proxy.capture-rules.<name>.*`](#tool-proxycapture-rulesname) | collection | empty | hot |
 
 ### `catalog.entries.<name>`
 
@@ -293,18 +282,6 @@ Catalog entries by logical name: ref, profiles, variants, prefix, template, host
 |---|---|
 | Type | collection of named instances (names: lower-case words with dashes) |
 | Environment | `SCRIM_CATALOG_ENTRIES` (JSON object of instances, replaces the collection); `SCRIM_CATALOG_ENTRIES_<NAME>_<FIELD>` for one field |
-| Reload | hot |
-
-### `redaction.placeholder-keys.<name>`
-
-Placeholder keys by name, each with `version` (1 to 255) and `key` (a reference to at least 16 bytes). The highest version is current; lower ones keep resolving placeholders made before a rotation. Every replica sharing conversations needs the same keys. Empty means a key generated once and kept in redaction.placeholder-key-dir.
-
-| | |
-|---|---|
-| Type | collection of named instances (names: lower-case words with dashes) |
-| Environment | `SCRIM_REDACTION_PLACEHOLDER_KEYS` (JSON object of instances, replaces the collection); `SCRIM_REDACTION_PLACEHOLDER_KEYS_<NAME>_<FIELD>` for one field |
-| Required fields | `version`, `key` |
-| Secret fields | `key` (references; a literal is warned about) |
 | Reload | hot |
 
 ### `stores.<name>`
@@ -319,30 +296,7 @@ Secret store instances by name. The name is the instance's reference scheme (`ba
 | Secret fields | `token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password`, `unlock` (references; a literal is warned about) |
 | Reload | restart required |
 
-### `tool-proxy.capture-rules.<name>`
-
-Response capture rules by name: `hosts`, optional `methods`, `path` glob and `status` codes select the response; exactly one of `json-pointer` and `header` selects the field; `store-ref` is the store reference the value is written to. The agent receives the reference's placeholder instead.
-
-| | |
-|---|---|
-| Type | collection of named instances (names: lower-case words with dashes) |
-| Environment | `SCRIM_TOOL_PROXY_CAPTURE_RULES` (JSON object of instances, replaces the collection); `SCRIM_TOOL_PROXY_CAPTURE_RULES_<NAME>_<FIELD>` for one field |
-| Required fields | `hosts`, `store-ref` |
-| Reload | hot |
-
 ### admin
-
-#### `admin.token`
-
-Reference to the bearer token operators present on a TCP admin listener (admin.url http://host:port). Required for TCP; the Unix socket uses peer credentials instead. scrim approve and friends send it.
-
-| | |
-|---|---|
-| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; a literal is warned about) |
-| Default | empty |
-| Environment | `SCRIM_ADMIN_TOKEN` |
-| Flag | none |
-| Reload | hot |
 
 #### `admin.url`
 
@@ -383,18 +337,6 @@ Unix socket of the local agent API. Empty uses $XDG_RUNTIME_DIR/scrim/api.sock.
 | Reload | restart required |
 
 ### approvals
-
-#### `approvals.listen`
-
-TCP address that serves only the decision-link endpoint, for approvals.public-url to point at (usually through a TLS reverse proxy). Empty means decision links are served on the admin listener only.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `""` |
-| Environment | `SCRIM_APPROVALS_LISTEN` |
-| Flag | `--approvals-listen` |
-| Reload | restart required |
 
 #### `approvals.poll-interval`
 
@@ -570,18 +512,6 @@ Path of a scrim-dataplane binary to run instead of the embedded one. For develop
 | Environment | `SCRIM_DATAPLANE_PATH` |
 | Flag | none |
 | Reload | restart required |
-
-#### `dataplane.push-debounce`
-
-How long the control plane waits after a store, catalog, configuration or policy change before it pushes a new snapshot, so bursts of changes become one push.
-
-| | |
-|---|---|
-| Type | duration (`90s`, `5m`, `1h30m`) |
-| Default | `200ms` |
-| Environment | `SCRIM_DATAPLANE_PUSH_DEBOUNCE` |
-| Flag | none |
-| Reload | hot |
 
 #### `dataplane.restart-max-backoff`
 
@@ -880,143 +810,6 @@ Built-in preset of defaults for a deployment shape: `local` for a laptop or VM, 
 | Reload | hot |
 | Values | `local`, `k8s`, `ci` |
 
-### proxy
-
-#### `proxy.capture.dir`
-
-Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture DIR` sets it.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `""` |
-| Environment | `SCRIM_PROXY_CAPTURE_DIR` |
-| Flag | `--proxy-capture-dir` |
-| Reload | hot |
-
-#### `proxy.capture.retention`
-
-Captured files older than this are deleted.
-
-| | |
-|---|---|
-| Type | duration (`90s`, `5m`, `1h30m`) |
-| Default | `168h0m0s` |
-| Environment | `SCRIM_PROXY_CAPTURE_RETENTION` |
-| Flag | none |
-| Reload | hot |
-
-#### `proxy.chain.on-unavailable`
-
-When the chained upstream cannot be reached: fail refuses the request, direct sends the already redacted request to the provider and audits the skip.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `fail` |
-| Environment | `SCRIM_PROXY_CHAIN_ON_UNAVAILABLE` |
-| Flag | none |
-| Reload | hot |
-| Values | `fail`, `direct` |
-
-#### `proxy.chain.url`
-
-Base URL of a chained upstream (for example a context compression proxy) that receives every redacted provider request in place of the provider. Empty means no chain.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `""` |
-| Environment | `SCRIM_PROXY_CHAIN_URL` |
-| Flag | none |
-| Reload | hot |
-
-#### `proxy.forward-listen`
-
-TCP address of the forward proxy for agents with HTTPS_PROXY set: provider hosts go to the LLM proxy, every other host to the tool proxy. Empty disables it.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `""` |
-| Environment | `SCRIM_PROXY_FORWARD_LISTEN` |
-| Flag | `--proxy-forward-listen` |
-| Reload | restart required |
-
-#### `proxy.listen`
-
-TCP address of the LLM proxy base URL (agents use http://<address>/anthropic and http://<address>/openai/v1). Empty disables it; keep it on loopback.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `127.0.0.1:9790` |
-| Environment | `SCRIM_PROXY_LISTEN` |
-| Flag | `--proxy-listen` |
-| Reload | restart required |
-
-#### `proxy.socket`
-
-Unix socket path for the LLM proxy base URL, for agents that can connect to one. Empty disables it.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `""` |
-| Environment | `SCRIM_PROXY_SOCKET` |
-| Flag | `--proxy-socket` |
-| Reload | restart required |
-
-#### `proxy.upstream.anthropic`
-
-Base URL Anthropic Messages requests are forwarded to after redaction.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `https://api.anthropic.com` |
-| Environment | `SCRIM_PROXY_UPSTREAM_ANTHROPIC` |
-| Flag | none |
-| Reload | hot |
-
-#### `proxy.upstream.openai`
-
-Base URL OpenAI Chat Completions and Responses requests are forwarded to after redaction.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `https://api.openai.com` |
-| Environment | `SCRIM_PROXY_UPSTREAM_OPENAI` |
-| Flag | none |
-| Reload | hot |
-
-### redaction
-
-#### `redaction.min-value-length`
-
-Shortest value matched in free text; shorter values are matched only in exact and encoded forms.
-
-| | |
-|---|---|
-| Type | int |
-| Default | `8` |
-| Environment | `SCRIM_REDACTION_MIN_VALUE_LENGTH` |
-| Flag | none |
-| Reload | hot |
-
-#### `redaction.placeholder-key-dir`
-
-Directory of the generated placeholder key, used when redaction.placeholder-keys is empty. Empty means $XDG_STATE_HOME/scrim/keys (~/.local/state/scrim/keys).
-
-| | |
-|---|---|
-| Type | string |
-| Default | `""` |
-| Environment | `SCRIM_REDACTION_PLACEHOLDER_KEY_DIR` |
-| Flag | none |
-| Reload | restart required |
-
 ### session
 
 #### `session.max-ttl`
@@ -1047,7 +840,7 @@ Default lifetime of a session token minted by scrim run. The token is revoked ea
 
 #### `state.backend`
 
-State backend for approvals, grants, sessions and audit metadata. The local profile uses sqlite ($XDG_STATE_HOME/scrim/state.db); ci and k8s use memory, which writes nothing to disk (set postgres for shared state).
+State backend for approvals, grants, sessions and audit metadata. memory writes nothing to disk.
 
 | | |
 |---|---|
@@ -1057,7 +850,6 @@ State backend for approvals, grants, sessions and audit metadata. The local prof
 | Flag | `--state-backend` |
 | Reload | restart required |
 | Values | `memory`, `sqlite`, `postgres` |
-| Profiles | local: `sqlite` |
 
 #### `state.postgres.connect-timeout`
 
@@ -1122,16 +914,76 @@ SQLite state file. Empty means $XDG_STATE_HOME/scrim/state.db (~/.local/state/sc
 
 ### tool-proxy
 
-#### `tool-proxy.listen`
+#### `tool-proxy.ca.cert-file`
 
-TCP address of the HTTPS tool proxy (credential injection and response redaction) for tools pointed at it directly. Empty disables it.
+PEM certificate of an operator-supplied interception CA, used together with tool-proxy.ca.key. An operator-supplied CA is never rotated by scrim; a warning is logged once it is within tool-proxy.ca.rotate-before of expiry.
 
 | | |
 |---|---|
 | Type | string |
 | Default | `""` |
-| Environment | `SCRIM_TOOL_PROXY_LISTEN` |
-| Flag | `--tool-proxy-listen` |
+| Environment | `SCRIM_TOOL_PROXY_CA_CERT_FILE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `tool-proxy.ca.dir`
+
+Directory of the generated interception CA (certificates, private keys, rotation state, trust manifest). Empty means $XDG_STATE_HOME/scrim/ca (~/.local/state/scrim/ca). Created with mode 0700.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_TOOL_PROXY_CA_DIR` |
+| Flag | none |
+| Reload | restart required |
+
+#### `tool-proxy.ca.key`
+
+Reference to the PKCS#8 PEM private key of the operator-supplied CA in tool-proxy.ca.cert-file (env:, file:, cred: or a store reference). Empty means scrim generates and rotates its own CA.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; literals rejected) |
+| Default | empty |
+| Environment | `SCRIM_TOOL_PROXY_CA_KEY` |
+| Flag | none |
+| Reload | restart required |
+
+#### `tool-proxy.ca.overlap`
+
+After a rotation, how long the previous CA stays trusted through a cross certificate and in the trust bundle. Capped at the previous certificate's expiry.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `168h0m0s` |
+| Environment | `SCRIM_TOOL_PROXY_CA_OVERLAP` |
+| Flag | none |
+| Reload | restart required |
+
+#### `tool-proxy.ca.rotate-before`
+
+A generated CA is rotated when less than this much of its validity remains. For an operator-supplied CA it is how early the expiry warning starts.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `720h0m0s` |
+| Environment | `SCRIM_TOOL_PROXY_CA_ROTATE_BEFORE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `tool-proxy.ca.validity`
+
+Validity of each generated CA certificate.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `17520h0m0s` |
+| Environment | `SCRIM_TOOL_PROXY_CA_VALIDITY` |
+| Flag | none |
 | Reload | restart required |
 
 ### tools
