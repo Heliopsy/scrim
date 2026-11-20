@@ -37,3 +37,37 @@ paths = ['''^bench/redact-bench/fixtures/gen/secrets\.go$''']
 matchCondition = "AND"
 regexTarget = "line"
 regexes = ['''-----BEGIN PRIVATE KEY-----''']
+
+[[allowlists]]
+description = """
+Descriptions of the HMAC constructions behind placeholders and approval
+tokens. The formulas name the key; they do not contain one.
+"""
+paths = [
+  '''^openspec/changes/scrim-v1/specs/redaction/spec\.md$''',
+  '''^dataplane/crates/scrim-redact/src/placeholder\.rs$''',
+  '''^internal/approval/token\.go$''',
+]
+matchCondition = "AND"
+regexTarget = "line"
+regexes = ['''HMAC-SHA256\(key''', '''"scrim-approval-v1\.''']
+
+[[allowlists]]
+description = """
+Detector tests in the redaction core: AWS's documented example-shaped key id
+and a truncated, escaped PEM block, which the fallback detectors must find.
+"""
+paths = ['''^dataplane/crates/scrim-redact/src/detect\.rs$''']
+matchCondition = "AND"
+regexTarget = "line"
+regexes = ['''AKIAABCDEFGHIJKLMNOP''', '''BEGIN RSA PRIVATE KEY-----\\\\nMIIEow==''']
+
+[[allowlists]]
+description = """
+Recorded OpenAI request fixtures carry Codex's prompt_cache_key, a UUID that
+groups requests for prompt caching; it grants nothing.
+"""
+paths = ['''^dataplane/crates/scrim-llm/tests/fixtures/''']
+matchCondition = "AND"
+regexTarget = "line"
+regexes = ['''"prompt_cache_key":"[0-9a-f-]{36}"''']
