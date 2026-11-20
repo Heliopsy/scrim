@@ -23,7 +23,29 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
+      # Container-backed store tests run in their own job below.
       - run: go test -race -count=1 ./...
+        env:
+          SCRIM_TEST_PODMAN: "0"
+
+  stores:
+    name: Store conformance (podman)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: podman version
+      # SCRIM_TEST_PODMAN=1 turns a missing or broken podman into a failure,
+      # so the conformance runs cannot be skipped silently.
+      - run: go test -race -count=1 -timeout 25m ./internal/stores/...
+        env:
+          SCRIM_TEST_PODMAN: "1"
+      - name: Leftover containers
+        if: always()
+        run: podman ps -a --filter name=scrim-stores- && podman pod ps --filter name=scrim-stores-
 
   rust:
     name: Rust
