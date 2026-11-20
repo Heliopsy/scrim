@@ -27,12 +27,12 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 3. Anthropic Messages proxy (M0 exit)
 
-- [ ] 3.1 Base-URL listener and Anthropic Messages codec, agent auth passed through, unknown request fields redacted; verify: recorded request fixtures round-trip with only allowlisted fields untouched
-- [ ] 3.2 Streaming restorer with per-block holdback, split placeholders and byte-identical thinking and signature content; verify: property test restore(redact(x)) and recorded stream fixtures
-- [ ] 3.3 Fail-closed error path; verify: injected redaction or guard errors return the documented error and nothing reaches the fake upstream
-- [ ] 3.4 Capture mode; verify: captured requests are byte-identical to what the fake upstream received
+- [x] 3.1 Base-URL listener and Anthropic Messages codec, agent auth passed through, unknown request fields redacted; verify: recorded request fixtures round-trip with only allowlisted fields untouched
+- [x] 3.2 Streaming restorer with per-block holdback, split placeholders and byte-identical thinking and signature content; verify: property test restore(redact(x)) and recorded stream fixtures
+- [x] 3.3 Fail-closed error path; verify: injected redaction or guard errors return the documented error and nothing reaches the fake upstream
+- [x] 3.4 Capture mode; verify: captured requests are byte-identical to what the fake upstream received
 - [ ] 3.5 Upstream chaining through caveman with redaction first; verify: caveman's store holds placeholders only, and placeholders survive compression in an end-to-end run
-- [ ] 3.6 Latency budget gate; verify: CI fails when p99 per request or per chunk exceeds the configured budget on the reference fixtures
+- [x] 3.6 Latency budget gate; verify: CI fails when p99 per request or per chunk exceeds the configured budget on the reference fixtures
 
 ## 4. Configuration
 
@@ -69,10 +69,10 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 8. Identity and agent tools
 
-- [ ] 8.1 Unix socket peer credentials and session tokens from `scrim run`; verify: one agent cannot use another's token or grants
-- [ ] 8.2 MCP server (stdio) with secrets_list, secret_request, secret_gen, secret_capture, secret_ask_human, approval_status, grants_list; verify: no tool schema accepts a value and no response contains one, checked against seeded values
-- [ ] 8.3 Agent-facing CLI equivalents including `scrim secret put --stdin` that never echoes; verify: golden tests and a pipe test with the value absent from all output
-- [ ] 8.4 Human entry page for secret_ask_human; verify: the agent receives only stored or declined
+- [x] 8.1 Unix socket peer credentials and session tokens from `scrim run`; verify: one agent cannot use another's token or grants
+- [x] 8.2 MCP server (stdio) with secrets_list, secret_request, secret_gen, secret_capture, secret_ask_human, approval_status, grants_list; verify: no tool schema accepts a value and no response contains one, checked against seeded values
+- [x] 8.3 Agent-facing CLI equivalents including `scrim secret put --stdin` that never echoes; verify: golden tests and a pipe test with the value absent from all output
+- [x] 8.4 Human entry page for secret_ask_human; verify: the agent receives only stored or declined
 
 ## 9. Restore policy, wrapper and leak assurance (M1 exit)
 

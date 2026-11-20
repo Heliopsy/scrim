@@ -146,7 +146,8 @@ func Main(ctx context.Context, args []string) int {
 }
 
 // Run executes args against e and returns the exit code: 0 on success, 1 on
-// error. Errors are printed once, to e.Stderr.
+// error, or the code of an [ExitCodeError]. Errors are printed once, to
+// e.Stderr.
 func Run(ctx context.Context, e *Env, args []string) int {
 	root := NewRoot(e)
 	root.SetArgs(args)
@@ -156,11 +157,14 @@ func Run(ctx context.Context, e *Env, args []string) int {
 			err = cerr
 		}
 	}
-	if err != nil {
-		_, _ = fmt.Fprintln(e.Stderr, "scrim:", err)
-		return 1
+	if err == nil {
+		return 0
 	}
-	return 0
+	code, perr := exitCode(err)
+	if perr != nil {
+		_, _ = fmt.Fprintln(e.Stderr, "scrim:", perr)
+	}
+	return code
 }
 
 // stub returns a placeholder command that fails with ErrNotImplemented and

@@ -1,0 +1,399 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! Contracts between the LLM proxy and the redaction core.
+//!
+//! The proxy never matches secrets itself. It hands raw request bytes to a [`Redactor`], the
+//! result to an independent [`Guard`], and uses [`Placeholders`] plus a [`RestorePolicy`] to
+//! resolve placeholders in responses. All four come from one [`Snapshot`], which the control
+//! plane replaces atomically; a request loads the snapshot once and uses it from start to end.
+//!
+//! The redaction core (`scrim-redact`) provides the production implementations. The
+//! `test-util` feature ships fakes for tests and benches.
+
+use std::fmt;
+use std::sync::Arc;
+
+use arc_swap::ArcSwapOption;
+use zeroize::Zeroizing;
+
+/// Name of a secret reference, such as `github-token` or `prod/db/password`.
+///
+/// This is metadata, never a value, and is safe to log and audit.
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SecretRef(Arc<str>);
+
+impl SecretRef {
+    /// Wraps a reference name.
+    pub fn new(name: impl Into<Arc<str>>) -> Self {
+        Self(name.into())
+    }
+
+    /// The reference name.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SecretRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SecretRef({})", self.0)
+    }
+}
+
+impl fmt::Display for SecretRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// How a secret value may be used once a placeholder resolves to it (design D5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ValueClass {
+    /// A credential. Never restored into text, commands, files or tool arguments; it reaches its
+    /// destination only through credential injection. The proxy enforces this regardless of the
+    /// restore policy.
+    Credential,
+    /// Display data the agent may need to read or keep, restored under the tool policy.
+    Display,
+}
+
+/// A secret value in memory. Wiped on drop, and printed as `[redacted]`.
+pub struct SecretValue(Zeroizing<Vec<u8>>);
+
+impl SecretValue {
+    /// Takes ownership of the bytes.
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(Zeroizing::new(bytes))
+    }
+
+    /// The raw value. Callers must not log, print or persist it.
+    pub fn expose(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SecretValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SecretValue([redacted])")
+    }
+}
+
+/// Error from the redactor, guard or placeholder layer.
+///
+/// The message is chosen by the implementation and must never contain a secret value or the
+/// bytes being redacted. The proxy maps every engine error to the fail-closed refusal.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{message}")]
+pub struct EngineError {
+    message: String,
+}
+
+impl EngineError {
+    /// Creates an error. `message` must not contain secret values or request content.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
+    /// The (value-free) message.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+/// What the redactor did to one input.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RedactReport {
+    /// Number of replacements made.
+    pub replacements: usize,
+    /// Secret references whose values were replaced, without duplicates.
+    pub refs: Vec<SecretRef>,
+    /// Fallback detectors that fired, by name.
+    pub detectors: Vec<String>,
+}
+
+impl RedactReport {
+    /// Merges another report into this one.
+    pub fn merge(&mut self, other: RedactReport) {
+        self.replacements += other.replacements;
+        for r in other.refs {
+            if !self.refs.contains(&r) {
+                self.refs.push(r);
+            }
+        }
+        for d in other.detectors {
+            if !self.detectors.contains(&d) {
+                self.detectors.push(d);
+            }
+        }
+    }
+}
+
+/// Replaces known secret values (and their encoded variants) with placeholders in raw bytes.
+pub trait Redactor: Send + Sync {
+    /// Appends the redacted form of `input` to `out`. On error nothing may be forwarded.
+    ///
+    /// The output must be deterministic for a given snapshot so that an unchanged conversation
+    /// prefix redacts to the same bytes on every request (prompt-cache stability).
+    fn redact(&self, input: &[u8], out: &mut Vec<u8>) -> Result<RedactReport, EngineError>;
+}
+
+/// The guard's verdict over the exact outgoing bytes.
+#[derive(Debug)]
+pub enum GuardVerdict {
+    /// No known value found.
+    Clean,
+    /// Known values were found and replaced; forward `bytes` instead.
+    Repaired {
+        /// The repaired outgoing bytes.
+        bytes: Vec<u8>,
+        /// References involved.
+        refs: Vec<SecretRef>,
+    },
+    /// Known values were found and could not be repaired. The request must be refused.
+    Refused {
+        /// References involved.
+        refs: Vec<SecretRef>,
+    },
+}
+
+/// Independent second check over the exact bytes that would leave (design D4). It must not share
+/// matching code with the [`Redactor`].
+pub trait Guard: Send + Sync {
+    /// Scans `outgoing`.
+    fn check(&self, outgoing: &[u8]) -> Result<GuardVerdict, EngineError>;
+}
+
+/// Where a placeholder sits in a piece of text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaceholderMatch {
+    /// A complete, well-formed placeholder at `start..end`.
+    Complete {
+        /// Byte offset of the first placeholder byte.
+        start: usize,
+        /// Byte offset just past the placeholder.
+        end: usize,
+    },
+    /// The text ends with `text[start..]`, which could still become a placeholder once more
+    /// bytes arrive. `text.len() - start` is less than [`Placeholders::max_len`].
+    Partial {
+        /// Byte offset where the possible placeholder starts.
+        start: usize,
+    },
+}
+
+/// A placeholder that resolved to a value.
+#[derive(Debug, Clone)]
+pub struct Resolved {
+    /// The secret reference.
+    pub reference: SecretRef,
+    /// The value's class.
+    pub class: ValueClass,
+    /// The value.
+    pub value: Arc<SecretValue>,
+}
+
+/// Placeholder syntax and resolution (design D3).
+pub trait Placeholders: Send + Sync {
+    /// Length in bytes of the longest placeholder. Streams hold back at most `max_len() - 1`
+    /// bytes per content block.
+    fn max_len(&self) -> usize;
+
+    /// Finds the first complete or trailing partial placeholder in `text`. Must be a char
+    /// boundary-respecting byte offset (placeholders start with a non-continuation byte).
+    fn find(&self, text: &str) -> Option<PlaceholderMatch>;
+
+    /// Resolves a complete placeholder. `None` when it is unknown (for example made with a
+    /// retired key or by another deployment); the proxy then emits it unchanged.
+    fn resolve(&self, placeholder: &str) -> Option<Resolved>;
+}
+
+/// The place in a response where a placeholder would be resolved.
+#[derive(Debug, Clone, Copy)]
+pub enum RestoreSite<'a> {
+    /// Text the agent displays to the user (assistant text, refusals).
+    Text,
+    /// Arguments of a tool call the model makes.
+    ToolInput {
+        /// The tool name as the model called it.
+        tool: &'a str,
+        /// The complete arguments (JSON text, or free-form input for custom tools) when known.
+        /// `None` while arguments stream in, unless the policy asked for
+        /// [`ToolMode::Buffered`].
+        arguments: Option<&'a str>,
+    },
+}
+
+/// The policy's answer for one placeholder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoreDecision {
+    /// Replace the placeholder with the value, escaped for where it lands.
+    Resolve,
+    /// Leave the placeholder as is.
+    Keep,
+}
+
+/// How the proxy feeds a tool call's arguments to the policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolMode {
+    /// Decide per placeholder while arguments stream; [`RestoreSite::ToolInput::arguments`] is
+    /// `None` for streamed responses.
+    Stream,
+    /// Hold the tool call's argument deltas until the call is complete, then decide with the
+    /// full arguments. Needed for rules such as "write tools only restore values already in
+    /// the target file". Bounded by `limits.max_buffered_tool_input`; past it, every
+    /// placeholder of that call is kept.
+    Buffered,
+}
+
+/// Per-tool restore policy (design D5, redaction spec "Resolution follows tool policy").
+///
+/// Thinking, reasoning and signature content is never offered to the policy: it stays
+/// byte-identical. Values of class [`ValueClass::Credential`] are never offered either.
+pub trait RestorePolicy: Send + Sync {
+    /// Decides one placeholder.
+    fn decide(
+        &self,
+        site: &RestoreSite<'_>,
+        reference: &SecretRef,
+        class: ValueClass,
+    ) -> RestoreDecision;
+
+    /// How to feed `tool`'s arguments. Defaults to [`ToolMode::Stream`].
+    fn tool_mode(&self, tool: &str) -> ToolMode {
+        let _ = tool;
+        ToolMode::Stream
+    }
+}
+
+/// Keeps every placeholder. The safe default until a policy snapshot arrives.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct KeepAll;
+
+impl RestorePolicy for KeepAll {
+    fn decide(&self, _: &RestoreSite<'_>, _: &SecretRef, _: ValueClass) -> RestoreDecision {
+        RestoreDecision::Keep
+    }
+}
+
+/// What to do with content parts that cannot be scanned (images, documents, audio).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BinaryPolicy {
+    /// Forward unscanned and mark the request as containing unscanned content in the audit log.
+    #[default]
+    Pass,
+    /// Refuse the request, naming the content type.
+    Block,
+}
+
+/// Everything a request needs from the control plane, swapped atomically.
+#[derive(Clone)]
+pub struct Snapshot {
+    /// Version acknowledged back to the control plane.
+    pub version: u64,
+    /// Request-side redactor.
+    pub redactor: Arc<dyn Redactor>,
+    /// Independent guard.
+    pub guard: Arc<dyn Guard>,
+    /// Placeholder syntax and resolution.
+    pub placeholders: Arc<dyn Placeholders>,
+    /// Tool restore policy.
+    pub policy: Arc<dyn RestorePolicy>,
+    /// Policy for unscannable content.
+    pub binary: BinaryPolicy,
+}
+
+impl fmt::Debug for Snapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Snapshot")
+            .field("version", &self.version)
+            .field("binary", &self.binary)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Holds the current [`Snapshot`]. Empty until the first one is applied; requests are refused
+/// with "redaction not ready" while it is empty.
+#[derive(Default)]
+pub struct SnapshotCell {
+    inner: ArcSwapOption<Snapshot>,
+}
+
+impl SnapshotCell {
+    /// An empty cell.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A cell holding `snapshot`.
+    pub fn with(snapshot: Snapshot) -> Self {
+        let cell = Self::new();
+        cell.store(snapshot);
+        cell
+    }
+
+    /// Replaces the snapshot. In-flight requests keep the one they loaded.
+    pub fn store(&self, snapshot: Snapshot) {
+        self.inner.store(Some(Arc::new(snapshot)));
+    }
+
+    /// Empties the cell, for example when the control plane connection is lost.
+    pub fn clear(&self) {
+        self.inner.store(None);
+    }
+
+    /// The current snapshot, if any.
+    pub fn load(&self) -> Option<Arc<Snapshot>> {
+        self.inner.load_full()
+    }
+}
+
+impl fmt::Debug for SnapshotCell {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SnapshotCell")
+            .field("version", &self.load().map(|s| s.version))
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secret_value_debug_is_redacted() {
+        let v = SecretValue::new(b"hunter2-hunter2".to_vec());
+        assert_eq!(format!("{v:?}"), "SecretValue([redacted])");
+        assert_eq!(v.expose(), b"hunter2-hunter2");
+    }
+
+    #[test]
+    fn report_merge_dedups() {
+        let mut a = RedactReport {
+            replacements: 1,
+            refs: vec![SecretRef::new("a")],
+            detectors: vec!["x".into()],
+        };
+        a.merge(RedactReport {
+            replacements: 2,
+            refs: vec![SecretRef::new("a"), SecretRef::new("b")],
+            detectors: vec!["x".into(), "y".into()],
+        });
+        assert_eq!(a.replacements, 3);
+        assert_eq!(a.refs, vec![SecretRef::new("a"), SecretRef::new("b")]);
+        assert_eq!(a.detectors, vec!["x".to_string(), "y".to_string()]);
+    }
+
+    #[test]
+    fn keep_all_keeps() {
+        let d = KeepAll.decide(
+            &RestoreSite::Text,
+            &SecretRef::new("a"),
+            ValueClass::Display,
+        );
+        assert_eq!(d, RestoreDecision::Keep);
+        assert_eq!(KeepAll.tool_mode("bash"), ToolMode::Stream);
+    }
+}

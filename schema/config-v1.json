@@ -4,16 +4,24 @@
   "additionalProperties": false,
   "description": "Generated from the scrim settings registry by `scrim config schema`. Do not edit.",
   "properties": {
-    "admin": {
+    "api": {
       "additionalProperties": false,
       "properties": {
-        "url": {
-          "default": "",
-          "description": "Address of the scrim admin API for operator commands: unix:/path/to/socket or http(s)://host:port. Empty means unix:$XDG_RUNTIME_DIR/scrim/admin.sock.",
+        "permissions": {
+          "default": "0600",
+          "description": "Permission bits of the API socket, octal. Widen (for example 0660) only to let agents running as other local users connect; their identity still comes from peer credentials.",
           "type": "string",
-          "x-scrim-env": "SCRIM_ADMIN_URL",
-          "x-scrim-flag": "--admin-url",
-          "x-scrim-restart-required": false,
+          "x-scrim-env": "SCRIM_API_PERMISSIONS",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "socket": {
+          "default": "",
+          "description": "Unix socket of the local agent API. Empty uses $XDG_RUNTIME_DIR/scrim/api.sock.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_API_SOCKET",
+          "x-scrim-flag": "--api-socket",
+          "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         }
       },
@@ -24,48 +32,6 @@
       "enum": [
         "scrim.dev/v1"
       ]
-    },
-    "approvals": {
-      "additionalProperties": false,
-      "properties": {
-        "poll-interval": {
-          "default": "1s",
-          "description": "How often a waiting operation re-reads its approval from the state backend; bounds how long a decision recorded elsewhere takes to release it.",
-          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
-          "type": "string",
-          "x-scrim-env": "SCRIM_APPROVALS_POLL_INTERVAL",
-          "x-scrim-restart-required": false,
-          "x-scrim-weakening": false
-        },
-        "public-url": {
-          "default": "",
-          "description": "Base URL under which the decision endpoint is reachable from approvers' devices, for example https://scrim.example.org. Empty means notifiers get no decision links and approvals are decided with scrim approve.",
-          "type": "string",
-          "x-scrim-env": "SCRIM_APPROVALS_PUBLIC_URL",
-          "x-scrim-restart-required": false,
-          "x-scrim-weakening": false
-        },
-        "signing-key": {
-          "default": "",
-          "description": "Reference to the key (at least 32 bytes) that signs decision links, shared by every replica. Empty means a random key per process: links stop working on restart and on other replicas.",
-          "type": "string",
-          "x-scrim-env": "SCRIM_APPROVALS_SIGNING_KEY",
-          "x-scrim-restart-required": false,
-          "x-scrim-secret-ref": true,
-          "x-scrim-weakening": false
-        },
-        "timeout": {
-          "default": "2m0s",
-          "description": "How long an approval waits for a decision before it is denied. A rule's approval.timeout overrides it.",
-          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
-          "type": "string",
-          "x-scrim-env": "SCRIM_APPROVALS_TIMEOUT",
-          "x-scrim-flag": "--approvals-timeout",
-          "x-scrim-restart-required": false,
-          "x-scrim-weakening": false
-        }
-      },
-      "type": "object"
     },
     "catalog": {
       "additionalProperties": false,
@@ -166,25 +132,32 @@
       },
       "type": "object"
     },
-    "grants": {
+    "entry": {
       "additionalProperties": false,
       "properties": {
-        "default-ttl": {
-          "default": "30m0s",
-          "description": "Grant duration when neither the rule nor the approver chooses one.",
-          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+        "listen": {
+          "default": "127.0.0.1:0",
+          "description": "Loopback address of the page where a human enters a value for secret_ask_human. Port 0 picks a free port.",
           "type": "string",
-          "x-scrim-env": "SCRIM_GRANTS_DEFAULT_TTL",
-          "x-scrim-restart-required": false,
+          "x-scrim-env": "SCRIM_ENTRY_LISTEN",
+          "x-scrim-restart-required": true,
           "x-scrim-weakening": false
-        },
-        "max-ttl": {
-          "default": "8h0m0s",
-          "description": "Longest grant any rule or approver can create. A rule's grant.max_ttl can only lower it.",
-          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
-          "type": "string",
-          "x-scrim-env": "SCRIM_GRANTS_MAX_TTL",
-          "x-scrim-restart-required": false,
+        }
+      },
+      "type": "object"
+    },
+    "identity": {
+      "additionalProperties": false,
+      "properties": {
+        "peers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Agents by local user or group: agent name to space-separated selectors uid:N, user:NAME, gid:N, group:NAME, scope:SCOPE, label:K=V. Empty maps the user scrim runs as to one agent named after it.",
+          "type": "object",
+          "x-scrim-env": "SCRIM_IDENTITY_PEERS",
+          "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         }
       },
@@ -299,108 +272,6 @@
       },
       "type": "object"
     },
-    "notify": {
-      "additionalProperties": false,
-      "properties": {
-        "ntfy": {
-          "additionalProperties": false,
-          "properties": {
-            "priority": {
-              "default": 4,
-              "description": "ntfy message priority, 1 (min) to 5 (max).",
-              "maximum": 9223372036854775807,
-              "minimum": -9223372036854775808,
-              "type": "integer",
-              "x-scrim-env": "SCRIM_NOTIFY_NTFY_PRIORITY",
-              "x-scrim-restart-required": false,
-              "x-scrim-weakening": false
-            },
-            "token": {
-              "default": "",
-              "description": "Reference to an ntfy access token for publishing. Empty publishes anonymously.",
-              "type": "string",
-              "x-scrim-env": "SCRIM_NOTIFY_NTFY_TOKEN",
-              "x-scrim-restart-required": false,
-              "x-scrim-secret-ref": true,
-              "x-scrim-weakening": false
-            },
-            "topic": {
-              "default": "",
-              "description": "ntfy topic approval requests are published to. Anyone who can read the topic sees approval metadata, so use an access-controlled topic or a long random name.",
-              "type": "string",
-              "x-scrim-env": "SCRIM_NOTIFY_NTFY_TOPIC",
-              "x-scrim-restart-required": false,
-              "x-scrim-weakening": false
-            },
-            "url": {
-              "default": "",
-              "description": "Base URL of the ntfy server, for example https://ntfy.sh. Empty disables the ntfy notifier.",
-              "type": "string",
-              "x-scrim-env": "SCRIM_NOTIFY_NTFY_URL",
-              "x-scrim-restart-required": false,
-              "x-scrim-weakening": false
-            }
-          },
-          "type": "object"
-        },
-        "terminal": {
-          "additionalProperties": false,
-          "properties": {
-            "enabled": {
-              "default": true,
-              "description": "Print each approval request with its scrim approve and scrim deny commands to the control plane's terminal.",
-              "type": "boolean",
-              "x-scrim-env": "SCRIM_NOTIFY_TERMINAL_ENABLED",
-              "x-scrim-restart-required": false,
-              "x-scrim-weakening": false
-            }
-          },
-          "type": "object"
-        },
-        "webhook": {
-          "additionalProperties": false,
-          "properties": {
-            "hold": {
-              "default": "30s",
-              "description": "Longest time one submit or poll request is held open by the receiver (sent as X-Nono-Timeout-Secs, capped by the approval's remaining time).",
-              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
-              "type": "string",
-              "x-scrim-env": "SCRIM_NOTIFY_WEBHOOK_HOLD",
-              "x-scrim-restart-required": false,
-              "x-scrim-weakening": false
-            },
-            "poll-interval": {
-              "default": "2s",
-              "description": "Pause between polls when the receiver answers pending without holding.",
-              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
-              "type": "string",
-              "x-scrim-env": "SCRIM_NOTIFY_WEBHOOK_POLL_INTERVAL",
-              "x-scrim-restart-required": false,
-              "x-scrim-weakening": false
-            },
-            "secret": {
-              "default": "",
-              "description": "Reference to the shared secret (at least 32 bytes) that signs webhook requests with HMAC-SHA256. Empty sends unsigned requests.",
-              "type": "string",
-              "x-scrim-env": "SCRIM_NOTIFY_WEBHOOK_SECRET",
-              "x-scrim-restart-required": false,
-              "x-scrim-secret-ref": true,
-              "x-scrim-weakening": false
-            },
-            "url": {
-              "default": "",
-              "description": "Approval service URL for the webhook notifier (nono approval webhook v1 compatible). https, or http to a loopback host. Empty disables it.",
-              "type": "string",
-              "x-scrim-env": "SCRIM_NOTIFY_WEBHOOK_URL",
-              "x-scrim-restart-required": false,
-              "x-scrim-weakening": false
-            }
-          },
-          "type": "object"
-        }
-      },
-      "type": "object"
-    },
     "policy": {
       "additionalProperties": false,
       "properties": {
@@ -416,33 +287,6 @@
           "x-scrim-env": "SCRIM_POLICY_DEFAULT",
           "x-scrim-restart-required": false,
           "x-scrim-weakening": true
-        },
-        "deny-all": {
-          "default": false,
-          "description": "Break-glass: deny every injection, grant and approval while redaction continues. While set in configuration it cannot be released from the CLI.",
-          "type": "boolean",
-          "x-scrim-env": "SCRIM_POLICY_DENY_ALL",
-          "x-scrim-flag": "--policy-deny-all",
-          "x-scrim-restart-required": false,
-          "x-scrim-weakening": false
-        },
-        "deny-all-refresh": {
-          "default": "1s",
-          "description": "How often each replica re-reads the deny-all state from the state backend; the bound on how long a change on one replica takes to reach the others.",
-          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
-          "type": "string",
-          "x-scrim-env": "SCRIM_POLICY_DENY_ALL_REFRESH",
-          "x-scrim-restart-required": false,
-          "x-scrim-weakening": false
-        },
-        "rules-file": {
-          "default": "",
-          "description": "Path of the policy rules file (YAML or JSON with default and rules). Empty means no rules: every request gets policy.default.",
-          "type": "string",
-          "x-scrim-env": "SCRIM_POLICY_RULES_FILE",
-          "x-scrim-flag": "--policy-rules-file",
-          "x-scrim-restart-required": false,
-          "x-scrim-weakening": false
         }
       },
       "type": "object"
@@ -460,6 +304,30 @@
       "x-scrim-flag": "--profile",
       "x-scrim-restart-required": false,
       "x-scrim-weakening": false
+    },
+    "session": {
+      "additionalProperties": false,
+      "properties": {
+        "max-ttl": {
+          "default": "168h0m0s",
+          "description": "Longest lifetime a session token can be minted with.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_SESSION_MAX_TTL",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "ttl": {
+          "default": "12h0m0s",
+          "description": "Default lifetime of a session token minted by scrim run. The token is revoked earlier when scrim run exits.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_SESSION_TTL",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
     },
     "state": {
       "additionalProperties": false,
@@ -583,6 +451,39 @@
       "x-scrim-collection": true,
       "x-scrim-env": "SCRIM_STORES",
       "x-scrim-restart-required": true
+    },
+    "tools": {
+      "additionalProperties": false,
+      "properties": {
+        "approval-timeout": {
+          "default": "15m0s",
+          "description": "How long a pending approval waits for a decision before it expires as denied.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_TOOLS_APPROVAL_TIMEOUT",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "grant-default-ttl": {
+          "default": "15m0s",
+          "description": "Duration of a grant when secret_request names none.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_TOOLS_GRANT_DEFAULT_TTL",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "grant-max-ttl": {
+          "default": "8h0m0s",
+          "description": "Longest grant secret_request can produce. Longer requests are capped and the result says so.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_TOOLS_GRANT_MAX_TTL",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
     },
     "tracing": {
       "additionalProperties": false,

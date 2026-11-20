@@ -78,3 +78,17 @@ jobs:
           SCRIM_TEST_NTFY_URL=http://127.0.0.1:18765 go test -race -count=1 -run TestEndToEndAgainstNtfy -v ./internal/notify/ntfy/
       - if: always()
         run: podman rm -f -v scrim-e2e-ntfy || true
+
+  llm-latency-gate:
+    name: LLM proxy latency gate
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: dataplane
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - run: rustup show active-toolchain || rustup toolchain install
+      # Fails, naming the measurement, when a p99 exceeds crates/scrim-llm/benches/budget.json.
+      - run: cargo bench --locked -p scrim-llm --bench latency_gate

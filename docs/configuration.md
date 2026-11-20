@@ -212,11 +212,8 @@ is out of date.
 
 | Key | Type | Default | Reload |
 |---|---|---|---|
-| [`admin.url`](#adminurl) | string | `""` | hot |
-| [`approvals.poll-interval`](#approvalspoll-interval) | duration | `1s` | hot |
-| [`approvals.public-url`](#approvalspublic-url) | string | `""` | hot |
-| [`approvals.signing-key`](#approvalssigning-key) | secret-ref | empty | hot |
-| [`approvals.timeout`](#approvalstimeout) | duration | `2m0s` | hot |
+| [`api.permissions`](#apipermissions) | string | `0600` | restart required |
+| [`api.socket`](#apisocket) | string | `""` | restart required |
 | [`catalog.environment`](#catalogenvironment) | string | `""` | hot |
 | [`catalog.files`](#catalogfiles) | list | `[]` | hot |
 | [`catalog.metadata-from`](#catalogmetadata-from) | list | `[]` | hot |
@@ -225,31 +222,24 @@ is out of date.
 | [`catalog.reload-interval`](#catalogreload-interval) | duration | `5s` | hot |
 | [`config.strict`](#configstrict) | bool | `true` | hot |
 | [`config.watch`](#configwatch) | bool | `true` | hot |
-| [`grants.default-ttl`](#grantsdefault-ttl) | duration | `30m0s` | hot |
-| [`grants.max-ttl`](#grantsmax-ttl) | duration | `8h0m0s` | hot |
+| [`entry.listen`](#entrylisten) | string | `127.0.0.1:0` | restart required |
+| [`identity.peers`](#identitypeers) | map | `{}` | restart required |
 | [`log.format`](#logformat) | string | `text` | hot |
 | [`log.level`](#loglevel) | string | `info` | hot |
 | [`metrics.listen`](#metricslisten) | string | `""` | restart required |
-| [`notify.ntfy.priority`](#notifyntfypriority) | int | `4` | hot |
-| [`notify.ntfy.token`](#notifyntfytoken) | secret-ref | empty | hot |
-| [`notify.ntfy.topic`](#notifyntfytopic) | string | `""` | hot |
-| [`notify.ntfy.url`](#notifyntfyurl) | string | `""` | hot |
-| [`notify.terminal.enabled`](#notifyterminalenabled) | bool | `true` | hot |
-| [`notify.webhook.hold`](#notifywebhookhold) | duration | `30s` | hot |
-| [`notify.webhook.poll-interval`](#notifywebhookpoll-interval) | duration | `2s` | hot |
-| [`notify.webhook.secret`](#notifywebhooksecret) | secret-ref | empty | hot |
-| [`notify.webhook.url`](#notifywebhookurl) | string | `""` | hot |
 | [`policy.default`](#policydefault) | string | `deny` | hot |
-| [`policy.deny-all`](#policydeny-all) | bool | `false` | hot |
-| [`policy.deny-all-refresh`](#policydeny-all-refresh) | duration | `1s` | hot |
-| [`policy.rules-file`](#policyrules-file) | string | `""` | hot |
 | [`profile`](#profile) | string | `local` | hot |
+| [`session.max-ttl`](#sessionmax-ttl) | duration | `168h0m0s` | restart required |
+| [`session.ttl`](#sessionttl) | duration | `12h0m0s` | restart required |
 | [`state.backend`](#statebackend) | string | `memory` | restart required |
 | [`state.postgres.connect-timeout`](#statepostgresconnect-timeout) | duration | `15s` | restart required |
 | [`state.postgres.dsn`](#statepostgresdsn) | secret-ref | empty | restart required |
 | [`state.postgres.max-conns`](#statepostgresmax-conns) | int | `16` | restart required |
 | [`state.sqlite.allow-network-filesystem`](#statesqliteallow-network-filesystem) | bool | `false` | restart required |
 | [`state.sqlite.path`](#statesqlitepath) | string | `""` | restart required |
+| [`tools.approval-timeout`](#toolsapproval-timeout) | duration | `15m0s` | restart required |
+| [`tools.grant-default-ttl`](#toolsgrant-default-ttl) | duration | `15m0s` | restart required |
+| [`tools.grant-max-ttl`](#toolsgrant-max-ttl) | duration | `8h0m0s` | restart required |
 | [`tracing.endpoint`](#tracingendpoint) | string | `""` | restart required |
 | [`tracing.sample-ratio`](#tracingsample-ratio) | float | `1` | restart required |
 | [`catalog.entries.<name>.*`](#catalogentriesname) | collection | empty | hot |
@@ -277,69 +267,31 @@ Secret store instances by name. The name is the instance's reference scheme (`ba
 | Secret fields | `token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password`, `unlock` (references; a literal is warned about) |
 | Reload | restart required |
 
-### admin
+### api
 
-#### `admin.url`
+#### `api.permissions`
 
-Address of the scrim admin API for operator commands: unix:/path/to/socket or http(s)://host:port. Empty means unix:$XDG_RUNTIME_DIR/scrim/admin.sock.
+Permission bits of the API socket, octal. Widen (for example 0660) only to let agents running as other local users connect; their identity still comes from peer credentials.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `0600` |
+| Environment | `SCRIM_API_PERMISSIONS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `api.socket`
+
+Unix socket of the local agent API. Empty uses $XDG_RUNTIME_DIR/scrim/api.sock.
 
 | | |
 |---|---|
 | Type | string |
 | Default | `""` |
-| Environment | `SCRIM_ADMIN_URL` |
-| Flag | `--admin-url` |
-| Reload | hot |
-
-### approvals
-
-#### `approvals.poll-interval`
-
-How often a waiting operation re-reads its approval from the state backend; bounds how long a decision recorded elsewhere takes to release it.
-
-| | |
-|---|---|
-| Type | duration (`90s`, `5m`, `1h30m`) |
-| Default | `1s` |
-| Environment | `SCRIM_APPROVALS_POLL_INTERVAL` |
-| Flag | none |
-| Reload | hot |
-
-#### `approvals.public-url`
-
-Base URL under which the decision endpoint is reachable from approvers' devices, for example https://scrim.example.org. Empty means notifiers get no decision links and approvals are decided with scrim approve.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `""` |
-| Environment | `SCRIM_APPROVALS_PUBLIC_URL` |
-| Flag | none |
-| Reload | hot |
-
-#### `approvals.signing-key`
-
-Reference to the key (at least 32 bytes) that signs decision links, shared by every replica. Empty means a random key per process: links stop working on restart and on other replicas.
-
-| | |
-|---|---|
-| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; a literal is warned about) |
-| Default | empty |
-| Environment | `SCRIM_APPROVALS_SIGNING_KEY` |
-| Flag | none |
-| Reload | hot |
-
-#### `approvals.timeout`
-
-How long an approval waits for a decision before it is denied. A rule's approval.timeout overrides it.
-
-| | |
-|---|---|
-| Type | duration (`90s`, `5m`, `1h30m`) |
-| Default | `2m0s` |
-| Environment | `SCRIM_APPROVALS_TIMEOUT` |
-| Flag | `--approvals-timeout` |
-| Reload | hot |
+| Environment | `SCRIM_API_SOCKET` |
+| Flag | `--api-socket` |
+| Reload | restart required |
 
 ### catalog
 
@@ -441,31 +393,33 @@ Reload the configuration when a config file or an included file changes. SIGHUP 
 | Flag | none |
 | Reload | hot |
 
-### grants
+### entry
 
-#### `grants.default-ttl`
+#### `entry.listen`
 
-Grant duration when neither the rule nor the approver chooses one.
-
-| | |
-|---|---|
-| Type | duration (`90s`, `5m`, `1h30m`) |
-| Default | `30m0s` |
-| Environment | `SCRIM_GRANTS_DEFAULT_TTL` |
-| Flag | none |
-| Reload | hot |
-
-#### `grants.max-ttl`
-
-Longest grant any rule or approver can create. A rule's grant.max_ttl can only lower it.
+Loopback address of the page where a human enters a value for secret_ask_human. Port 0 picks a free port.
 
 | | |
 |---|---|
-| Type | duration (`90s`, `5m`, `1h30m`) |
-| Default | `8h0m0s` |
-| Environment | `SCRIM_GRANTS_MAX_TTL` |
+| Type | string |
+| Default | `127.0.0.1:0` |
+| Environment | `SCRIM_ENTRY_LISTEN` |
 | Flag | none |
-| Reload | hot |
+| Reload | restart required |
+
+### identity
+
+#### `identity.peers`
+
+Agents by local user or group: agent name to space-separated selectors uid:N, user:NAME, gid:N, group:NAME, scope:SCOPE, label:K=V. Empty maps the user scrim runs as to one agent named after it.
+
+| | |
+|---|---|
+| Type | map of strings (env: JSON object or `k=v,k2=v2`; one entry: variable plus `_ENTRY`) |
+| Default | `{}` |
+| Environment | `SCRIM_IDENTITY_PEERS` |
+| Flag | none |
+| Reload | restart required |
 
 ### log
 
@@ -509,116 +463,6 @@ Address of the metrics and health endpoint (Prometheus format at /metrics, /heal
 | Flag | `--metrics-listen` |
 | Reload | restart required |
 
-### notify
-
-#### `notify.ntfy.priority`
-
-ntfy message priority, 1 (min) to 5 (max).
-
-| | |
-|---|---|
-| Type | int |
-| Default | `4` |
-| Environment | `SCRIM_NOTIFY_NTFY_PRIORITY` |
-| Flag | none |
-| Reload | hot |
-
-#### `notify.ntfy.token`
-
-Reference to an ntfy access token for publishing. Empty publishes anonymously.
-
-| | |
-|---|---|
-| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; a literal is warned about) |
-| Default | empty |
-| Environment | `SCRIM_NOTIFY_NTFY_TOKEN` |
-| Flag | none |
-| Reload | hot |
-
-#### `notify.ntfy.topic`
-
-ntfy topic approval requests are published to. Anyone who can read the topic sees approval metadata, so use an access-controlled topic or a long random name.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `""` |
-| Environment | `SCRIM_NOTIFY_NTFY_TOPIC` |
-| Flag | none |
-| Reload | hot |
-
-#### `notify.ntfy.url`
-
-Base URL of the ntfy server, for example https://ntfy.sh. Empty disables the ntfy notifier.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `""` |
-| Environment | `SCRIM_NOTIFY_NTFY_URL` |
-| Flag | none |
-| Reload | hot |
-
-#### `notify.terminal.enabled`
-
-Print each approval request with its scrim approve and scrim deny commands to the control plane's terminal.
-
-| | |
-|---|---|
-| Type | bool |
-| Default | `true` |
-| Environment | `SCRIM_NOTIFY_TERMINAL_ENABLED` |
-| Flag | none |
-| Reload | hot |
-
-#### `notify.webhook.hold`
-
-Longest time one submit or poll request is held open by the receiver (sent as X-Nono-Timeout-Secs, capped by the approval's remaining time).
-
-| | |
-|---|---|
-| Type | duration (`90s`, `5m`, `1h30m`) |
-| Default | `30s` |
-| Environment | `SCRIM_NOTIFY_WEBHOOK_HOLD` |
-| Flag | none |
-| Reload | hot |
-
-#### `notify.webhook.poll-interval`
-
-Pause between polls when the receiver answers pending without holding.
-
-| | |
-|---|---|
-| Type | duration (`90s`, `5m`, `1h30m`) |
-| Default | `2s` |
-| Environment | `SCRIM_NOTIFY_WEBHOOK_POLL_INTERVAL` |
-| Flag | none |
-| Reload | hot |
-
-#### `notify.webhook.secret`
-
-Reference to the shared secret (at least 32 bytes) that signs webhook requests with HMAC-SHA256. Empty sends unsigned requests.
-
-| | |
-|---|---|
-| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; a literal is warned about) |
-| Default | empty |
-| Environment | `SCRIM_NOTIFY_WEBHOOK_SECRET` |
-| Flag | none |
-| Reload | hot |
-
-#### `notify.webhook.url`
-
-Approval service URL for the webhook notifier (nono approval webhook v1 compatible). https, or http to a loopback host. Empty disables it.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `""` |
-| Environment | `SCRIM_NOTIFY_WEBHOOK_URL` |
-| Flag | none |
-| Reload | hot |
-
 ### policy
 
 #### `policy.default`
@@ -635,42 +479,6 @@ Decision applied when no rule matches. Anything other than deny is reported as a
 | Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
 | Values | `deny`, `ask`, `allow` |
 
-#### `policy.deny-all`
-
-Break-glass: deny every injection, grant and approval while redaction continues. While set in configuration it cannot be released from the CLI.
-
-| | |
-|---|---|
-| Type | bool |
-| Default | `false` |
-| Environment | `SCRIM_POLICY_DENY_ALL` |
-| Flag | `--policy-deny-all` |
-| Reload | hot |
-
-#### `policy.deny-all-refresh`
-
-How often each replica re-reads the deny-all state from the state backend; the bound on how long a change on one replica takes to reach the others.
-
-| | |
-|---|---|
-| Type | duration (`90s`, `5m`, `1h30m`) |
-| Default | `1s` |
-| Environment | `SCRIM_POLICY_DENY_ALL_REFRESH` |
-| Flag | none |
-| Reload | hot |
-
-#### `policy.rules-file`
-
-Path of the policy rules file (YAML or JSON with default and rules). Empty means no rules: every request gets policy.default.
-
-| | |
-|---|---|
-| Type | string |
-| Default | `""` |
-| Environment | `SCRIM_POLICY_RULES_FILE` |
-| Flag | `--policy-rules-file` |
-| Reload | hot |
-
 ### profile
 
 #### `profile`
@@ -685,6 +493,32 @@ Built-in preset of defaults for a deployment shape: `local` for a laptop or VM, 
 | Flag | `--profile` |
 | Reload | hot |
 | Values | `local`, `k8s`, `ci` |
+
+### session
+
+#### `session.max-ttl`
+
+Longest lifetime a session token can be minted with.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `168h0m0s` |
+| Environment | `SCRIM_SESSION_MAX_TTL` |
+| Flag | none |
+| Reload | restart required |
+
+#### `session.ttl`
+
+Default lifetime of a session token minted by scrim run. The token is revoked earlier when scrim run exits.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `12h0m0s` |
+| Environment | `SCRIM_SESSION_TTL` |
+| Flag | none |
+| Reload | restart required |
 
 ### state
 
@@ -760,6 +594,44 @@ SQLite state file. Empty means $XDG_STATE_HOME/scrim/state.db (~/.local/state/sc
 | Default | `""` |
 | Environment | `SCRIM_STATE_SQLITE_PATH` |
 | Flag | `--state-sqlite-path` |
+| Reload | restart required |
+
+### tools
+
+#### `tools.approval-timeout`
+
+How long a pending approval waits for a decision before it expires as denied.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `15m0s` |
+| Environment | `SCRIM_TOOLS_APPROVAL_TIMEOUT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `tools.grant-default-ttl`
+
+Duration of a grant when secret_request names none.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `15m0s` |
+| Environment | `SCRIM_TOOLS_GRANT_DEFAULT_TTL` |
+| Flag | none |
+| Reload | restart required |
+
+#### `tools.grant-max-ttl`
+
+Longest grant secret_request can produce. Longer requests are capped and the result says so.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `8h0m0s` |
+| Environment | `SCRIM_TOOLS_GRANT_MAX_TTL` |
+| Flag | none |
 | Reload | restart required |
 
 ### tracing

@@ -21,6 +21,24 @@ agent's identity.
 - **WHEN** an MCP request over HTTP carries no valid agent credential
 - **THEN** it is refused and no tool runs
 
+### Requirement: Local agent API
+
+The system SHALL serve a versioned local API on a Unix socket that the MCP server and the CLI use for
+every tool call. Each request SHALL be attributed from the socket's peer credentials and, when
+present, a session token; callers that are not mapped to an agent SHALL be refused. Request bodies
+with unknown fields SHALL be refused. Exactly one route SHALL accept a value, as a raw request body,
+and no route SHALL return one.
+
+#### Scenario: Unmapped local user
+
+- **WHEN** a process running as a local user with no agent mapping calls a tool route
+- **THEN** it is refused as unauthenticated and the refusal is audited with its user ID
+
+#### Scenario: Value smuggled into a tool body
+
+- **WHEN** a client sends a `value` field in the body of a generate request
+- **THEN** the request is refused and nothing is generated or stored
+
 ### Requirement: Every tool has an equivalent CLI command
 
 The system SHALL offer each agent tool as a CLI command with the same inputs, outputs, policy and
@@ -31,6 +49,12 @@ audit behaviour, with machine-readable output on request and meaningful exit cod
 - **WHEN** a script runs the CLI equivalent of `secret_request` with JSON output
 - **THEN** it receives the same fields the MCP tool returns
 - **AND** the exit code distinguishes granted, denied, pending and error
+
+#### Scenario: Documented exit codes
+
+- **WHEN** a CLI tool command finishes
+- **THEN** it exits 0 on success, 1 on error, 3 when denied, 4 while pending and 5 when declined or
+  expired
 
 ### Requirement: No tool accepts or returns a secret value
 
@@ -102,6 +126,11 @@ reference. The command's output SHALL NOT be returned to the agent.
 - **WHEN** an agent captures `.token` from the output of a command that creates a token
 - **THEN** the token is stored, added to the redaction set, and the agent receives only the reference
 
+#### Scenario: Capture refused by policy
+
+- **WHEN** policy denies storing at the capture's reference
+- **THEN** the command is not run at all
+
 #### Scenario: Extraction finds nothing
 
 - **WHEN** the JSON path matches no value
@@ -118,6 +147,11 @@ the result of the write.
 - **WHEN** a command's output is piped into `scrim secret put new-token --stdin`
 - **THEN** the terminal and the agent's tool result show only the reference and success
 
+#### Scenario: Typing a value at a terminal
+
+- **WHEN** `scrim secret put --stdin` reads from a terminal
+- **THEN** terminal echo is off while the value is typed and restored afterwards
+
 ### Requirement: secret_ask_human
 
 The system SHALL provide `secret_ask_human`, which sends a prompt to a human through the configured
@@ -129,6 +163,18 @@ directly, and the agent SHALL learn only whether it was stored, declined or time
 - **WHEN** the agent asks for an API key and the human submits it on the entry page
 - **THEN** the key is stored and redacted from then on, and the agent receives "stored" with the
   reference
+
+#### Scenario: Entry link reused or opened from elsewhere
+
+- **WHEN** an entry link is submitted a second time, or a submission comes from another origin or
+  Host name
+- **THEN** it is refused and the stored value, if any, is unchanged
+
+#### Scenario: Agent does not wait
+
+- **WHEN** the human has not answered within the call's wait time
+- **THEN** the agent receives pending with an ask identifier it can poll with `approval_status`,
+  and never the entry link
 
 #### Scenario: Human declines
 
