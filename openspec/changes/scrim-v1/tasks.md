@@ -85,12 +85,12 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 10. Credential injection
 
-- [ ] 10.1 Host binding for credentials in configuration and policy; verify: a placeholder toward an unbound host is refused and audited
+- [x] 10.1 Host binding for credentials in configuration and policy; verify: a placeholder toward an unbound host is refused and audited
 - [ ] 10.2 HTTPS tool proxy with CA generation, rotation and trust installation; verify: injection works toward bound hosts for curl, git and a Node client
-- [ ] 10.2a User-declared placeholders mapped to references and bound hosts; verify: a config file with `SCRIM_ACME_KEY` works against a fake API and duplicate declarations fail validation
-- [ ] 10.2b Substitution in URL, headers, cookies, form, JSON and multipart bodies with decompression, length, digest and re-signing; verify: gzip, chunked and HTTP/2 fixtures reach the fake upstream valid and unsupported encodings are refused
-- [ ] 10.2c Redaction of tool-proxy responses, including streamed and compressed bodies; verify: an echoing fake API and a create-resource fake return only placeholders to the agent
-- [ ] 10.3 Response capture rules; verify: a token returned by a fake API is stored and the agent sees a placeholder
+- [x] 10.2a User-declared placeholders mapped to references and bound hosts; verify: a config file with `SCRIM_ACME_KEY` works against a fake API and duplicate declarations fail validation
+- [x] 10.2b Substitution in URL, headers, cookies, form, JSON and multipart bodies with decompression, length, digest and re-signing; verify: gzip, chunked and HTTP/2 fixtures reach the fake upstream valid and unsupported encodings are refused
+- [x] 10.2c Redaction of tool-proxy responses, including streamed and compressed bodies; verify: an echoing fake API and a create-resource fake return only placeholders to the agent
+- [x] 10.3 Response capture rules; verify: a token returned by a fake API is stored and the agent sees a placeholder
 - [ ] 10.4 Exec broker as a separate identity with allowlisted commands; verify: an allowed command runs with the secret, a transform command is blocked
 
 ## 10a. Command-line tools

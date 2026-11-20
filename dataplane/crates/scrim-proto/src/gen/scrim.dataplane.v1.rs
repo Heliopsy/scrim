@@ -56,6 +56,9 @@ pub struct Snapshot {
     /// redaction holds matcher settings.
     #[prost(message, optional, tag = "8")]
     pub redaction: ::core::option::Option<RedactionSettings>,
+    /// capture_rules apply to tool-proxy responses.
+    #[prost(message, repeated, tag = "9")]
+    pub capture_rules: ::prost::alloc::vec::Vec<CaptureRule>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 #[prost(skip_debug)]
@@ -82,6 +85,53 @@ pub struct ValueEntry {
     /// store is the store instance the value came from.
     #[prost(string, tag = "7")]
     pub store: ::prost::alloc::string::String,
+    /// declared_placeholders are user-declared placeholder strings standing for
+    /// this value (for example `SCRIM_ACME_KEY`), unique across the snapshot.
+    /// Safe to log.
+    #[prost(string, repeated, tag = "8")]
+    pub declared_placeholders: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// bound_methods restrict injection to these HTTP methods. Empty allows all.
+    #[prost(string, repeated, tag = "9")]
+    pub bound_methods: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// bound_paths restrict injection to these path globs (`*` matches any run,
+    /// including `/`). Empty allows all.
+    #[prost(string, repeated, tag = "10")]
+    pub bound_paths: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// inject_locations are the request parts the placeholder may be replaced
+    /// in: `header`, `header:<name>`, `cookie`, `query`, `path`, `body`,
+    /// `anywhere`. Empty means `header`.
+    #[prost(string, repeated, tag = "11")]
+    pub inject_locations: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// allow_plaintext_http also injects over plain `<http://`.> Weakening.
+    #[prost(bool, tag = "12")]
+    pub allow_plaintext_http: bool,
+}
+/// CaptureRule stores a value an API returns (a newly created token) under
+/// `store_ref` and hands the agent its placeholder instead.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CaptureRule {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    /// hosts the request goes to (exact or `*.suffix`, optional `:port`).
+    #[prost(string, repeated, tag = "2")]
+    pub hosts: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// methods of the request; empty matches all.
+    #[prost(string, repeated, tag = "3")]
+    pub methods: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// path glob of the request; empty matches all.
+    #[prost(string, tag = "4")]
+    pub path: ::prost::alloc::string::String,
+    /// status codes of the response; empty matches every 2xx.
+    #[prost(uint32, repeated, tag = "5")]
+    pub status: ::prost::alloc::vec::Vec<u32>,
+    /// Exactly one of json_pointer (RFC 6901, into a JSON body) and header.
+    #[prost(string, tag = "6")]
+    pub json_pointer: ::prost::alloc::string::String,
+    #[prost(string, tag = "7")]
+    pub header: ::prost::alloc::string::String,
+    /// store_ref is the reference the value is written to.
+    #[prost(string, tag = "8")]
+    pub store_ref: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 #[prost(skip_debug)]

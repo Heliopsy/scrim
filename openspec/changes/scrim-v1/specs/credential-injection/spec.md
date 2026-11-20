@@ -54,6 +54,11 @@ for trust installation.
 - **WHEN** the CA is rotated
 - **THEN** connections made with the previous CA keep working until the overlap period ends
 
+#### Scenario: Client trusting only the previous CA
+
+- **WHEN** a client that trusts only the previous CA connects during the overlap period
+- **THEN** the handshake succeeds through a cross certificate, and fails once the overlap ends
+
 ### Requirement: Pinned certificates fail closed
 
 When a client refuses the interception certificate, scrim SHALL not fall back to passing the
@@ -80,6 +85,68 @@ the agent receives the response. If storing fails, the field SHALL be withheld.
 
 - **WHEN** the store write for a captured field fails
 - **THEN** the agent receives the response with the field withheld and an error marker
+
+### Requirement: Destination is the connection
+
+The tool proxy SHALL check bindings against the host and port it actually connects to (the CONNECT
+target or the absolute-form URI), SHALL refuse a request whose `Host` header, `:authority` or TLS
+server name names a different host, and SHALL match path bindings after removing dot segments.
+
+#### Scenario: Host header pointing elsewhere
+
+- **WHEN** an agent opens a tunnel to a bound host and sends a request whose `Host` header names
+  another host
+- **THEN** the request is refused as misdirected and nothing is sent upstream
+
+#### Scenario: Dot segments in the path
+
+- **WHEN** a credential is bound to `/v1/*` and the agent requests `/v1/../admin` with its placeholder
+- **THEN** the request is refused because the effective path is `/admin`
+
+### Requirement: Plain HTTP injection is opt-in
+
+A credential SHALL only be injected into plain `http://` requests when its binding explicitly allows
+plain HTTP, a setting named for what it weakens.
+
+#### Scenario: Bound host over plain HTTP
+
+- **WHEN** an agent sends a credential placeholder to its bound host over `http://` and the binding
+  does not allow plain HTTP
+- **THEN** the request is refused as an unbound destination
+
+### Requirement: Documented refusals
+
+Every refusal and withheld response from the tool proxy SHALL carry a stable error code in an
+`x-scrim-error` header and a JSON body, SHALL name credentials only by alias, and SHALL be recorded
+in the audit log without any value.
+
+#### Scenario: Agent reads the refusal
+
+- **WHEN** a request is refused because its placeholder is not bound to the destination
+- **THEN** the agent receives status 403 with code `unbound_destination` and the credential alias,
+  and the audit entry names the alias and destination
+
+### Requirement: Bodies too large to rewrite
+
+Request bodies above the configured buffering limit SHALL be streamed unmodified and cut off if a
+placeholder appears in them, and an encoded oversized body toward a host with bound credentials
+SHALL be refused. The upstream's answer to a cut-off request SHALL not reach the agent.
+
+#### Scenario: Placeholder in a large upload
+
+- **WHEN** an agent uploads a body larger than the buffering limit with a placeholder near its end
+- **THEN** the upload is cut off before the placeholder leaves scrim and the agent receives
+  `body_too_large`
+
+### Requirement: Protocol upgrades are refused
+
+The tool proxy SHALL refuse protocol upgrades (for example WebSocket) because the upgraded stream
+cannot be scanned.
+
+#### Scenario: WebSocket handshake
+
+- **WHEN** an agent sends a WebSocket upgrade request through the tool proxy
+- **THEN** the request is refused with `upgrade_unsupported`
 
 ### Requirement: Exec broker
 
@@ -353,3 +420,13 @@ the same placeholder it sent. A response that cannot be scanned SHALL be withhel
 
 - **WHEN** a tool creates a webhook whose response includes the signing secret already held in a store
 - **THEN** the agent receives the placeholder for that secret
+
+#### Scenario: Echo of a declared placeholder
+
+- **WHEN** an agent sends `SCRIM_ACME_KEY` and the API echoes the injected key back
+- **THEN** the agent sees `SCRIM_ACME_KEY`, the placeholder it sent
+
+#### Scenario: Captured token returned again
+
+- **WHEN** a capture rule stored a token and a later response from any host contains the same token
+- **THEN** the agent receives its placeholder, even before the next snapshot includes the value
