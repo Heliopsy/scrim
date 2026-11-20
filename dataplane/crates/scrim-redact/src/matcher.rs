@@ -5,7 +5,9 @@
 //! first wins, among those the longest, and scanning resumes at its end.
 //!
 //! * [`AcEngine`]: Aho-Corasick (`aho-corasick` crate). Its SIMD prefilter makes it the fastest
-//!   choice for small sets; it is also the reference implementation in tests.
+//!   choice for small sets, but only up to 64 patterns per automaton, so sets of up to
+//!   [`AC_PART`]` * `[`AC_MAX_PARTS`] patterns are split and merged. With one automaton it is the
+//!   reference implementation in tests.
 //! * [`HashWindowEngine`]: every pattern of at least [`WINDOW`] bytes is indexed by its first
 //!   eight bytes. Each eight-byte window of the input is hashed and tested against a blocked
 //!   Bloom filter (one cache line word per window, two bits), so the per-byte cost does not grow
