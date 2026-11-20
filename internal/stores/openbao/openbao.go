@@ -9,10 +9,12 @@
 //	bao://kv/agents/github#token
 //	bao://kv/agents/github?version=3#token
 //
-// The adapter authenticates with a token or an AppRole role and secret ID,
-// reads, lists and writes KV v2 secrets, and watches a prefix by polling its
-// version metadata (one LIST of detailed-metadata per folder per interval on
-// OpenBao, falling back to per-secret metadata reads on Vault). Paths listed
+// The adapter authenticates with a token, an AppRole role and secret ID, or
+// the pod's Kubernetes service account token, renewing login tokens before
+// they expire (see auth.go). It reads, lists and writes KV v2 secrets, and
+// watches a prefix by polling its version metadata (one LIST of
+// detailed-metadata per folder per interval on OpenBao, falling back to
+// per-secret metadata reads on Vault). Paths listed
 // in write-only-paths are written but never read back: scrim keeps only the
 // value it wrote, and a policy without read on those paths is enough.
 //

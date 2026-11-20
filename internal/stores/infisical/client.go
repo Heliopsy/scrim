@@ -19,6 +19,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/internal/satoken"
 	"github.com/heliopsy/scrim/internal/stores/internal/wire"
 )
 
@@ -165,6 +166,7 @@ func (c *client) send(ctx context.Context, method, u string, body *wire.Body, au
 		if err != nil {
 			return 0, nil, err
 		}
+		defer tok.Wipe()
 		_ = tok.Expose(func(b []byte) error {
 			// net/http needs the header as a string; it lives only for
 			// this request. See the package documentation.
@@ -226,15 +228,20 @@ func (c *client) dropToken() {
 	c.expiry = time.Time{}
 }
 
-// accessToken returns the current token, logging in when there is none or
-// it expires within a tenth of its lifetime (at least 30 seconds).
+// accessToken returns a copy of the current token, which the caller wipes,
+// logging in again when there is none or it expires within a tenth of its
+// lifetime (at least 30 seconds). Both methods replace the token by a fresh
+// login rather than renewing it, so its max TTL never matters. The copy
+// keeps a concurrent login from wiping a token mid-request.
 func (c *client) accessToken(ctx context.Context) (secret.Value, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.token.IsZero() && c.now().Before(c.expiry) {
-		return c.token, nil
+	if c.token.IsZero() || !c.now().Before(c.expiry) {
+		if _, err := c.loginLocked(ctx); err != nil {
+			return secret.Value{}, err
+		}
 	}
-	return c.loginLocked(ctx)
+	return copyValue(c.token), nil
 }
 
 type loginResponse struct {
@@ -243,40 +250,48 @@ type loginResponse struct {
 }
 
 func (c *client) loginLocked(ctx context.Context) (secret.Value, error) {
-	if c.clientSecret.IsZero() {
-		id, sec, err := c.settings.resolveCredentials(ctx)
-		if err != nil {
-			return secret.Value{}, &apiError{kind: stores.ErrPermission, msg: err.Error()}
+	var (
+		body     *wire.Body
+		path     string
+		what     string
+		involved []secret.Value
+		err      error
+	)
+	switch c.settings.method {
+	case methodKubernetesAuth:
+		var jwt secret.Value
+		// Read the file at every login: the kubelet rotates projected
+		// tokens, and an old one stops working.
+		if jwt, err = satoken.Read(c.settings.tokenFile); err != nil {
+			return secret.Value{}, &apiError{kind: stores.ErrPermission, msg: fmt.Sprintf("option %s: %v", optK8sTokenFile, err)}
 		}
-		c.clientID, c.clientSecret = id, sec
+		defer jwt.Wipe()
+		if body, err = kubernetesLoginBody(c.settings.identityID, jwt); err != nil {
+			return secret.Value{}, err
+		}
+		path, what, involved = "/api/v1/auth/kubernetes-auth/login", "Kubernetes Auth", []secret.Value{jwt}
+	default:
+		if body, err = c.universalLoginBody(ctx); err != nil {
+			return secret.Value{}, err
+		}
+		path, what, involved = "/api/v1/auth/universal-auth/login", "universal auth", []secret.Value{c.clientSecret}
 	}
-	buf, err := wire.AppendJSON(nil, map[string]string{"clientId": c.clientID})
-	if err != nil {
-		return secret.Value{}, &apiError{kind: stores.ErrInvalidRef, msg: "cannot encode login", cause: err}
-	}
-	buf = append(buf[:len(buf)-1], `,"clientSecret":`...)
-	buf, err = wire.AppendValue(buf, c.clientSecret)
-	if err != nil {
-		secret.WipeBytes(buf)
-		return secret.Value{}, &apiError{kind: stores.ErrPermission, msg: "client secret cannot be encoded", cause: err}
-	}
-	buf = append(buf, '}')
-	body := wire.NewBody(buf)
 	defer body.Wipe()
 
-	status, b, err := c.send(ctx, http.MethodPost, c.url("/api/v1/auth/universal-auth/login", nil), body, false)
+	status, b, err := c.send(ctx, http.MethodPost, c.url(path, nil), body, false)
 	if err != nil {
 		return secret.Value{}, err
 	}
 	defer secret.WipeBytes(b)
 	if status < 200 || status >= 300 {
-		e := classify(status, b, []secret.Value{c.clientSecret})
+		e := classify(status, b, involved)
 		if e.kind == stores.ErrNotFound || e.kind == stores.ErrInvalidRef {
-			// A login refused for a bad client ID or secret is a credential
-			// problem whatever status Infisical picks.
+			// A login refused for a bad identity, client ID, secret or
+			// service account token is a credential problem whatever
+			// status Infisical picks.
 			e.kind = stores.ErrPermission
 		}
-		e.msg = "universal auth login refused: " + e.msg
+		e.msg = what + " login refused: " + e.msg
 		return secret.Value{}, e
 	}
 	var lr loginResponse
@@ -301,6 +316,46 @@ func (c *client) loginLocked(ctx context.Context) (secret.Value, error) {
 	c.token = tok
 	c.expiry = c.now().Add(ttl - margin)
 	return tok, nil
+}
+
+// universalLoginBody resolves the client credentials at the first login and
+// encodes them. The caller wipes the body.
+func (c *client) universalLoginBody(ctx context.Context) (*wire.Body, error) {
+	if c.clientSecret.IsZero() {
+		id, sec, err := c.settings.resolveCredentials(ctx)
+		if err != nil {
+			return nil, &apiError{kind: stores.ErrPermission, msg: err.Error()}
+		}
+		c.clientID, c.clientSecret = id, sec
+	}
+	buf, err := wire.AppendJSON(nil, map[string]string{"clientId": c.clientID})
+	if err != nil {
+		return nil, &apiError{kind: stores.ErrInvalidRef, msg: "cannot encode login", cause: err}
+	}
+	buf = append(buf[:len(buf)-1], `,"clientSecret":`...)
+	buf, err = wire.AppendValue(buf, c.clientSecret)
+	if err != nil {
+		secret.WipeBytes(buf)
+		return nil, &apiError{kind: stores.ErrPermission, msg: "client secret cannot be encoded", cause: err}
+	}
+	return wire.NewBody(append(buf, '}')), nil
+}
+
+// kubernetesLoginBody encodes a Kubernetes Auth login for identityID with
+// jwt, a service account token. The caller wipes the body; jwt stays owned
+// by the caller.
+func kubernetesLoginBody(identityID string, jwt secret.Value) (*wire.Body, error) {
+	buf, err := wire.AppendJSON(nil, map[string]string{"identityId": identityID})
+	if err != nil {
+		return nil, &apiError{kind: stores.ErrInvalidRef, msg: "cannot encode login", cause: err}
+	}
+	buf = append(buf[:len(buf)-1], `,"jwt":`...)
+	buf, err = wire.AppendValue(buf, jwt)
+	if err != nil {
+		secret.WipeBytes(buf)
+		return nil, &apiError{kind: stores.ErrPermission, msg: "service account token cannot be encoded", cause: err}
+	}
+	return wire.NewBody(append(buf, '}')), nil
 }
 
 // credentials returns copies of the client secret and the current token.

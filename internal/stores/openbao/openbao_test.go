@@ -92,7 +92,7 @@ func TestParseOptions(t *testing.T) {
 			t.Errorf("address %q accepted", bad)
 		}
 	}
-	if _, err := ParseOptions(map[string]any{"address": "http://x", "auth.method": "kubernetes"}); err == nil {
+	if _, err := ParseOptions(map[string]any{"address": "http://x", "auth.method": "ldap"}); err == nil {
 		t.Errorf("unknown auth method accepted")
 	}
 }

@@ -256,6 +256,75 @@ update and patch without read.
 - **AND** scrim reports it as write-only and does not try to load it into the redaction set from the
   store, keeping only the value it just wrote
 
+### Requirement: Store login with the pod's Kubernetes service account
+
+When scrim runs in Kubernetes, the OpenBao adapter (`auth.method: kubernetes`) and the Infisical
+adapter (`auth.method: kubernetes-auth`) SHALL log in with the service account token of scrim's own
+pod, so that no static store credential exists in the cluster for scrim. A static credential (token,
+role ID, secret ID, client ID or client secret) configured alongside one of these methods SHALL be
+refused at validation. A refused login SHALL be reported as a permission error naming the store.
+
+#### Scenario: No static store credential in the cluster
+
+- **WHEN** scrim is deployed in a cluster with OpenBao Kubernetes auth bound to its service account
+  name, namespace and audience
+- **THEN** scrim reads and writes secrets with the token it obtains at login
+- **AND** the scrim configuration and the cluster hold no OpenBao token, role ID or secret ID
+
+#### Scenario: Static credential left in the configuration
+
+- **WHEN** a store uses `auth.method: kubernetes` and the configuration also sets `secret-id`
+- **THEN** validation fails naming the option, without echoing its value
+
+#### Scenario: Wrong role
+
+- **WHEN** the configured OpenBao role does not exist or is not bound to scrim's service account
+- **THEN** the store reports a permission error naming the store
+- **AND** no service account token or session token appears in the error
+
+### Requirement: Service account token read at every login
+
+The adapters SHALL read the configured service account token file again at every login, never only
+at start-up, and SHALL hold its content only as a secret value that is wiped once the login request
+is sent. Neither the service account token nor the session token a login issues SHALL appear in any
+error, log, audit entry or test output.
+
+#### Scenario: Rotated service account token
+
+- **WHEN** the kubelet rotates the projected token in the token file and scrim next logs in
+- **THEN** the login presents the new token, not the one read at start-up
+
+#### Scenario: Unreadable token file
+
+- **WHEN** the token file is missing or empty at login
+- **THEN** the store reports a permission error naming the option and the file
+- **AND** the store is not contacted
+
+### Requirement: Store login tokens are renewed before they expire
+
+The OpenBao adapter SHALL renew a renewable login token with renew-self at two thirds of its TTL,
+and SHALL log in again instead when the token is not renewable, when renewal fails or is refused, or
+when a renewal is capped by the max TTL. The Infisical adapter SHALL log in again before the access
+token's `expiresIn` runs out. Both SHALL log in again once when the store refuses a token as expired
+or revoked, and report a second refusal as a permission error.
+
+#### Scenario: OpenBao token renewed
+
+- **WHEN** two thirds of a renewable login token's TTL have passed
+- **THEN** scrim renews the token with renew-self and keeps using it
+
+#### Scenario: Renewal refused
+
+- **WHEN** renew-self fails, or comes back capped by the token's max TTL and that lease is used up
+- **THEN** scrim logs in again instead of renewing, with Kubernetes auth presenting a freshly read
+  service account token
+
+#### Scenario: Revoked token
+
+- **WHEN** the store refuses scrim's session token on a read
+- **THEN** scrim logs in once and retries the read
+- **AND** a second refusal is reported as a permission error
+
 ### Requirement: OpenBao control groups for configured paths
 
 The system SHALL support OpenBao control groups on configured paths: when a read or write is held by a

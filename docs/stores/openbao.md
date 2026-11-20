@@ -2,8 +2,9 @@
 
 The `openbao` adapter reads, lists, watches and writes secrets in an OpenBao KV version 2 secrets
 engine. It also works with HashiCorp Vault's KV v2 engine, though Vault's own features
-(namespaces aside) get a separate `vault` adapter later. Authentication is by token or by AppRole.
-Kubernetes auth arrives with the Kubernetes deployment work.
+(namespaces aside) get a separate `vault` adapter later. Authentication is by token, by AppRole, or
+in a Kubernetes cluster by the scrim pod's own service account
+([Kubernetes auth](#kubernetes-auth)), so no static store credential exists in the cluster.
 
 ## References
 
@@ -61,11 +62,14 @@ stores:
 | `stores.bao.address` | `SCRIM_STORES_BAO_ADDRESS` | required | `http://` or `https://` URL of the API. |
 | `stores.bao.namespace` | `SCRIM_STORES_BAO_NAMESPACE` | none | OpenBao namespace, sent as `X-Vault-Namespace`. |
 | `stores.bao.mounts` | `SCRIM_STORES_BAO_MOUNTS` | none | KV v2 mounts that span more than one path segment. |
-| `stores.bao.auth.method` | `SCRIM_STORES_BAO_AUTH_METHOD` | `token` | `token` or `approle`. |
+| `stores.bao.auth.method` | `SCRIM_STORES_BAO_AUTH_METHOD` | `token` | `token`, `approle` or `kubernetes`. |
 | `stores.bao.token` | `SCRIM_STORES_BAO_TOKEN` | required for `token` | Token reference. |
 | `stores.bao.role-id` | `SCRIM_STORES_BAO_ROLE_ID` | required for `approle` | AppRole role ID reference. |
 | `stores.bao.secret-id` | `SCRIM_STORES_BAO_SECRET_ID` | required for `approle` | AppRole secret ID reference. |
 | `stores.bao.auth.approle.mount` | `SCRIM_STORES_BAO_AUTH_APPROLE_MOUNT` | `approle` | Where the AppRole auth method is mounted. |
+| `stores.bao.auth.kubernetes.role` | `SCRIM_STORES_BAO_AUTH_KUBERNETES_ROLE` | required for `kubernetes` | Kubernetes auth role to log in as. Not a secret. |
+| `stores.bao.auth.kubernetes.mount` | `SCRIM_STORES_BAO_AUTH_KUBERNETES_MOUNT` | `kubernetes` | Where the Kubernetes auth method is mounted. |
+| `stores.bao.auth.kubernetes.token-file` | `SCRIM_STORES_BAO_AUTH_KUBERNETES_TOKEN_FILE` | `/var/run/secrets/kubernetes.io/serviceaccount/token` | Service account token presented at login, read again at every login. Point it at a projected token with a dedicated audience. |
 | `stores.bao.timeout` | `SCRIM_STORES_BAO_TIMEOUT` | `10s` | Per-request timeout. |
 | `stores.bao.tls.ca-file` | `SCRIM_STORES_BAO_TLS_CA_FILE` | system roots | PEM bundle to verify the server with. |
 | `stores.bao.tls.server-name` | `SCRIM_STORES_BAO_TLS_SERVER_NAME` | from address | TLS server name to verify. |
@@ -77,11 +81,101 @@ The common keys (`kind`, `aliases`, `redact`, `refresh.*`) are described in the
 [stores overview](README.md). Unknown keys fail validation and name the closest known key. Lists
 set from the environment are comma-separated.
 
-With AppRole, scrim logs in when it first needs a token, replaces the token at two thirds of its
-TTL, and logs in again once if the store rejects a token it should have accepted. A second refusal
-is reported as a permission error. Use a role with a short `token_ttl`. With a static token, use a
-periodic token or rotate it through its reference, because scrim does not renew it. scrim refuses
-HTTP redirects, so a token is never sent to another host.
+With AppRole and Kubernetes auth, scrim logs in when it first needs a token. At two thirds of the
+token's TTL it renews the token with `auth/token/renew-self` if the store issued it as renewable,
+asking for the TTL of the login again. It logs in again instead when the token is not renewable,
+when renewal fails or is refused, and when a renewal comes back shorter than asked for, which means
+the token's `token_max_ttl` is close: scrim uses up what is left and then logs in. If the store
+rejects a token it should have accepted (403), scrim logs in again once; a second refusal is
+reported as a permission error. Use a role with a short `token_ttl` and a `token_max_ttl` of a few
+hours. With a static token, use a periodic token or rotate it through its reference, because scrim
+does not renew it. scrim refuses HTTP redirects, so a token is never sent to another host.
+
+The session token a login issues is added to the redaction set with scrim's other store credentials.
+No token, role ID, secret ID or service account token appears in an error.
+
+## Kubernetes auth
+
+When scrim runs in a Kubernetes cluster it logs in with its own pod's service account token, so the
+cluster holds no OpenBao token, role ID or secret ID for scrim. OpenBao checks the token with the
+Kubernetes TokenReview API and issues a token with the role's policies.
+
+```yaml
+stores:
+  bao:
+    kind: openbao
+    address: https://bao.example.com:8200
+    auth:
+      method: kubernetes
+      kubernetes:
+        role: scrim
+        token-file: /var/run/secrets/tokens/openbao
+```
+
+scrim reads `token-file` at every login, never only at start-up, because the kubelet rotates
+projected tokens and an old one stops working. The token lives in wiped memory for the length of
+the login request and is not kept. `token`, `role-id` and `secret-id` are refused with
+`auth.method: kubernetes`, so a static credential left in the configuration is noticed.
+
+Mount a projected token whose audience is meant for OpenBao alone, rather than the default
+service account token, whose audience is the Kubernetes API server. A token leaked from OpenBao's
+side is then useless against the API server, and the other way round:
+
+```yaml
+# scrim Deployment, pod spec
+serviceAccountName: scrim
+containers:
+  - name: scrim
+    volumeMounts:
+      - {name: openbao-token, mountPath: /var/run/secrets/tokens, readOnly: true}
+volumes:
+  - name: openbao-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            path: openbao
+            audience: openbao
+            expirationSeconds: 3600
+```
+
+On the OpenBao side, enable the method, point it at the cluster and bind a role to scrim's service
+account name and namespace and to the audience:
+
+```sh
+bao auth enable kubernetes
+# Run from a pod in the cluster, OpenBao can find the API server and its CA itself:
+bao write auth/kubernetes/config kubernetes_host=https://kubernetes.default.svc:443
+# Outside the cluster, also pass kubernetes_ca_cert=@ca.crt and a reviewer token
+# (token_reviewer_jwt=...) of a service account allowed to create TokenReviews.
+bao write auth/kubernetes/role/scrim \
+  bound_service_account_names=scrim bound_service_account_namespaces=scrim \
+  audience=openbao token_policies=scrim token_ttl=20m token_max_ttl=4h
+```
+
+OpenBao checks each login with a TokenReview, so the token it reviews with needs
+`system:auth-delegator`:
+
+- OpenBao in the cluster, no `token_reviewer_jwt`: OpenBao's own service account.
+- `token_reviewer_jwt` set: the service account that token belongs to.
+- OpenBao outside the cluster, no `token_reviewer_jwt`: OpenBao reviews with the client's own
+  token, so scrim's service account needs the binding. The API server only accepts that token if
+  its audience is the API server's, so this mode rules out a dedicated audience. Prefer a reviewer
+  token.
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openbao-tokenreview
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
+subjects:
+  - {kind: ServiceAccount, name: openbao, namespace: openbao}
+```
+
+Outside that last mode, scrim's service account needs no Kubernetes RBAC. A wrong role, a token
+outside the role's bound names, namespaces or audience, a missing mount, and an unreadable or empty
+token file are all reported as permission errors naming the store; the token file error also names
+the file and the option.
 
 ## Least privilege
 
@@ -131,7 +225,7 @@ contains any value sent in the request, it is replaced by `(store message withhe
 
 | Store answer | Error kind |
 | -------------- | ------------ |
-| 403, failed AppRole login | permission denied by store |
+| 403, failed AppRole or Kubernetes login, unreadable token file | permission denied by store |
 | 404, deleted or destroyed version | not found |
 | 400 check-and-set mismatch | conflict |
 | other 400, 405 | invalid reference |
@@ -154,3 +248,8 @@ policy above and an AppRole role with a 30 second TTL, and then runs three thing
 the conformance suite, with the outage simulated by pausing the container. The second covers
 token auth and the write-only policy. The third stops the store mid-run under the refresher. See
 the [stores overview](README.md#conformance) for the switches.
+
+Kubernetes auth is covered by the unit tests: an in-process OpenBao checks the login body,
+renew-self, renewal refused then a fresh login, a rotated token file picked up at the next login,
+refusals mapped to permission errors, and that no generated token or JWT appears in any error. The
+end-to-end check runs in a kind cluster.

@@ -1,10 +1,11 @@
 # Infisical
 
 The `infisical` adapter reads, lists, watches and writes secrets in Infisical, self-hosted or
-Infisical Cloud. scrim logs in with a Universal Auth machine identity and is the only holder of that
-identity's credentials. Agents never call Infisical: they ask scrim, which enforces write-only toward
-agents itself. That works with the built-in project roles of the free self-hosted edition, so no paid
-custom roles are needed.
+Infisical Cloud. scrim logs in with a Universal Auth machine identity, or in a Kubernetes cluster with
+a Kubernetes Auth identity and its own pod's service account ([Kubernetes Auth](#kubernetes-auth)),
+and is the only holder of that identity's credentials. Agents never call Infisical: they ask scrim,
+which enforces write-only toward agents itself. That works with the built-in project roles of the
+free self-hosted edition, so no paid custom roles are needed.
 
 ## Capabilities
 
@@ -92,15 +93,112 @@ stores:
 | Key | Environment variable (instance `inf`) | Type | Default | Meaning |
 | ----- | ---------------------------------------- | ------ | --------- | --------- |
 | `stores.<name>.address` | `SCRIM_STORES_INF_ADDRESS` | URL | required | Base URL of the Infisical server. For Infisical Cloud use `https://app.infisical.com` (US) or `https://eu.infisical.com` (EU). There is no default, so scrim never contacts a server you did not name. |
-| `stores.<name>.auth.method` | `SCRIM_STORES_INF_AUTH_METHOD` | string | `universal-auth` | Only `universal-auth` for now; Kubernetes Auth follows. |
-| `stores.<name>.client-id` | `SCRIM_STORES_INF_CLIENT_ID` | secret reference | required | The identity's client ID. Not secret on its own, but half of the credential, so it is taken as a reference (a literal is fine). |
-| `stores.<name>.client-secret` | `SCRIM_STORES_INF_CLIENT_SECRET` | secret reference | required | `file:`, `env:`, a systemd credential or a store reference. A reference that does not resolve, or resolves to an empty value, stops start-up. A literal works but logs a warning. |
+| `stores.<name>.auth.method` | `SCRIM_STORES_INF_AUTH_METHOD` | string | `universal-auth` | `universal-auth` or `kubernetes-auth`. |
+| `stores.<name>.client-id` | `SCRIM_STORES_INF_CLIENT_ID` | secret reference | required for `universal-auth` | The identity's client ID. Not secret on its own, but half of the credential, so it is taken as a reference (a literal is fine). |
+| `stores.<name>.client-secret` | `SCRIM_STORES_INF_CLIENT_SECRET` | secret reference | required for `universal-auth` | `file:`, `env:`, a systemd credential or a store reference. A reference that does not resolve, or resolves to an empty value, stops start-up. A literal works but logs a warning. |
+| `stores.<name>.auth.kubernetes.identity-id` | `SCRIM_STORES_INF_AUTH_KUBERNETES_IDENTITY_ID` | string | required for `kubernetes-auth` | ID of the machine identity with Kubernetes Auth. Not a secret. |
+| `stores.<name>.auth.kubernetes.token-file` | `SCRIM_STORES_INF_AUTH_KUBERNETES_TOKEN_FILE` | path | `/var/run/secrets/kubernetes.io/serviceaccount/token` | Service account token presented at login, read again at every login. Point it at a projected token with a dedicated audience. |
 | `stores.<name>.timeout` | `SCRIM_STORES_INF_TIMEOUT` | duration | `10s` | Per-request timeout. A timed-out request counts as the store being unavailable. |
 | `stores.<name>.tls.ca-file` | `SCRIM_STORES_INF_TLS_CA_FILE` | path | system roots | PEM bundle to verify the server with, for a private CA. |
 | `stores.<name>.watch.interval` | `SCRIM_STORES_INF_WATCH_INTERVAL` | duration | `30s` | How often the listing is polled for changes, with +-20% jitter. |
 | `stores.<name>.watch.max-backoff` | `SCRIM_STORES_INF_WATCH_MAX_BACKOFF` | duration | `5m` | Longest wait between polls while Infisical keeps failing. |
 | `stores.<name>.create-folders` | `SCRIM_STORES_INF_CREATE_FOLDERS` | bool | `true` | Create missing folders on write. With `false`, a write into a missing folder fails as not found. |
 | `stores.<name>.expand-references` | `SCRIM_STORES_INF_EXPAND_REFERENCES` | bool | `true` | Expand Infisical secret references (`${KEY}`, `${env.folder.KEY}`) on read, as the Infisical CLI does when it injects secrets, so the value scrim redacts is the value your applications see. |
+
+With either method scrim logs in when it first needs an access token and logs in again before the
+token runs out: a tenth of `expiresIn` before it, at least 30 seconds, or halfway for very short
+tokens. A fresh login rather than a renewal means the token's max TTL never cuts a session short. A
+401, or a 403 about the token, drops it and logs in again once. The access token is added to the
+redaction set; no client secret, access token or service account token appears in an error.
+
+## Kubernetes Auth
+
+When scrim runs in a Kubernetes cluster it can log in with its own pod's service account token, so
+the cluster holds no client secret for scrim. Infisical checks the token with the Kubernetes
+TokenReview API and issues an access token for the identity.
+
+```yaml
+stores:
+  inf:
+    kind: infisical
+    address: https://infisical.example.com
+    auth:
+      method: kubernetes-auth
+      kubernetes:
+        identity-id: 2dd11664-68e3-471d-b366-907206ab1bff
+        token-file: /var/run/secrets/tokens/infisical
+```
+
+The login is `POST /api/v1/auth/kubernetes-auth/login` with `identityId` and the token as `jwt`.
+scrim reads `token-file` at every login, because the kubelet rotates projected tokens and an old one
+stops working. The token lives in wiped memory for the length of the login request and is not kept.
+`client-id` and `client-secret` are refused with `kubernetes-auth`, so a static credential left in
+the configuration is noticed.
+
+Mount a projected token with an audience meant for Infisical alone, so a token leaked on one side is
+useless on the other:
+
+```yaml
+# scrim Deployment, pod spec
+serviceAccountName: scrim
+containers:
+  - name: scrim
+    volumeMounts:
+      - {name: infisical-token, mountPath: /var/run/secrets/tokens, readOnly: true}
+volumes:
+  - name: infisical-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            path: infisical
+            audience: infisical
+            expirationSeconds: 3600
+```
+
+In Infisical:
+
+1. Create the identity as in [Setup](#setup), but add the **Kubernetes Auth** method instead of
+   Universal Auth.
+2. Set **Kubernetes Host / Base Kubernetes API URL** to the API server Infisical can reach, and the
+   **CA Certificate** if it is private.
+3. Set **Token Reviewer JWT** to the token of a dedicated reviewer service account (see below).
+   Left empty, Infisical reviews with scrim's own token, which then needs the RBAC binding and an
+   audience the API server accepts, so a dedicated audience is ruled out. Enterprise editions can
+   use a gateway as the reviewer instead.
+4. Set **Allowed Service Account Names** to `scrim`, **Allowed Namespaces** to the namespace scrim
+   runs in (here `scrim`) and **Allowed Audience** to `infisical`.
+5. Keep a short **Access Token TTL**, for example 20 minutes. scrim logs in again before it ends.
+6. Note the identity ID for `auth.kubernetes.identity-id` and add the identity to projects as in
+   [Least privilege](#least-privilege).
+
+The reviewer service account needs `system:auth-delegator`. With a reviewer token, scrim's own
+service account needs no Kubernetes RBAC:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: infisical-token-reviewer, namespace: scrim}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: infisical-token-reviewer}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
+subjects:
+  - {kind: ServiceAccount, name: infisical-token-reviewer, namespace: scrim}
+---
+# A long-lived token for the reviewer, to paste into Infisical.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: infisical-token-reviewer
+  namespace: scrim
+  annotations: {kubernetes.io/service-account.name: infisical-token-reviewer}
+type: kubernetes.io/service-account-token
+```
+
+A wrong identity ID, a token outside the allowed names, namespaces or audience, and an unreadable or
+empty token file are all reported as permission errors naming the store; the token file error also
+names the file and the option.
 
 ## Watch and refresh
 
@@ -120,6 +218,7 @@ included when it does not contain a value involved in the request, and is withhe
 | Infisical says | scrim reports |
 | ---------------- | --------------- |
 | 401, or 403 about the token | logs in again once, then permission denied |
+| login refused (bad client secret, identity or service account token), unreadable token file | permission denied |
 | 403 | permission denied |
 | 404 (secret, version, folder, project or environment) | not found |
 | 400 "already exists" on a create-only write | conflict |
@@ -142,8 +241,8 @@ such values.
   directly, and request and response bodies are zeroed after use.
 - Personal secret overrides are ignored; scrim reads and writes shared secrets only.
 - Secret imports are not followed when listing. Reference the source project directly.
-- Kubernetes Auth, OIDC token exchange for per-agent identities, and Infisical's own approval
-  workflows are not used yet.
+- OIDC token exchange for per-agent identities and Infisical's own approval workflows are not used
+  yet.
 
 ## Testing against a local Infisical
 
