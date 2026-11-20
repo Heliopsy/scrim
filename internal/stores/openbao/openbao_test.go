@@ -33,7 +33,7 @@ func resolveMap(m map[string]string) func(context.Context, config.SecretRef) (se
 
 func newTest(t *testing.T, srv *httptest.Server, opts map[string]any, creds map[string]string) *Adapter {
 	t.Helper()
-	o := map[string]any{"address": srv.URL, "auth.method": "token", "auth.token": "test:token", "timeout": "2s"}
+	o := map[string]any{"address": srv.URL, "auth.method": "token", "token": "test:token", "timeout": "2s"}
 	for k, v := range opts {
 		if v == nil {
 			delete(o, k)
@@ -68,13 +68,13 @@ func TestParseOptions(t *testing.T) {
 		t.Fatal("invalid options accepted")
 	}
 	msg := err.Error()
-	for _, want := range []string{"watch.intervall", "did you mean watch.interval", "auth.approle.secret-id is required", "option timeout"} {
+	for _, want := range []string{"watch.intervall", "did you mean watch.interval", "secret-id is required", "option timeout"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q does not mention %s", msg, want)
 		}
 	}
 	o, err := ParseOptions(map[string]any{
-		"address": "https://bao.example.test:8200/", "auth": map[string]any{"token": "file:/run/bao"},
+		"address": "https://bao.example.test:8200/", "token": "file:/run/bao",
 		"mounts": "teams/kv, other", "write-only-paths": []any{"/kv/inbox/"},
 		"watch": map[string]any{"interval": "1m", "max-backoff": "10s"},
 	})
@@ -88,7 +88,7 @@ func TestParseOptions(t *testing.T) {
 		t.Errorf("max backoff below the interval was not raised: %s", o.WatchMaxBackoff)
 	}
 	for _, bad := range []string{"bao:8200", "ftp://x", ""} {
-		if _, err := ParseOptions(map[string]any{"address": bad, "auth.token": "env:T"}); err == nil {
+		if _, err := ParseOptions(map[string]any{"address": bad, "token": "env:T"}); err == nil {
 			t.Errorf("address %q accepted", bad)
 		}
 	}
@@ -309,7 +309,7 @@ func (s *approleServer) handler(t *testing.T) http.Handler {
 
 func approleAdapter(t *testing.T, srv *httptest.Server) *Adapter {
 	return newTest(t, srv,
-		map[string]any{"auth.method": "approle", "auth.token": nil, "auth.approle.role-id": "test:role", "auth.approle.secret-id": "test:sid"},
+		map[string]any{"auth.method": "approle", "token": nil, "role-id": "test:role", "secret-id": "test:sid"},
 		map[string]string{"test:role": "role-7d1c9e", "test:sid": "sid"})
 }
 
@@ -385,7 +385,7 @@ func TestAppRoleBadCredentials(t *testing.T) {
 	srv := httptest.NewServer(s.handler(t))
 	defer srv.Close()
 	a := newTest(t, srv,
-		map[string]any{"auth.method": "approle", "auth.approle.role-id": "test:role", "auth.approle.secret-id": "test:sid"},
+		map[string]any{"auth.method": "approle", "role-id": "test:role", "secret-id": "test:sid"},
 		map[string]string{"test:role": "role-7d1c9e", "test:sid": "wrong-secret-id-value"})
 	err := a.Health(t.Context())
 	if !errors.Is(err, stores.ErrPermission) {
@@ -405,7 +405,7 @@ func TestUnresolvableCredentialContactsNoStore(t *testing.T) {
 		writeJSON(w, 200, map[string]any{})
 	}))
 	defer srv.Close()
-	a := newTest(t, srv, map[string]any{"auth.token": "file:/run/missing"}, map[string]string{})
+	a := newTest(t, srv, map[string]any{"token": "file:/run/missing"}, map[string]string{})
 	_, err := a.Read(t.Context(), stores.MustParseRef("bao://kv/x"))
 	if !errors.Is(err, stores.ErrPermission) || !strings.Contains(err.Error(), "file:/run/missing") {
 		t.Fatalf("got %v, want a permission error naming the reference", err)

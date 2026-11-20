@@ -210,11 +210,10 @@ func resolver(m map[string]string) func(context.Context, config.SecretRef) (secr
 func (s *server) adapter(t testing.TB, name string, extra map[string]any) *openbao.Adapter {
 	t.Helper()
 	opts := map[string]any{
-		"address": s.addr,
-		"auth": map[string]any{
-			"method":  "approle",
-			"approle": map[string]any{"role-id": "test:role-id", "secret-id": "test:secret-id"},
-		},
+		"address":           s.addr,
+		"auth":              map[string]any{"method": "approle"},
+		"role-id":           "test:role-id",
+		"secret-id":         "test:secret-id",
 		"timeout":           "2s",
 		"watch.interval":    "300ms",
 		"watch.max-backoff": "1s",
@@ -274,7 +273,7 @@ func TestTokenAuth(t *testing.T) {
 	client, _ := tok["auth"].(map[string]any)["client_token"].(string)
 	a, err := openbao.New(stores.Instance{
 		Name: "bao-token", Kind: openbao.Kind,
-		Options: map[string]any{"address": s.addr, "auth.method": "token", "auth.token": "test:token"},
+		Options: map[string]any{"address": s.addr, "auth.method": "token", "token": "test:token"},
 		Resolve: resolver(map[string]string{"test:token": client}),
 	})
 	if err != nil {
@@ -311,7 +310,7 @@ func TestTokenAuth(t *testing.T) {
 	// A bad token is a permission error, not an outage.
 	bad, _ := openbao.New(stores.Instance{
 		Name: "bao-bad", Kind: openbao.Kind,
-		Options: map[string]any{"address": s.addr, "auth.method": "token", "auth.token": "test:bad"},
+		Options: map[string]any{"address": s.addr, "auth.method": "token", "token": "test:bad"},
 		Resolve: resolver(map[string]string{"test:bad": "not-a-token"}),
 	})
 	defer func() { _ = bad.Close() }()

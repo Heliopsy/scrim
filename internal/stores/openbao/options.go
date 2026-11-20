@@ -12,16 +12,17 @@ import (
 )
 
 // Option keys, relative to `stores.<instance>.`. docs/stores/openbao.md
-// documents each one; keep the two in step.
+// documents each one; keep the two in step. Credential fields are top-level
+// names because the stores collection resolves and masks them by name.
 const (
 	optAddress         = "address"
 	optNamespace       = "namespace"
 	optMounts          = "mounts"
 	optAuthMethod      = "auth.method"
-	optAuthToken       = "auth.token"
+	optAuthToken       = "token"
 	optAppRoleMount    = "auth.approle.mount"
-	optAppRoleRoleID   = "auth.approle.role-id"
-	optAppRoleSecretID = "auth.approle.secret-id"
+	optAppRoleRoleID   = "role-id"
+	optAppRoleSecretID = "secret-id"
 	optTimeout         = "timeout"
 	optCAFile          = "tls.ca-file"
 	optServerName      = "tls.server-name"
