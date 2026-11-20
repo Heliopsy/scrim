@@ -26,8 +26,11 @@ pub struct Config {
     pub short_floor: usize,
     /// `redaction.engine` (default `auto`).
     pub engine: EngineChoice,
-    /// `redaction.engine_threshold` (default 4,000 patterns): with `auto`, sets with more
-    /// compiled patterns use the hash-window engine.
+    /// `redaction.engine_threshold` (default 256 patterns): with `auto`, sets with more compiled
+    /// patterns use the hash-window engine. Aho-Corasick is only faster while its SIMD (Teddy)
+    /// prefilter applies, which is up to 64 patterns per automaton; the engine splits sets of up
+    /// to 256 patterns into such automata. Above that the hash-window engine wins (measured, see
+    /// the crate README).
     pub engine_threshold: usize,
     /// `redaction.max_body_bytes` (default 64 MiB): larger inputs are refused.
     pub max_input: usize,
@@ -44,7 +47,7 @@ impl Default for Config {
             min_len: 8,
             short_floor: 4,
             engine: EngineChoice::Auto,
-            engine_threshold: 4_000,
+            engine_threshold: 256,
             max_input: 64 << 20,
             guard_max_repairs: 64,
             detectors: DetectorConfig::default(),
@@ -193,6 +196,50 @@ impl Redactor {
         }
         self.gap(input, pos, input.len(), out, &mut st, on_hit);
         Ok(st)
+    }
+
+    /// Reports every replacement [`Redactor::redact`] would make, in order, as
+    /// `(start, end, placeholder)` over `input`, without producing the output for the caller.
+    ///
+    /// For callers that apply replacements themselves (the HTTPS tool proxy's streaming
+    /// redactor). Allocates one scratch buffer per call.
+    pub fn find_matches(
+        &self,
+        input: &[u8],
+        f: &mut dyn FnMut(usize, usize, &[u8]),
+    ) -> Result<(), Error> {
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+        let mut out = Vec::new();
+        self.redact_with(input, &mut out, &mut |h| match h {
+            Hit::Known { start, end, .. } | Hit::Detected { start, end, .. } => {
+                spans.push((start, end));
+            }
+        })?;
+        // The output is the input with each span replaced by one placeholder: walk both.
+        let (mut in_pos, mut out_pos) = (0, 0);
+        for (start, end) in spans {
+            out_pos += start - in_pos;
+            let len = match crate::placeholder::parse(&out[out_pos..]) {
+                crate::placeholder::Parse::Complete(p) => p.len,
+                _ => unreachable!("redactor output holds a placeholder at every replacement"),
+            };
+            f(start, end, &out[out_pos..out_pos + len]);
+            out_pos += len;
+            in_pos = end;
+        }
+        zeroize::Zeroize::zeroize(&mut out);
+        Ok(())
+    }
+
+    /// Longest input span one replacement can cover: the longest compiled pattern, or the
+    /// longest a fallback detector matches. A streaming caller holds back this many bytes minus
+    /// one.
+    pub fn max_match_len(&self) -> usize {
+        let pats = (0..self.set.len() as u32)
+            .map(|i| self.set.get(i).len())
+            .max()
+            .unwrap_or(0);
+        pats.max(self.detectors.max_match_len())
     }
 
     /// Copies `input[from..to]`, running the fallback detectors over it.

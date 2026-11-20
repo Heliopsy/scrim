@@ -88,6 +88,9 @@ pub(crate) struct Cursor {
     /// Cached next short-tier match (hash-window engine only). `Some(None)` means "none left".
     #[allow(clippy::option_option)]
     short: Option<Option<Match>>,
+    /// Cached next match per Aho-Corasick part (split engine only), same encoding.
+    #[allow(clippy::option_option)]
+    parts: [Option<Option<Match>>; AC_MAX_PARTS],
 }
 
 impl Cursor {
@@ -110,15 +113,33 @@ fn build_ac<'a>(pats: impl IntoIterator<Item = &'a [u8]>) -> Result<AhoCorasick,
         .map_err(|_| BuildError::Automaton)
 }
 
-/// Aho-Corasick engine over the whole set.
+/// Patterns per Aho-Corasick automaton when the set is split. The crate's SIMD (Teddy)
+/// prefilter only applies up to 64 patterns; past that throughput drops by an order of
+/// magnitude, so small sets are split into several automata of at most 64 patterns each and
+/// their matches merged.
+pub(crate) const AC_PART: usize = 64;
+/// Most parts a split engine uses; larger sets get one automaton.
+pub(crate) const AC_MAX_PARTS: usize = 4;
+
+/// Aho-Corasick engine: one automaton over the whole set, or up to [`AC_MAX_PARTS`] automata of
+/// [`AC_PART`] patterns whose leftmost-longest matches are merged.
 pub(crate) struct AcEngine {
-    ac: AhoCorasick,
+    parts: Vec<(AhoCorasick, Vec<u32>)>,
 }
 
 impl AcEngine {
     pub(crate) fn build(set: &PatternSet) -> Result<Self, BuildError> {
-        let ac = build_ac((0..set.len() as u32).map(|i| set.get(i)))?;
-        Ok(Self { ac })
+        let ids: Vec<u32> = (0..set.len() as u32).collect();
+        let chunk = if set.len() <= AC_PART * AC_MAX_PARTS {
+            AC_PART
+        } else {
+            set.len().max(1)
+        };
+        let parts = ids
+            .chunks(chunk)
+            .map(|c| Ok((build_ac(c.iter().map(|&i| set.get(i)))?, c.to_vec())))
+            .collect::<Result<Vec<_>, BuildError>>()?;
+        Ok(Self { parts })
     }
 }
 
@@ -127,13 +148,41 @@ impl Engine for AcEngine {
         if cur.pos >= hay.len() {
             return None;
         }
-        let m = self.ac.find(Input::new(hay).span(cur.pos..hay.len()))?;
-        cur.pos = m.end();
-        Some(Match {
-            start: m.start(),
-            end: m.end(),
-            pattern: m.pattern().as_u32(),
-        })
+        let find = |ac: &AhoCorasick, ids: &[u32], from: usize| {
+            ac.find(Input::new(hay).span(from..hay.len()))
+                .map(|m| Match {
+                    start: m.start(),
+                    end: m.end(),
+                    pattern: ids[m.pattern().as_usize()],
+                })
+        };
+        if let [(ac, ids)] = self.parts.as_slice() {
+            let m = find(ac, ids, cur.pos)?;
+            cur.pos = m.end;
+            return Some(m);
+        }
+        // Merge: the leftmost start wins, then the longest. Each part's next match stays valid
+        // while it starts at or after the cursor.
+        let mut best: Option<Match> = None;
+        for (k, (ac, ids)) in self.parts.iter().enumerate() {
+            let m = match cur.parts[k] {
+                Some(Some(m)) if m.start >= cur.pos => Some(m),
+                Some(None) => None,
+                _ => {
+                    let m = find(ac, ids, cur.pos);
+                    cur.parts[k] = Some(m);
+                    m
+                }
+            };
+            if let Some(m) = m
+                && best.is_none_or(|b| m.start < b.start || (m.start == b.start && m.end > b.end))
+            {
+                best = Some(m);
+            }
+        }
+        let m = best?;
+        cur.pos = m.end;
+        Some(m)
     }
 }
 

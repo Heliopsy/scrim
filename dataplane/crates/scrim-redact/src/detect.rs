@@ -248,6 +248,14 @@ impl Detectors {
         })
     }
 
+    /// Longest span any enabled detector can match.
+    pub(crate) fn max_match_len(&self) -> usize {
+        let rules = self.rules.iter().map(|r| r.max_len).max().unwrap_or(0);
+        let pem = if self.pem { PEM_MAX } else { 0 };
+        let ent = self.entropy.as_ref().map_or(0, |e| e.max_len);
+        rules.max(pem).max(ent)
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.anchors.is_none() && self.entropy.is_none()
     }
