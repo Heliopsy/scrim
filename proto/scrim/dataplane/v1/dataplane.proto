@@ -200,6 +200,70 @@ message Policy {
   // break_glass denies every injection, restore and ask while redaction
   // continues.
   bool break_glass = 6;
+  // table is the rule set compiled from CEL into a decision table (design
+  // D7, docs/policy.md "How the data plane decides"), in rule order. When it
+  // is set, `rules`, `engine` and `compiled` are empty.
+  repeated TableRule table = 7;
+  // table_format is the version of the table semantics; a data plane that
+  // does not implement it rejects the snapshot. Currently 1.
+  uint32 table_format = 8;
+}
+
+// TableRule is one rule in disjunctive normal form: it matches when any
+// clause matches. The data plane evaluates every rule to match, no match or
+// unknown, then for each effect in the order deny, ask, allow takes the
+// first rule (in order) with that effect that is not a no-match: unknown
+// sends the request to the control plane; otherwise deny denies, ask goes
+// to the control plane, and allow allows unless control_plane is set. With
+// no candidate, default_effect applies (ask goes to the control plane).
+message TableRule {
+  string name = 1;
+  Effect effect = 2;
+  // control_plane marks an allow rule with side effects (it leaves a grant
+  // behind); when it decides, the control plane is asked instead.
+  bool control_plane = 3;
+  // clauses are alternatives; none means the rule never matches.
+  repeated Clause clauses = 4;
+  // reason is shown in approvals and audit.
+  string reason = 5;
+}
+
+// Clause is a conjunction. Its result: false if any condition is false;
+// otherwise unknown if residual; otherwise error if any condition errored;
+// otherwise true. A rule is true if any clause is true, else unknown if any
+// is unknown, else error if any errored, else false. A rule that errors
+// counts as a match when its effect is deny or ask and as no match for
+// allow.
+message Clause {
+  repeated Condition conditions = 1;
+  // residual: the clause also has parts only the control plane evaluates.
+  bool residual = 2;
+}
+
+enum ConditionOp {
+  CONDITION_OP_UNSPECIFIED = 0;  // invalid; rejects the snapshot
+  CONDITION_OP_IN = 1;           // operand equals one of values
+  CONDITION_OP_PREFIX = 2;       // operand starts with values[0]
+  CONDITION_OP_SUFFIX = 3;       // operand ends with values[0]
+  CONDITION_OP_CONTAINS = 4;     // operand contains values[0]
+  CONDITION_OP_GLOB = 5;         // operand matches glob values[0]
+  CONDITION_OP_HAS_KEY = 6;      // map field has key; never errors
+}
+
+// Condition tests one request field.
+message Condition {
+  // field is one of: op, provider, agent.id, agent.kind, agent.known,
+  // agent.session, agent.labels, secret.ref, secret.name, secret.store,
+  // secret.class, secret.labels, dest.host, dest.method, dest.path,
+  // tool.name, tool.command. agent.known is "true" or "false".
+  string field = 1;
+  // key selects an entry of a map field (agent.labels, secret.labels). Any
+  // op but HAS_KEY on a missing key is an error.
+  string key = 2;
+  ConditionOp op = 3;
+  repeated string values = 4;
+  // negate inverts the result; an error stays an error.
+  bool negate = 5;
 }
 
 message PolicyRule {
@@ -322,6 +386,14 @@ message PolicyRequest {
   string method = 7;
   string path = 8;
   string tool = 9;
+  // The rest of the request attributes rules see (docs/policy.md).
+  string agent_kind = 10;
+  string session = 11;
+  map<string, string> agent_labels = 12;
+  string store = 13;
+  string secret_class = 14;
+  map<string, string> secret_labels = 15;
+  string command = 16;
 }
 
 message AskRequest {

@@ -1,0 +1,487 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package matrix
+
+import (
+	"bytes"
+	"encoding/base64"
+	"encoding/binary"
+	"hash/crc32"
+	"net/http"
+	"net/url"
+
+	fp "github.com/heliopsy/scrim/internal/testing/fakeprovider"
+)
+
+// Content is the secret-bearing text a placement puts into a request: the
+// transformed value with the tool output around it.
+type Content struct {
+	Command string
+	Before  string
+	Value   string
+	After   string
+}
+
+// Text is the whole tool output.
+func (c Content) Text() string { return c.Before + c.Value + c.After }
+
+// halves splits the content inside the value.
+func (c Content) halves() (string, string) {
+	mid := len(c.Value) / 2
+	// Keep multi-byte characters whole.
+	for mid > 0 && mid < len(c.Value) && c.Value[mid]&0xc0 == 0x80 {
+		mid++
+	}
+	return c.Before + c.Value[:mid], c.Value[mid:] + c.After
+}
+
+// Request is one HTTP request a row sends through the proxy.
+type Request struct {
+	API    fp.API
+	Path   string
+	Query  url.Values
+	Header http.Header
+	Body   []byte
+	Stream bool
+}
+
+// Placement is where in a provider request the secret-bearing content goes.
+type Placement struct {
+	ID     string
+	Desc   string
+	Expect Expect
+	Note   string
+	// Build returns the requests for one API, or nil when the placement does
+	// not exist in that API.
+	Build func(api fp.API, c Content, mode Escape) []Request
+}
+
+const (
+	userAsk  = "The billing service fails to start. Find out why."
+	sysText  = "You are a coding agent working in the user's repository."
+	toolID   = "toolu_01Leak"
+	callID   = "call_01Leak"
+	toolName = "Bash"
+)
+
+func bashToolAnthropic(desc string) any {
+	return obj("name", toolName, "description", desc, "input_schema", obj(
+		"type", "object",
+		"properties", obj("command", obj("type", "string", "description", "The command to run")),
+		"required", []any{"command"},
+	))
+}
+
+func bashToolChat(desc string) any {
+	return obj("type", "function", "function", obj("name", toolName, "description", desc, "parameters", obj(
+		"type", "object",
+		"properties", obj("command", obj("type", "string")),
+		"required", []any{"command"},
+	)))
+}
+
+func bashToolResponses(desc string) any {
+	return obj("type", "function", "name", toolName, "description", desc, "parameters", obj(
+		"type", "object",
+		"properties", obj("command", obj("type", "string")),
+		"required", []any{"command"},
+	))
+}
+
+// anthropicBody assembles a Messages request. Each argument may be nil to
+// use the default.
+type anthropicParts struct {
+	system   any
+	tools    []any
+	messages []any
+	extra    []kv
+	stream   bool
+}
+
+func (p anthropicParts) body() any {
+	if p.system == nil {
+		p.system = sysText
+	}
+	if p.tools == nil {
+		p.tools = []any{bashToolAnthropic("Run a shell command.")}
+	}
+	m := obj("model", "claude-sonnet-4-5", "max_tokens", 1024, "system", p.system, "tools", p.tools, "messages", p.messages)
+	if p.stream {
+		m = append(m, kv{"stream", true})
+	}
+	return append(m, p.extra...)
+}
+
+func anthropicToolTurn(command string, result any) []any {
+	return []any{
+		obj("role", "user", "content", userAsk),
+		obj("role", "assistant", "content", []any{
+			obj("type", "text", "text", "I'll look at the service configuration."),
+			obj("type", "tool_use", "id", toolID, "name", toolName, "input", obj("command", command)),
+		}),
+		obj("role", "user", "content", []any{obj("type", "tool_result", "tool_use_id", toolID, "content", result)}),
+	}
+}
+
+type chatParts struct {
+	messages []any
+	tools    []any
+	extra    []kv
+	stream   bool
+}
+
+func (p chatParts) body() any {
+	if p.tools == nil {
+		p.tools = []any{bashToolChat("Run a shell command.")}
+	}
+	m := obj("model", "gpt-5", "messages", p.messages, "tools", p.tools)
+	if p.stream {
+		m = append(m, kv{"stream", true}, kv{"stream_options", obj("include_usage", true)})
+	}
+	return append(m, p.extra...)
+}
+
+func chatToolTurn(command string, result any) []any {
+	return []any{
+		obj("role", "system", "content", sysText),
+		obj("role", "user", "content", userAsk),
+		obj("role", "assistant", "content", nil, "tool_calls", []any{
+			obj("id", callID, "type", "function", "function", obj("name", toolName, "arguments", string(encode(obj("command", command), EscapeMinimal)))),
+		}),
+		obj("role", "tool", "tool_call_id", callID, "content", result),
+	}
+}
+
+type responsesParts struct {
+	instructions any
+	input        []any
+	tools        []any
+	extra        []kv
+	stream       bool
+}
+
+func (p responsesParts) body() any {
+	if p.instructions == nil {
+		p.instructions = sysText
+	}
+	if p.tools == nil {
+		p.tools = []any{bashToolResponses("Run a shell command.")}
+	}
+	m := obj("model", "gpt-5", "instructions", p.instructions, "input", p.input, "tools", p.tools)
+	if p.stream {
+		m = append(m, kv{"stream", true})
+	}
+	return append(m, p.extra...)
+}
+
+func responsesToolTurn(command string, output any) []any {
+	return []any{
+		obj("type", "message", "role", "user", "content", []any{obj("type", "input_text", "text", userAsk)}),
+		obj("type", "function_call", "call_id", callID, "name", toolName, "arguments", string(encode(obj("command", command), EscapeMinimal))),
+		obj("type", "function_call_output", "call_id", callID, "output", output),
+	}
+}
+
+func req(api fp.API, body any, mode Escape, stream bool) Request {
+	h := http.Header{}
+	h.Set("Content-Type", "application/json")
+	switch api {
+	case fp.Anthropic:
+		h.Set("Anthropic-Version", "2023-06-01")
+	}
+	return Request{API: api, Path: api.Path(), Header: h, Body: encode(body, mode), Stream: stream}
+}
+
+// standard builds the primary tool-result request, with optional changes.
+func standard(api fp.API, c Content, mode Escape, stream bool) Request {
+	switch api {
+	case fp.Anthropic:
+		return req(api, anthropicParts{messages: anthropicToolTurn(c.Command, c.Text()), stream: stream}.body(), mode, stream)
+	case fp.OpenAIChat:
+		return req(api, chatParts{messages: chatToolTurn(c.Command, c.Text()), stream: stream}.body(), mode, stream)
+	case fp.OpenAIResponses:
+		return req(api, responsesParts{input: responsesToolTurn(c.Command, c.Text()), stream: stream}.body(), mode, stream)
+	}
+	return Request{}
+}
+
+func one(r Request) []Request { return []Request{r} }
+
+// pngWithText returns a 1x1 PNG whose tEXt chunk carries text, the way an
+// image's metadata can carry a secret into a screenshot.
+func pngWithText(key, text string) []byte {
+	var b bytes.Buffer
+	b.Write([]byte("\x89PNG\r\n\x1a\n"))
+	chunk := func(typ string, data []byte) {
+		_ = binary.Write(&b, binary.BigEndian, uint32(len(data)))
+		b.WriteString(typ)
+		b.Write(data)
+		crc := crc32.NewIEEE()
+		crc.Write([]byte(typ))
+		crc.Write(data)
+		_ = binary.Write(&b, binary.BigEndian, crc.Sum32())
+	}
+	chunk("IHDR", []byte{0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0})
+	chunk("tEXt", append([]byte(key+"\x00"), text...))
+	chunk("IDAT", []byte{0x78, 0x9c, 0x63, 0x60, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01})
+	chunk("IEND", nil)
+	return b.Bytes()
+}
+
+// Placements is the catalogue of places a secret can sit in a request.
+var Placements = []Placement{
+	{ID: "tool-result", Desc: "tool result content as a string (primary placement)", Expect: Redacted,
+		Build: func(api fp.API, c Content, mode Escape) []Request { return one(standard(api, c, mode, false)) }},
+	{ID: "tool-result-streaming", Desc: "tool result in a streaming request", Expect: Redacted,
+		Build: func(api fp.API, c Content, mode Escape) []Request { return one(standard(api, c, mode, true)) }},
+	{ID: "tool-result-blocks", Desc: "tool result content as text blocks", Expect: Redacted,
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			switch api {
+			case fp.Anthropic:
+				return one(req(api, anthropicParts{messages: anthropicToolTurn(c.Command, []any{obj("type", "text", "text", c.Text())})}.body(), mode, false))
+			case fp.OpenAIChat:
+				return one(req(api, chatParts{messages: chatToolTurn(c.Command, []any{obj("type", "text", "text", c.Text())})}.body(), mode, false))
+			case fp.OpenAIResponses:
+				return one(req(api, responsesParts{input: responsesToolTurn(c.Command, []any{obj("type", "input_text", "text", c.Text())})}.body(), mode, false))
+			}
+			return nil
+		}},
+	{ID: "user-text", Desc: "user message text", Expect: Redacted,
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			switch api {
+			case fp.Anthropic:
+				return one(req(api, anthropicParts{messages: []any{obj("role", "user", "content", c.Text())}}.body(), mode, false))
+			case fp.OpenAIChat:
+				return one(req(api, chatParts{messages: []any{obj("role", "user", "content", c.Text())}}.body(), mode, false))
+			case fp.OpenAIResponses:
+				return one(req(api, responsesParts{input: []any{obj("role", "user", "content", c.Text())}}.body(), mode, false))
+			}
+			return nil
+		}},
+	{ID: "user-blocks", Desc: "user message content parts", Expect: Redacted,
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			switch api {
+			case fp.Anthropic:
+				return one(req(api, anthropicParts{messages: []any{obj("role", "user", "content", []any{obj("type", "text", "text", c.Text())})}}.body(), mode, false))
+			case fp.OpenAIChat:
+				return one(req(api, chatParts{messages: []any{obj("role", "user", "content", []any{obj("type", "text", "text", c.Text())})}}.body(), mode, false))
+			case fp.OpenAIResponses:
+				return one(req(api, responsesParts{input: []any{obj("type", "message", "role", "user", "content", []any{obj("type", "input_text", "text", c.Text())})}}.body(), mode, false))
+			}
+			return nil
+		}},
+	{ID: "system-prompt", Desc: "system prompt, instructions or system/developer message", Expect: Redacted,
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			switch api {
+			case fp.Anthropic:
+				return one(req(api, anthropicParts{system: []any{obj("type", "text", "text", sysText), obj("type", "text", "text", c.Text(), "cache_control", obj("type", "ephemeral"))}, messages: []any{obj("role", "user", "content", userAsk)}}.body(), mode, false))
+			case fp.OpenAIChat:
+				return one(req(api, chatParts{messages: []any{obj("role", "developer", "content", c.Text()), obj("role", "user", "content", userAsk)}}.body(), mode, false))
+			case fp.OpenAIResponses:
+				return one(req(api, responsesParts{instructions: c.Text(), input: []any{obj("role", "user", "content", userAsk)}}.body(), mode, false))
+			}
+			return nil
+		}},
+	{ID: "tool-call-input", Desc: "a prior tool call's input in the history (a restored value sent back)", Expect: Redacted,
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			cmd := "printf '%s' '" + c.Text() + "' > .env"
+			switch api {
+			case fp.Anthropic:
+				return one(req(api, anthropicParts{messages: anthropicToolTurn(cmd, "")}.body(), mode, false))
+			case fp.OpenAIChat:
+				return one(req(api, chatParts{messages: chatToolTurn(cmd, "")}.body(), mode, false))
+			case fp.OpenAIResponses:
+				return one(req(api, responsesParts{input: responsesToolTurn(cmd, "")}.body(), mode, false))
+			}
+			return nil
+		}},
+	{ID: "assistant-text", Desc: "a prior assistant message in the history", Expect: Redacted,
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			hist := func(asst any) []any {
+				return []any{obj("role", "user", "content", userAsk), asst, obj("role", "user", "content", "Thanks, go on.")}
+			}
+			switch api {
+			case fp.Anthropic:
+				return one(req(api, anthropicParts{messages: hist(obj("role", "assistant", "content", []any{obj("type", "text", "text", c.Text())}))}.body(), mode, false))
+			case fp.OpenAIChat:
+				return one(req(api, chatParts{messages: hist(obj("role", "assistant", "content", c.Text()))}.body(), mode, false))
+			case fp.OpenAIResponses:
+				return one(req(api, responsesParts{input: hist(obj("type", "message", "role", "assistant", "content", []any{obj("type", "output_text", "text", c.Text())}))}.body(), mode, false))
+			}
+			return nil
+		}},
+	{ID: "tool-definition", Desc: "a tool description (an MCP server describing itself)", Expect: Redacted,
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			msgs := []any{obj("role", "user", "content", userAsk)}
+			switch api {
+			case fp.Anthropic:
+				return one(req(api, anthropicParts{tools: []any{bashToolAnthropic(c.Text())}, messages: msgs}.body(), mode, false))
+			case fp.OpenAIChat:
+				return one(req(api, chatParts{tools: []any{bashToolChat(c.Text())}, messages: msgs}.body(), mode, false))
+			case fp.OpenAIResponses:
+				return one(req(api, responsesParts{tools: []any{bashToolResponses(c.Text())}, input: msgs}.body(), mode, false))
+			}
+			return nil
+		}},
+	{ID: "metadata", Desc: "request metadata (user id, metadata map)", Expect: Redacted,
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			msgs := []any{obj("role", "user", "content", userAsk)}
+			switch api {
+			case fp.Anthropic:
+				return one(req(api, anthropicParts{messages: msgs, extra: []kv{{"metadata", obj("user_id", c.Text())}}}.body(), mode, false))
+			case fp.OpenAIChat:
+				return one(req(api, chatParts{messages: msgs, extra: []kv{{"user", c.Text()}, {"metadata", obj("session", c.Text())}}}.body(), mode, false))
+			case fp.OpenAIResponses:
+				return one(req(api, responsesParts{input: msgs, extra: []kv{{"metadata", obj("session", c.Text())}}}.body(), mode, false))
+			}
+			return nil
+		}},
+	{ID: "unknown-field", Desc: "an undocumented top-level field (like Claude Code's safeguards field)", Expect: Redacted,
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			msgs := []any{obj("role", "user", "content", userAsk)}
+			extra := []kv{{"x_client_context", obj("cwd", "/home/dev/billing", "env_preview", c.Text())}}
+			switch api {
+			case fp.Anthropic:
+				return one(req(api, anthropicParts{messages: msgs, extra: extra}.body(), mode, false))
+			case fp.OpenAIChat:
+				return one(req(api, chatParts{messages: msgs, extra: extra}.body(), mode, false))
+			case fp.OpenAIResponses:
+				return one(req(api, responsesParts{input: msgs, extra: extra}.body(), mode, false))
+			}
+			return nil
+		}},
+	{ID: "unknown-block-field", Desc: "an undocumented field inside a content block", Expect: Redacted,
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			switch api {
+			case fp.Anthropic:
+				return one(req(api, anthropicParts{messages: []any{obj("role", "user", "content", []any{obj("type", "text", "text", userAsk, "x_source", c.Text())})}}.body(), mode, false))
+			case fp.OpenAIChat:
+				return one(req(api, chatParts{messages: []any{obj("role", "user", "content", userAsk, "x_source", c.Text())}}.body(), mode, false))
+			case fp.OpenAIResponses:
+				return one(req(api, responsesParts{input: []any{obj("type", "message", "role", "user", "content", []any{obj("type", "input_text", "text", userAsk, "x_source", c.Text())})}}.body(), mode, false))
+			}
+			return nil
+		}},
+	{ID: "document-text", Desc: "a plain-text document or file input", Expect: Redacted,
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			switch api {
+			case fp.Anthropic:
+				doc := obj("type", "document", "source", obj("type", "text", "media_type", "text/plain", "data", c.Text()), "title", ".env")
+				return one(req(api, anthropicParts{messages: []any{obj("role", "user", "content", []any{doc, obj("type", "text", "text", userAsk)})}}.body(), mode, false))
+			case fp.OpenAIChat:
+				data := "data:text/plain;base64," + base64.StdEncoding.EncodeToString([]byte(c.Text()))
+				file := obj("type", "file", "file", obj("filename", ".env", "file_data", data))
+				return one(req(api, chatParts{messages: []any{obj("role", "user", "content", []any{file, obj("type", "text", "text", userAsk)})}}.body(), mode, false))
+			case fp.OpenAIResponses:
+				data := "data:text/plain;base64," + base64.StdEncoding.EncodeToString([]byte(c.Text()))
+				file := obj("type", "input_file", "filename", ".env", "file_data", data)
+				return one(req(api, responsesParts{input: []any{obj("type", "message", "role", "user", "content", []any{file, obj("type", "input_text", "text", userAsk)})}}.body(), mode, false))
+			}
+			return nil
+		}},
+	{ID: "header", Desc: "a custom HTTP request header", Expect: Guard,
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			r := standard(api, Content{Command: c.Command, Before: "(no output)"}, mode, false)
+			r.Header.Set("X-Debug-Context", headerSafe(c.Text()))
+			return one(r)
+		}},
+	{ID: "query", Desc: "the request URL query string", Expect: Guard,
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			r := standard(api, Content{Command: c.Command, Before: "(no output)"}, mode, false)
+			r.Query = url.Values{"trace": {c.Text()}}
+			return one(r)
+		}},
+	{ID: "image-metadata", Desc: "text in an image's PNG tEXt metadata", Expect: Limitation,
+		Note: "limitation: images and other binary parts pass unscanned under the default binary policy",
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			png := base64.StdEncoding.EncodeToString(pngWithText("Comment", c.Text()))
+			switch api {
+			case fp.Anthropic:
+				img := obj("type", "image", "source", obj("type", "base64", "media_type", "image/png", "data", png))
+				return one(req(api, anthropicParts{messages: []any{obj("role", "user", "content", []any{img, obj("type", "text", "text", "What does this screenshot show?")})}}.body(), mode, false))
+			case fp.OpenAIChat:
+				img := obj("type", "image_url", "image_url", obj("url", "data:image/png;base64,"+png))
+				return one(req(api, chatParts{messages: []any{obj("role", "user", "content", []any{img, obj("type", "text", "text", "What does this screenshot show?")})}}.body(), mode, false))
+			case fp.OpenAIResponses:
+				img := obj("type", "input_image", "image_url", "data:image/png;base64,"+png)
+				return one(req(api, responsesParts{input: []any{obj("type", "message", "role", "user", "content", []any{img, obj("type", "input_text", "text", "What does this screenshot show?")})}}.body(), mode, false))
+			}
+			return nil
+		}},
+	{ID: "split-blocks", Desc: "the value split across two content blocks of one message", Expect: Limitation,
+		Note: "limitation: a value split by the agent across separate fields is matched only by the guard's fragment rules, if at all",
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			a, b := c.halves()
+			switch api {
+			case fp.Anthropic:
+				return one(req(api, anthropicParts{messages: anthropicToolTurn(c.Command, []any{obj("type", "text", "text", a), obj("type", "text", "text", b)})}.body(), mode, false))
+			case fp.OpenAIChat:
+				return one(req(api, chatParts{messages: chatToolTurn(c.Command, []any{obj("type", "text", "text", a), obj("type", "text", "text", b)})}.body(), mode, false))
+			case fp.OpenAIResponses:
+				return one(req(api, responsesParts{input: responsesToolTurn(c.Command, []any{obj("type", "input_text", "text", a), obj("type", "input_text", "text", b)})}.body(), mode, false))
+			}
+			return nil
+		}},
+	{ID: "split-tool-results", Desc: "the value split across two tool results", Expect: Limitation,
+		Note: "limitation: a value split by the agent across separate tool results is not reassembled",
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			a, b := c.halves()
+			switch api {
+			case fp.Anthropic:
+				msgs := append(anthropicToolTurn("head -c 40 .env", a),
+					obj("role", "assistant", "content", []any{obj("type", "tool_use", "id", toolID+"2", "name", toolName, "input", obj("command", "tail -c +41 .env"))}),
+					obj("role", "user", "content", []any{obj("type", "tool_result", "tool_use_id", toolID+"2", "content", b)}))
+				return one(req(api, anthropicParts{messages: msgs}.body(), mode, false))
+			case fp.OpenAIChat:
+				msgs := append(chatToolTurn("head -c 40 .env", a),
+					obj("role", "assistant", "content", nil, "tool_calls", []any{obj("id", callID+"2", "type", "function", "function", obj("name", toolName, "arguments", `{"command":"tail -c +41 .env"}`))}),
+					obj("role", "tool", "tool_call_id", callID+"2", "content", b))
+				return one(req(api, chatParts{messages: msgs}.body(), mode, false))
+			case fp.OpenAIResponses:
+				in := append(responsesToolTurn("head -c 40 .env", a),
+					obj("type", "function_call", "call_id", callID+"2", "name", toolName, "arguments", `{"command":"tail -c +41 .env"}`),
+					obj("type", "function_call_output", "call_id", callID+"2", "output", b))
+				return one(req(api, responsesParts{input: in}.body(), mode, false))
+			}
+			return nil
+		}},
+	{ID: "split-requests", Desc: "the value split across two requests chained by previous_response_id", Expect: Limitation,
+		Note: "limitation: server-side conversation state lets halves arrive in separate requests",
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			if api != fp.OpenAIResponses {
+				return nil
+			}
+			a, b := c.halves()
+			r1 := req(api, responsesParts{input: responsesToolTurn("head -c 40 .env", a), extra: []kv{{"store", true}}}.body(), mode, false)
+			in2 := []any{
+				obj("type", "function_call", "call_id", callID+"2", "name", toolName, "arguments", `{"command":"tail -c +41 .env"}`),
+				obj("type", "function_call_output", "call_id", callID+"2", "output", b),
+			}
+			r2 := req(api, responsesParts{input: in2, extra: []kv{{"previous_response_id", "resp_previous"}}}.body(), mode, false)
+			return []Request{r1, r2}
+		}},
+}
+
+// headerSafe keeps a header value legal: control characters and non-ASCII
+// would make the client refuse to send it.
+func headerSafe(s string) string {
+	b := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x20 || c > 0x7e {
+			c = ' '
+		}
+		b = append(b, c)
+	}
+	return string(b)
+}
+
+// PlacementByID returns the placement with the given ID.
+func PlacementByID(id string) (Placement, bool) {
+	for _, p := range Placements {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return Placement{}, false
+}

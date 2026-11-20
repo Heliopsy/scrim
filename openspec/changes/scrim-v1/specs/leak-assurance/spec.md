@@ -24,20 +24,73 @@ ever record post-redaction bytes and SHALL refuse to start if the directory is w
 
 ### Requirement: Audit harness
 
-`scrim audit` SHALL drive real agent CLIs (at least Claude Code and Codex) through scrim against a
-local fake model, seeded with generated secrets, and SHALL report per request what the provider would
-have received, every leak found, and the prompt-cache hit rate.
+`scrim audit run` SHALL drive agents through scrim against a local fake model, seeded with generated
+secrets, and SHALL report per request what the provider would have received, every leak found, and
+the prompt-cache hit rate. It SHALL drive real agent CLIs (at least Claude Code and Codex) and a
+built-in synthetic agent for every supported provider API. The report SHALL identify seeds by name,
+kind, length and a short hash, never by value.
 
 #### Scenario: Clean audit
 
-- **WHEN** `scrim audit --driver claude` runs a scripted session over files containing seeded secrets
+- **WHEN** `scrim audit run --driver claude` runs a scripted session over files containing seeded secrets
 - **THEN** the report shows zero leaks
 - **AND** shows the cache hit rate across turns
 
 #### Scenario: Leak fails the audit
 
 - **WHEN** any seeded value reaches the fake model in any encoding
-- **THEN** `scrim audit` exits non-zero and names the request, field and encoding
+- **THEN** `scrim audit run` exits non-zero and names the request, field and encoding
+
+#### Scenario: Restored value sent back
+
+- **WHEN** the fake model calls a tool with a placeholder, the proxy restores it, and the agent sends that call back in its history
+- **THEN** the next request carries the placeholder again, byte-identical to the first
+
+#### Scenario: Cache measured
+
+- **WHEN** a scenario runs twice through the proxy
+- **THEN** the report shows, per turn, whether the previous turn's whole prompt was a cached prefix
+- **AND** whether the replay produced byte-identical requests, failing the audit if either does not hold
+
+#### Scenario: Report holds no value
+
+- **WHEN** a run finds leaks
+- **THEN** neither the JSON report nor the printed summary contains any seeded value
+
+### Requirement: Testing a user's own setup
+
+`scrim audit run` SHALL run against any proxy URL. It SHALL write its generated seeds to a file with
+mode 0600 for loading into the user's store, or read seeds the user already loaded, SHALL listen for
+the proxy's provider traffic on a configurable address, and SHALL optionally start and stop the
+proxy itself with the fake provider's address, the seed file and the listen address in its
+environment.
+
+#### Scenario: Own deployment
+
+- **WHEN** a user writes the seeds with `--seeds-out`, loads them into their store and points their proxy's routes at the fake provider
+- **THEN** `scrim audit run --proxy <url>` reports leaks and outcomes for that deployment
+
+#### Scenario: Proxy does not start
+
+- **WHEN** the command given with `--proxy-cmd` does not listen within the start timeout
+- **THEN** the run stops with an error and the proxy process is terminated
+
+### Requirement: Fake provider
+
+The suite SHALL include a fake provider, usable in process and as a standalone binary, that speaks
+the Anthropic Messages, OpenAI Chat Completions and OpenAI Responses APIs, streaming and not, with
+tool-call round trips, that records every byte of every request, splits streamed text and tool
+arguments into small deltas, and reports prompt-cache usage by byte-identical prefix blocks.
+
+#### Scenario: Placeholder split across events
+
+- **WHEN** the fake provider streams a reply containing a placeholder
+- **THEN** the placeholder arrives split across several delta events
+
+#### Scenario: Changed prefix
+
+- **WHEN** a request changes one byte in an early message of an otherwise repeated conversation
+- **THEN** the fake provider reports only the blocks before that message as cached
 
 ### Requirement: Strict leak checker
 
@@ -50,6 +103,28 @@ be independent of the redactor, so it detects anything the redactor misses.
 - **WHEN** a test inserts a base64url form of a seeded secret into an outbound fixture
 - **THEN** the leak checker reports it
 
+### Requirement: Fragments and split values
+
+The leak checker SHALL decode recursively, SHALL report fragments of a value at or above a
+configurable threshold (by default half the value, at least 8 bytes outside format-fixed parts such
+as prefixes, at most 24 bytes for long values), and SHALL join strings across fields, messages and
+consecutive requests to find split values.
+
+#### Scenario: One line of a private key
+
+- **WHEN** a single 64-character line of a seeded private key reaches the fake model
+- **THEN** the checker reports a partial leak of that seed
+
+#### Scenario: Checker sees every matrix transform
+
+- **WHEN** every bypass matrix row is sent through a proxy that forwards requests unchanged
+- **THEN** the checker reports a leak for every row and seed, except fragments below the threshold
+
+#### Scenario: No false positives
+
+- **WHEN** the checker scans traffic holding placeholders, random base64 and hex, and format prefixes but no seeded value
+- **THEN** it reports nothing
+
 ### Requirement: Bypass matrix as a gate
 
 A bypass matrix SHALL exercise one-command transforms an agent can apply to secret-bearing output (byte
@@ -61,6 +136,24 @@ redacted), and any uncontained transform SHALL fail the release.
 
 - **WHEN** the matrix runs a command that prints a secret-bearing file reversed
 - **THEN** the reversed value does not reach the fake model
+
+### Requirement: Matrix rows state their outcome
+
+Every matrix row SHALL name its transform, its placement in the request and its provider API, and
+SHALL state its expected outcome: `redacted` (forwarded with a placeholder), `guard` (redacted,
+repaired or withheld), `withheld` (refused, nothing forwarded) or `limitation` (documented, run and
+reported but not gating). A row whose observed outcome its expectation does not accept SHALL fail
+the run.
+
+#### Scenario: Verbatim value refused instead of redacted
+
+- **WHEN** a row expecting `redacted` is refused by the proxy
+- **THEN** the run fails with an unexpected outcome, not a leak
+
+#### Scenario: Limitation row leaks
+
+- **WHEN** a row marked `limitation` reaches the fake model
+- **THEN** the report lists it as a known-limitation leak and the gate does not fail on it
 
 ### Requirement: Fuzzing gates
 
