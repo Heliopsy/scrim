@@ -278,9 +278,10 @@ impl Decisions {
                 let a = self
                     .hooks
                     .asks
-                    .ask_as(
+                    .ask_proven(
                         req.to_proto(),
                         who.ask_caller(),
+                        who.verifier.as_ref(),
                         &rule,
                         &reason,
                         self.ask_timeout,
@@ -524,6 +525,7 @@ mod tests {
         let sess = Identity {
             session: Some("s1".into()),
             peer: None,
+            verifier: None,
         };
         sess.apply(&mut r);
         assert!(d.decide(&r, &sess, "t").await.asked);

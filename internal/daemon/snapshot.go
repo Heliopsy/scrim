@@ -9,11 +9,13 @@ import (
 	"net/url"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/heliopsy/scrim/internal/catalog"
 	"github.com/heliopsy/scrim/internal/config"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
 	"github.com/heliopsy/scrim/internal/placeholder"
+	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/refresh"
@@ -261,6 +263,10 @@ func routes(cfg *config.Config) []*pb.Route {
 		// forward proxy.
 		{Name: "chatgpt", Provider: "openai", Upstream: UpstreamChatGPT.Get(cfg), PathPrefix: "/chatgpt",
 			Hosts: []string{"chatgpt.com"}, Chain: clone()},
+		// ab.chatgpt.com carries the same session's traffic. No path there
+		// is a Responses call, so every body is redacted as generic JSON.
+		{Name: "chatgpt-ab", Provider: "openai", Upstream: UpstreamChatGPTAB.Get(cfg), PathPrefix: "/chatgpt-ab",
+			Hosts: []string{"ab.chatgpt.com"}, Chain: clone()},
 	}
 }
 
@@ -269,7 +275,7 @@ func routes(cfg *config.Config) []*pb.Route {
 // not intercepted").
 func bypass(cfg *config.Config) []string {
 	var out []string
-	for _, raw := range []string{ChainURL.Get(cfg), UpstreamAnthropic.Get(cfg), UpstreamOpenAI.Get(cfg), UpstreamChatGPT.Get(cfg)} {
+	for _, raw := range []string{ChainURL.Get(cfg), UpstreamAnthropic.Get(cfg), UpstreamOpenAI.Get(cfg), UpstreamChatGPT.Get(cfg), UpstreamChatGPTAB.Get(cfg)} {
 		u, err := url.Parse(raw)
 		if err != nil || u.Host == "" {
 			continue
@@ -330,4 +336,18 @@ func wipeSnapshot(s *pb.Snapshot) {
 	for _, c := range s.GetToolProxyCa() {
 		clear(c.KeyPem)
 	}
+}
+
+// askTimeoutMillis is how long the data plane holds an operation it asked
+// about (`Policy.ask_timeout_millis`): approvals.timeout, or the longest
+// per-rule approval timeout when a rule sets a longer one. The table carries
+// no per-rule timeout, so the data plane holds for the longest and the
+// control plane expires each approval at its own rule's timeout, which then
+// answers deny. At least 1 ms: 0 would mean the data plane's default.
+func askTimeoutMillis(global time.Duration, cfg policy.Config) uint64 {
+	t := global
+	for _, r := range cfg.Rules {
+		t = max(t, r.Approval.Timeout.D())
+	}
+	return uint64(max(t.Milliseconds(), 1)) // #nosec G115 -- positive
 }

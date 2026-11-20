@@ -25,6 +25,7 @@ import (
 	"github.com/heliopsy/scrim/internal/audit"
 	"github.com/heliopsy/scrim/internal/config"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
+	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/testing/testhome"
 )
@@ -239,10 +240,13 @@ func TestDaemonServesAndPushes(t *testing.T) {
 	if len(s.GetPlaceholderKeys()) != 1 || !s.GetPlaceholderKeys()[0].GetCurrent() || len(s.GetPlaceholderKeys()[0].GetKey()) < 16 {
 		t.Fatalf("keys = %v", s.GetPlaceholderKeys())
 	}
-	if len(s.GetPolicy().GetTable()) != 2 || s.GetPolicy().GetDefaultEffect() != pb.Effect_EFFECT_DENY {
+	// The two file rules, then the built-in injection rule; the ask timeout
+	// is approvals.timeout.
+	if tb := s.GetPolicy().GetTable(); len(tb) != 3 || tb[2].GetName() != policy.BuiltinInjectRule ||
+		s.GetPolicy().GetDefaultEffect() != pb.Effect_EFFECT_DENY || s.GetPolicy().GetAskTimeoutMillis() == 0 {
 		t.Fatalf("policy = %v", s.GetPolicy())
 	}
-	if len(s.GetListeners()) != 2 || len(s.GetRoutes()) != 3 || len(s.GetCaptureRules()) != 1 || s.GetCaptureRules()[0].GetStoreRef() != "vault://issued/token" {
+	if len(s.GetListeners()) != 2 || len(s.GetRoutes()) != 4 || len(s.GetCaptureRules()) != 1 || s.GetCaptureRules()[0].GetStoreRef() != "vault://issued/token" {
 		t.Fatalf("listeners %v routes %v capture rules %v", s.GetListeners(), s.GetRoutes(), s.GetCaptureRules())
 	}
 	if len(s.GetToolProxyCa()) != 1 || !s.GetToolProxyCa()[0].GetCurrent() || !strings.Contains(string(s.GetToolProxyCa()[0].GetKeyPem()), "PRIVATE KEY") {

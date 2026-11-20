@@ -192,6 +192,9 @@ mod tests {
         let t = RouteTable::new(&default_routes()).unwrap();
         assert_eq!(t.find_host("API.Anthropic.com").unwrap().name, "anthropic");
         assert_eq!(t.find_host("api.openai.com.").unwrap().name, "openai");
+        assert_eq!(t.find_host("chatgpt.com").unwrap().name, "chatgpt");
+        assert_eq!(t.find_host("AB.chatgpt.com").unwrap().name, "chatgpt-ab");
+        assert!(t.find_host("www.chatgpt.com").is_none());
         assert!(t.find_host("example.com").is_none());
         let mut c = default_routes();
         c[1].hosts = vec!["api.anthropic.com".into()];

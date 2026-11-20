@@ -12,6 +12,12 @@
 //! view; otherwise each component is repaired on its own and the head is checked again, and
 //! anything still found is refused.
 //!
+//! A header value is visible ASCII on the wire (RFC 9110 `field-value`; strict provider front
+//! ends reject obs-text), so every placeholder in one leaves in its percent form: the
+//! placeholder's non-ASCII brackets percent-encoded, `%E2%9F%A6scrim:<slug>:<vv><tag>%E2%9F%A7`.
+//! That form resolves like the placeholder and the guard reads through it. In the request target
+//! the same bytes come out of the target's own percent-encoding.
+//!
 //! Only the agent's own provider credentials ([`PASSTHROUGH`]) are forwarded untouched: they
 //! skip both checks, as the spec requires, and capture masks them. Every other header is
 //! redacted, known or not (design D4 applied to headers).
@@ -19,7 +25,7 @@
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::audit::RefusalReason;
-use crate::engine::{GuardVerdict, RedactReport, SecretRef, Snapshot};
+use crate::engine::{GuardVerdict, PlaceholderMatch, RedactReport, SecretRef, Snapshot};
 use crate::error::Refusal;
 
 /// Request headers forwarded byte for byte, never redacted or guarded: the agent's own provider
@@ -135,7 +141,7 @@ pub fn prepare(
         } else {
             let mut out = Vec::with_capacity(value.len());
             head.report.merge(redact(snap, value.as_bytes(), &mut out)?);
-            out
+            ascii_placeholders(snap, out)
         };
         values.push((name, bytes, pass));
     }
@@ -148,7 +154,7 @@ pub fn prepare(
                 GuardVerdict::Clean => {}
                 GuardVerdict::Repaired { bytes, refs } => {
                     head.repaired(refs);
-                    *v = bytes;
+                    *v = ascii_placeholders(snap, bytes);
                 }
                 GuardVerdict::Refused { refs } => return Err(guard_refused(refs)),
             }
@@ -168,6 +174,36 @@ pub fn prepare(
         headers.append(name, v);
     }
     Ok(head)
+}
+
+/// Rewrites every placeholder in a header value to its percent form: each non-ASCII byte of
+/// the placeholder (its two brackets) becomes `%XX`. Everything else is left as the agent sent
+/// it.
+fn ascii_placeholders(snap: &Snapshot, v: Vec<u8>) -> Vec<u8> {
+    if v.is_ascii() {
+        return v;
+    }
+    let mut out = Vec::with_capacity(v.len() + 16);
+    for chunk in v.utf8_chunks() {
+        let mut text = chunk.valid();
+        while let Some(m) = snap.placeholders.find(text) {
+            let PlaceholderMatch::Complete { start, end } = m else {
+                break;
+            };
+            out.extend_from_slice(&text.as_bytes()[..start]);
+            for &b in &text.as_bytes()[start..end] {
+                if b.is_ascii() {
+                    out.push(b);
+                } else {
+                    pct(&mut out, b);
+                }
+            }
+            text = &text[end..];
+        }
+        out.extend_from_slice(text.as_bytes());
+        out.extend_from_slice(chunk.invalid());
+    }
+    out
 }
 
 fn redact(snap: &Snapshot, input: &[u8], out: &mut Vec<u8>) -> Result<RedactReport, Refusal> {
@@ -468,7 +504,7 @@ mod tests {
             ("x-api-key", V),
         ]);
         let head = run(&fx, "/v1/messages", None, &mut h).unwrap();
-        let ph = fx.placeholder("a");
+        let ph = fx.placeholder_ascii("a");
         let all: Vec<_> = h.get_all("x-debug-context").iter().collect();
         assert_eq!(all.len(), 2, "every value of a repeated header is kept");
         assert_eq!(all[0].as_bytes(), format!("token {ph} end").as_bytes());
@@ -486,6 +522,45 @@ mod tests {
         assert_eq!(head.report.replacements, 2);
         assert_eq!(head.guard_repaired, [] as [SecretRef; 0]);
         assert_eq!(PASSTHROUGH, ["authorization", "x-api-key"]);
+    }
+
+    /// RFC 9110 `field-value` without obs-text: visible ASCII, space and tab.
+    fn field_value(v: &[u8]) -> bool {
+        v.iter()
+            .all(|&b| b == b' ' || b == b'\t' || b.is_ascii_graphic())
+    }
+
+    #[test]
+    fn header_placeholders_are_visible_ascii_and_resolve() {
+        let mut fx = fx();
+        let ph = fx.placeholder_ascii("a");
+        assert!(ph.starts_with("%E2%9F%A6scrim:a:") && ph.ends_with("%E2%9F%A7"));
+        // Redacted, and repaired by the guard when the redactor misses.
+        for miss in [false, true] {
+            fx.redactor_misses = if miss { vec!["a".into()] } else { vec![] };
+            let mut h = headers(&[("x-debug-context", &format!("token {V} end"))]);
+            let head = run(&fx, "/v1/messages", None, &mut h).unwrap();
+            let v = h["x-debug-context"].as_bytes();
+            assert!(field_value(v), "{}", String::from_utf8_lossy(v));
+            assert_eq!(v, format!("token {ph} end").as_bytes(), "miss {miss}");
+            assert_eq!(head.guard_repaired.len(), usize::from(miss));
+            let snap = fx.snapshot();
+            let r = snap
+                .placeholders
+                .resolve(&ph)
+                .expect("percent form resolves");
+            assert_eq!(r.value.expose(), V.as_bytes());
+        }
+        // Other non-ASCII bytes the agent sent are its own; only placeholders are rewritten.
+        fx.redactor_misses.clear();
+        let mut h = HeaderMap::new();
+        let mut raw = format!("caf\u{e9} {V} ").into_bytes();
+        raw.push(0xff);
+        h.insert("x-note", HeaderValue::from_bytes(&raw).unwrap());
+        run(&fx, "/v1/messages", None, &mut h).unwrap();
+        let mut want = format!("caf\u{e9} {ph} ").into_bytes();
+        want.push(0xff);
+        assert_eq!(h["x-note"].as_bytes(), want);
     }
 
     #[test]

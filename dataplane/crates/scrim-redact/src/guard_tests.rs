@@ -308,3 +308,74 @@ fn digit_free_hex_value() {
         ));
     }
 }
+
+/// Transforms of the agent's tools are decoded over the whole view on the calling thread: a
+/// reversed, spaced or dumped value is found wherever the parallel region cuts fall, and the
+/// result is the oracle's.
+#[test]
+fn transforms_across_parallel_cuts() {
+    let v = b"Tr4nsf0rm-Acr0ss-Cuts-Value".to_vec();
+    let s = snap_par(std::slice::from_ref(&v), 8, 1000, 4, 256).unwrap();
+    let mut rev = v.clone();
+    rev.reverse();
+    let spaced: Vec<u8> = v.iter().flat_map(|&c| [c, b' ']).collect();
+    let lines: Vec<u8> = v.iter().flat_map(|&c| [c, b'\\', b'n']).collect();
+    let dump: Vec<u8> = v
+        .chunks(16)
+        .enumerate()
+        .flat_map(|(l, c)| {
+            let hexes: Vec<String> = c.iter().map(|b| format!("{b:02x}")).collect();
+            format!("{:07o} {}\\n", l * 16, hexes.join(" ")).into_bytes()
+        })
+        .collect();
+    for (name, form) in [
+        ("rev", rev),
+        ("spaced", spaced),
+        ("lines", lines),
+        ("dump", dump),
+    ] {
+        // Every offset of the form around each of the quarter cuts of a ~1 KiB body.
+        for shift in (0..form.len()).step_by(3) {
+            let filler = vec![b'k'; 256 - shift % 64];
+            let mut body = b"{\"content\":\"".to_vec();
+            for _ in 0..3 {
+                body.extend_from_slice(&filler);
+                body.extend_from_slice(b"\\n");
+                body.extend_from_slice(&form);
+                body.extend_from_slice(b"\\n");
+            }
+            body.extend_from_slice(b"\"}");
+            let mut gs = GuardScratch::new();
+            match s.guard().check(&body, &mut gs) {
+                Verdict::Repaired { bytes, findings } => {
+                    assert!(findings.len() >= 3);
+                    assert!(serde_json::from_slice::<serde_json::Value>(bytes).is_ok());
+                }
+                v => panic!("{name}: {v:?} at shift {shift}"),
+            }
+            assert_agrees(&s, &body);
+        }
+    }
+}
+
+/// Header values and query strings reach the same guard as raw bytes with no JSON around them.
+#[test]
+fn transforms_in_header_and_query_bytes() {
+    let v = b"Header-Query-Value-42xyz".to_vec();
+    let s = snap(std::slice::from_ref(&v), 8, 64).unwrap();
+    let mut rev = v.clone();
+    rev.reverse();
+    let spaced: Vec<u8> = v.iter().flat_map(|&c| [c, b' ']).collect();
+    for form in [rev, spaced] {
+        let header = [b"x-debug-context: (no output) ".as_slice(), &form, b"\r\n"].concat();
+        let query = [b"/v1/messages?ctx=".as_slice(), &form].concat();
+        for body in [header, query] {
+            let mut gs = GuardScratch::new();
+            assert!(matches!(
+                s.guard().check(&body, &mut gs),
+                Verdict::Repaired { .. }
+            ));
+            assert_agrees(&s, &body);
+        }
+    }
+}

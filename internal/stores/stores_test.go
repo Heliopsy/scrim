@@ -140,3 +140,15 @@ func TestSet(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestZeroRefRoundTripsAsText(t *testing.T) {
+	var r stores.Ref
+	b, err := r.MarshalText()
+	if err != nil || len(b) != 0 {
+		t.Fatalf("zero ref marshals to %q (%v)", b, err)
+	}
+	back := stores.MustParseRef("bao://kv/x")
+	if err := back.UnmarshalText(b); err != nil || !back.IsZero() {
+		t.Fatalf("zero ref reads back as %v (%v)", back, err)
+	}
+}

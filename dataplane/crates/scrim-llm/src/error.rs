@@ -17,6 +17,7 @@
 //! | `chain_unavailable`    | 502    | chained upstream unreachable, `on-unavailable: fail`   |
 //! | `upstream_unavailable` | 502    | provider unreachable                                   |
 //! | `policy_denied`        | 403    | denied by a rule, or the approval was not granted      |
+//! | `upgrade_unsupported`  | 501    | protocol upgrade (WebSocket), refused before anything  |
 //!
 //! 422 is the redaction-failed status: every redaction or guard failure uses it, and nothing is
 //! forwarded. Every proxy-generated response carries `x-scrim-error: <reason>` so it is never
@@ -71,6 +72,7 @@ impl Refusal {
                 StatusCode::BAD_GATEWAY
             }
             RefusalReason::PolicyDenied => StatusCode::FORBIDDEN,
+            RefusalReason::UpgradeUnsupported => StatusCode::NOT_IMPLEMENTED,
         }
     }
 
@@ -101,6 +103,9 @@ impl Refusal {
             RefusalReason::ChainUnavailable => "scrim: the chained upstream is unavailable",
             RefusalReason::UpstreamUnavailable => "scrim: the provider is unreachable",
             RefusalReason::PolicyDenied => "scrim: request denied by policy",
+            RefusalReason::UpgradeUnsupported => {
+                "scrim: protocol upgrades (WebSocket) cannot be redacted; use HTTPS requests"
+            }
         };
         let mut m = what.to_string();
         if !self.detail.is_empty() {

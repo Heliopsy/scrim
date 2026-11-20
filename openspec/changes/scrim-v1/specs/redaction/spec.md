@@ -120,6 +120,24 @@ U+27E7, at most 79 bytes.
 - **WHEN** a placeholder appears unquoted in a shell word, a JSON string or a YAML plain scalar
 - **THEN** it needs no escaping and contains no whitespace or shell metacharacter
 
+### Requirement: Percent-form placeholders
+
+Where only ASCII may go (an HTTP request header value or request target), a placeholder SHALL be
+written in its percent form `%E2%9F%A6scrim:<slug>:<vv><tag>%E2%9F%A7`, at most 91 bytes: the two
+brackets percent-encoded, either hex case accepted, nothing else changed. The percent form SHALL
+name the same entry: it SHALL resolve wherever the placeholder resolves, the redactor and guard
+SHALL treat it as that placeholder, and a value restored in its place SHALL be percent-encoded.
+
+#### Scenario: Placeholder in a request header
+
+- **WHEN** a known value in a request header value is replaced
+- **THEN** the header carries the placeholder's percent form, holds only visible ASCII (an RFC 9110 field-value without obs-text), is accepted by a provider front end that rejects obs-text, and resolves to the same entry as the placeholder
+
+#### Scenario: Percent-form placeholder restored
+
+- **WHEN** a model's tool call carries a display value's placeholder in percent form and the tool policy restores it
+- **THEN** the tool receives the value percent-encoded in its place
+
 ### Requirement: Placeholder fields
 
 The slug SHALL be the reference alias in `[a-z0-9-]`, 1 to 48 bytes, not starting or ending with
@@ -172,13 +190,71 @@ not share matching logic with the redactor.
 
 #### Scenario: Guard decodes what the redactor does not
 
-- **WHEN** a known value of at least the minimum length reaches the guard upper-cased, JSON-escaped up to `redaction.json_depth` times, percent-encoded, base64-encoded at any alignment (wrapped or not) or hex-encoded in any case
+- **WHEN** a known value of at least the minimum length reaches the guard upper-cased, JSON-escaped up to `redaction.json_depth` times, percent-encoded, base64-encoded at any alignment (wrapped or not), hex-encoded in any case, or in one of the tool transforms the guard decodes
 - **THEN** the guard finds it in the decoded view, replaces the covering bytes with the value's placeholder, and checks the repaired bytes again
 
 #### Scenario: Repair cannot complete
 
 - **WHEN** a known value is still present after repair, or more values reach the guard than `redaction.guard.max_repairs` allows
 - **THEN** the request is refused and nothing is forwarded
+
+### Requirement: Guard decodes tool transforms
+
+The guard SHALL find a known value of at least the minimum length in the output of tools agents
+run over files: reversal, rot13, rot47, base64 of base64, base32, byte dumps joined across lines,
+units written one at a time with a fixed separator, runs of byte escapes, and these inside a
+base64 text data URL. Repairs SHALL cover a dump's ASCII column and keep JSON valid.
+
+#### Scenario: Reversed value in a tool result
+
+- **WHEN** a tool result holds the output of `rev` over a file containing a known value
+- **THEN** the guard replaces the reversed value with the value's placeholder
+
+#### Scenario: Byte dump across lines
+
+- **WHEN** a tool result holds `xxd` output of a known value longer than one dump line
+- **THEN** the guard joins the lines, replaces the hex groups and the ASCII column with the
+  placeholder, and the body stays valid JSON
+
+#### Scenario: Spaced letters in a header
+
+- **WHEN** a request header carries a known value with a space after every character
+- **THEN** the guard repairs the header or the request is refused
+
+### Requirement: Guard fragments
+
+The guard SHALL find any run of at least half a known value (at least the minimum length, at most
+24 bytes) or of its reversal, unless the run holds fewer than the minimum length of bytes outside
+the value's format-fixed parts (PEM armour, a JWT header and payload start).
+
+#### Scenario: Half a value
+
+- **WHEN** the first half of a 40-byte known value reaches the guard
+- **THEN** the guard replaces it, while PEM armour or a JWT header alone is left unchanged
+
+### Requirement: Guard decoder cost
+
+Each transform decoder of the guard SHALL do bounded work per input byte, decode only runs above a
+length threshold, see the whole body regardless of how the guard splits work between threads, and
+allocate nothing on a clean request once its buffers have grown.
+
+#### Scenario: Value across a worker cut
+
+- **WHEN** a reversed or spaced value straddles the point where the guard splits a large body
+  between worker threads
+- **THEN** the guard still finds it
+
+### Requirement: Guard decoding limitations
+
+The guard SHALL NOT be required to decode look-alike Unicode (no shell tool produces it, tables
+are unbounded), spelling alphabets (unbounded), compressed content (unbounded work per byte), the
+base85 family (its alphabet covers most printable text), lower-case base32, other ciphers, or
+fragments below the threshold, and the documentation SHALL list each with its reason.
+
+#### Scenario: Documented limitation
+
+- **WHEN** a known value reaches the guard in NATO spelling
+- **THEN** the guard is not required to find it and the documentation lists the limitation
 
 ### Requirement: Split placeholders in streams
 

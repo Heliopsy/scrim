@@ -108,7 +108,21 @@ const (
 //     rule has side effects.
 //  4. No rule matched: apply the default (ask goes to the control plane).
 func (s *Snapshot) Evaluate(req Request) LocalResult {
+	return s.evaluate(newView(&req))
+}
+
+// EvaluateUnknownAgent evaluates req the way the data plane does for a
+// caller it cannot place (a session it cannot verify, a Unix peer it cannot
+// map): every `agent.*` condition is unknown, so a rule that depends on the
+// agent goes to the control plane. Rust: `Request::unknown = FieldSet::AGENT`.
+func (s *Snapshot) EvaluateUnknownAgent(req Request) LocalResult {
 	v := newView(&req)
+	v.agent = RuleAgent{}
+	v.unknownAgent = true
+	return s.evaluate(v)
+}
+
+func (s *Snapshot) evaluate(v view) LocalResult {
 	if s.DenyAll {
 		return LocalResult{Outcome: OutcomeDeny, DenyAll: true}
 	}
@@ -175,21 +189,27 @@ func (r *SnapshotRule) eval(req *view) tri {
 
 func (c *Clause) eval(req *view) tri {
 	out := triTrue
+	unknown := c.Residual
 	for i := range c.Conditions {
 		switch c.Conditions[i].eval(req) {
 		case triFalse:
 			return triFalse
 		case triError:
 			out = triError
+		case triUnknown:
+			unknown = true
 		}
 	}
-	if c.Residual {
+	if unknown {
 		return triUnknown
 	}
 	return out
 }
 
 func (c *Condition) eval(req *view) tri {
+	if req.unknownAgent && strings.HasPrefix(c.Field, "agent.") {
+		return triUnknown
+	}
 	var v string
 	if kind, known := SnapshotFields[c.Field]; !known {
 		return triError

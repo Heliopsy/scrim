@@ -46,6 +46,26 @@ var ClaudePreset = &Preset{
 		return nil
 	},
 	Apply: func(b *builder) error {
+		if b.identified() {
+			// Claude Code adds ANTHROPIC_CUSTOM_HEADERS (one "Name: value"
+			// per line) to every API request: the session header identifies
+			// it on the base-URL listener, which strips it. Inherited
+			// headers are kept, minus any session header of their own.
+			var keep []string
+			for line := range strings.SplitSeq(b.env["ANTHROPIC_CUSTOM_HEADERS"], "\n") {
+				name, _, _ := strings.Cut(line, ":")
+				if strings.TrimSpace(line) != "" && !strings.EqualFold(strings.TrimSpace(name), SessionHeader) {
+					keep = append(keep, line)
+				}
+			}
+			hdr := SessionHeader + ": " + TokenMarker
+			display := hdr
+			if len(keep) > 0 {
+				display = "<inherited headers>\n" + hdr
+			}
+			b.setWithToken("ANTHROPIC_CUSTOM_HEADERS", strings.Join(append(keep, hdr), "\n"), display,
+				"identifies the session to scrim's LLM proxy (stripped before the provider)")
+		}
 		if !b.in.MCP {
 			return nil
 		}
@@ -82,6 +102,12 @@ var CodexPreset = &Preset{
 		// (openai_base_url), older releases from OPENAI_BASE_URL; -c sets it
 		// for this run only without touching ~/.codex/config.toml.
 		args := []string{"-c", "openai_base_url=" + tomlString(b.valueOf("OPENAI_BASE_URL"))}
+		// No session header here: the built-in openai provider takes no
+		// extra headers and its id is reserved, and a provider of scrim's own
+		// would change where a ChatGPT sign-in sends its requests. Codex's
+		// base-URL requests are therefore unidentified; its ChatGPT traffic
+		// goes through the forward proxy, which carries the session
+		// (docs/run.md, "Codex").
 		if b.in.MCP {
 			// Codex starts MCP servers with a reduced environment; env_vars
 			// passes the socket and token through by name, so the token

@@ -197,7 +197,8 @@ struct CorePlaceholders(Arc<Inner>);
 
 impl Placeholders for CorePlaceholders {
     fn max_len(&self) -> usize {
-        rc::MAX_PLACEHOLDER_LEN
+        // Either form: the percent form (`%E2%9F%A6...%E2%9F%A7`) is the longer one.
+        rc::MAX_PERCENT_PLACEHOLDER_LEN
     }
 
     fn find(&self, text: &str) -> Option<PlaceholderMatch> {
@@ -210,12 +211,32 @@ impl Placeholders for CorePlaceholders {
     fn resolve(&self, placeholder: &str) -> Option<Resolved> {
         let inner = &self.0;
         let r = inner.snap.resolver().resolve(placeholder.as_bytes())?;
+        // A percent-form placeholder sat in percent-encoded text; its value lands there encoded.
+        let value = if placeholder.starts_with('%') {
+            percent_encode(r.expose())
+        } else {
+            r.expose().to_vec()
+        };
         Some(Resolved {
             reference: inner.reference(r.meta),
             class: class(r.meta.class),
-            value: Arc::new(SecretValue::new(r.expose().to_vec())),
+            value: Arc::new(SecretValue::new(value)),
         })
     }
+}
+
+/// Percent-encodes every byte but RFC 3986 unreserved characters.
+fn percent_encode(v: &[u8]) -> Vec<u8> {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = Vec::with_capacity(v.len() * 3);
+    for &b in v {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b);
+        } else {
+            out.extend_from_slice(&[b'%', HEX[usize::from(b >> 4)], HEX[usize::from(b & 15)]]);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -296,5 +317,41 @@ mod tests {
                 .resolve("\u{27e6}scrim:db:01ffffffffffffffff\u{27e7}")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn header_placeholders_are_ascii_and_resolve() {
+        let s = engine().snapshot(1, Arc::new(KeepAll), BinaryPolicy::Pass);
+        let mut h = http::HeaderMap::new();
+        h.insert(
+            "x-debug-context",
+            http::HeaderValue::from_str(&format!("db=\"{VALUE}\"; q=1")).unwrap(),
+        );
+        let head =
+            crate::head::prepare(&s, &http::Method::POST, "/v1/messages", None, &mut h).unwrap();
+        assert_eq!(head.report.replacements, 1);
+        let v = h["x-debug-context"].as_bytes();
+        // RFC 9110 field-value: visible ASCII, space and tab only.
+        assert!(
+            v.iter()
+                .all(|&b| b == b' ' || b == b'\t' || b.is_ascii_graphic()),
+            "{}",
+            String::from_utf8_lossy(v)
+        );
+        let v = std::str::from_utf8(v).unwrap();
+        assert!(!v.contains(VALUE));
+        let start = v.find("%E2%9F%A6scrim:db:01").unwrap();
+        let Some(PlaceholderMatch::Complete { start: from, end }) = s.placeholders.find(v) else {
+            panic!("percent form not found in {v}");
+        };
+        assert_eq!(from, start);
+        assert_eq!(&v[end..], "\"; q=1");
+        let r = s.placeholders.resolve(&v[from..end]).unwrap();
+        assert_eq!(r.value.expose(), VALUE.as_bytes());
+        // The same bytes pass the guard again unchanged.
+        assert!(matches!(
+            s.guard.check(v.as_bytes()).unwrap(),
+            GuardVerdict::Clean
+        ));
     }
 }

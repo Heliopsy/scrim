@@ -250,6 +250,7 @@ is out of date.
 | [`notify.webhook.poll-interval`](#notifywebhookpoll-interval) | duration | `2s` | hot |
 | [`notify.webhook.secret`](#notifywebhooksecret) | secret-ref | empty | hot |
 | [`notify.webhook.url`](#notifywebhookurl) | string | `""` | hot |
+| [`policy.builtin.inject`](#policybuiltininject) | string | `allow` | hot |
 | [`policy.default`](#policydefault) | string | `deny` | hot |
 | [`policy.deny-all`](#policydeny-all) | bool | `false` | hot |
 | [`policy.deny-all-refresh`](#policydeny-all-refresh) | duration | `1s` | hot |
@@ -264,6 +265,7 @@ is out of date.
 | [`proxy.socket`](#proxysocket) | string | `""` | restart required |
 | [`proxy.upstream.anthropic`](#proxyupstreamanthropic) | string | `https://api.anthropic.com` | hot |
 | [`proxy.upstream.chatgpt`](#proxyupstreamchatgpt) | string | `https://chatgpt.com` | hot |
+| [`proxy.upstream.chatgpt-ab`](#proxyupstreamchatgpt-ab) | string | `https://ab.chatgpt.com` | hot |
 | [`proxy.upstream.openai`](#proxyupstreamopenai) | string | `https://api.openai.com` | hot |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
@@ -841,6 +843,19 @@ Approval service URL for the webhook notifier (nono approval webhook v1 compatib
 
 ### policy
 
+#### `policy.builtin.inject`
+
+Built-in rule `builtin.inject-bound` for injecting a credential toward a host it is bound to, for an identified agent: allow, ask, or off (injection is then decided by your rules and policy.default). Deny rules in the rules file still win.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `allow` |
+| Environment | `SCRIM_POLICY_BUILTIN_INJECT` |
+| Flag | none |
+| Reload | hot |
+| Values | `allow`, `ask`, `off` |
+
 #### `policy.default`
 
 Decision applied when no rule matches. Anything other than deny is reported as a weakened protection.
@@ -1014,6 +1029,18 @@ Base URL requests to chatgpt.com (Codex signed in with ChatGPT, through the forw
 | Type | string |
 | Default | `https://chatgpt.com` |
 | Environment | `SCRIM_PROXY_UPSTREAM_CHATGPT` |
+| Flag | none |
+| Reload | hot |
+
+#### `proxy.upstream.chatgpt-ab`
+
+Base URL requests to ab.chatgpt.com (Codex signed in with ChatGPT, through the forward proxy) are forwarded to after redaction. Its API shape is not documented, so every request body is redacted as generic JSON.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `https://ab.chatgpt.com` |
+| Environment | `SCRIM_PROXY_UPSTREAM_CHATGPT_AB` |
 | Flag | none |
 | Reload | hot |
 

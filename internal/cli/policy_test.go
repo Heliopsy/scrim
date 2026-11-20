@@ -37,7 +37,7 @@ func writeRules(t *testing.T, body string) string {
 func TestPolicyCheck(t *testing.T) {
 	p := writeRules(t, rulesYAML)
 	code, out, errs := runAdmin(t, "", "policy", "check", p)
-	if code != 0 || !strings.Contains(out, "ok: 3 rules, default deny, 2 decided entirely in the data plane") {
+	if code != 0 || !strings.Contains(out, "ok: 4 rules (1 built-in), default deny, 3 decided entirely in the data plane") {
 		t.Fatalf("%d %q %q", code, out, errs)
 	}
 	bad := writeRules(t, "rules:\n  - name: x\n    decision: allow\n    wehn: op == \"x\"\n")
@@ -50,7 +50,7 @@ func TestPolicyCheck(t *testing.T) {
 	}
 	// The setting form.
 	e, out2, _ := newEnv("SCRIM_POLICY_RULES_FILE=" + p)
-	if code := Run(t.Context(), e, []string{"policy", "check"}); code != 0 || !strings.Contains(out2.String(), "3 rules") {
+	if code := Run(t.Context(), e, []string{"policy", "check"}); code != 0 || !strings.Contains(out2.String(), "4 rules") {
 		t.Fatalf("from setting: %q", out2.String())
 	}
 }

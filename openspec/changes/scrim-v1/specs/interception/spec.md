@@ -137,6 +137,18 @@ environment variables reach providers through scrim without a base URL change.
 - **THEN** scrim terminates TLS, handles the request in the tool proxy (credential injection and
   response redaction) and never passes the connection through uninspected
 
+### Requirement: ChatGPT hosts are provider hosts
+
+`chatgpt.com` and `ab.chatgpt.com` SHALL be provider hosts: a connection to either through the
+forward proxy, or any other host-routed mode, SHALL go through the LLM proxy, never the tool proxy.
+On `chatgpt.com`, `POST .../responses` SHALL use the OpenAI Responses codec. Every other path on
+both hosts SHALL be redacted as generic JSON, since its shape is not documented.
+
+#### Scenario: Codex signed in with ChatGPT
+
+- **WHEN** Codex with a ChatGPT login, through the forward proxy, sends `POST /backend-api/codex/responses` to `chatgpt.com` and a request to `ab.chatgpt.com`, both holding a known value
+- **THEN** both reach their upstream through the LLM proxy with placeholders only
+
 ### Requirement: One snapshot version per request
 
 The data plane SHALL build every part of a control-plane snapshot (dictionary, LLM routes, tool
@@ -244,9 +256,19 @@ traffic.
 
 ### Requirement: CA trust installation
 
-scrim SHALL install its public CA certificate for the system trust store and for runtimes that use
-their own (Node.js, Python, OpenSSL-based tools, Java) when a mode needs TLS interception, and SHALL
-remove it on uninstall.
+scrim SHALL make its public CA certificate trusted wherever a mode needs TLS interception, scoped
+to the processes that mode covers, and SHALL remove every trust change it made on uninstall.
+
+#### Scenario: Wrapper trusts the CA for the agent only
+
+- **WHEN** an agent is started with `scrim run`
+- **THEN** the agent and the tools it starts trust scrim's CA through the session bundle
+- **AND** no trust store outside the session directory is changed
+
+#### Scenario: Modes that cover processes scrim does not start
+
+- **WHEN** transparent or DNS mode is installed
+- **THEN** the CA is also installed into the system trust store and the Java truststore
 
 #### Scenario: Node-based agent
 

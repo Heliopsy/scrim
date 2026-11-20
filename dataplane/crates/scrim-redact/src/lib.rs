@@ -99,6 +99,7 @@ mod guard;
 mod guard_oracle;
 #[cfg(test)]
 mod guard_tests;
+mod guard_tx;
 mod matcher;
 mod placeholder;
 mod redactor;
@@ -111,8 +112,9 @@ pub use error::{BuildError, Error, WithholdReason};
 pub use guard::{Guard, GuardFinding, GuardScratch, GuardView, Verdict};
 pub use matcher::{EngineChoice, EngineKind};
 pub use placeholder::{
-    Keyring, MAX_PLACEHOLDER_LEN, MIN_PLACEHOLDER_LEN, ParsedPlaceholder, PlaceholderAt,
-    PlaceholderKey, find_placeholders, next_placeholder, placeholder_for,
+    Keyring, MAX_PERCENT_PLACEHOLDER_LEN, MAX_PLACEHOLDER_LEN, MIN_PLACEHOLDER_LEN,
+    ParsedPlaceholder, PlaceholderAt, PlaceholderKey, find_placeholders, next_placeholder,
+    percent_form, placeholder_for,
 };
 pub use redactor::{
     BuildReport, Config, GuardOutcome, Hit, Protected, Redactor, Snapshot, SnapshotHandle, Stats,

@@ -364,9 +364,11 @@ impl ToolProxy {
         mut req: Request<Incoming>,
         peer: Option<SocketAddr>,
     ) -> Response<ProxyBody> {
+        let (session, verifier) = ClientInfo::credentials_from(req.headers()).unzip();
         let client = ClientInfo {
             peer,
-            session: ClientInfo::session_from(req.headers()),
+            session,
+            verifier: verifier.flatten(),
         };
         if req.method() == Method::CONNECT {
             let Some(dest) = req

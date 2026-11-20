@@ -162,52 +162,52 @@ transform's and its placement's expectation.
 | `hex-lower` | `xxd -p -c0` | redacted | |
 | `url-encoded` | `python3 -c 'print(urllib.parse.quote_plus(v))'` | redacted | |
 | `url-path-encoded` | `python3 -c 'print(urllib.parse.quote(v))'` | redacted | |
-| `upper` | `tr a-z A-Z < .env` | guard | |
-| `lower` | `tr A-Z a-z < .env` | guard | |
-| `swapcase` | `python3 -c 'print(v.swapcase())'` | guard | |
-| `sql-upper` | `SELECT UPPER(token) FROM creds` | guard | |
-| `reversed` | `rev .env` | guard | |
-| `rot13` | `tr 'A-Za-z' 'N-ZA-Mn-za-m' < .env` | guard | |
-| `rot47` | `tr '!-~' 'P-~!-O' < .env` | guard | |
-| `hex-upper` | `SELECT HEX(token) FROM creds` | guard | |
-| `hex-wrapped` | `xxd -p .env` | guard | |
-| `sql-hex-0x` | `SELECT CONCAT('0x', HEX(token))` | guard | |
-| `sql-hex-literal` | `pg_dump with bytea hex literals` | guard | |
-| `xxd-dump` | `xxd .env` | guard | |
-| `hexdump-canonical` | `hexdump -C .env` | guard | |
-| `od-hex-bytes` | `od -An -tx1 .env` | guard | |
-| `od-chars` | `od -c .env` | guard | |
-| `decimal-bytes` | `od -An -tu1 .env` | guard | |
-| `python-byte-list` | `python3 -c 'print(list(v.encode()))'` | guard | |
-| `c-hex-escapes` | `printf '%s' "$TOKEN" \| xxd -i \| ...` | guard | |
-| `octal-escapes` | `printf '%s' "$TOKEN" \| od -b \| ...` | guard | |
-| `unicode-escapes` | `node -e 'console.log(escapeAll(v))'` | guard | |
+| `upper` | `tr a-z A-Z < .env` | guard | guard: case-insensitive match |
+| `lower` | `tr A-Z a-z < .env` | guard | guard: case-insensitive match |
+| `swapcase` | `python3 -c 'print(v.swapcase())'` | guard | guard: case-insensitive match |
+| `sql-upper` | `SELECT UPPER(token) FROM creds` | guard | guard: case-insensitive match |
+| `reversed` | `rev .env` | guard | guard decodes: reversed form indexed (rev is a common shell tool), and reversed fragments catch rev per line |
+| `rot13` | `tr 'A-Za-z' 'N-ZA-Mn-za-m' < .env` | guard | guard decodes: rot13 form indexed (one tr command, no runtime cost) |
+| `rot47` | `tr '!-~' 'P-~!-O' < .env` | guard | guard decodes: rot47 form indexed (one tr command, no runtime cost) |
+| `hex-upper` | `SELECT HEX(token) FROM creds` | guard | guard: hex view, any case |
+| `hex-wrapped` | `xxd -p .env` | guard | guard decodes: dump view joins hex lines (xxd -p wraps at 60 columns) |
+| `sql-hex-0x` | `SELECT CONCAT('0x', HEX(token))` | guard | guard: hex view |
+| `sql-hex-literal` | `pg_dump with bytea hex literals` | guard | guard: hex view |
+| `xxd-dump` | `xxd .env` | guard | guard decodes: dump view joins hex groups across lines and covers the ASCII column |
+| `hexdump-canonical` | `hexdump -C .env` | guard | guard decodes: dump view joins hex bytes across lines and covers the \|ASCII\| column |
+| `od-hex-bytes` | `od -An -tx1 .env` | guard | guard decodes: dump view (od -An -tx1, with or without offsets) |
+| `od-chars` | `od -c .env` | guard | guard decodes: od -c cells, and spaced characters on one line |
+| `decimal-bytes` | `od -An -tu1 .env` | guard | guard decodes: separated decimal bytes (od -tu1) |
+| `python-byte-list` | `python3 -c 'print(list(v.encode()))'` | guard | guard decodes: separated decimal bytes |
+| `c-hex-escapes` | `printf '%s' "$TOKEN" \| xxd -i \| ...` | guard | guard decodes: runs of \xNN escapes |
+| `octal-escapes` | `printf '%s' "$TOKEN" \| od -b \| ...` | guard | guard decodes: runs of \NNN escapes |
+| `unicode-escapes` | `node -e 'console.log(escapeAll(v))'` | guard | guard: JSON view of the inner string |
 | `json-escape-all` | `client escaping every character as \uXXXX` | guard | same JSON value: the provider decodes it to the plain value |
-| `url-every-byte` | `printf '%s' "$TOKEN" \| od -An -tx1 \| tr ' ' %` | guard | |
-| `url-every-byte-lower` | `curl --data-urlencode style, lower-case hex` | guard | |
-| `url-double` | `url-encode twice` | guard | |
-| `html-entities` | `python3 -c 'print("".join(f"&#{ord(c)};" for c in v))'` | guard | |
-| `html-hex-entities` | `html entity encoder, hex form` | guard | |
-| `base64-mime-wrapped` | `base64 .env (wraps at 76 columns)` | guard | |
-| `base64-double` | `base64 -w0 .env \| base64 -w0` | guard | |
-| `base32` | `base32 -w0 .env` | guard | |
-| `base32hex` | `basenc --base32hex -w0` | guard | |
-| `one-char-per-line` | `fold -w1 .env` | guard | |
-| `spaced-letters` | `sed 's/./& /g' .env` | guard | |
-| `comma-separated` | `python3 -c 'print(",".join(v))'` | guard | |
-| `dash-separated` | `sed 's/./&-/g' .env` | guard | |
-| `python-char-list` | `python3 -c 'print(list(v))'` | guard | |
-| `zero-width-interleaved` | `sed 's/./&\u200b/g'` | guard | |
-| `truncated-prefix` | `head -c 75% of the value` | guard | values at or above the minimum length; shorter fragments are a documented limitation |
-| `truncated-suffix` | `tail -c 75% of the value` | guard | |
-| `truncated-half` | `cut -c1-half` | guard | |
-| `sql-substring` | `SELECT SUBSTRING(token, 9, 24) FROM creds` | guard | |
-| `homoglyphs` | `substitute Cyrillic look-alike letters` | limitation | limitation: look-alike Unicode substitution is not matched |
-| `fullwidth` | `convert to fullwidth forms` | limitation | limitation: look-alike Unicode substitution is not matched |
-| `nato-spelling` | `spell the value in the NATO alphabet` | limitation | limitation: spelled-out values are not matched |
-| `gzip-base64` | `gzip -c .env \| base64 -w0` | limitation | limitation: compressed content is not decompressed |
-| `ascii85` | `python3 -c 'base64.a85encode(v, adobe=True)'` | limitation | limitation: base85 family encodings are not matched |
-| `base85` | `python3 -c 'base64.b85encode(v)'` | limitation | limitation: base85 family encodings are not matched |
+| `url-every-byte` | `printf '%s' "$TOKEN" \| od -An -tx1 \| tr ' ' %` | guard | guard: percent-decoded view |
+| `url-every-byte-lower` | `curl --data-urlencode style, lower-case hex` | guard | guard: percent-decoded view |
+| `url-double` | `url-encode twice` | guard | guard decodes: runs of %25NN escapes |
+| `html-entities` | `python3 -c 'print("".join(f"&#{ord(c)};" for c in v))'` | guard | guard decodes: runs of &#NN; entities |
+| `html-hex-entities` | `html entity encoder, hex form` | guard | guard decodes: runs of &#xNN; entities |
+| `base64-mime-wrapped` | `base64 .env (wraps at 76 columns)` | guard | guard: base64 runs continue across line breaks |
+| `base64-double` | `base64 -w0 .env \| base64 -w0` | guard | guard decodes: inner base64 forms indexed, found in the base64 view |
+| `base32` | `base32 -w0 .env` | guard | guard decodes: base32 view at every alignment (base32 is a coreutils tool) |
+| `base32hex` | `basenc --base32hex -w0` | guard | guard decodes: base32hex view at every alignment |
+| `one-char-per-line` | `fold -w1 .env` | guard | guard decodes: separated characters (fold -w1) |
+| `spaced-letters` | `sed 's/./& /g' .env` | guard | guard decodes: separated characters (sed, tr) |
+| `comma-separated` | `python3 -c 'print(",".join(v))'` | guard | guard decodes: separated characters |
+| `dash-separated` | `sed 's/./&-/g' .env` | guard | guard decodes: separated characters |
+| `python-char-list` | `python3 -c 'print(list(v))'` | guard | guard decodes: quoted characters separated by commas |
+| `zero-width-interleaved` | `sed 's/./&\u200b/g'` | guard | guard decodes: zero-width characters are separators |
+| `truncated-prefix` | `head -c 75% of the value` | guard | guard decodes: fragments of at least half the value (8 to 24 bytes); shorter fragments are a documented limitation |
+| `truncated-suffix` | `tail -c 75% of the value` | guard | guard decodes: fragments of at least half the value (8 to 24 bytes) |
+| `truncated-half` | `cut -c1-half` | guard | guard decodes: fragments of at least half the value (8 to 24 bytes) |
+| `sql-substring` | `SELECT SUBSTRING(token, 9, 24) FROM creds` | guard | guard decodes: fragments of at least half the value (8 to 24 bytes) |
+| `homoglyphs` | `substitute Cyrillic look-alike letters` | limitation | limitation: look-alike Unicode substitution is not matched (unbounded confusable tables, no shell tool produces it) |
+| `fullwidth` | `convert to fullwidth forms` | limitation | limitation: look-alike Unicode substitution is not matched (no shell tool produces it) |
+| `nato-spelling` | `spell the value in the NATO alphabet` | limitation | limitation: spelled-out values are not matched (any language or alphabet, unbounded) |
+| `gzip-base64` | `gzip -c .env \| base64 -w0` | limitation | limitation: compressed content is not decompressed (unbounded work per byte) |
+| `ascii85` | `python3 -c 'base64.a85encode(v, adobe=True)'` | limitation | limitation: base85 family encodings are not matched (alphabet covers most printable text, runs cannot be delimited cheaply) |
+| `base85` | `python3 -c 'base64.b85encode(v)'` | limitation | limitation: base85 family encodings are not matched (alphabet covers most printable text, runs cannot be delimited cheaply) |
 
 | Placement | Where | Expected | Note |
 | --- | --- | --- | --- |
@@ -232,6 +232,29 @@ transform's and its placement's expectation.
 | `split-requests` | the value split across two requests chained by previous_response_id ([openai-responses]) | limitation | limitation: server-side conversation state lets halves arrive in separate requests |
 <!-- matrix:end -->
 
+### What the guard decodes
+
+The guard (design D4) re-reads the exact outgoing bytes, request head included, through views the
+redactor never compiles. Besides JSON escapes, percent-encoding, base64 and hex it decodes what an
+agent's own tools make of a value, because agents run `cat`, `rev`, `base64`, `base32`, `xxd`,
+`od`, `tr` and `fold` on files that hold secrets:
+
+| Transform | How the guard finds it |
+| --- | --- |
+| reversal (`rev`), rot13 and rot47 (`tr`) | the reversed, rot13 and rot47 forms of each value are indexed next to it, so every view finds them at no cost per request; reversed fragments also catch `rev` of a multi-line value, which reverses each line |
+| base64 of base64 (and base64 documents holding base64) | the inner base64 forms of each value are indexed and found in the base64 view |
+| one unit at a time: spaced or separated characters (`sed 's/./& /g'`, `fold -w1`, commas, dashes, zero-width characters), Python character and byte lists, decimal bytes (`od -tu1`), `0x41, ...` (`xxd -i`) | runs of at least eight units with one fixed separator are decoded; every separator length is tried, since a separator character can also be part of the value |
+| runs of `\x41`, `\101`, `&#65;`, `&#x41;`, `%2541` | runs of at least eight self-delimiting escapes are decoded |
+| byte dumps: `xxd`, `xxd -p`, `hexdump -C`, `od -tx1`, `od -An -tx1`, `od -c` | dump lines are joined across line breaks; the repair also covers each line's ASCII column |
+| base32 and base32hex | upper-case runs of at least thirteen characters, at every alignment, across line breaks |
+| truncation and substrings | any run of at least half a value (at least the minimum length, at most 24 bytes) outside its format-fixed parts (PEM armour, a JWT header) |
+| the above inside a text document sent as a base64 data URL | the document is decoded and the same views are taken over its text |
+
+Each decoder is linear in the input and allocates nothing on a clean request once its buffers have
+grown. Lower-case base32, look-alike Unicode, spelling alphabets, compression, the base85 family
+and ciphers beyond rot13 and rot47 are not decoded: none is a common shell tool's output, and each
+is either unbounded work or an alphabet that cannot be delimited in ordinary text.
+
 ## Known limitations
 
 These are outside what scrim protects. The matrix runs a row for each one it can express, marked
@@ -241,10 +264,10 @@ These are outside what scrim protects. The matrix runs a row for each one it can
 | --- | --- | --- |
 | The agent's local transcripts, memory and history files hold real values: scrim protects the wire, not the agent's disk. | none | Keep agent state on an encrypted disk; restored values only reach tools the tool policy names. |
 | Images, PDFs and other binary parts pass unscanned under the default `pass` binary policy, including text in image metadata. | `image-metadata` | Set the binary policy to `block`; the status command reports the current policy. |
-| Look-alike Unicode substitution (Cyrillic or fullwidth letters) is not matched. | `homoglyphs`, `fullwidth` | none yet |
-| Values spelled out in words (NATO alphabet) are not matched. | `nato-spelling` | none yet |
-| Compressed content (`gzip`, `zlib`) is not decompressed. | `gzip-base64` | none yet |
-| The base85 family (ascii85, RFC 1924 base85) is not matched. | `ascii85`, `base85` | none yet |
+| Look-alike Unicode substitution (Cyrillic or fullwidth letters) is not matched: confusable tables are unbounded and no shell tool produces it. | `homoglyphs`, `fullwidth` | none yet |
+| Values spelled out in words (NATO alphabet) are not matched: any language or alphabet would do. | `nato-spelling` | none yet |
+| Compressed content (`gzip`, `zlib`) is not decompressed: decompression is unbounded work per byte. | `gzip-base64` | none yet |
+| The base85 family (ascii85, RFC 1924 base85) is not matched: its alphabet covers most printable text, so runs cannot be delimited cheaply. | `ascii85`, `base85` | none yet |
 | A value the agent splits across fields, tool results or requests (including server-side state such as `previous_response_id`) is not reassembled. | `split-blocks`, `split-tool-results`, `split-requests` | Fragment rules in the guard catch long halves; short values are not protected. |
 | Values shorter than the minimum length (default 8 bytes) are matched only whole and in their encoded forms, never as fragments. Truncations of short values pass as `repaired`. | truncation rows for short seeds | Raise the minimum only with care; `scrim status` lists short values. |
 | Transforms not in the matrix, and secrets unknown to every store and missed by the fallback detectors, are not protected. | none | Add stores for every secret source; report new transforms as issues so they become matrix rows. |

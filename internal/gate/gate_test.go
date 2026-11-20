@@ -9,7 +9,6 @@ import (
 
 	"github.com/heliopsy/scrim/internal/approval"
 	"github.com/heliopsy/scrim/internal/breakglass"
-	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
 	"github.com/heliopsy/scrim/internal/grant"
 	"github.com/heliopsy/scrim/internal/notify"
 	"github.com/heliopsy/scrim/internal/policy"
@@ -208,6 +207,11 @@ func TestBreakGlassEveryPathRefuses(t *testing.T) {
 	ctx := context.Background()
 	// A grant from before deny-all, and a pending approval.
 	pending := r.g.Check(ctx, inject(agentA, hetzner, "api.hetzner.cloud", "GET"), Options{})
+	// Notifications are delivered asynchronously: wait for the first, so the
+	// second one approveNext approves is the GitHub approval.
+	for deadline := time.Now().Add(2 * time.Second); len(r.rec.Sent()) < 1 && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
 	r.approveNext(t, 2, true)
 	if v := r.g.Check(ctx, inject(agentA, github, "api.github.com", "POST"), Options{Wait: true}); !v.Allowed() {
 		t.Fatalf("setup: %+v", v)
@@ -261,40 +265,4 @@ type failingStore struct{ state.Store }
 
 func (failingStore) Update(context.Context, func(state.Tx) error) error {
 	return context.DeadlineExceeded
-}
-
-func TestAnswerDataPlaneAsk(t *testing.T) {
-	r := newRig(t, rules)
-	ctx := context.Background()
-	cur := uint32(pb.ProtocolVersion_PROTOCOL_VERSION_CURRENT)
-	ask := func(method string) *pb.AskRequest {
-		return &pb.AskRequest{Protocol: cur, Id: 7, Request: &pb.PolicyRequest{
-			AgentId: "agent-a", AgentKind: "session", Action: "inject", Ref: "bao://kv/agents/github",
-			Host: "api.github.com", Method: method,
-		}, DeadlineUnixNano: time.Now().Add(5 * time.Second).UnixNano()}
-	}
-	if a := r.g.Answer(ctx, ask("GET")); a.Effect != pb.Effect_EFFECT_ALLOW || a.Id != 7 {
-		t.Fatalf("GET: %+v", a)
-	}
-	r.approveNext(t, 1, true)
-	if a := r.g.Answer(ctx, ask("POST")); a.Effect != pb.Effect_EFFECT_ALLOW || a.GrantId == "" || a.GrantExpiresUnixNano == 0 {
-		t.Fatalf("approved POST: %+v", a)
-	}
-	bad := ask("GET")
-	bad.Protocol = 99
-	if a := r.g.Answer(ctx, bad); a.Effect != pb.Effect_EFFECT_DENY {
-		t.Fatalf("protocol mismatch allowed: %+v", a)
-	}
-	bad = ask("GET")
-	bad.Request.Ref = "not a ref"
-	if a := r.g.Answer(ctx, bad); a.Effect != pb.Effect_EFFECT_DENY {
-		t.Fatalf("bad ref allowed: %+v", a)
-	}
-	// A past deadline denies without waiting for a human.
-	late := ask("PUT")
-	late.Request.AgentId = "agent-b"
-	late.DeadlineUnixNano = time.Now().Add(20 * time.Millisecond).UnixNano()
-	if a := r.g.Answer(ctx, late); a.Effect != pb.Effect_EFFECT_DENY {
-		t.Fatalf("deadline: %+v", a)
-	}
 }

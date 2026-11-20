@@ -122,8 +122,9 @@ const STRIP_REQUEST: &[&str] = &[
     "accept-encoding",
 ];
 
-/// The header an agent names its scrim session in on a base-URL listener (`x-scrim-session:
-/// <session id>`). Read by the request gate, never forwarded.
+/// The header an agent identifies its scrim session with on a base-URL listener
+/// (`x-scrim-session: <session token>`, or a bare session id, which proves nothing). Read by the
+/// request gate, never forwarded.
 pub const SESSION_HEADER: &str = "x-scrim-session";
 
 /// Response headers never forwarded.
@@ -181,6 +182,18 @@ async fn admit(
         }
         Admission::Deny { detail } => Err(Refusal::new(RefusalReason::PolicyDenied, detail)),
     }
+}
+
+/// Whether the request asks for a protocol upgrade: an `Upgrade` header, or `upgrade` among
+/// the `Connection` options.
+fn is_upgrade(h: &HeaderMap) -> bool {
+    h.contains_key(header::UPGRADE)
+        || h.get_all(header::CONNECTION).iter().any(|v| {
+            v.to_str().is_ok_and(|s| {
+                s.split(',')
+                    .any(|o| o.trim().eq_ignore_ascii_case("upgrade"))
+            })
+        })
 }
 
 fn is_identity(h: &HeaderMap) -> bool {
@@ -307,6 +320,13 @@ impl Proxy {
         B::Error: Into<BoxError>,
     {
         let api = route.provider.api_for(req.method(), rest);
+        // A WebSocket (or any other) upgrade would carry frames scrim cannot redact. Refuse it
+        // first, before the snapshot, the gate or the body, so a client with an HTTPS fallback
+        // (Codex tries the Responses API over WebSocket first) falls back at once.
+        if is_upgrade(req.headers()) {
+            let r = Refusal::new(RefusalReason::UpgradeUnsupported, "");
+            return self.refuse(Some(route), api, &r);
+        }
         let Some(snap) = snap else {
             let r = Refusal::new(RefusalReason::NotReady, "");
             return self.refuse(Some(route), api, &r);

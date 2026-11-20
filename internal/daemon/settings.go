@@ -72,6 +72,13 @@ var (
 		Description: "Base URL requests to chatgpt.com (Codex signed in with ChatGPT, through the forward proxy) are forwarded to after redaction.",
 		Validate:    httpURL,
 	})
+	// UpstreamChatGPTAB is where ab.chatgpt.com requests go.
+	UpstreamChatGPTAB = config.Register(config.Spec[string]{
+		Key:         "proxy.upstream.chatgpt-ab",
+		Default:     "https://ab.chatgpt.com",
+		Description: "Base URL requests to ab.chatgpt.com (Codex signed in with ChatGPT, through the forward proxy) are forwarded to after redaction. Its API shape is not documented, so every request body is redacted as generic JSON.",
+		Validate:    httpURL,
+	})
 	// ChainURL is an optional chained upstream for every route.
 	ChainURL = config.Register(config.Spec[string]{
 		Key:         "proxy.chain.url",
