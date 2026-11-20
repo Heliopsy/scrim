@@ -10,9 +10,12 @@
 # the tree they live in, including settings no release has yet.
 #
 # The data plane is built with scripts/release/dataplane.sh (needs rustup and
-# musl-tools, as in CI). SCRIM_EXAMPLES_DATAPLANE_IMAGE=<image> takes it from
-# a published scrim-dataplane image instead, for a machine without musl; that
-# only works while the boundary protocol is unchanged since that release.
+# musl-tools, as in CI). SCRIM_EXAMPLES_DATAPLANE=<file> takes a linux-amd64
+# musl data plane built from this tree some other way (for example
+# `cargo build --release` in a rust:alpine container).
+# SCRIM_EXAMPLES_DATAPLANE_IMAGE=<image> takes it from a published
+# scrim-dataplane image: only for config checks, since an older data plane
+# lacks newer boundary fields (Kubernetes identity among them).
 #
 # Remove the image with `podman rmi <reference>`; check.sh and smoke.sh do
 # when they built it themselves.
@@ -26,7 +29,9 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/stage/linux-amd64" "$work/stage/state"
 
 dp=$work/scrim-dataplane
-if [ -n "${SCRIM_EXAMPLES_DATAPLANE_IMAGE:-}" ]; then
+if [ -n "${SCRIM_EXAMPLES_DATAPLANE:-}" ]; then
+  cp "$SCRIM_EXAMPLES_DATAPLANE" "$dp"
+elif [ -n "${SCRIM_EXAMPLES_DATAPLANE_IMAGE:-}" ]; then
   cid=$(podman create --name "scrim-examples-dp-$$" "$SCRIM_EXAMPLES_DATAPLANE_IMAGE")
   podman cp "$cid:/usr/local/bin/scrim-dataplane" "$dp" >&2
   podman rm -f "$cid" >/dev/null

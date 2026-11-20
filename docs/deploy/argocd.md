@@ -77,6 +77,10 @@ the chart generates would be new at every sync.
 the Secrets `scrim-ca` and `scrim-keys` that wave -1 creates, with the CA's public PEM pasted in.
 With `metrics.enabled`, also name a metrics token Secret in `secrets.existing.metrics`.
 
+The Application turns on the server-side diff (`argocd.argoproj.io/compare-options:
+ServerSideDiff=true`). Kyverno fills in defaults on the chart's injection ClusterPolicy, and the
+default client-side diff then shows the policy OutOfSync after every sync.
+
 ```yaml
 sources:
   - repoURL: ghcr.io/heliopsy/charts
