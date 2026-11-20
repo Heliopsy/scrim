@@ -23,6 +23,10 @@ import (
 func resolver(m map[string]string) func(context.Context, config.SecretRef) (secret.Value, error) {
 	return func(_ context.Context, ref config.SecretRef) (secret.Value, error) {
 		v, ok := m[string(ref)]
+		if !ok && !strings.Contains(string(ref), ":") {
+			// A literal resolves to itself, as in the config loader.
+			return secret.FromString(string(ref)), nil
+		}
 		if !ok {
 			return secret.Value{}, fmt.Errorf("reference %s does not resolve", ref)
 		}
@@ -35,11 +39,9 @@ func instance(name, addr, clientID, clientSecret string, extra map[string]any) s
 		"address": addr,
 		"auth": map[string]any{
 			"method": "universal-auth",
-			"universal-auth": map[string]any{
-				"client-id":     clientID,
-				"client-secret": config.SecretRef("env:INF_SECRET"),
-			},
 		},
+		"client-id":     clientID,
+		"client-secret": config.SecretRef("env:INF_SECRET"),
 	}
 	for k, v := range extra {
 		opts[k] = v
@@ -173,11 +175,11 @@ func TestOptions(t *testing.T) {
 	})
 	t.Run("dotted keys decode like nested ones", func(t *testing.T) {
 		inst := stores.Instance{Name: "inf", Kind: Kind, Options: map[string]any{
-			"address":                           "https://inf.example.test/",
-			"auth.universal-auth.client-id":     "cid",
-			"auth.universal-auth.client-secret": "env:INF_SECRET",
-			"watch.interval":                    5 * time.Second,
-			"create-folders":                    false,
+			"address":        "https://inf.example.test/",
+			"client-id":      "cid",
+			"client-secret":  "env:INF_SECRET",
+			"watch.interval": 5 * time.Second,
+			"create-folders": false,
 		}, Resolve: resolver(map[string]string{"env:INF_SECRET": "x"})}
 		a, err := New(t.Context(), inst)
 		if err != nil {

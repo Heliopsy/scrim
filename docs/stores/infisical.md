@@ -70,7 +70,9 @@ scrim then keeps only the value it wrote in the redaction set.
 
 ## Configuration
 
-Each instance is configured under `stores.<instance>`. Every key can also be set as an environment
+Each instance is configured under `stores.<instance>`. The generic keys every store takes (`kind`,
+`aliases`, `redact`, `refresh.*`) are shared by every store and handled by scrim; the keys below are
+the adapter's own. Every key can also be set as an environment
 variable: `SCRIM_` followed by the full key upper-cased, with dots and dashes as `_`. Nested and
 dotted forms are equivalent in the file. Unknown keys fail validation and name the closest known key.
 
@@ -81,9 +83,8 @@ stores:
     address: https://infisical.example.com
     auth:
       method: universal-auth
-      universal-auth:
-        client-id: 74e8b22b-ac55-4cf6-8d9b-d6334d9e4e80
-        client-secret: file:/run/credentials/scrim/infisical-client-secret
+    client-id: 74e8b22b-ac55-4cf6-8d9b-d6334d9e4e80
+    client-secret: file:/run/credentials/scrim/infisical-client-secret
     watch:
       interval: 30s
 ```
@@ -92,8 +93,8 @@ stores:
 |-----|----------------------------------------|------|---------|---------|
 | `stores.<name>.address` | `SCRIM_STORES_INF_ADDRESS` | URL | required | Base URL of the Infisical server. For Infisical Cloud use `https://app.infisical.com` (US) or `https://eu.infisical.com` (EU). There is no default, so scrim never contacts a server you did not name. |
 | `stores.<name>.auth.method` | `SCRIM_STORES_INF_AUTH_METHOD` | string | `universal-auth` | Only `universal-auth` for now; Kubernetes Auth follows. |
-| `stores.<name>.auth.universal-auth.client-id` | `SCRIM_STORES_INF_AUTH_UNIVERSAL_AUTH_CLIENT_ID` | string | required | The identity's client ID. |
-| `stores.<name>.auth.universal-auth.client-secret` | `SCRIM_STORES_INF_AUTH_UNIVERSAL_AUTH_CLIENT_SECRET` | secret reference | required | `file:`, `env:`, a systemd credential or a store reference. A reference that does not resolve, or resolves to an empty value, stops start-up. A literal works but logs a warning. |
+| `stores.<name>.client-id` | `SCRIM_STORES_INF_CLIENT_ID` | secret reference | required | The identity's client ID. Not secret on its own, but half of the credential, so it is taken as a reference (a literal is fine). |
+| `stores.<name>.client-secret` | `SCRIM_STORES_INF_CLIENT_SECRET` | secret reference | required | `file:`, `env:`, a systemd credential or a store reference. A reference that does not resolve, or resolves to an empty value, stops start-up. A literal works but logs a warning. |
 | `stores.<name>.timeout` | `SCRIM_STORES_INF_TIMEOUT` | duration | `10s` | Per-request timeout. A timed-out request counts as the store being unavailable. |
 | `stores.<name>.tls.ca-file` | `SCRIM_STORES_INF_TLS_CA_FILE` | path | system roots | PEM bundle to verify the server with, for a private CA. |
 | `stores.<name>.watch.interval` | `SCRIM_STORES_INF_WATCH_INTERVAL` | duration | `30s` | How often the listing is polled for changes, with +-20% jitter. |

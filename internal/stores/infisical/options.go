@@ -21,8 +21,8 @@ import (
 const (
 	optAddress       = "address"
 	optAuthMethod    = "auth.method"
-	optClientID      = "auth.universal-auth.client-id"
-	optClientSecret  = "auth.universal-auth.client-secret"
+	optClientID      = "client-id"
+	optClientSecret  = "client-secret"
 	optTimeout       = "timeout"
 	optCAFile        = "tls.ca-file"
 	optWatchInterval = "watch.interval"
@@ -60,7 +60,6 @@ func decodeSettings(ctx context.Context, inst stores.Instance) (*settings, error
 		watchBackoff:  d.Duration(optWatchBackoff, defaultWatchBackoff),
 		createFolders: d.Bool(optCreateFolders, true),
 		expandRefs:    d.Bool(optExpandRefs, true),
-		clientID:      d.String(optClientID, ""),
 	}
 	for key, v := range map[string]time.Duration{optTimeout: s.timeout, optWatchInterval: s.watchInterval, optWatchBackoff: s.watchBackoff} {
 		if v <= 0 {
@@ -77,7 +76,10 @@ func decodeSettings(ctx context.Context, inst stores.Instance) (*settings, error
 	if m := d.String(optAuthMethod, methodUniversalAuth); m != methodUniversalAuth {
 		d.Errorf("option %s: unsupported method %q (supported: %s)", optAuthMethod, m, methodUniversalAuth)
 	}
-	if s.clientID == "" {
+	// The client ID is not secret on its own, but it is half of the
+	// credential and the stores collection takes it as a reference too.
+	idRef := d.SecretRef(optClientID)
+	if idRef == "" {
 		d.Errorf("option %s is required", optClientID)
 	}
 	if ca := d.String(optCAFile, ""); ca != "" {
@@ -98,6 +100,15 @@ func decodeSettings(ctx context.Context, inst stores.Instance) (*settings, error
 	}
 	if inst.Resolve == nil {
 		return nil, fmt.Errorf("option %s: no secret resolver configured", optClientSecret)
+	}
+	id, err := inst.Resolve(ctx, idRef)
+	if err != nil {
+		return nil, fmt.Errorf("option %s: %w", optClientID, err)
+	}
+	_ = id.Expose(func(b []byte) error { s.clientID = string(b); return nil })
+	id.Wipe()
+	if s.clientID == "" {
+		return nil, fmt.Errorf("option %s resolved to an empty value", optClientID)
 	}
 	v, err := inst.Resolve(ctx, ref)
 	if err != nil {

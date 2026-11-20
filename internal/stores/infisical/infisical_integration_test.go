@@ -169,13 +169,13 @@ func TestConformanceInfisical(t *testing.T) {
 		a, err := New(t.Context(), stores.Instance{
 			Name: "inf", Kind: Kind,
 			Options: map[string]any{
-				"address":                           adm.addr,
-				"auth.universal-auth.client-id":     clientID,
-				"auth.universal-auth.client-secret": config.SecretRef("env:INF"),
-				"timeout":                           "3s",
-				"watch.interval":                    "500ms",
-				"watch.max-backoff":                 "2s",
-				"expand-references":                 false,
+				"address":           adm.addr,
+				"client-id":         clientID,
+				"client-secret":     config.SecretRef("env:INF"),
+				"timeout":           "3s",
+				"watch.interval":    "500ms",
+				"watch.max-backoff": "2s",
+				"expand-references": false,
 			},
 			Resolve: resolver(map[string]string{"env:INF": clientSecret}),
 		})
