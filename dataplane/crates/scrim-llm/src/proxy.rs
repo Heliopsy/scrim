@@ -122,8 +122,9 @@ const STRIP_REQUEST: &[&str] = &[
     "accept-encoding",
 ];
 
-/// The header an agent names its scrim session in on a base-URL listener (`x-scrim-session:
-/// <session id>`). Read by the request gate, never forwarded.
+/// The header an agent identifies its scrim session with on a base-URL listener
+/// (`x-scrim-session: <session token>`, or a bare session id, which proves nothing). Read by the
+/// request gate, never forwarded.
 pub const SESSION_HEADER: &str = "x-scrim-session";
 
 /// Response headers never forwarded.

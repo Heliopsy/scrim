@@ -1440,6 +1440,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "bytes",
+ "hmac 0.12.1",
  "http",
  "http-body-util",
  "hyper",
@@ -1455,6 +1456,7 @@ dependencies = [
  "scrim-redact",
  "scrim-toolproxy",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "tokio-rustls",
  "tokio-stream",

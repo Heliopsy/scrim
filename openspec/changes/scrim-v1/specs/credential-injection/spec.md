@@ -152,6 +152,29 @@ the control plane's answer, bounded as every ask is, and the data plane SHALL NO
 - **WHEN** an ask rule covers an injection and no answer arrives within the ask timeout
 - **THEN** the request is refused with `policy_denied` and nothing is sent upstream
 
+### Requirement: Injection works out of the box
+
+The system SHALL ship a built-in rule, `builtin.inject-bound`, allowing `op == "inject"` for an
+identified agent after the configured rules, so deny and ask rules still win. Injection is only
+decided after the binding matched, so it allows exactly injection toward bound hosts.
+`policy.builtin.inject` SHALL select allow (default), ask or off; the rule SHALL appear in the
+compiled snapshot, and `builtin.` rule names SHALL be reserved.
+
+#### Scenario: Default configuration
+
+- **WHEN** `policy.default` is deny, no rule mentions `inject`, and a `scrim run` agent sends a request with a credential placeholder to a host the credential is bound to
+- **THEN** the credential is injected, and the same request to an unbound host is refused
+
+#### Scenario: Unknown caller
+
+- **WHEN** a process without a session sends the same request through the forward proxy
+- **THEN** the injection is refused with `policy_denied`
+
+#### Scenario: Built-in rule switched off
+
+- **WHEN** `policy.builtin.inject` is off and no rule allows `inject`
+- **THEN** nothing is injected
+
 ### Requirement: Documented refusals
 
 Every refusal and withheld response from the tool proxy SHALL carry a stable error code in an

@@ -250,6 +250,7 @@ is out of date.
 | [`notify.webhook.poll-interval`](#notifywebhookpoll-interval) | duration | `2s` | hot |
 | [`notify.webhook.secret`](#notifywebhooksecret) | secret-ref | empty | hot |
 | [`notify.webhook.url`](#notifywebhookurl) | string | `""` | hot |
+| [`policy.builtin.inject`](#policybuiltininject) | string | `allow` | hot |
 | [`policy.default`](#policydefault) | string | `deny` | hot |
 | [`policy.deny-all`](#policydeny-all) | bool | `false` | hot |
 | [`policy.deny-all-refresh`](#policydeny-all-refresh) | duration | `1s` | hot |
@@ -840,6 +841,19 @@ Approval service URL for the webhook notifier (nono approval webhook v1 compatib
 | Reload | hot |
 
 ### policy
+
+#### `policy.builtin.inject`
+
+Built-in rule `builtin.inject-bound` for injecting a credential toward a host it is bound to, for an identified agent: allow, ask, or off (injection is then decided by your rules and policy.default). Deny rules in the rules file still win.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `allow` |
+| Environment | `SCRIM_POLICY_BUILTIN_INJECT` |
+| Flag | none |
+| Reload | hot |
+| Values | `allow`, `ask`, `off` |
 
 #### `policy.default`
 

@@ -130,8 +130,8 @@ func TestRunEnvironmentSeenByTheAgent(t *testing.T) {
 	want := map[string]string{
 		"ANTHROPIC_BASE_URL": h.llm.URL + "/anthropic",
 		"OPENAI_BASE_URL":    h.llm.URL + "/openai/v1",
-		"HTTPS_PROXY":        h.ep.ForwardProxy,
-		"https_proxy":        h.ep.ForwardProxy,
+		"HTTPS_PROXY":        strings.Replace(h.ep.ForwardProxy, "http://", "http://"+env[EnvSessionID]+":"+TokenMarker+"@", 1),
+		"https_proxy":        strings.Replace(h.ep.ForwardProxy, "http://", "http://"+env[EnvSessionID]+":"+TokenMarker+"@", 1),
 		"NO_PROXY":           "localhost,127.0.0.1,::1",
 		"SCRIM_API_SOCKET":   h.api.Socket,
 		"SCRIM_ACME_KEY":     "SCRIM_ACME_KEY",

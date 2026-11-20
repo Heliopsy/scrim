@@ -2704,7 +2704,22 @@ type AskCaller struct {
 	PeerUid  uint32 `protobuf:"varint,3,opt,name=peer_uid,json=peerUid,proto3" json:"peer_uid,omitempty"`
 	PeerGid  uint32 `protobuf:"varint,4,opt,name=peer_gid,json=peerGid,proto3" json:"peer_gid,omitempty"`
 	// peer_pid is 0 when the platform does not report it.
-	PeerPid       int32 `protobuf:"varint,5,opt,name=peer_pid,json=peerPid,proto3" json:"peer_pid,omitempty"`
+	PeerPid int32 `protobuf:"varint,5,opt,name=peer_pid,json=peerPid,proto3" json:"peer_pid,omitempty"`
+	// session_proof shows that the request carried the session's token, not
+	// just its id (design D14). The client sends the token as the password of
+	// `Proxy-Authorization: Basic <session_id>:<token>` or as the value of
+	// `x-scrim-session` on a base-URL listener. The data plane never logs or
+	// forwards it: it keeps only the verifier
+	//   v = SHA-256("scrim session token v1\0" || secret)
+	// where secret is the part of `scrim_st_<id>_<secret>` after the id, and
+	// sends
+	//   HMAC-SHA256(key = v, "scrim session proof v1\0" || session_id || "\0"
+	//               || id (8 bytes, big-endian) || deadline_unix_nano (8 bytes, big-endian))
+	// The control plane recomputes it from the hash it stores. The proof is
+	// bound to this one ask and reveals neither the token nor v, so it is not
+	// a secret field. Empty when the request named a session without its
+	// token: such a caller is not verified and is evaluated as unknown.
+	SessionProof  []byte `protobuf:"bytes,6,opt,name=session_proof,json=sessionProof,proto3" json:"session_proof,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2772,6 +2787,13 @@ func (x *AskCaller) GetPeerPid() int32 {
 		return x.PeerPid
 	}
 	return 0
+}
+
+func (x *AskCaller) GetSessionProof() []byte {
+	if x != nil {
+		return x.SessionProof
+	}
+	return nil
 }
 
 type AskAnswer struct {
@@ -3649,14 +3671,15 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x04rule\x18\x04 \x01(\tR\x04rule\x12\x16\n" +
 	"\x06reason\x18\x05 \x01(\tR\x06reason\x12,\n" +
 	"\x12deadline_unix_nano\x18\x06 \x01(\x03R\x10deadlineUnixNano\x125\n" +
-	"\x06caller\x18\a \x01(\v2\x1d.scrim.dataplane.v1.AskCallerR\x06caller\"\x98\x01\n" +
+	"\x06caller\x18\a \x01(\v2\x1d.scrim.dataplane.v1.AskCallerR\x06caller\"\xbd\x01\n" +
 	"\tAskCaller\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
 	"\tunix_peer\x18\x02 \x01(\bR\bunixPeer\x12\x19\n" +
 	"\bpeer_uid\x18\x03 \x01(\rR\apeerUid\x12\x19\n" +
 	"\bpeer_gid\x18\x04 \x01(\rR\apeerGid\x12\x19\n" +
-	"\bpeer_pid\x18\x05 \x01(\x05R\apeerPid\"\xd5\x01\n" +
+	"\bpeer_pid\x18\x05 \x01(\x05R\apeerPid\x12#\n" +
+	"\rsession_proof\x18\x06 \x01(\fR\fsessionProof\"\xd5\x01\n" +
 	"\tAskAnswer\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\x04R\x02id\x122\n" +

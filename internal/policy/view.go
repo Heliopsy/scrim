@@ -60,6 +60,9 @@ type view struct {
 	dest     RuleDest
 	tool     RuleTool
 	now      time.Time
+	// unknownAgent: the agent fields are unknown (data-plane reference
+	// evaluation only; CEL never sees it).
+	unknownAgent bool
 }
 
 func newView(r *Request) view {

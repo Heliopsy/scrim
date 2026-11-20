@@ -57,10 +57,10 @@ func TestBuildCommonEnvironment(t *testing.T) {
 	want := map[string]string{
 		"ANTHROPIC_BASE_URL":  "http://127.0.0.1:9790/anthropic",
 		"OPENAI_BASE_URL":     "http://127.0.0.1:9790/openai/v1",
-		"HTTPS_PROXY":         "http://127.0.0.1:9791",
-		"https_proxy":         "http://127.0.0.1:9791",
-		"HTTP_PROXY":          "http://127.0.0.1:9791",
-		"http_proxy":          "http://127.0.0.1:9791",
+		"HTTPS_PROXY":         "http://s1:<session-token>@127.0.0.1:9791",
+		"https_proxy":         "http://s1:<session-token>@127.0.0.1:9791",
+		"HTTP_PROXY":          "http://s1:<session-token>@127.0.0.1:9791",
+		"http_proxy":          "http://s1:<session-token>@127.0.0.1:9791",
 		"NO_PROXY":            "localhost,127.0.0.1,::1,127.0.0.1:8787",
 		"no_proxy":            "localhost,127.0.0.1,::1,127.0.0.1:8787",
 		"NODE_EXTRA_CA_CERTS": "/run/user/1000/scrim/run/s1/scrim-ca.pem",
@@ -78,6 +78,18 @@ func TestBuildCommonEnvironment(t *testing.T) {
 	}
 	if tok := v[localapi.EnvToken]; !tok.Secret || tok.Value != "" {
 		t.Errorf("token var %+v", tok)
+	}
+	if !v["HTTPS_PROXY"].Secret {
+		t.Error("the proxy URL carries the token but is not secret")
+	}
+	if _, ok := v["ANTHROPIC_CUSTOM_HEADERS"]; ok {
+		t.Error("generic preset set a Claude Code variable")
+	}
+	// Without a session the proxy carries no credentials.
+	anon := input("/opt/bin/myagent")
+	anon.Token, anon.SessionID = false, ""
+	if got := vars(mustBuild(t, anon))["HTTPS_PROXY"]; got.Value != "http://127.0.0.1:9791" || got.Secret {
+		t.Errorf("anonymous proxy %+v", got)
 	}
 	if _, ok := v["CODEX_CA_CERTIFICATE"]; ok {
 		t.Error("generic preset set a Codex variable")
@@ -116,7 +128,7 @@ func TestBuildReplacesInheritedRouting(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := envMap(env)
-	if m["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:9790/anthropic" || m["HTTPS_PROXY"] != "http://127.0.0.1:9791" {
+	if m["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:9790/anthropic" || m["HTTPS_PROXY"] != "http://s1:scrim_st_abc_def@127.0.0.1:9791" {
 		t.Errorf("not overridden: %v", m)
 	}
 	if _, ok := m["ALL_PROXY"]; ok {
@@ -196,6 +208,21 @@ func TestClaudePreset(t *testing.T) {
 	if s := cfg.MCPServers["scrim"]; s.Command != "/usr/local/bin/scrim" || !slices.Equal(s.Args, []string{"mcp"}) {
 		t.Errorf("mcp config %s", p.Files[FileMCP])
 	}
+	// The session header goes on every API request; inherited headers stay,
+	// an inherited session header does not, and print-env never shows them.
+	hin := input("claude")
+	hin.Environ = append(hin.Environ, "ANTHROPIC_CUSTOM_HEADERS=X-Team: infra\nx-scrim-session: forged")
+	hp := mustBuild(t, hin)
+	if h := vars(hp)["ANTHROPIC_CUSTOM_HEADERS"]; !h.Secret || h.Value != "<inherited headers>\nx-scrim-session: <session-token>" {
+		t.Errorf("custom headers var %+v", h)
+	}
+	henv, err := hp.Environ(hin.Environ, secret.FromString("scrim_st_abc_def"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := envMap(henv)["ANTHROPIC_CUSTOM_HEADERS"]; got != "X-Team: infra\nx-scrim-session: scrim_st_abc_def" {
+		t.Errorf("ANTHROPIC_CUSTOM_HEADERS = %q", got)
+	}
 
 	in := input("claude")
 	in.MCP = false
@@ -236,6 +263,7 @@ func TestCodexPreset(t *testing.T) {
 	}
 	in := input("codex")
 	in.MCP = false
+	in.Token, in.SessionID = false, ""
 	in.Endpoints.ForwardProxy, in.Endpoints.CACertPEM = "", nil
 	p = mustBuild(t, in)
 	if len(p.Args) != 3 || vars(p)["CODEX_CA_CERTIFICATE"].Value != "" {
