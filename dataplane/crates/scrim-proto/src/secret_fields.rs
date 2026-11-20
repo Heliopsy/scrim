@@ -6,7 +6,7 @@ use std::fmt;
 
 use zeroize::Zeroize;
 
-use crate::v1::{PlaceholderKey, ValueEntry};
+use crate::v1::{CaptureRequest, PlaceholderKey, ValueEntry};
 
 /// What `Debug` prints in place of secret bytes.
 pub const REDACTED: &str = "[scrim:redacted]";
@@ -29,6 +29,11 @@ impl fmt::Debug for ValueEntry {
             .field("bound_hosts", &self.bound_hosts)
             .field("name", &self.name)
             .field("store", &self.store)
+            .field("declared_placeholders", &self.declared_placeholders)
+            .field("bound_methods", &self.bound_methods)
+            .field("bound_paths", &self.bound_paths)
+            .field("inject_locations", &self.inject_locations)
+            .field("allow_plaintext_http", &self.allow_plaintext_http)
             .finish()
     }
 }
@@ -40,6 +45,26 @@ impl fmt::Debug for PlaceholderKey {
             .field("key", &Redacted(self.key.len()))
             .field("current", &self.current)
             .finish()
+    }
+}
+
+impl fmt::Debug for CaptureRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CaptureRequest")
+            .field("protocol", &self.protocol)
+            .field("id", &self.id)
+            .field("rule", &self.rule)
+            .field("ref", &self.r#ref)
+            .field("destination", &self.destination)
+            .field("value", &Redacted(self.value.len()))
+            .field("deadline_unix_nano", &self.deadline_unix_nano)
+            .finish()
+    }
+}
+
+impl Drop for CaptureRequest {
+    fn drop(&mut self) {
+        self.value.zeroize();
     }
 }
 
@@ -73,7 +98,9 @@ mod tests {
         snap.values.push(entry);
         snap.placeholder_keys.push(key);
 
-        let out = format!("{snap:?} {snap:#?}");
+        let mut capture = crate::v1::CaptureRequest::default();
+        capture.value.clone_from(&secret);
+        let out = format!("{snap:?} {snap:#?} {capture:?}");
         let as_text = String::from_utf8(secret.clone()).unwrap_or_default();
         assert!(!out.contains(&as_text), "debug output leaks: {out}");
         assert!(

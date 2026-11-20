@@ -52,12 +52,26 @@ type Env struct {
 }
 
 // Config returns the effective configuration, loaded once after flags are
-// parsed: defaults, then SCRIM_* environment, then flags.
+// parsed: defaults, profile, config files, SCRIM_* environment, then flags.
 func (e *Env) Config() (*config.Config, error) {
 	e.cfgOnce.Do(func() {
-		e.cfg, e.cfgErr = config.Load(e.Registry, config.EnvLayer(e.Environ), config.FlagLayer(e.root.PersistentFlags()))
+		e.cfg, e.cfgErr = config.Build(e.ConfigOptions())
 	})
 	return e.cfg, e.cfgErr
+}
+
+// ConfigOptions says where this invocation reads configuration from, for
+// [config.Build] and [config.NewManager].
+func (e *Env) ConfigOptions() config.Options {
+	var paths []string
+	if p, _ := e.root.PersistentFlags().GetString("config"); p != "" {
+		paths = []string{p}
+	}
+	environ := e.Environ
+	if environ == nil {
+		environ = []string{}
+	}
+	return config.Options{Registry: e.Registry, ConfigPaths: paths, Environ: environ, Flags: e.root.PersistentFlags()}
 }
 
 // App builds the composition root once. The root command closes it.
@@ -65,11 +79,10 @@ func (e *Env) App(ctx context.Context) (*app.App, error) {
 	if e.app != nil {
 		return e.app, nil
 	}
-	cfg, err := e.Config()
-	if err != nil {
+	if _, err := e.Config(); err != nil {
 		return nil, err
 	}
-	a, err := app.New(ctx, cfg, e.Stderr)
+	a, err := app.New(ctx, e.ConfigOptions(), e.Stderr)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +146,8 @@ func Main(ctx context.Context, args []string) int {
 }
 
 // Run executes args against e and returns the exit code: 0 on success, 1 on
-// error. Errors are printed once, to e.Stderr.
+// error, or the code of an [ExitCodeError]. Errors are printed once, to
+// e.Stderr.
 func Run(ctx context.Context, e *Env, args []string) int {
 	root := NewRoot(e)
 	root.SetArgs(args)
@@ -143,11 +157,14 @@ func Run(ctx context.Context, e *Env, args []string) int {
 			err = cerr
 		}
 	}
-	if err != nil {
-		_, _ = fmt.Fprintln(e.Stderr, "scrim:", err)
-		return 1
+	if err == nil {
+		return 0
 	}
-	return 0
+	code, perr := exitCode(err)
+	if perr != nil {
+		_, _ = fmt.Fprintln(e.Stderr, "scrim:", perr)
+	}
+	return code
 }
 
 // stub returns a placeholder command that fails with ErrNotImplemented and

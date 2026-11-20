@@ -1,0 +1,125 @@
+# State, audit and observability
+
+scrim keeps approvals, grants, sessions, the audit log and an event outbox in a state backend. None
+of it is a secret value: rows hold identities, references, decisions and times. Settings are in the
+[configuration reference](configuration.md#settings-reference).
+
+## State backends
+
+| `state.backend` | Use | Where |
+|---|---|---|
+| `memory` | throwaway runs, tests | process memory; a restart loses everything and pending approvals end denied |
+| `sqlite` | one scrim on one machine | `state.sqlite.path`, default `$XDG_STATE_HOME/scrim/state.db` |
+| `postgres` | shared and multi-replica deployments | `state.postgres.dsn`, a reference such as `env:SCRIM_PG_DSN` |
+
+The binary default is `memory` until profiles set a per-profile default (configuration tasks).
+
+### SQLite
+
+- WAL journal, `synchronous=NORMAL`, 5 s busy timeout.
+- One writer: write transactions go through a single connection and begin `IMMEDIATE`, so writers
+  queue in scrim instead of failing with `SQLITE_BUSY`. Reads use a separate pool.
+- One process per file: scrim holds an exclusive lock on `state.db.lock` for its lifetime. A second
+  process refuses to start and names the file and the holding PID.
+- The directory is created `0700` and the file `0600`.
+- A file on NFS, SMB, sshfs or another network filesystem is refused. The weakening setting
+  `state.sqlite.allow-network-filesystem` overrides that; it is logged at start-up and listed by
+  `scrim status`.
+
+### PostgreSQL
+
+- A pgx v5 pool (`state.postgres.max-conns`, default 16); start-up fails after
+  `state.postgres.connect-timeout` (15 s) if the server does not answer.
+- The DSN is a secret reference. Errors and `scrim status` show `postgres://user@host:port/db`
+  without the password.
+- Replicas starting together migrate once, under an advisory lock.
+- Events are written to the outbox under a transaction advisory lock, so event IDs become visible
+  in commit order. A replica tailing the outbox by ID never misses an event that committed late,
+  for example a grant revocation made through another replica.
+- A grant's last use is a single conditional `UPDATE`: two replicas cannot both take it.
+- Audit IDs are unique and increasing per transaction but, unlike event IDs, not guaranteed to be
+  visible in commit order. Page the audit log with `--before`, not as a live tail.
+
+### Migrations
+
+Each SQL backend embeds its migrations (`internal/state/<backend>/migrations/NNNN_name.sql`), applied
+in order at start-up, each in its own transaction with its `schema_migrations` row. They are forward
+only. A database migrated by a newer scrim is refused with both schema versions in the message.
+
+### No values in state
+
+SQL backends pass every stored string through the process scrubber, so a value that slipped into a
+reason, target or attribute is stored as `[scrim:redacted]`. The leak tests write such rows and then
+search the SQLite file and WAL bytes, and a JSON dump of every PostgreSQL table, for the values.
+
+## Audit log
+
+Every state change made with `state.Apply` writes its audit entry and events in the same
+transaction: a failure between the writes leaves none of them, and a change without an audit entry
+is refused. Entries carry the action, actor, agent, reference, decision (`allow`, `deny`, `ask`),
+rule, outcome (`ok`, `refused`, `failed`, `pending`), target, subject, request ID, reason and
+metadata attributes.
+
+```sh
+scrim audit log --agent claude-laptop --decision ask --since 1h
+scrim audit log --ref 'bao://kv/gh#token' --outcome refused -o json
+scrim audit log --limit 50 --before 1234    # next older page
+```
+
+Results are newest first. `--since` and `--until` take an RFC 3339 time or a duration ago. The admin
+API mounts the same query as `auditlog.Handler` with the filters as query parameters.
+
+## Logs
+
+`log.format` is `text` or `json`, `log.level` one of `debug`, `info`, `warn`, `error`. Every record
+has `time`, `level`, `component` and `msg`, and `agent`, `request_id`, `trace_id`, `span_id` when
+known. Values never reach a log line: `secret.Value` prints as its marker, byte slices print as their
+length, every message and attribute is scrubbed at write time (including attributes bound before a
+value was loaded), and the finished line is scrubbed again.
+
+## Metrics and health
+
+`metrics.listen` (empty disables) serves:
+
+| Path | Meaning |
+|---|---|
+| `/healthz`, `/livez` | the process answers |
+| `/readyz` | scrim can redact safely; failing checks are named, 503 otherwise |
+| `/metrics` | Prometheus text format, scrubbed as a whole |
+
+| Metric | Labels |
+|---|---|
+| `scrim_redaction_replacements_total` | provider, rule, agent |
+| `scrim_guard_repairs_total` | provider, rule, agent |
+| `scrim_guard_refusals_total` | provider, agent |
+| `scrim_detector_fallback_hits_total` | provider, rule, agent |
+| `scrim_proxy_added_latency_seconds` | provider, stage (redaction, guard, resolution) |
+| `scrim_proxy_chunk_added_latency_seconds` | provider, stage |
+| `scrim_store_up`, `scrim_store_degraded`, `scrim_store_values_loaded`, `scrim_store_last_refresh_timestamp_seconds` | store |
+| `scrim_approval_outcomes_total` | rule, notifier, outcome |
+| `scrim_approval_wait_seconds` | rule, notifier |
+| `scrim_audit_delivered_total`, `scrim_audit_dropped_total` | sink |
+| `scrim_state_up` | backend |
+| `scrim_state_transaction_seconds` | backend, kind (view, update) |
+| `scrim_config_weakened_settings` | setting |
+
+## Traces
+
+With `tracing.endpoint` set (an OTLP/HTTP URL such as `http://127.0.0.1:4318`) scrim exports spans
+named `scrim.redaction`, `scrim.guard`, `scrim.upstream`, `scrim.resolution`, `scrim.policy` and
+`scrim.approval_wait`, as children of an incoming W3C `traceparent`. `tracing.sample-ratio` samples
+new root traces. Span names, attributes, events and statuses are scrubbed before export. Without an
+endpoint nothing is exported and trace context is still propagated.
+
+## `scrim status` and `scrim doctor`
+
+`scrim status` reports the version, profile, configuration (files, version, last reload, settings
+pending a restart), interception modes, protections, providers, stores, the state backend, audit
+sinks, the data plane, everything degraded and every weakened setting. `-o json` (or `--json`) puts
+weakened settings under `weakened_protections`. A component this process cannot check is reported
+as not reported and degraded, never healthy. While a daemon holds the SQLite file, status reports
+it as in use by that process.
+
+`scrim doctor` turns the same report into checks, adds the state location permissions for SQLite
+and any checks other areas contribute (CA trust per runtime, interception rules), prints each
+problem with a fix and exits non-zero when one fails.

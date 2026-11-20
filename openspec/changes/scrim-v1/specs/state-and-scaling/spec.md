@@ -37,6 +37,11 @@ SHALL refuse to run when another scrim process holds the same file.
 - **WHEN** a second scrim process starts with the same SQLite file
 - **THEN** it refuses to start and names the file and the holding process
 
+#### Scenario: Status while the daemon holds the file
+
+- **WHEN** `scrim status` runs while a scrim process holds the SQLite file
+- **THEN** it reports the state backend as in use by that process instead of failing
+
 ### Requirement: SQLite on a network filesystem
 
 scrim SHALL detect when the SQLite file is on a network or shared filesystem and SHALL refuse to
@@ -59,10 +64,20 @@ metadata SHALL be stored or sent.
 - **WHEN** a test seeds known secrets, runs traffic and then dumps every backend and sink
 - **THEN** no known secret value, in any supported encoding, appears in the dump
 
+#### Scenario: Value in a free-text field
+
+- **WHEN** a caller passes a known secret value inside a reason, target or attribute of a state change
+- **THEN** the stored row holds a redacted marker in its place
+
 ### Requirement: Versioned automatic migrations
 
 scrim SHALL apply schema migrations automatically and in order at start-up, SHALL record the applied
 version, and SHALL refuse to start against a schema newer than it understands.
+
+#### Scenario: Replicas start together
+
+- **WHEN** several replicas start at once against an unmigrated PostgreSQL database
+- **THEN** the migrations are applied once and every replica starts at the same schema version
 
 #### Scenario: Downgrade attempt
 
@@ -89,6 +104,22 @@ a documented bound, and a revoked grant SHALL never be honoured after that bound
 
 - **WHEN** an operator revokes a grant through replica A
 - **THEN** replica B refuses requests relying on that grant within the documented bound
+
+#### Scenario: Last use of a grant through two replicas
+
+- **WHEN** two replicas try to use the last remaining use of a grant at the same time
+- **THEN** exactly one use succeeds and the other is refused as unusable
+
+### Requirement: Ordered event outbox
+
+Events SHALL be written to an outbox in the same transaction as the state change they announce, and
+a reader that follows the outbox by increasing event ID SHALL see every committed event exactly
+once, even when transactions on different replicas commit in a different order than they started.
+
+#### Scenario: Concurrent writers on two replicas
+
+- **WHEN** two replicas commit events concurrently while a third reader tails the outbox by ID
+- **THEN** the reader sees every event exactly once and never an ID lower than one it has already seen
 
 ### Requirement: Pending approvals survive replica loss
 

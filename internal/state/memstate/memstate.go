@@ -365,6 +365,9 @@ func (t *tx) QueryAudit(_ context.Context, q state.AuditQuery) ([]audit.Entry, e
 	for _, e := range t.s.auditLog {
 		switch {
 		case e.ID <= q.AfterID,
+			q.BeforeID > 0 && e.ID >= q.BeforeID,
+			q.Effect != "" && e.Effect.String() != q.Effect,
+			q.Outcome != "" && e.Outcome != q.Outcome,
 			q.AgentID != "" && e.Agent.ID != q.AgentID,
 			!q.Ref.IsZero() && e.Ref != q.Ref,
 			q.Action != "" && e.Action != q.Action,
@@ -373,6 +376,9 @@ func (t *tx) QueryAudit(_ context.Context, q state.AuditQuery) ([]audit.Entry, e
 			continue
 		}
 		out = append(out, cloneEntry(e))
+	}
+	if q.Newest {
+		slices.Reverse(out)
 	}
 	return limit(out, q.Limit), nil
 }

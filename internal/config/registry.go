@@ -26,6 +26,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"sort"
@@ -83,6 +84,12 @@ type Spec[T Type] struct {
 	RestartRequired bool
 	// Validate, if set, checks a parsed value beyond its type.
 	Validate func(T) error
+	// RequireReference, for secret-ref settings, rejects a literal value:
+	// the setting must be given as env:, file:, cred: or a store reference.
+	RequireReference bool
+	// Profiles sets the value a built-in profile (see [Profiles]) gives the
+	// setting. A profile sits above the default and below every other source.
+	Profiles map[string]T
 }
 
 // Setting is the type-erased view of a registered setting, used by the
@@ -97,6 +104,10 @@ type Setting struct {
 	Weakening       bool
 	SecretRef       bool
 	RestartRequired bool
+	// RequireReference rejects a literal for a secret-ref setting.
+	RequireReference bool
+	// Profiles maps a profile name to the value it gives the setting.
+	Profiles map[string]any
 
 	validate func(any) error
 }
@@ -123,6 +134,9 @@ type Registry struct {
 	settings map[string]*Setting
 	envs     map[string]string
 	flags    map[string]string
+	checks   []namedCheck
+	// collections are named-instance sections, see [RegisterCollection].
+	collections map[string]*CollectionSpec
 }
 
 // NewRegistry returns an empty registry. Most code uses [Default].
@@ -182,6 +196,13 @@ func RegisterIn[T Type](r *Registry, spec Spec[T]) (Key[T], error) {
 		RestartRequired: spec.RestartRequired,
 	}
 	s.SecretRef = s.Kind == KindSecretRef
+	s.RequireReference = spec.RequireReference
+	if len(spec.Profiles) > 0 {
+		s.Profiles = make(map[string]any, len(spec.Profiles))
+		for name, v := range spec.Profiles {
+			s.Profiles[name] = clone(any(v))
+		}
+	}
 	if v := spec.Validate; v != nil {
 		s.validate = func(a any) error { return v(a.(T)) }
 	}
@@ -207,6 +228,23 @@ func (r *Registry) add(s *Setting) error {
 	if err := s.check(s.Default); err != nil {
 		return fmt.Errorf("config: default of %s: %w", s.Key, err)
 	}
+	if s.RequireReference && s.Kind != KindSecretRef {
+		return fmt.Errorf("config: setting %s: RequireReference is only valid for secret-ref settings", s.Key)
+	}
+	if s.Kind == KindSecretRef && refKind(s.Default.(SecretRef)) == RefLiteral {
+		return fmt.Errorf("config: setting %s: a secret-ref default must be empty or a reference", s.Key)
+	}
+	for _, name := range slices.Sorted(maps.Keys(s.Profiles)) {
+		if !slices.Contains(Profiles, name) {
+			return fmt.Errorf("config: setting %s: unknown profile %q (profiles: %s)", s.Key, name, strings.Join(Profiles, ", "))
+		}
+		if err := s.check(s.Profiles[name]); err != nil {
+			return fmt.Errorf("config: profile %s value of %s: %w", name, s.Key, err)
+		}
+		if s.Weakening && !equalValues(s.Profiles[name], s.Default) {
+			return fmt.Errorf("config: weakening setting %s cannot be changed by profile %s", s.Key, name)
+		}
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -217,6 +255,9 @@ func (r *Registry) add(s *Setting) error {
 		if strings.HasPrefix(k, s.Key+".") || strings.HasPrefix(s.Key, k+".") {
 			return fmt.Errorf("config: setting %s conflicts with %s: a key cannot be both a value and a section", s.Key, k)
 		}
+	}
+	if col := r.collisionWithCollection(s.Key); col != "" {
+		return fmt.Errorf("config: setting %s conflicts with collection %s", s.Key, col)
 	}
 	if other, dup := r.envs[s.EnvVar()]; dup {
 		return fmt.Errorf("config: settings %s and %s map to the same variable %s", s.Key, other, s.EnvVar())

@@ -1,0 +1,333 @@
+{
+  "$id": "https://raw.githubusercontent.com/heliopsy/scrim/main/schema/config-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Generated from the scrim settings registry by `scrim config schema`. Do not edit.",
+  "properties": {
+    "apiVersion": {
+      "description": "Config file format version.",
+      "enum": [
+        "scrim.dev/v1"
+      ]
+    },
+    "approvals": {
+      "additionalProperties": false,
+      "properties": {
+        "timeout": {
+          "default": "2m0s",
+          "description": "How long an approval waits for a decision.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_APPROVALS_TIMEOUT",
+          "x-scrim-flag": "--approvals-timeout",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "config": {
+      "additionalProperties": false,
+      "properties": {
+        "strict": {
+          "default": true,
+          "description": "Reject config files containing keys scrim does not know. When false, unknown keys are reported as warnings instead.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_CONFIG_STRICT",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "watch": {
+          "default": true,
+          "description": "Reload the configuration when a config file or an included file changes. SIGHUP always triggers a reload.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_CONFIG_WATCH",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "include": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "optional": {
+                  "type": "boolean"
+                },
+                "path": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "items": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "optional": {
+                    "type": "boolean"
+                  },
+                  "path": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      ],
+      "description": "Files, globs or directories merged after this file, relative to it."
+    },
+    "interception": {
+      "additionalProperties": false,
+      "properties": {
+        "ca-key": {
+          "default": "",
+          "description": "CA private key.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_INTERCEPTION_CA_KEY",
+          "x-scrim-restart-required": true,
+          "x-scrim-secret-ref": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "kind": {
+      "const": "Config",
+      "description": "Document kind."
+    },
+    "log": {
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "default": "info",
+          "description": "Minimum level of log records.",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_LOG_LEVEL",
+          "x-scrim-flag": "--log-level",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "notifiers": {
+      "additionalProperties": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "description": "Approval notifiers by name.",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+      },
+      "type": "object",
+      "x-scrim-collection": true,
+      "x-scrim-env": "SCRIM_NOTIFIERS",
+      "x-scrim-restart-required": false
+    },
+    "profile": {
+      "default": "local",
+      "description": "Built-in preset of defaults for a deployment shape: `local` for a laptop or VM, `k8s` for Kubernetes, `ci` for throwaway runs. Any value a profile sets can be overridden.",
+      "enum": [
+        "local",
+        "k8s",
+        "ci"
+      ],
+      "type": "string",
+      "x-scrim-env": "SCRIM_PROFILE",
+      "x-scrim-flag": "--profile",
+      "x-scrim-restart-required": false,
+      "x-scrim-weakening": false
+    },
+    "proxy": {
+      "additionalProperties": false,
+      "properties": {
+        "listen": {
+          "default": "127.0.0.1:9790",
+          "description": "Address the LLM proxy listens on.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_PROXY_LISTEN",
+          "x-scrim-flag": "--proxy-listen",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "no-proxy": {
+          "default": [],
+          "description": "Hosts reached without the proxy.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_PROXY_NO_PROXY",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "upstream": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {
+            "anthropic": "https://api.anthropic.com"
+          },
+          "description": "Upstream base URL per provider.",
+          "type": "object",
+          "x-scrim-env": "SCRIM_PROXY_UPSTREAM",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "workers": {
+          "default": 4,
+          "description": "Worker count.",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "type": "integer",
+          "x-scrim-env": "SCRIM_PROXY_WORKERS",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "redaction": {
+      "additionalProperties": false,
+      "properties": {
+        "allow-unredacted-on-error": {
+          "default": false,
+          "description": "Forward a request unredacted when redaction fails.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_REDACTION_ALLOW_UNREDACTED_ON_ERROR",
+          "x-scrim-flag": "--redaction-allow-unredacted-on-error",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true
+        },
+        "entropy-threshold": {
+          "default": 4.5,
+          "description": "Entropy threshold.",
+          "type": "number",
+          "x-scrim-env": "SCRIM_REDACTION_ENTROPY_THRESHOLD",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "state": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "default": "sqlite",
+          "description": "Where scrim keeps its state.",
+          "enum": [
+            "memory",
+            "sqlite",
+            "postgres"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_STATE_BACKEND",
+          "x-scrim-flag": "--state-backend",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "sqlite": {
+          "additionalProperties": false,
+          "properties": {
+            "allow-network-filesystem": {
+              "default": false,
+              "description": "Allow the SQLite database on a network filesystem.",
+              "type": "boolean",
+              "x-scrim-env": "SCRIM_STATE_SQLITE_ALLOW_NETWORK_FILESYSTEM",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": true
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "stores": {
+      "additionalProperties": false,
+      "properties": {
+        "infisical": {
+          "additionalProperties": false,
+          "properties": {
+            "client-secret": {
+              "default": "",
+              "description": "Infisical machine identity secret.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_STORES_INFISICAL_CLIENT_SECRET",
+              "x-scrim-restart-required": false,
+              "x-scrim-secret-ref": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
+        "openbao": {
+          "additionalProperties": false,
+          "properties": {
+            "token": {
+              "default": "",
+              "description": "Token scrim uses to read OpenBao.",
+              "pattern": "^$|^(env:[A-Za-z_][A-Za-z0-9_]*|file:/.*|cred:[A-Za-z0-9_@.:-]+|[a-z][a-z0-9+.-]*://[^#].*)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_STORES_OPENBAO_TOKEN",
+              "x-scrim-restart-required": false,
+              "x-scrim-secret-ref": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind"
+  ],
+  "title": "scrim configuration file (scrim.dev/v1)",
+  "type": "object"
+}

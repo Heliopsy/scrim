@@ -51,6 +51,19 @@ reject a request whose path matches no configured route, without forwarding it a
 - **WHEN** a request arrives on a path that matches no configured provider route
 - **THEN** the proxy answers with a not-found error and forwards nothing
 
+### Requirement: Routing by provider host
+
+Each route SHALL be able to name provider host names. A request for one of those hosts that
+reaches scrim through the forward proxy or a transparent listener SHALL be handled by the LLM
+proxy with its whole path, with the same redaction, guard, capture, chaining and restore as a
+base-URL request. Two routes SHALL NOT claim the same host.
+
+#### Scenario: Agent with HTTPS_PROXY set
+
+- **WHEN** an agent whose `HTTPS_PROXY` points at scrim sends a Messages request to `api.anthropic.com`
+- **THEN** the provider receives the request with known values replaced by placeholders
+- **AND** the agent receives the response with placeholders resolved under the tool policy
+
 ### Requirement: Agent provider credentials pass through
 
 The proxy SHALL forward the agent's own provider authentication (API key, OAuth token or session
@@ -104,6 +117,57 @@ forwarded without redaction.
 - **WHEN** a request contains a field not on the allowlist whose value includes a known secret
 - **THEN** the forwarded request carries that field with the secret replaced by a placeholder
 
+### Requirement: Raw-byte request redaction
+
+The proxy SHALL redact the raw request bytes without re-serialising the body, parsing the body
+only to locate the byte-stable spans of the next requirement. Every byte outside those spans,
+including every field the proxy does not know, SHALL go through the redactor.
+
+#### Scenario: Unchanged bytes outside secrets
+
+- **WHEN** a recorded request containing known values is forwarded
+- **THEN** the provider receives the same bytes with only the values replaced by placeholders
+
+### Requirement: Byte-stable request spans
+
+Values of allowlisted configuration fields, the text and signature of thinking blocks, the data of
+redacted thinking blocks, encrypted reasoning and compaction content, and unscannable binary data
+SHALL NOT be changed by the redactor or its fallback detectors. The guard SHALL still scan them as
+part of the outgoing bytes and repair or refuse a known value found there.
+
+#### Scenario: Detector match inside a signature
+
+- **WHEN** a fallback detector would match bytes inside a thinking block signature that the agent sends back
+- **THEN** the provider receives the signature byte-identical to what it emitted
+
+#### Scenario: Known value inside an allowlisted field
+
+- **WHEN** an allowlisted configuration field contains a known value
+- **THEN** the redactor leaves the field alone and the guard repairs it or refuses the request
+
+### Requirement: Ambiguous request structure is refused
+
+A body that is not strictly valid JSON, or whose structure is ambiguous where the proxy needs to
+read it (such as a duplicate `type` key in a content block), SHALL be refused as malformed, so the
+proxy and the provider never disagree about which bytes are content.
+
+#### Scenario: Ambiguous content block
+
+- **WHEN** a content block carries two `type` members
+- **THEN** the request is refused with the redaction-failed status and nothing is forwarded
+
+### Requirement: Compressed request bodies
+
+The proxy SHALL refuse a request body with a content encoding other than `identity`, because it
+cannot redact bytes it does not see, and SHALL ask the provider for identity-encoded responses so
+it can resolve placeholders in them. A response that still arrives encoded SHALL be forwarded with
+its placeholders unresolved.
+
+#### Scenario: Gzip request body
+
+- **WHEN** an agent sends a request with `Content-Encoding: gzip`
+- **THEN** the agent receives an unsupported-media-type error and nothing is forwarded
+
 ### Requirement: Fail closed on redaction error
 
 The proxy SHALL refuse a request with a distinct error status when redaction or the guard fails for
@@ -121,6 +185,29 @@ never forward the original bytes as a fallback.
 - **WHEN** the guard detects a known value in the outgoing bytes and cannot repair it
 - **THEN** the request is refused and the audit log records which secret reference was involved
 
+### Requirement: Proxy error responses
+
+Every response the proxy generates itself SHALL carry an `x-scrim-error` header naming the reason
+and a body in the error shape of the provider API the request used. Its message SHALL name secret
+references at most and SHALL never contain a value or request content.
+
+#### Scenario: Redaction failure seen by an OpenAI client
+
+- **WHEN** redaction fails for an OpenAI Responses request
+- **THEN** the agent receives `x-scrim-error: redactor_failed` and an OpenAI-shaped error body
+
+### Requirement: Proxy error statuses
+
+The proxy SHALL answer 422 (the redaction-failed status) for malformed bodies, redactor errors,
+guard errors, guard refusals and unscannable content under `block`; 503 with `Retry-After` while
+redaction is not ready; 404 for an unknown route; 413 for an oversized body; 415 for a compressed
+body; 502 for an unreachable provider or chained upstream; 500 when capture cannot record.
+
+#### Scenario: Guard refusal status
+
+- **WHEN** the guard refuses a request
+- **THEN** the agent receives status 422 and the provider receives nothing
+
 ### Requirement: Streaming without whole buffering
 
 The proxy SHALL relay streamed responses incrementally. It SHALL hold back no more bytes than needed
@@ -132,6 +219,29 @@ stream ends.
 - **WHEN** a provider streams a response over many seconds
 - **THEN** the agent receives events as they arrive, delayed only by the bounded hold-back
 
+### Requirement: Response restore sites
+
+The proxy SHALL resolve placeholders only in assistant text and refusals (under the display
+policy) and in tool-call arguments (under the tool policy for that tool), and SHALL forward
+thinking, reasoning summaries, signatures and encrypted content byte-identical. In JSON tool
+arguments a value SHALL be resolved only inside a string literal, JSON-escaped.
+
+#### Scenario: Thinking stream with a placeholder
+
+- **WHEN** a provider streams a thinking block containing a placeholder
+- **THEN** the agent receives the thinking text and its signature byte-identical
+
+### Requirement: Held text released in order
+
+Text held back in a stream SHALL be released before the event that ends its content block, so no
+text follows a block stop, a `finish_reason` or a `*.done` event. Where a stream repeats the full
+text (done events, final response snapshots), it SHALL carry the same resolution as the deltas.
+
+#### Scenario: Placeholder split before finish
+
+- **WHEN** a chat completion stream ends a choice while a placeholder prefix is held back
+- **THEN** the held text reaches the agent before the chunk carrying `finish_reason`
+
 ### Requirement: Capture mode
 
 The proxy SHALL offer a capture mode that writes every request exactly as it left for the provider,
@@ -141,6 +251,11 @@ and the response as received, to a configured directory, so users can verify wha
 
 - **WHEN** capture mode is on and an agent sends a request containing a known secret
 - **THEN** the capture directory contains the outgoing request with only placeholders in place of the secret
+
+#### Scenario: Agent credentials in captures
+
+- **WHEN** capture mode records a request carrying the agent's `authorization` or `x-api-key` header
+- **THEN** the captured headers show those values as masked and the body is byte-identical to what the provider received
 
 ### Requirement: Images and binary content
 

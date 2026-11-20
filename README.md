@@ -2,10 +2,10 @@
 
 Keeps your secrets away from LLM providers while your AI agents keep working.
 
-> **Status: design.** Nothing here runs yet. The behaviour contract is being written as an
-> [OpenSpec](https://openspec.dev) change in [`openspec/changes/`](openspec/changes/). The
-> implementation language for the data plane (Go, Rust, or a Go control plane with a Rust data
-> plane) is decided by a benchmark before the first line of product code.
+> **Status: early development.** The skeleton builds and runs, but scrim does not protect
+> anything yet. The behaviour contract is the [OpenSpec](https://openspec.dev) change in
+> [`openspec/changes/scrim-v1`](openspec/changes/scrim-v1/). A Go control plane runs a Rust data
+> plane as a child process, chosen by the benchmark in [`bench/redact-bench`](bench/redact-bench/).
 
 A scrim is a theatre curtain that looks solid from one side and lets you see through it from the
 other. scrim does the same for secrets: the model provider sees placeholders, your agent and your
@@ -37,6 +37,21 @@ tools keep working with the real thing.
 The same binary and the same configuration on a laptop, a VM, a container or a Kubernetes cluster.
 Agents reach it through a wrapper (`scrim run -- claude`), a base URL, a forward proxy, transparent
 interception (nftables or eBPF), Kubernetes injection, or agent hooks.
+
+## Building from source
+
+You need Go (version in `go.mod`), Rust (version in `dataplane/rust-toolchain.toml`),
+[just](https://github.com/casey/just) and, to change the protocol, `protoc`.
+
+```sh
+just build        # bin/scrim with the data plane embedded
+./bin/scrim version
+just test         # Rust and Go tests, including a launch of the real data plane
+just check        # everything CI checks
+```
+
+`just build-dev` skips the release build of the data plane; point the binary at the debug one
+with `SCRIM_DATAPLANE_PATH=dataplane/target/debug/scrim-dataplane`.
 
 ## Licence
 

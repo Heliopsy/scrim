@@ -1,0 +1,18 @@
+{
+  "findings": [
+    {
+      "check": "data-plane",
+      "outcome": "fail",
+      "message": "data plane not reported",
+      "fix": "restart scrim; check its log for the data plane's exit reason"
+    },
+    {
+      "check": "state",
+      "outcome": "fail",
+      "message": "state backend not reported",
+      "fix": "check state.backend and its location or DSN with `scrim config show --effective`"
+    }
+  ],
+  "failed": 2,
+  "warned": 0
+}

@@ -1,0 +1,26 @@
+{
+  "findings": [
+    {
+      "check": "audit:db",
+      "outcome": "pass",
+      "message": "ok"
+    },
+    {
+      "check": "data-plane",
+      "outcome": "pass",
+      "message": "ok"
+    },
+    {
+      "check": "state",
+      "outcome": "pass",
+      "message": "ok"
+    },
+    {
+      "check": "store:bao",
+      "outcome": "pass",
+      "message": "ok"
+    }
+  ],
+  "failed": 0,
+  "warned": 0
+}

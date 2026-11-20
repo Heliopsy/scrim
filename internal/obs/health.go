@@ -95,7 +95,8 @@ func (h *Health) Run(ctx context.Context, ready bool) Report {
 	return rep
 }
 
-// Handler serves /livez and /readyz; other paths are 404.
+// Handler serves /healthz (and its alias /livez) and /readyz; other paths
+// are 404.
 func (h *Health) Handler() http.Handler {
 	mux := http.NewServeMux()
 	serve := func(ready bool) http.HandlerFunc {
@@ -109,7 +110,22 @@ func (h *Health) Handler() http.Handler {
 			_ = json.NewEncoder(w).Encode(rep)
 		}
 	}
+	mux.HandleFunc("GET /healthz", serve(false))
 	mux.HandleFunc("GET /livez", serve(false))
 	mux.HandleFunc("GET /readyz", serve(true))
+	return mux
+}
+
+// Mux serves the health endpoints of h and, when m is not nil, /metrics:
+// everything metrics.listen exposes.
+func Mux(h *Health, m *Metrics) *http.ServeMux {
+	mux := http.NewServeMux()
+	hh := h.Handler()
+	for _, p := range []string{"/healthz", "/livez", "/readyz"} {
+		mux.Handle("GET "+p, hh)
+	}
+	if m != nil {
+		mux.Handle("GET /metrics", m.Handler())
+	}
 	return mux
 }

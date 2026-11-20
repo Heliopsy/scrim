@@ -46,6 +46,26 @@ upper-cased, with `.` and `-` replaced by `_`. List and map values SHALL use a d
 - **WHEN** `SCRIM_PROXY_NO_PROXY='["127.0.0.1","localhost"]'` is set
 - **THEN** the effective value of `proxy.no-proxy` is the two-element list
 
+### Requirement: Collections of named instances
+
+Sections that hold any number of named instances (for example secret store instances under
+`stores`) SHALL address each field by the dotted key `<collection>.<name>.<field>`. The environment
+SHALL be able to replace a whole collection with a JSON object and override any field already
+present by its variable name; a variable under a collection's prefix that matches no known instance
+SHALL be reported as a warning. Secret fields of an instance SHALL follow the secret-valued setting
+rules.
+
+#### Scenario: Store token from a file reference
+
+- **WHEN** the file declares `stores.bao-prod` with `token: file:/run/secrets/bao` and that file exists
+- **THEN** the token is resolved at start-up
+- **AND** `scrim config show` lists `stores.bao-prod.token` with the reference and a masked value
+
+#### Scenario: Field override from the environment
+
+- **WHEN** the file declares `stores.bao-prod.address` and `SCRIM_STORES_BAO_PROD_ADDRESS` is set
+- **THEN** the effective address is the variable's value and its source is the variable
+
 ### Requirement: Flags for operational settings
 
 Settings an operator commonly changes per invocation (listen addresses, config path, log level,
@@ -112,9 +132,10 @@ can be overridden.
 ### Requirement: Secret-valued settings by reference
 
 Settings that hold credentials (store tokens, placeholder key, CA key, notifier tokens, database
-passwords) SHALL accept references (`file:`, `env:`, a systemd credential name, or a secret store
-reference) as well as literals. A reference that cannot be resolved SHALL stop start-up or reload,
-never fall back to an empty value.
+passwords) SHALL accept references (`env:NAME`, `file:/path`, `cred:NAME` for a systemd credential,
+or `<scheme>://<path>[#field]`) as well as literals, unless the setting requires a reference, in
+which case a literal SHALL be rejected. A reference that cannot be resolved, or resolves to an
+empty value, SHALL stop start-up or reload, never fall back to an empty value.
 
 #### Scenario: Unresolvable reference
 
@@ -127,6 +148,12 @@ never fall back to an empty value.
 - **WHEN** a secret-valued setting is given as a literal in a config file
 - **THEN** scrim starts and logs a warning naming the setting, without its value
 
+#### Scenario: Literal rejected where a reference is required
+
+- **WHEN** a secret-valued setting that requires a reference is given as a literal, in a file or the environment
+- **THEN** scrim refuses to start and names the setting and its source
+- **AND** the error does not contain the literal
+
 ### Requirement: Published JSON Schema
 
 Each release SHALL publish a JSON Schema for every supported `apiVersion`, generated from the same
@@ -135,7 +162,12 @@ definitions scrim validates against, and `scrim config schema` SHALL print it.
 #### Scenario: Schema matches the binary
 
 - **WHEN** a user runs `scrim config schema` and validates a file against it with an external tool
-- **THEN** a file the external tool accepts is also accepted by `scrim config validate`
+- **THEN** a file the external tool accepts is also accepted by `scrim config validate`, except for checks a schema cannot express (value ranges, cross-setting rules, references that must resolve), which `scrim config validate` reports by key
+
+#### Scenario: Committed schema does not drift
+
+- **WHEN** a setting is added or changed without regenerating the committed schema and reference
+- **THEN** the test suite fails and names the stale file
 
 ### Requirement: Strict validation of unknown keys
 
@@ -188,6 +220,12 @@ reporting why.
 
 - **WHEN** the config file changes `approvals.timeout` to a valid value
 - **THEN** new approval requests use the new timeout without a restart
+- **AND** components subscribed to configuration changes are notified once with the new version
+
+#### Scenario: Rotated secret file
+
+- **WHEN** a file named by a `file:` reference changes and scrim reloads
+- **THEN** the new value is used and the setting is reported as changed, without its value in any log
 
 ### Requirement: Settings that need a restart
 

@@ -1,0 +1,25 @@
+# profile: ci
+# file: $DIR/etc/config.yaml
+# file: $DIR/etc/conf.d/10-approvals.yaml
+KEY  VALUE  SOURCE  NOTES
+approvals.timeout  1m0s  file:$DIR/etc/conf.d/10-approvals.yaml:3  -
+config.strict  true  default  -
+config.watch  true  default  -
+interception.ca-key  [scrim:redacted] (<literal>)  file:$DIR/etc/config.yaml:14  restart
+log.level  debug  flag:--log-level  -
+notifiers.ops-slack.kind  slack  file:$DIR/etc/config.yaml:17  -
+notifiers.ops-slack.retry.attempts  3  file:$DIR/etc/config.yaml:19  -
+notifiers.ops-slack.token  [scrim:redacted] (env:INF_SECRET)  file:$DIR/etc/config.yaml:18  -
+profile  ci  env:SCRIM_PROFILE  -
+proxy.listen  127.0.0.1:9790  default  restart
+proxy.no-proxy  ["localhost","127.0.0.1"]  file:$DIR/etc/config.yaml:8  -
+proxy.upstream.anthropic  http://127.0.0.1:9000  env:SCRIM_PROXY_UPSTREAM_ANTHROPIC  -
+proxy.upstream.openai  http://127.0.0.1:8001  file:$DIR/etc/config.yaml:6  -
+proxy.workers  4  default  -
+redaction.allow-unredacted-on-error  false  default  weakening
+redaction.entropy-threshold  4.5  default  -
+state.backend  memory  profile:ci  restart
+state.sqlite.allow-network-filesystem  true  env:SCRIM_STATE_SQLITE_ALLOW_NETWORK_FILESYSTEM  WEAKENED
+stores.infisical.client-secret  [scrim:redacted] (env:INF_SECRET)  file:$DIR/etc/config.yaml:13  -
+stores.openbao.token  [scrim:redacted] (file:$DIR/secrets/bao-token)  file:$DIR/etc/config.yaml:11  -
+warning: interception.ca-key (file:$DIR/etc/config.yaml:14): holds a literal secret; use env:, file:, cred: or a store reference instead

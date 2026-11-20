@@ -10,69 +10,69 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 ## 1. Language decision and toolchain
 
 - [x] 1.1 Record the `redact-bench` result and the chosen language split in design.md D1; verify: the decision rule's inputs (CPU per GB, p99, p999) are quoted with a link to the benchmark README
-- [ ] 1.2 Add the build toolchain, `justfile` (`build`, `test`, `check`, `bench`, `fuzz`, `spec`) and language-specific sections of AGENTS.md; verify: `just check` passes on an empty skeleton
-- [ ] 1.3 Add CI: lint, unit tests, `openspec validate --all --strict`, gitleaks, CodeQL, dependency review, Scorecard, release-please, every action pinned by SHA; verify: CI green on a no-op PR
+- [x] 1.2 Add the build toolchain, `justfile` (`build`, `test`, `check`, `bench`, `fuzz`, `spec`) and language-specific sections of AGENTS.md; verify: `just check` passes on an empty skeleton
+- [x] 1.3 Add CI: lint, unit tests, `openspec validate --all --strict`, gitleaks, CodeQL, dependency review, Scorecard, release-please, every action pinned by SHA; verify: CI green on a no-op PR
 - [x] 1.4 Add the release pipeline (static binaries, container image, SBOM, signatures, provenance); verify: a pre-release tag produces signed artifacts that `cosign verify` accepts
 
 ## 2. Redaction core
 
 - [ ] 2.0 Hash-window prefilter matcher for large sets with Aho-Corasick for small sets (design D13); verify: identical output to the reference matcher on every fixture and at least 500 MB/s single core at 10,000 secrets
 
-- [ ] 2.1 Value dictionary with encoded variants (raw, JSON-escaped, base64 std/url at three alignments, hex, URL-encoded) and minimum-length rule; verify: table tests per variant and per edge length
-- [ ] 2.2 Multi-pattern matcher over raw request bytes with atomic rebuild and swap; verify: concurrent requests during rebuild never block and never miss a value present before and after the swap
-- [ ] 2.3 Deterministic placeholders with versioned key and rotation; verify: same value gives same bytes across processes; old-key placeholders still resolve after rotation
-- [ ] 2.4 Independent guard over exact outgoing bytes (separate code from 2.2), repair or withhold; verify: a value the redactor is made to miss is caught by the guard in tests
-- [ ] 2.5 Fallback detectors (pattern rules, entropy), configurable; verify: rule fixtures and false-positive corpus thresholds
+- [x] 2.1 Value dictionary with encoded variants (raw, JSON-escaped, base64 std/url at three alignments, hex, URL-encoded) and minimum-length rule; verify: table tests per variant and per edge length
+- [x] 2.2 Multi-pattern matcher over raw request bytes with atomic rebuild and swap; verify: concurrent requests during rebuild never block and never miss a value present before and after the swap
+- [x] 2.3 Deterministic placeholders with versioned key and rotation; verify: same value gives same bytes across processes; old-key placeholders still resolve after rotation
+- [x] 2.4 Independent guard over exact outgoing bytes (separate code from 2.2), repair or withhold; verify: a value the redactor is made to miss is caught by the guard in tests
+- [x] 2.5 Fallback detectors (pattern rules, entropy), configurable; verify: rule fixtures and false-positive corpus thresholds
 - [ ] 2.6 Fuzz targets for matcher, variants and guard; verify: fuzzing runs in CI for a fixed budget with zero findings
 
 ## 3. Anthropic Messages proxy (M0 exit)
 
-- [ ] 3.1 Base-URL listener and Anthropic Messages codec, agent auth passed through, unknown request fields redacted; verify: recorded request fixtures round-trip with only allowlisted fields untouched
-- [ ] 3.2 Streaming restorer with per-block holdback, split placeholders and byte-identical thinking and signature content; verify: property test restore(redact(x)) and recorded stream fixtures
-- [ ] 3.3 Fail-closed error path; verify: injected redaction or guard errors return the documented error and nothing reaches the fake upstream
-- [ ] 3.4 Capture mode; verify: captured requests are byte-identical to what the fake upstream received
+- [x] 3.1 Base-URL listener and Anthropic Messages codec, agent auth passed through, unknown request fields redacted; verify: recorded request fixtures round-trip with only allowlisted fields untouched
+- [x] 3.2 Streaming restorer with per-block holdback, split placeholders and byte-identical thinking and signature content; verify: property test restore(redact(x)) and recorded stream fixtures
+- [x] 3.3 Fail-closed error path; verify: injected redaction or guard errors return the documented error and nothing reaches the fake upstream
+- [x] 3.4 Capture mode; verify: captured requests are byte-identical to what the fake upstream received
 - [ ] 3.5 Upstream chaining through caveman with redaction first; verify: caveman's store holds placeholders only, and placeholders survive compression in an end-to-end run
-- [ ] 3.6 Latency budget gate; verify: CI fails when p99 per request or per chunk exceeds the configured budget on the reference fixtures
+- [x] 3.6 Latency budget gate; verify: CI fails when p99 per request or per chunk exceeds the configured budget on the reference fixtures
 
 ## 4. Configuration
 
-- [ ] 4.1 Schema-versioned config file, `SCRIM_*` environment mapping, flags, precedence and search order; verify: precedence table tests and generated JSON Schema committed
-- [ ] 4.2 Secret-valued settings by reference (file, env, store ref, systemd credential); verify: literal secrets rejected where a reference is required
-- [ ] 4.3 `scrim config validate` and `scrim config show --effective` with provenance and masking; verify: golden output tests
-- [ ] 4.4 Hot reload with atomic apply or full rejection; verify: an invalid edit keeps the old config and reports why
-- [ ] 4.5 Weakening settings named, warned at start-up and shown in status; verify: test per weakening setting
+- [x] 4.1 Schema-versioned config file, `SCRIM_*` environment mapping, flags, precedence and search order; verify: precedence table tests and generated JSON Schema committed
+- [x] 4.2 Secret-valued settings by reference (file, env, store ref, systemd credential); verify: literal secrets rejected where a reference is required
+- [x] 4.3 `scrim config validate` and `scrim config show --effective` with provenance and masking; verify: golden output tests
+- [x] 4.4 Hot reload with atomic apply or full rejection; verify: an invalid edit keeps the old config and reports why
+- [x] 4.5 Weakening settings named, warned at start-up and shown in status; verify: test per weakening setting
 
 ## 5. State, audit and observability
 
-- [ ] 5.1 Memory, SQLite and PostgreSQL state backends behind one interface, migrations; verify: the same contract suite passes on all three, PostgreSQL in podman
-- [ ] 5.2 Audit log (metadata only) written with the state change it records; verify: a failure between the two writes leaves neither
-- [ ] 5.3 Structured logs, metrics, traces and health endpoints with a secret-free type for values; verify: a test that seeds known values and greps every log, metric and trace output for them
-- [ ] 5.4 `scrim status` and `scrim doctor`; verify: reports active protections, interception mode, degraded stores and weakened settings in fixture setups
+- [x] 5.1 Memory, SQLite and PostgreSQL state backends behind one interface, migrations; verify: the same contract suite passes on all three, PostgreSQL in podman
+- [x] 5.2 Audit log (metadata only) written with the state change it records; verify: a failure between the two writes leaves neither
+- [x] 5.3 Structured logs, metrics, traces and health endpoints with a secret-free type for values; verify: a test that seeds known values and greps every log, metric and trace output for them
+- [x] 5.4 `scrim status` and `scrim doctor`; verify: reports active protections, interception mode, degraded stores and weakened settings in fixture setups
 
 ## 6. OpenBao and Infisical adapters
 
-- [ ] 6.1 Store adapter contract, capability declaration, reference scheme parser and the shared conformance suite; verify: the suite runs against a fake adapter and fails on a deliberately broken one
-- [ ] 6.2 OpenBao adapter (AppRole, KV v2 read, list, watch, write without read); verify: contract suite against OpenBao dev mode in podman
-- [ ] 6.3 Infisical adapter (Universal Auth, read, list, watch, write); verify: contract suite against a local Infisical in podman
-- [ ] 6.3a Secret catalog: logical names, bindings, declared placeholders, reference placeholders without a catalog; verify: rules, profiles and MCP tools accept catalog names and a literal value in a catalog fails validation
-- [ ] 6.3b Per-environment and bulk prefix mapping with collision checks; verify: one placeholder resolves to different references per profile and colliding templates fail
-- [ ] 6.3c Catalog from store metadata, catalog files, environment and hot reload, with `scrim catalog show` and `scrim catalog suggest`; verify: OpenBao custom metadata binds a host and suggestions are printed, never applied
-- [ ] 6.4 Store outage behaviour (last known set, fail closed for injection, degraded status); verify: tests that stop the store mid-run
+- [x] 6.1 Store adapter contract, capability declaration, reference scheme parser and the shared conformance suite; verify: the suite runs against a fake adapter and fails on a deliberately broken one
+- [x] 6.2 OpenBao adapter (AppRole, KV v2 read, list, watch, write without read); verify: contract suite against OpenBao dev mode in podman
+- [x] 6.3 Infisical adapter (Universal Auth, read, list, watch, write); verify: contract suite against a local Infisical in podman
+- [x] 6.3a Secret catalog: logical names, bindings, declared placeholders, reference placeholders without a catalog; verify: rules, profiles and MCP tools accept catalog names and a literal value in a catalog fails validation
+- [x] 6.3b Per-environment and bulk prefix mapping with collision checks; verify: one placeholder resolves to different references per profile and colliding templates fail
+- [x] 6.3c Catalog from store metadata, catalog files, environment and hot reload, with `scrim catalog show` and `scrim catalog suggest`; verify: OpenBao custom metadata binds a host and suggestions are printed, never applied
+- [x] 6.4 Store outage behaviour (last known set, fail closed for injection, degraded status); verify: tests that stop the store mid-run
 
 ## 7. Policy, approvals and grants
 
-- [ ] 7.1 Rule language and evaluation (allow, deny, ask, default); verify: rule table tests and a compiled snapshot used by the data plane
-- [ ] 7.2 Approval flow with timeout deny and single-use signed decision links; verify: replayed or expired links are refused
-- [ ] 7.3 ntfy notifier with action buttons and terminal `scrim approve`; verify: end-to-end approve and deny against a local ntfy in podman
-- [ ] 7.4 JIT grants (ttl, max ttl, scope, use count, revoke); verify: expiry and revocation take effect on the next request
-- [ ] 7.5 Break-glass deny-all switch; verify: every path refuses while it is set
+- [x] 7.1 Rule language and evaluation (allow, deny, ask, default); verify: rule table tests and a compiled snapshot used by the data plane
+- [x] 7.2 Approval flow with timeout deny and single-use signed decision links; verify: replayed or expired links are refused
+- [x] 7.3 ntfy notifier with action buttons and terminal `scrim approve`; verify: end-to-end approve and deny against a local ntfy in podman
+- [x] 7.4 JIT grants (ttl, max ttl, scope, use count, revoke); verify: expiry and revocation take effect on the next request
+- [x] 7.5 Break-glass deny-all switch; verify: every path refuses while it is set
 
 ## 8. Identity and agent tools
 
-- [ ] 8.1 Unix socket peer credentials and session tokens from `scrim run`; verify: one agent cannot use another's token or grants
-- [ ] 8.2 MCP server (stdio) with secrets_list, secret_request, secret_gen, secret_capture, secret_ask_human, approval_status, grants_list; verify: no tool schema accepts a value and no response contains one, checked against seeded values
-- [ ] 8.3 Agent-facing CLI equivalents including `scrim secret put --stdin` that never echoes; verify: golden tests and a pipe test with the value absent from all output
-- [ ] 8.4 Human entry page for secret_ask_human; verify: the agent receives only stored or declined
+- [x] 8.1 Unix socket peer credentials and session tokens from `scrim run`; verify: one agent cannot use another's token or grants
+- [x] 8.2 MCP server (stdio) with secrets_list, secret_request, secret_gen, secret_capture, secret_ask_human, approval_status, grants_list; verify: no tool schema accepts a value and no response contains one, checked against seeded values
+- [x] 8.3 Agent-facing CLI equivalents including `scrim secret put --stdin` that never echoes; verify: golden tests and a pipe test with the value absent from all output
+- [x] 8.4 Human entry page for secret_ask_human; verify: the agent receives only stored or declined
 
 ## 9. Restore policy, wrapper and leak assurance (M1 exit)
 
@@ -85,12 +85,12 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 10. Credential injection
 
-- [ ] 10.1 Host binding for credentials in configuration and policy; verify: a placeholder toward an unbound host is refused and audited
+- [x] 10.1 Host binding for credentials in configuration and policy; verify: a placeholder toward an unbound host is refused and audited
 - [ ] 10.2 HTTPS tool proxy with CA generation, rotation and trust installation; verify: injection works toward bound hosts for curl, git and a Node client
-- [ ] 10.2a User-declared placeholders mapped to references and bound hosts; verify: a config file with `SCRIM_ACME_KEY` works against a fake API and duplicate declarations fail validation
-- [ ] 10.2b Substitution in URL, headers, cookies, form, JSON and multipart bodies with decompression, length, digest and re-signing; verify: gzip, chunked and HTTP/2 fixtures reach the fake upstream valid and unsupported encodings are refused
-- [ ] 10.2c Redaction of tool-proxy responses, including streamed and compressed bodies; verify: an echoing fake API and a create-resource fake return only placeholders to the agent
-- [ ] 10.3 Response capture rules; verify: a token returned by a fake API is stored and the agent sees a placeholder
+- [x] 10.2a User-declared placeholders mapped to references and bound hosts; verify: a config file with `SCRIM_ACME_KEY` works against a fake API and duplicate declarations fail validation
+- [x] 10.2b Substitution in URL, headers, cookies, form, JSON and multipart bodies with decompression, length, digest and re-signing; verify: gzip, chunked and HTTP/2 fixtures reach the fake upstream valid and unsupported encodings are refused
+- [x] 10.2c Redaction of tool-proxy responses, including streamed and compressed bodies; verify: an echoing fake API and a create-resource fake return only placeholders to the agent
+- [x] 10.3 Response capture rules; verify: a token returned by a fake API is stored and the agent sees a placeholder
 - [ ] 10.4 Exec broker as a separate identity with allowlisted commands; verify: an allowed command runs with the secret, a transform command is blocked
 
 ## 10a. Command-line tools
@@ -109,7 +109,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 11. Vaultwarden and more providers
 
-- [ ] 11.1 Vaultwarden adapter with client-side decryption and unlock key by reference; verify: contract suite against Vaultwarden in podman
+- [x] 11.1 Vaultwarden adapter with client-side decryption and unlock key by reference; verify: contract suite against Vaultwarden in podman
 - [ ] 11.2 OpenAI Chat Completions and Responses codecs; verify: recorded fixtures and Codex end-to-end run
 - [ ] 11.3 Gemini codec; verify: recorded fixtures
 - [ ] 11.4 Bedrock, Vertex, Foundry and Claude Platform on AWS with re-signing after redaction; verify: Claude Code end-to-end against faithful fake upstreams
@@ -120,7 +120,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [ ] 11a.2 AWS Secrets Manager and SSM Parameter Store adapters with ambient identity and version/stage selectors; verify: conformance suite against LocalStack in podman
 - [ ] 11a.3 Google Secret Manager and Azure Key Vault adapters with workload identity; verify: conformance suite against the services or compatible fakes
 - [ ] 11a.4 1Password, Bitwarden Secrets Manager and Doppler adapters; verify: conformance suite against each service's test account or recorded fixtures
-- [ ] 11a.5 Kubernetes Secrets adapter and local sources (env, file, SOPS file, OS keyring) with read-only capabilities declared where applicable; verify: conformance suite in kind and locally, writes to read-only sources refused
+- [x] 11a.5 Local env and file sources with read-only capabilities declared; verify: conformance suite locally, writes to read-only sources refused
+- [ ] 11a.5b Kubernetes Secrets adapter and local SOPS-file and OS keyring sources with read-only capabilities declared where applicable; verify: conformance suite in kind and locally, writes to read-only sources refused
 
 ## 12. Shared state and Kubernetes
 

@@ -1,0 +1,183 @@
+{
+  "apiVersion": "scrim.dev/v1",
+  "profile": "ci",
+  "version": 0,
+  "files": [
+    "$DIR/etc/config.yaml",
+    "$DIR/etc/conf.d/10-approvals.yaml"
+  ],
+  "settings": [
+    {
+      "key": "approvals.timeout",
+      "type": "duration",
+      "value": "1m0s",
+      "source": "file:$DIR/etc/conf.d/10-approvals.yaml:3",
+      "env": "SCRIM_APPROVALS_TIMEOUT",
+      "flag": "--approvals-timeout"
+    },
+    {
+      "key": "config.strict",
+      "type": "bool",
+      "value": true,
+      "source": "default",
+      "env": "SCRIM_CONFIG_STRICT"
+    },
+    {
+      "key": "config.watch",
+      "type": "bool",
+      "value": true,
+      "source": "default",
+      "env": "SCRIM_CONFIG_WATCH"
+    },
+    {
+      "key": "interception.ca-key",
+      "type": "secret-ref",
+      "value": "[scrim:redacted]",
+      "reference": "<literal>",
+      "source": "file:$DIR/etc/config.yaml:14",
+      "env": "SCRIM_INTERCEPTION_CA_KEY",
+      "restartRequired": true
+    },
+    {
+      "key": "log.level",
+      "type": "string",
+      "value": "debug",
+      "source": "flag:--log-level",
+      "env": "SCRIM_LOG_LEVEL",
+      "flag": "--log-level"
+    },
+    {
+      "key": "notifiers.ops-slack.kind",
+      "type": "string",
+      "value": "slack",
+      "source": "file:$DIR/etc/config.yaml:17",
+      "env": "SCRIM_NOTIFIERS_OPS_SLACK_KIND",
+      "collection": "notifiers"
+    },
+    {
+      "key": "notifiers.ops-slack.retry.attempts",
+      "type": "int",
+      "value": 3,
+      "source": "file:$DIR/etc/config.yaml:19",
+      "env": "SCRIM_NOTIFIERS_OPS_SLACK_RETRY_ATTEMPTS",
+      "collection": "notifiers"
+    },
+    {
+      "key": "notifiers.ops-slack.token",
+      "type": "secret-ref",
+      "value": "[scrim:redacted]",
+      "reference": "env:INF_SECRET",
+      "source": "file:$DIR/etc/config.yaml:18",
+      "env": "SCRIM_NOTIFIERS_OPS_SLACK_TOKEN",
+      "collection": "notifiers"
+    },
+    {
+      "key": "profile",
+      "type": "string",
+      "value": "ci",
+      "source": "env:SCRIM_PROFILE",
+      "env": "SCRIM_PROFILE",
+      "flag": "--profile"
+    },
+    {
+      "key": "proxy.listen",
+      "type": "string",
+      "value": "127.0.0.1:9790",
+      "source": "default",
+      "env": "SCRIM_PROXY_LISTEN",
+      "flag": "--proxy-listen",
+      "restartRequired": true
+    },
+    {
+      "key": "proxy.no-proxy",
+      "type": "list",
+      "value": [
+        "localhost",
+        "127.0.0.1"
+      ],
+      "source": "file:$DIR/etc/config.yaml:8",
+      "env": "SCRIM_PROXY_NO_PROXY"
+    },
+    {
+      "key": "proxy.upstream",
+      "type": "map",
+      "value": {
+        "anthropic": "http://127.0.0.1:9000",
+        "openai": "http://127.0.0.1:8001"
+      },
+      "source": "env:SCRIM_PROXY_UPSTREAM_ANTHROPIC",
+      "sources": {
+        "anthropic": "env:SCRIM_PROXY_UPSTREAM_ANTHROPIC",
+        "openai": "file:$DIR/etc/config.yaml:6"
+      },
+      "env": "SCRIM_PROXY_UPSTREAM"
+    },
+    {
+      "key": "proxy.workers",
+      "type": "int",
+      "value": 4,
+      "source": "default",
+      "env": "SCRIM_PROXY_WORKERS"
+    },
+    {
+      "key": "redaction.allow-unredacted-on-error",
+      "type": "bool",
+      "value": false,
+      "source": "default",
+      "env": "SCRIM_REDACTION_ALLOW_UNREDACTED_ON_ERROR",
+      "flag": "--redaction-allow-unredacted-on-error",
+      "weakening": true
+    },
+    {
+      "key": "redaction.entropy-threshold",
+      "type": "float",
+      "value": 4.5,
+      "source": "default",
+      "env": "SCRIM_REDACTION_ENTROPY_THRESHOLD"
+    },
+    {
+      "key": "state.backend",
+      "type": "string",
+      "value": "memory",
+      "source": "profile:ci",
+      "env": "SCRIM_STATE_BACKEND",
+      "flag": "--state-backend",
+      "restartRequired": true
+    },
+    {
+      "key": "state.sqlite.allow-network-filesystem",
+      "type": "bool",
+      "value": true,
+      "source": "env:SCRIM_STATE_SQLITE_ALLOW_NETWORK_FILESYSTEM",
+      "env": "SCRIM_STATE_SQLITE_ALLOW_NETWORK_FILESYSTEM",
+      "weakening": true,
+      "weakened": true
+    },
+    {
+      "key": "stores.infisical.client-secret",
+      "type": "secret-ref",
+      "value": "[scrim:redacted]",
+      "reference": "env:INF_SECRET",
+      "source": "file:$DIR/etc/config.yaml:13",
+      "env": "SCRIM_STORES_INFISICAL_CLIENT_SECRET"
+    },
+    {
+      "key": "stores.openbao.token",
+      "type": "secret-ref",
+      "value": "[scrim:redacted]",
+      "reference": "file:$DIR/secrets/bao-token",
+      "source": "file:$DIR/etc/config.yaml:11",
+      "env": "SCRIM_STORES_OPENBAO_TOKEN"
+    }
+  ],
+  "warnings": [
+    {
+      "key": "interception.ca-key",
+      "source": {
+        "Kind": "file",
+        "Name": "$DIR/etc/config.yaml:14"
+      },
+      "message": "holds a literal secret; use env:, file:, cred: or a store reference instead"
+    }
+  ]
+}

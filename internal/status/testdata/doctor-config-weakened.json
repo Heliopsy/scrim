@@ -1,0 +1,22 @@
+{
+  "findings": [
+    {
+      "check": "data-plane",
+      "outcome": "pass",
+      "message": "ok"
+    },
+    {
+      "check": "state",
+      "outcome": "pass",
+      "message": "ok"
+    },
+    {
+      "check": "weakened-settings",
+      "outcome": "warn",
+      "message": "policy.default is set (env:SCRIM_POLICY_DEFAULT): Decision when no rule matches.",
+      "fix": "unset policy.default unless you accept the weaker protection"
+    }
+  ],
+  "failed": 0,
+  "warned": 1
+}

@@ -1,0 +1,30 @@
+{
+  "version": "0.1.0",
+  "interception_modes": [],
+  "protections": [],
+  "providers": [],
+  "stores": [],
+  "state": {
+    "backend": "unknown",
+    "schema_version": 0,
+    "healthy": false,
+    "detail": "state backend not reported"
+  },
+  "audit_sinks": [],
+  "data_plane": {
+    "running": false,
+    "healthy": false,
+    "detail": "data plane not reported"
+  },
+  "degraded": [
+    {
+      "name": "data-plane",
+      "reason": "data plane not reported"
+    },
+    {
+      "name": "state:unknown",
+      "reason": "state backend not reported"
+    }
+  ],
+  "weakened_protections": []
+}
