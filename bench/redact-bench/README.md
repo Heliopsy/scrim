@@ -7,7 +7,7 @@ behind a separate Go control plane, so the cost of the process boundary is visib
 
 Everything is synthetic. No real secrets, no calls to real LLM providers.
 
-```
+```sh
 just bench-quick   # ~6 min
 just bench-full    # ~30 min, produced the numbers below
 just crosscheck    # correctness only

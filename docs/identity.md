@@ -14,7 +14,7 @@ arrive later.
 When a process connects to the API socket, the kernel records who it is. scrim reads that record:
 
 | Platform | Mechanism | What it reports |
-|---|---|---|
+| --- | --- | --- |
 | Linux | `SO_PEERCRED` | user, group, process |
 | macOS | `LOCAL_PEERCRED`, `LOCAL_PEERPID` | user, primary group, process |
 | others | none | the caller is unknown and refused |
@@ -32,7 +32,7 @@ Each key is an agent name (lower case, digits, `.`, `_`, `-`). Each value lists 
 by spaces:
 
 | Selector | Matches |
-|---|---|
+| --- | --- |
 | `uid:N`, `user:NAME` | the peer's user |
 | `gid:N`, `group:NAME` | the peer's primary group |
 | `scope:S` | limits the agent to scope S (repeatable; default all) |
@@ -55,7 +55,7 @@ scrim api whoami
 ### Scopes
 
 | Scope | Allows |
-|---|---|
+| --- | --- |
 | `secrets:list` | `secrets_list` |
 | `secrets:request` | `secret_request`, `approval_status`, `grants_list` |
 | `secrets:write` | `secret_gen`, `secret_capture`, `secret_ask_human`, `scrim secret put` |
@@ -90,7 +90,7 @@ minted for is refused and audited as `outside the session's process tree`.
 Grants, approvals and asks belong to a principal:
 
 | Caller | Principal |
-|---|---|
+| --- | --- |
 | peer credentials only | `<agent>` |
 | session | `<agent>/<session id>` |
 
@@ -106,7 +106,7 @@ stolen or stale token cannot be retried as something else. The caller is only to
 refused; the audit entry (action `tool.auth`) records why:
 
 | Reason | Meaning |
-|---|---|
+| --- | --- |
 | `malformed` | not shaped like a token |
 | `unknown` | no such session, or the secret part does not match |
 | `revoked` | the session was ended or revoked |
@@ -146,7 +146,7 @@ verifiers and no `identity.peers` mapping. It reads what the transport carries a
 rest to the control plane:
 
 | Listener | What the data plane reads |
-|---|---|
+| --- | --- |
 | Unix socket base URL | the kernel's peer credentials (user, group, process) |
 | forward proxy | `Proxy-Authorization: Basic <session id>:<token>`, which clients send for `HTTPS_PROXY=http://<session id>:<token>@127.0.0.1:<port>` |
 | TCP base URL | the `x-scrim-session: <token>` header (Claude Code sends it through `ANTHROPIC_CUSTOM_HEADERS`) |
@@ -171,7 +171,7 @@ an HMAC keyed with the verifier over the session id, the ask id and the ask dead
 The proof is good for one ask only and reveals neither the token nor the hash.
 
 | What the ask carries | Who the rules see |
-|---|---|
+| --- | --- |
 | a session and a valid proof | that session's agent (`agent.kind == "session"`, `agent.session`), if the session is active; over a Unix socket the peer must also be the session's user and inside its process tree |
 | a session without a proof (a bare session id), or a wrong proof | an unknown caller; the decision is audited with `caller=refused` and the reason |
 | a revoked or expired session, or a Unix peer outside the session's tree | an unknown caller, audited with the reason (`revoked`, `expired`, `outside the session's process tree`) |

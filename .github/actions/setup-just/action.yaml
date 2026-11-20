@@ -1,0 +1,48 @@
+name: setup-just
+description: >-
+  Put a pinned just on PATH. The release archive is checked against a pinned
+  sha256 before it is unpacked. Ubuntu's apt package is too old for the
+  justfile (it rejects recipe attributes such as [group(...)]).
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        # Bump the version and all four checksums together, from the
+        # release's SHA256SUMS.
+        version=1.59.0
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64)
+            target=x86_64-unknown-linux-musl
+            sum=409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e ;;
+          Linux-ARM64)
+            target=aarch64-unknown-linux-musl
+            sum=23871b1702bfd550fb5f901778fd4290ecf2ee034a45a889fbe96d89b188086d ;;
+          macOS-ARM64)
+            target=aarch64-apple-darwin
+            sum=6574cea774ed4cae12e24b6aa11857de33e80dab4667cf628fd5840df96a2a9d ;;
+          macOS-X64)
+            target=x86_64-apple-darwin
+            sum=036ead9df9bc31dbae9934ae3b4236ed124d0bafcffd33439460ae084d5c9cb7 ;;
+          *)
+            echo "::error::no pinned just for ${RUNNER_OS}-${RUNNER_ARCH}"
+            exit 1 ;;
+        esac
+        asset="just-${version}-${target}.tar.gz"
+        dir="$RUNNER_TEMP/just-${version}"
+        mkdir -p "$dir/bin"
+        curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+          --connect-timeout 20 --max-time 300 -o "$dir/$asset" \
+          "https://github.com/casey/just/releases/download/${version}/${asset}"
+        if command -v sha256sum >/dev/null; then
+          got=$(sha256sum "$dir/$asset" | cut -d' ' -f1)
+        else
+          got=$(shasum -a 256 "$dir/$asset" | cut -d' ' -f1)
+        fi
+        [ "$got" = "$sum" ] || { echo "::error::$asset has sha256 $got, pinned $sum"; exit 1; }
+        tar -xzf "$dir/$asset" -C "$dir/bin" just
+        rm -f "$dir/$asset"
+        echo "$dir/bin" >> "$GITHUB_PATH"
+        "$dir/bin/just" --version

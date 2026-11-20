@@ -57,7 +57,7 @@ stores:
 ```
 
 | Key | Env var (instance `bao`) | Default | Meaning |
-|-----|--------------------------|---------|---------|
+| ----- | -------------------------- | --------- | --------- |
 | `stores.bao.address` | `SCRIM_STORES_BAO_ADDRESS` | required | `http://` or `https://` URL of the API. |
 | `stores.bao.namespace` | `SCRIM_STORES_BAO_NAMESPACE` | none | OpenBao namespace, sent as `X-Vault-Namespace`. |
 | `stores.bao.mounts` | `SCRIM_STORES_BAO_MOUNTS` | none | KV v2 mounts that span more than one path segment. |
@@ -130,7 +130,7 @@ Errors name the store, the operation and the reference, never a value. If the st
 contains any value sent in the request, it is replaced by `(store message withheld)`.
 
 | Store answer | Error kind |
-|--------------|------------|
+| -------------- | ------------ |
 | 403, failed AppRole login | permission denied by store |
 | 404, deleted or destroyed version | not found |
 | 400 check-and-set mismatch | conflict |

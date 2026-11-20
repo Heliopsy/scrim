@@ -107,8 +107,8 @@ time.
 **Guard (`guard.rs`).** Shares no matching code with the redactor and works the other way round:
 it decodes the bytes into views and searches the raw values there, ASCII case-insensitively. Views:
 raw, JSON-unescaped once, twice and up to `json_depth` times, percent-decoded, every base64 run
-(both alphabets, joined across line breaks) at all four alignments, every hex run (any case) at both alignments. Values are
-indexed by five-byte grams at offsets 0 to 3, so only every fourth position of a view is probed;
+(both alphabets, joined across line breaks) at all four alignments, every hex run (any case) at
+both alignments. Values are indexed by five-byte grams at offsets 0 to 3, so only every fourth position of a view is probed;
 a probe folds bit 5 of every byte and tests a blocked Bloom filter (one word, two bits, about 16
 bits per gram) before the exact, case-insensitive check. Exact necessary conditions keep the cost
 down: one pass builds bitmaps of base64 and hex characters, from which runs of eleven base64
@@ -164,7 +164,7 @@ sibling was the least busy; four-thread runs to four such cores. Redact throughp
 median, auto engine, hits / clean):
 
 | set | 100 KB | 1 MB | 4 MB |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 10 (packed Teddy) | 1.91 / 2.05 GiB/s | 1.79 / 1.80 GiB/s | 1.77 / 1.71 GiB/s |
 | 1,000 (hash-window) | 1.07 / 1.05 GiB/s | 1,016 / 1,015 MiB/s | 1,011 / 1,020 MiB/s |
 | 10,000 (hash-window) | 1,024 / 1,042 MiB/s | 932 / 955 MiB/s | 923 / 884 MiB/s |
@@ -172,7 +172,7 @@ median, auto engine, hits / clean):
 `protect` per 1 MB request, p50 / p99 in ms, 300 requests per cell (hits / clean):
 
 | set | one thread | four threads (default) |
-|---|---|---|
+| --- | --- | --- |
 | 10 | 3.11 / 3.56, 3.16 / 3.62 | 1.87 / 3.71, 1.63 / 2.43 |
 | 1,000 | 4.20 / 4.85, 4.03 / 4.60 | 2.38 / 4.43, 2.19 / 3.75 |
 | 10,000 | 4.43 / 5.06, 4.53 / 5.20 | 2.37 / 4.85, 2.26 / 4.20 |

@@ -51,7 +51,7 @@ CA has expired. Replace both files and restart to change it.
 ## Rotation
 
 | Setting | Default | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | `tool-proxy.ca.validity` | `17520h` (2 years) | validity of each generated CA |
 | `tool-proxy.ca.rotate-before` | `720h` (30 days) | rotate when this much validity remains |
 | `tool-proxy.ca.overlap` | `168h` (7 days) | how long the previous CA stays trusted |
@@ -97,7 +97,7 @@ scrim ca uninstall --user
 in the manifest and is printed with the manual step, and the command exits 1.
 
 | OS | Store | Change | Revert |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | macOS | login keychain | `security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db` (macOS asks for confirmation) | `security remove-trusted-cert`, `security delete-certificate -Z <sha1>` |
 | Linux | `~/.pki/nssdb` (Chromium, Chrome, Edge), when it exists and `certutil` is installed | `certutil -d sql:~/.pki/nssdb -A -t C,, -n <name>` | `certutil -D -n <name>` |
 | all | `$XDG_DATA_HOME/scrim/scrim-ca.pem` (`~/.local/share/scrim`) | the scrim CA certificates | file removed |

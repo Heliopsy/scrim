@@ -90,7 +90,7 @@ stores:
 ```
 
 | Key | Environment variable (instance `inf`) | Type | Default | Meaning |
-|-----|----------------------------------------|------|---------|---------|
+| ----- | ---------------------------------------- | ------ | --------- | --------- |
 | `stores.<name>.address` | `SCRIM_STORES_INF_ADDRESS` | URL | required | Base URL of the Infisical server. For Infisical Cloud use `https://app.infisical.com` (US) or `https://eu.infisical.com` (EU). There is no default, so scrim never contacts a server you did not name. |
 | `stores.<name>.auth.method` | `SCRIM_STORES_INF_AUTH_METHOD` | string | `universal-auth` | Only `universal-auth` for now; Kubernetes Auth follows. |
 | `stores.<name>.client-id` | `SCRIM_STORES_INF_CLIENT_ID` | secret reference | required | The identity's client ID. Not secret on its own, but half of the credential, so it is taken as a reference (a literal is fine). |
@@ -118,7 +118,7 @@ Errors name the store, the operation and the reference, never a value. Infisical
 included when it does not contain a value involved in the request, and is withheld otherwise.
 
 | Infisical says | scrim reports |
-|----------------|---------------|
+| ---------------- | --------------- |
 | 401, or 403 about the token | logs in again once, then permission denied |
 | 403 | permission denied |
 | 404 (secret, version, folder, project or environment) | not found |

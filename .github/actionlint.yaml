@@ -1,0 +1,8 @@
+# Self-hosted runner labels the workflows target. actionlint rejects labels it
+# does not know, since a typo in runs-on is a job that never starts.
+#
+# ho-z10 is the Heliopsy ARC runner scale set: one ephemeral pod per job,
+# matched by the scale set name alone. macOS/ARM64 is the self-hosted Mac.
+self-hosted-runner:
+  labels:
+    - ho-z10

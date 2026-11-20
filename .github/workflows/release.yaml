@@ -16,6 +16,29 @@ name: Release
 # - A pull request that touches the pipeline: everything up to and including
 #   the image smoke tests runs, nothing is signed or published.
 #
+# Runners. Builds run on the owner's self-hosted runners where one exists for
+# the platform; everything that needs podman, signs or publishes stays on
+# GitHub-hosted runners:
+#
+# - ho-z10 (ARC scale set, one ephemeral pod per job, no podman): plan.
+# - linux-amd64 data plane, control plane and archives: GitHub's ubuntu-24.04.
+#   The release build compiles C (ring, zstd) with the image's compiler and
+#   musl, so it is only byte-for-byte reproducible on the same image; the
+#   reproduce job rebuilds on another ubuntu-24.04. Building on ho-z10 needs a
+#   pinned toolchain image first.
+# - linux-arm64 data plane: GitHub's ubuntu-24.04-arm. There is no self-hosted
+#   Linux arm64 runner, and a cross build would need the cross linker or
+#   cargo-zigbuild that the native musl build exists to avoid (AGENTS.md).
+# - darwin data planes: the self-hosted Mac (self-hosted, macOS, ARM64) for a
+#   release, both targets with Apple's toolchain. It is a personal machine, so
+#   pull requests build darwin on GitHub's macos-15 instead and code from a
+#   pull request never runs on it.
+# - reproduce: another GitHub ubuntu-24.04 runner and a different checkout
+#   path from the build it is compared with.
+# - image-check and image: GitHub-hosted, they need podman.
+# - sign, publish, image, verify: GitHub-hosted, so the Sigstore certificates
+#   and provenance record a GitHub-hosted signer.
+#
 # Jobs that run third-party build code (cargo build scripts, go build) hold a
 # read-only token and no OIDC token. Signing, attesting and publishing happen in
 # separate jobs that only handle the built files. Nothing is restored from a
@@ -50,7 +73,7 @@ concurrency:
 jobs:
   plan:
     name: Plan
-    runs-on: ubuntu-24.04
+    runs-on: ho-z10
     permissions:
       contents: read
     outputs:
@@ -60,6 +83,7 @@ jobs:
       epoch: ${{ steps.plan.outputs.epoch }}
       prerelease: ${{ steps.plan.outputs.prerelease }}
       publish: ${{ steps.plan.outputs.publish }}
+      mac-runner: ${{ steps.plan.outputs.mac-runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -72,13 +96,22 @@ jobs:
           EVENT: ${{ github.event_name }}
           INPUT_TAG: ${{ inputs.tag }}
           PR: ${{ github.event.pull_request.number }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           commit=$(git rev-parse HEAD)
           epoch=$(git log -1 --format=%ct HEAD)
           if [ "$EVENT" = pull_request ]; then
             tag="" version="0.0.0-pr.$PR" prerelease=true publish=false
+            mac_runner='"macos-15"'
           else
+            # The signing jobs get an OIDC token, so a dispatch must come from
+            # the default branch; a tag push is the other way in.
+            if [ "$EVENT" = workflow_dispatch ] && [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+              echo "::error::dispatch the release from $DEFAULT_BRANCH, not $GITHUB_REF"
+              exit 1
+            fi
+            mac_runner='["self-hosted","macOS","ARM64"]'
             tag=${INPUT_TAG:-$GITHUB_REF_NAME}
             if ! [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
               echo "::error::'$tag' is not a release tag (vMAJOR.MINOR.PATCH[-PRERELEASE])"
@@ -95,12 +128,15 @@ jobs:
             echo "epoch=$epoch"
             echo "prerelease=$prerelease"
             echo "publish=$publish"
+            echo "mac-runner=$mac_runner"
           } | tee -a "$GITHUB_OUTPUT"
 
   dataplane:
     name: Data plane (${{ matrix.platform }})
     needs: plan
-    runs-on: ${{ matrix.runner }}
+    # matrix.runner is JSON, or "mac" for the runner the plan picked.
+    runs-on: ${{ fromJSON(matrix.runner == 'mac' && needs.plan.outputs.mac-runner || matrix.runner) }}
+    timeout-minutes: 60
     permissions:
       contents: read
     strategy:
@@ -110,10 +146,10 @@ jobs:
           # Native runners for both Linux architectures, so the musl link is
           # done by the host toolchain with no cross linker; one macOS runner
           # builds both darwin targets with Apple's toolchain.
-          - {platform: linux-amd64, runner: ubuntu-24.04}
-          - {platform: linux-arm64, runner: ubuntu-24.04-arm}
-          - {platform: darwin-amd64, runner: macos-15}
-          - {platform: darwin-arm64, runner: macos-15}
+          - {platform: linux-amd64, runner: '"ubuntu-24.04"'}
+          - {platform: linux-arm64, runner: '"ubuntu-24.04-arm"'}
+          - {platform: darwin-amd64, runner: mac}
+          - {platform: darwin-arm64, runner: mac}
     env:
       SCRIM_VERSION: ${{ needs.plan.outputs.version }}
       SCRIM_COMMIT: ${{ needs.plan.outputs.commit }}
@@ -123,6 +159,19 @@ jobs:
         with:
           ref: ${{ needs.plan.outputs.commit }}
           persist-credentials: false
+      - name: Set up rustup
+        run: scripts/ci-setup-rust.sh
+      # Cargo's home and target directory under the job's temp directory: no
+      # registry or build output from an earlier job is reused (the Mac keeps
+      # its home between jobs), and the cleanup step below removes both.
+      - name: Job-local cargo directories
+        run: |
+          {
+            echo "CARGO_HOME=$RUNNER_TEMP/cargo-home"
+            echo "CARGO_TARGET_DIR=$RUNNER_TEMP/target"
+          } >> "$GITHUB_ENV"
+          # rustup's proxies stay where rustup put them.
+          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
       - name: Install musl tools
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends musl-tools
@@ -140,6 +189,9 @@ jobs:
           path: out/
           if-no-files-found: error
           retention-days: 3
+      - name: Remove build output
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/cargo-home" "$RUNNER_TEMP/target" "$RUNNER_TEMP/tools" out
 
   build:
     name: Control plane and archives
@@ -157,7 +209,7 @@ jobs:
         with:
           ref: ${{ needs.plan.outputs.commit }}
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
         with:
           go-version-file: go.mod
           cache: false
@@ -192,8 +244,9 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  # Rebuilds the linux-amd64 pair on a fresh runner, from nothing, and refuses
-  # the release unless every byte matches. A build that depends on the runner,
+  # Rebuilds the linux-amd64 pair on a fresh GitHub-hosted runner, from
+  # nothing, and refuses the release unless every byte matches the pair built
+  # by the build job. A build that depends on the machine,
   # the clock or the checkout path fails here instead of shipping.
   reproduce:
     name: Reproducibility (linux-amd64)
@@ -214,7 +267,9 @@ jobs:
           # A different checkout path from the build, so a path that leaked
           # into a binary shows up as a mismatch.
           path: elsewhere/scrim
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+      - name: Set up rustup
+        run: elsewhere/scrim/scripts/ci-setup-rust.sh
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
         with:
           go-version-file: elsewhere/scrim/go.mod
           cache: false
@@ -227,6 +282,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends musl-tools
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/target"
           scripts/release/tools.sh "$RUNNER_TEMP/tools" cargo-auditable
           export PATH="$RUNNER_TEMP/tools/bin:$PATH"
           scripts/release/dataplane.sh linux-amd64 "$RUNNER_TEMP/again/scrim-dataplane"
@@ -267,6 +323,11 @@ jobs:
         env:
           IMAGE: ${{ matrix.image }}
         run: scripts/release/image.sh build "$IMAGE" dist/bin
+      - name: Remove local images
+        if: always()
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: scripts/release/image.sh clean "$IMAGE"
 
   sign:
     name: Sign and attest files

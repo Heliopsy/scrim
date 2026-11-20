@@ -1,5 +1,19 @@
 name: CI
 
+# Where the jobs run:
+#
+# - ho-z10 is the Heliopsy ARC runner scale set. Each job gets its own
+#   ephemeral pod (with its own network namespace) that is deleted when the job
+#   ends, so nothing a job leaves behind reaches the next one. The pods have no
+#   podman. They are matched by the scale set name alone: `[self-hosted,
+#   ho-z10]` is never picked up. The pod image's own Go, Rust and just are not
+#   relied on: every job installs the versions go.mod,
+#   dataplane/rust-toolchain.toml and the pins below name.
+# - Jobs that need podman stay on GitHub-hosted runners.
+#
+# Pull requests from forks wait for a maintainer's approval before any job
+# runs (repository setting). No job here has a secret or an OIDC token, and the
+# token is read-only.
 on:
   pull_request:
   push:
@@ -19,10 +33,14 @@ env:
 jobs:
   go:
     name: Go
-    runs-on: ubuntu-24.04
+    runs-on: ho-z10
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
         with:
           go-version-file: go.mod
       - name: gofmt
@@ -36,13 +54,20 @@ jobs:
         env:
           SCRIM_TEST_PODMAN: "0"
 
+  # GitHub-hosted: the store adapters are tested against real OpenBao,
+  # Infisical and Vaultwarden containers, and the ho-z10 pods have no podman.
+  # Every container is published on a free port and named scrim-stores-*.
   stores:
     name: Store conformance (podman)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
         with:
           go-version-file: go.mod
       - run: podman version
@@ -51,20 +76,30 @@ jobs:
       - run: go test -race -count=1 -timeout 25m ./internal/stores/...
         env:
           SCRIM_TEST_PODMAN: "1"
-      - name: Leftover containers
+      - name: Remove leftover containers
         if: always()
-        run: podman ps -a --filter name=scrim-stores- && podman pod ps --filter name=scrim-stores-
+        run: |
+          podman ps -a --filter name=scrim-stores- --format '{{.Names}}'
+          podman pod ps --filter name=scrim-stores- --format '{{.Name}}'
+          podman ps -aq --filter name=scrim-stores- | xargs -r podman rm -f -v
+          podman pod ps -q --filter name=scrim-stores- | xargs -r podman pod rm -f
+          podman volume prune -f
 
   rust:
     name: Rust
-    runs-on: ubuntu-24.04
+    runs-on: ho-z10
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: dataplane
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      # rust-toolchain.toml pins the toolchain; rustup on the runner installs it.
-      - run: rustup toolchain install
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      # rust-toolchain.toml pins the toolchain; rustup installs it.
+      - run: rustup toolchain install && cargo --version
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
           workspaces: dataplane
@@ -72,6 +107,9 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+
+  # ntfy as its release binary, not as a container: the ho-z10 pods have no
+  # podman. It listens on a free port picked at run time, never a fixed one.
 
   macos:
     name: macOS build
@@ -96,41 +134,74 @@ jobs:
 
   ntfy-e2e:
     name: ntfy end-to-end
-    runs-on: ubuntu-24.04
+    runs-on: ho-z10
+    permissions:
+      contents: read
+    env:
+      NTFY_VERSION: 2.38.1
+      NTFY_LINUX_AMD64_SHA256: 9727d45e5da86c3f338f0f329044485bddde76f3fbbbc3f9e695c14776f09c32
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
         with:
           go-version-file: go.mod
-      - name: Approve and deny through a local ntfy (rootless podman)
+      - name: Install ntfy
         run: |
-          podman run -d --rm --name scrim-e2e-ntfy -p 127.0.0.1:18765:80 docker.io/binwiederhier/ntfy:v2.14.0 serve
-          for _ in $(seq 50); do curl -fsS http://127.0.0.1:18765/v1/health && break; sleep 0.2; done
-          SCRIM_TEST_NTFY_URL=http://127.0.0.1:18765 go test -race -count=1 -run TestEndToEndAgainstNtfy -v ./internal/notify/ntfy/
-      - if: always()
-        run: podman rm -f -v scrim-e2e-ntfy || true
+          set -euo pipefail
+          tarball="ntfy_${NTFY_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL --retry 5 -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/binwiederhier/ntfy/releases/download/v${NTFY_VERSION}/$tarball"
+          echo "$NTFY_LINUX_AMD64_SHA256  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" --strip-components=1 \
+            "ntfy_${NTFY_VERSION}_linux_amd64/ntfy"
+      - name: Approve and deny through a local ntfy
+        run: |
+          set -euo pipefail
+          port=$(python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+          "$RUNNER_TEMP/ntfy" serve --listen-http "127.0.0.1:$port" >"$RUNNER_TEMP/ntfy.log" 2>&1 &
+          echo $! >"$RUNNER_TEMP/ntfy.pid"
+          for _ in $(seq 50); do curl -fsS "http://127.0.0.1:$port/v1/health" && break; sleep 0.2; done
+          SCRIM_TEST_NTFY_URL="http://127.0.0.1:$port" \
+            go test -race -count=1 -run TestEndToEndAgainstNtfy -v ./internal/notify/ntfy/
+      - name: Stop ntfy
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/ntfy.pid" ]; then kill "$(cat "$RUNNER_TEMP/ntfy.pid")" 2>/dev/null || true; fi
+          cat "$RUNNER_TEMP/ntfy.log" 2>/dev/null || true
 
   llm-latency-gate:
     name: LLM proxy latency gate
-    runs-on: ubuntu-24.04
+    runs-on: ho-z10
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: dataplane
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - run: rustup toolchain install
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - run: rustup toolchain install && cargo --version
       # Fails, naming the measurement, when a p99 exceeds crates/scrim-llm/benches/budget.json.
       - run: cargo bench --locked -p scrim-llm --bench latency_gate
 
   integration:
     name: Boundary integration
-    runs-on: ubuntu-24.04
+    runs-on: ho-z10
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
         with:
           go-version-file: go.mod
-      - run: rustup toolchain install
+      - run: rustup toolchain install && cargo --version
         working-directory: dataplane
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
@@ -145,35 +216,70 @@ jobs:
 
   proto:
     name: Generated code up to date
-    runs-on: ubuntu-24.04
+    runs-on: ho-z10
+    permissions:
+      contents: read
+    env:
+      # The committed Go code names this protoc in its header. Upstream
+      # publishes no checksums; this is the sha256 of the release asset.
+      PROTOC_VERSION: "36.2"
+      PROTOC_LINUX_X86_64_SHA256: 121f6c7afe1d4d0e3ea6aab9432038599250134cbf4474cb1167d2c7decd4278
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
         with:
           go-version-file: go.mod
-      # Ubuntu 24.04 ships protoc 3.21.12, the version the committed Go code
-      # names in its header.
-      - run: sudo apt-get update -q && sudo apt-get install -y -q protobuf-compiler just
-      - run: rustup toolchain install
+      - uses: ./.github/actions/setup-just
+      - name: Install protoc
+        run: |
+          set -euo pipefail
+          zip="protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          curl -fsSL --retry 5 -o "$RUNNER_TEMP/$zip" \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/$zip"
+          echo "$PROTOC_LINUX_X86_64_SHA256  $RUNNER_TEMP/$zip" | sha256sum -c -
+          python3 -I -m zipfile -e "$RUNNER_TEMP/$zip" "$RUNNER_TEMP/protoc"
+          chmod 0755 "$RUNNER_TEMP/protoc/bin/protoc"
+          echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/protoc/bin/protoc" --version
+      - run: rustup toolchain install && cargo --version
         working-directory: dataplane
       - run: just proto-check
 
   security:
     name: Vulnerabilities, licences and secrets
-    runs-on: ubuntu-24.04
+    runs-on: ho-z10
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
         with:
           go-version-file: go.mod
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
-      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd  # v2.1.3
-        with:
-          manifest-path: dataplane/Cargo.toml
-          command: check advisories licenses bans sources
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+      # The release binary rather than EmbarkStudios/cargo-deny-action, which
+      # is a Docker container action and cannot run on the ho-z10 pods.
+      - name: cargo-deny
+        env:
+          CARGO_DENY_VERSION: 0.22.0
+          CARGO_DENY_SHA256: 98c56e6a408bfa5c3c60744b6015aaa6aa08f743fdeb88386d06fca035bb1786
+        run: |
+          set -euo pipefail
+          name="cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl"
+          curl -fsSL --retry 5 -o "$RUNNER_TEMP/$name.tar.gz" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/$name.tar.gz"
+          echo "$CARGO_DENY_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP" "$name/cargo-deny"
+          cd dataplane
+          rustup toolchain install
+          "$RUNNER_TEMP/$name/cargo-deny" check advisories licenses bans sources
       # History reachable from the commit under test; without --log-opts
       # gitleaks scans every fetched branch, including unmerged ones.
       - name: gitleaks
@@ -187,3 +293,20 @@ jobs:
           echo "$GITLEAKS_SHA256  $RUNNER_TEMP/$tarball" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git --redact --no-banner --verbose --config .gitleaks.toml --log-opts=HEAD .
+
+  # The files it checks are set in .markdownlint-cli2.yaml, the rules in
+  # .markdownlint.yaml; `just md` runs the same thing locally.
+  markdown:
+    name: Markdown
+    runs-on: ho-z10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 24
+      - uses: ./.github/actions/setup-just
+      - run: just md

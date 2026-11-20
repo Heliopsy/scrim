@@ -4,12 +4,12 @@ scrim ships as one file per platform: the `scrim` binary is the Go control plane
 plane embedded, and runs the data plane as a child process (design D11). The data plane is also
 published on its own as `scrim-dataplane`, for Kubernetes sidecars and edge forwarders.
 
-| Platform     | Archive                                   |
-| ------------ | ----------------------------------------- |
-| Linux x86-64 | `scrim_<version>_linux_amd64.tar.gz`      |
-| Linux arm64  | `scrim_<version>_linux_arm64.tar.gz`      |
-| macOS Intel  | `scrim_<version>_darwin_amd64.tar.gz`     |
-| macOS Apple  | `scrim_<version>_darwin_arm64.tar.gz`     |
+| Platform | Archive |
+| --- | --- |
+| Linux x86-64 | `scrim_<version>_linux_amd64.tar.gz` |
+| Linux arm64 | `scrim_<version>_linux_arm64.tar.gz` |
+| macOS Intel | `scrim_<version>_darwin_amd64.tar.gz` |
+| macOS Apple | `scrim_<version>_darwin_arm64.tar.gz` |
 
 The Linux binaries are statically linked and need nothing from the host but the kernel. The macOS
 binaries need only the base system. `scrim-dataplane_<version>_<os>_<arch>.tar.gz` holds the data
@@ -26,12 +26,12 @@ the minor series.
 
 ## What every release carries
 
-| File                                   | What it is                                               |
-| -------------------------------------- | -------------------------------------------------------- |
-| `*.tar.gz`                             | the binary, `LICENSE` and `README.md`                    |
-| `*.tar.gz.spdx.json`                   | SPDX SBOM of that archive, Go and Rust dependencies both |
-| `checksums.txt`                        | SHA-256 of every archive and SBOM                        |
-| `checksums.txt.sigstore.json`          | Sigstore bundle: keyless cosign signature over `checksums.txt` |
+| File | What it is |
+| --- | --- |
+| `*.tar.gz` | the binary, `LICENSE` and `README.md` |
+| `*.tar.gz.spdx.json` | SPDX SBOM of that archive, Go and Rust dependencies both |
+| `checksums.txt` | SHA-256 of every archive and SBOM |
+| `checksums.txt.sigstore.json` | Sigstore bundle: keyless cosign signature over `checksums.txt` |
 
 Every archive and SBOM also has a SLSA build provenance attestation, stored with the repository on
 GitHub. Each image is signed with cosign, has an SBOM attestation per architecture, and a build

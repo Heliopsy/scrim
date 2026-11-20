@@ -7,7 +7,7 @@ of it is a secret value: rows hold identities, references, decisions and times. 
 ## State backends
 
 | `state.backend` | Use | Where |
-|---|---|---|
+| --- | --- | --- |
 | `memory` | throwaway runs, tests | process memory; a restart loses everything, pending approvals end denied and `scrim run` sessions end |
 | `sqlite` | one scrim on one machine | `state.sqlite.path`, default `$XDG_STATE_HOME/scrim/state.db` |
 | `postgres` | shared and multi-replica deployments | `state.postgres.dsn`, a reference such as `env:SCRIM_PG_DSN` |
@@ -55,7 +55,7 @@ in order at start-up, each in its own transaction with its `schema_migrations` r
 only. A database migrated by a newer scrim is refused with both schema versions in the message.
 
 | Version | Change |
-|---|---|
+| --- | --- |
 | 1 | approvals, grants, sessions, audit log, events |
 | 2 | sessions keep what `scrim run` binds them to (user, root process, scopes, name, end reason), so they survive a restart |
 
@@ -96,13 +96,13 @@ value was loaded), and the finished line is scrubbed again.
 `metrics.listen` (empty disables) serves:
 
 | Path | Meaning |
-|---|---|
+| --- | --- |
 | `/healthz`, `/livez` | the process answers |
 | `/readyz` | scrim can redact safely; failing checks are named, 503 otherwise |
 | `/metrics` | Prometheus text format, scrubbed as a whole |
 
 | Metric | Labels |
-|---|---|
+| --- | --- |
 | `scrim_redaction_replacements_total` | provider, rule, agent |
 | `scrim_guard_repairs_total` | provider, rule, agent |
 | `scrim_guard_refusals_total` | provider, agent |

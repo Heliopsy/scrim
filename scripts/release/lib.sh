@@ -106,7 +106,9 @@ check_binary() {
       got=$(od -An -t u4 -j 4 -N 4 "$file" | tr -d ' ')
       [ "$got" = "$want" ] || die "$file has Mach-O cputype $got, want $want for $platform"
       if command -v otool >/dev/null; then
-        if otool -L "$file" | tail -n +2 | grep -v -e '/usr/lib/libSystem' -e '/usr/lib/libresolv' -e '/System/Library/Frameworks/' | grep -q .; then
+        # libSystem, libresolv and libiconv (linked by Rust's std on Apple
+        # targets) ship with macOS, as do the system frameworks.
+        if otool -L "$file" | tail -n +2 | grep -v -e '/usr/lib/libSystem' -e '/usr/lib/libresolv' -e '/usr/lib/libiconv' -e '/System/Library/Frameworks/' | grep -q .; then
           otool -L "$file" >&2
           die "$file links libraries outside the base system"
         fi

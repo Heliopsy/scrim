@@ -61,7 +61,7 @@ fuzz:
 # ---------------------------------------------------------------- gates
 
 # The pre-push gate.
-check: fmt-check lint test spec proto-check vuln
+check: fmt-check lint md test spec proto-check vuln
 
 fmt:
     gofmt -w .
@@ -76,13 +76,17 @@ lint:
     golangci-lint run ./...
     cd dataplane && cargo clippy --locked --all-targets -- -D warnings
 
+# Lint the Markdown .markdownlint-cli2.yaml selects, with the rules in .markdownlint.yaml.
+md:
+    npx --yes markdownlint-cli2@0.24.1
+
 # Validate every OpenSpec change and spec.
 spec:
     npx --yes @fission-ai/openspec@1.15.0 validate --all --strict --no-interactive
 
 # govulncheck, and cargo-deny when it is installed (CI always runs it).
 vuln:
-    go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+    go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
     @if command -v cargo-deny >/dev/null; then cd dataplane && cargo deny check; else echo "cargo-deny not installed; skipped (CI runs it)"; fi
 
 # ---------------------------------------------------------------- protocol
@@ -135,17 +139,22 @@ leak *args: leak-selftest
 fakeprovider *args:
     go run ./internal/testing/fakeprovider/cmd/scrim-fakeprovider {{args}}
 
-ntfy_image := "docker.io/binwiederhier/ntfy:v2.14.0"
+ntfy_image := "docker.io/binwiederhier/ntfy:v2.38.1"
 
-# End-to-end approve and deny through a local ntfy in rootless podman.
-e2e-ntfy port="18765":
+# End-to-end approve and deny through a local ntfy in rootless podman, on a
+# free host port unless PORT is given.
+e2e-ntfy port="":
     #!/usr/bin/env bash
     set -euo pipefail
     name=scrim-e2e-ntfy-$$
-    podman run -d --rm --name "$name" -p 127.0.0.1:{{port}}:80 {{ntfy_image}} serve >/dev/null
+    port="{{port}}"
+    if [ -z "$port" ]; then
+      port=$(python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    fi
+    podman run -d --rm --name "$name" -p "127.0.0.1:$port:80" {{ntfy_image}} serve >/dev/null
     trap 'podman rm -f -v "$name" >/dev/null' EXIT
-    for _ in $(seq 50); do curl -fsS http://127.0.0.1:{{port}}/v1/health >/dev/null 2>&1 && break; sleep 0.2; done
-    SCRIM_TEST_NTFY_URL=http://127.0.0.1:{{port}} go test -race -count=1 -run TestEndToEndAgainstNtfy -v ./internal/notify/ntfy/
+    for _ in $(seq 50); do curl -fsS "http://127.0.0.1:$port/v1/health" >/dev/null 2>&1 && break; sleep 0.2; done
+    SCRIM_TEST_NTFY_URL="http://127.0.0.1:$port" go test -race -count=1 -run TestEndToEndAgainstNtfy -v ./internal/notify/ntfy/
 
 clean:
     rm -rf bin/ dist/ {{embed}}

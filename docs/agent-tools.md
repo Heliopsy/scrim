@@ -15,7 +15,7 @@ result that refers to a secret carries its reference (`bao://kv/agents/github#to
 redaction core is wired in, its placeholder. Values move around the model instead of through it:
 
 | Tool | How the value moves |
-|---|---|
+| --- | --- |
 | `secret_gen` | made inside scrim, written to the store, wiped |
 | `secret_capture` | the command runs in the tool process; only the extracted value goes to scrim |
 | `secret_ask_human` | a person types it into a local entry page, which writes it to the store |
@@ -284,7 +284,7 @@ Every `scrim secret` command takes `-o json` for the same fields the MCP tool re
 `-o json` are the error envelope on standard output.
 
 | Exit | Meaning |
-|---|---|
+| --- | --- |
 | 0 | success: granted, stored, approved |
 | 1 | error |
 | 3 | denied by policy, or the caller is not allowed |
@@ -297,7 +297,7 @@ HTTP/1.1 with JSON on the Unix socket, every route under `/v1`, every response c
 `Scrim-Api-Version: v1`. A client of another version is refused rather than misread.
 
 | Route | Tool |
-|---|---|
+| --- | --- |
 | `GET /v1/version` | (open) API and server version |
 | `GET /v1/whoami` | the caller's identity |
 | `POST /v1/sessions` | mint a session token (`scrim run`) |
