@@ -17,8 +17,11 @@ import (
 	"github.com/heliopsy/scrim/internal/agenttools"
 	"github.com/heliopsy/scrim/internal/agenttools/agenttoolstest"
 	"github.com/heliopsy/scrim/internal/app"
+	"github.com/heliopsy/scrim/internal/approval"
 	"github.com/heliopsy/scrim/internal/audit"
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/gate"
+	"github.com/heliopsy/scrim/internal/grant"
 	"github.com/heliopsy/scrim/internal/identity"
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/policy"
@@ -191,27 +194,44 @@ func TestAuditAdapter(t *testing.T) {
 func TestApprovalsAdapter(t *testing.T) {
 	st := memstate.New()
 	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
-	ap := Approvals{
+	clock := func() time.Time { return now }
+	grants := grant.NewService(st, nil)
+	grants.SetClock(clock)
+	approvals, err := approval.New(approval.Options{State: st, Signer: approval.RandomSigner(), Timeout: 10 * time.Minute,
+		PollInterval: 10 * time.Millisecond, Now: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &gate.Gate{
 		Engine: rules(
 			policy.Rule{Name: "agents", Match: under("bao://kv/agents/"), Effect: policy.Allow, GrantTTL: time.Hour},
+			policy.Rule{Name: "open", Match: under("bao://kv/open/"), Effect: policy.Allow},
 			policy.Rule{Name: "github", Match: under("bao://kv/ask/"), Effect: policy.Ask},
 		),
-		State: st, DefaultTTL: 15 * time.Minute, MaxTTL: 8 * time.Hour, ApprovalTimeout: 10 * time.Minute,
-		Now: func() time.Time { return now },
+		Grants: grants, Approvals: approvals, State: st, Now: clock,
 	}
+	ap := Approvals{Gate: g, DefaultTTL: 15 * time.Minute, MaxTTL: 8 * time.Hour, Now: clock}
 	a := agenttoolstest.Session("dev", "s1", 1000)
 	b := agenttoolstest.Session("dev", "s2", 1000)
 
-	g, err := ap.Request(ctx, a, agenttools.GrantRequest{Ref: "bao://kv/agents/x", Duration: 2 * time.Hour, Reason: "r"})
-	if err != nil || g.Status != agenttools.StatusGranted || !g.Capped || g.Duration != time.Hour || !g.ExpiresAt.Equal(now.Add(time.Hour)) {
-		t.Fatalf("grant: %+v %v", g, err)
+	// An allow rule with a TTL leaves its own grant behind; asking for more
+	// is capped at the rule's TTL.
+	gr, err := ap.Request(ctx, a, agenttools.GrantRequest{Ref: "bao://kv/agents/x", Duration: 2 * time.Hour, Reason: "r"})
+	if err != nil || gr.Status != agenttools.StatusGranted || !gr.Capped || gr.Duration != time.Hour || !gr.ExpiresAt.Equal(now.Add(time.Hour)) {
+		t.Fatalf("grant: %+v %v", gr, err)
 	}
-	g2, _ := ap.Request(ctx, a, agenttools.GrantRequest{Ref: "bao://kv/agents/y", Reason: "r"})
-	if g2.Duration != 15*time.Minute || g2.Capped {
+	// An allow rule without a TTL gets the requested or default duration,
+	// capped at tools.grant-max-ttl.
+	g2, _ := ap.Request(ctx, a, agenttools.GrantRequest{Ref: "bao://kv/open/y", Reason: "r"})
+	if g2.Status != agenttools.StatusGranted || g2.Duration != 15*time.Minute || g2.Capped {
 		t.Fatalf("default ttl: %+v", g2)
 	}
+	g3, _ := ap.Request(ctx, a, agenttools.GrantRequest{Ref: "bao://kv/open/z", Duration: 24 * time.Hour, Reason: "r"})
+	if g3.Duration != 8*time.Hour || !g3.Capped {
+		t.Fatalf("max ttl: %+v", g3)
+	}
 	gs, _ := ap.Grants(ctx, a)
-	if len(gs) != 2 {
+	if len(gs) != 3 {
 		t.Fatalf("A grants = %+v", gs)
 	}
 	if gs, _ := ap.Grants(ctx, b); len(gs) != 0 {
@@ -232,8 +252,17 @@ func TestApprovalsAdapter(t *testing.T) {
 	if _, err := ap.Approval(ctx, a, "apr_nope"); !errors.Is(err, agenttools.ErrNotFound) {
 		t.Fatalf("unknown approval: %v", err)
 	}
+	// The approval is the real one: the operator API decides it and the
+	// agent sees the grant it created.
+	if _, err := approvals.Decide(ctx, p.ApprovalID, approval.Decision{Approve: true, By: "user:op", Via: "api"}); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := ap.Approval(ctx, a, p.ApprovalID); s.Status != string(state.ApprovalApproved) || s.GrantID == "" {
+		t.Fatalf("after approval: %+v", s)
+	}
+	p2, _ := ap.Request(ctx, a, agenttools.GrantRequest{Ref: "bao://kv/ask/other", Reason: "PR"})
 	now = now.Add(11 * time.Minute)
-	if s, _ := ap.Approval(ctx, a, p.ApprovalID); s.Status != agenttools.ApprovalExpired {
+	if s, _ := ap.Approval(ctx, a, p2.ApprovalID); s.Status != agenttools.ApprovalExpired {
 		t.Fatalf("after timeout: %+v", s)
 	}
 	d, _ := ap.Request(ctx, a, agenttools.GrantRequest{Ref: "bao://kv/prod/x", Reason: "r"})
@@ -244,7 +273,7 @@ func TestApprovalsAdapter(t *testing.T) {
 	if d.Status != agenttools.StatusDenied {
 		t.Fatalf("invalid ref: %+v", d)
 	}
-	now = now.Add(2 * time.Hour)
+	now = now.Add(9 * time.Hour)
 	if gs, _ := ap.Grants(ctx, a); len(gs) != 0 {
 		t.Fatalf("expired grants listed: %+v", gs)
 	}
@@ -363,5 +392,95 @@ func TestSettings(t *testing.T) {
 		if _, err := config.Load(config.Default, config.EnvLayer([]string{bad})); err == nil {
 			t.Errorf("%s accepted", bad)
 		}
+	}
+}
+
+// TestRuntimeSessionsSurviveRestart mints a session through one runtime over
+// a SQLite state file, then checks a second runtime opened on the same file
+// after the first is closed accepts the token, and that ending the session
+// there still holds after a third restart.
+func TestRuntimeSessionsSurviveRestart(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("peer credentials are implemented on Linux and macOS")
+	}
+	dir, err := os.MkdirTemp("", "scrim")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	home := t.TempDir()
+	db := filepath.Join(home, "state.db")
+
+	// start runs one control plane generation and returns a client on its
+	// socket and a function that shuts it down and closes the state file.
+	start := func(gen string, tok secret.Value) (*localapi.Client, *app.App, func()) {
+		t.Helper()
+		sock := filepath.Join(dir, gen+".sock")
+		opts := config.Options{Registry: config.Default, SystemDir: home, Environ: []string{"HOME=" + home,
+			"XDG_CONFIG_HOME=" + home, "XDG_STATE_HOME=" + home, "SCRIM_API_SOCKET=" + sock,
+			"SCRIM_STATE_BACKEND=sqlite", "SCRIM_STATE_SQLITE_PATH=" + db}}
+		var logs bytes.Buffer
+		a, err := app.New(ctx, opts, &logs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a.State.Backend() != "sqlite" {
+			t.Fatalf("state backend %s", a.State.Backend())
+		}
+		rt, err := New(a, Options{})
+		if err != nil {
+			_ = a.Close()
+			t.Fatal(err)
+		}
+		sctx, cancel := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() { done <- rt.Serve(sctx) }()
+		c := localapi.NewClient(sock, tok)
+		return c, a, func() {
+			c.Close()
+			cancel()
+			if err := <-done; err != nil {
+				t.Errorf("serve: %v", err)
+			}
+			if err := a.Close(); err != nil {
+				t.Errorf("close: %v", err)
+			}
+		}
+	}
+
+	peer, _, stop := start("a", secret.Value{})
+	minted, err := peer.Mint(ctx, localapi.MintInput{Name: "restart-test"})
+	stop()
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	defer minted.Token.Wipe()
+
+	sc, a, stop := start("b", minted.Token)
+	who, err := sc.WhoAmI(ctx)
+	if err != nil || who.Source != identity.SourceSession || who.SessionID != minted.Session.ID || who.SessionName != "restart-test" {
+		stop()
+		t.Fatalf("whoami after restart: %+v %v", who, err)
+	}
+	err = a.State.View(ctx, func(tx state.Tx) error {
+		es, err := tx.QueryAudit(ctx, state.AuditQuery{Action: "session.created"})
+		if err == nil && (len(es) != 1 || es[0].Subject != minted.Session.ID) {
+			t.Errorf("session.created entries = %+v", es)
+		}
+		return err
+	})
+	if err != nil {
+		t.Error(err)
+	}
+	err = sc.EndSession(ctx)
+	stop()
+	if err != nil {
+		t.Fatalf("end session: %v", err)
+	}
+
+	sc, _, stop = start("c", minted.Token)
+	defer stop()
+	if who, err := sc.WhoAmI(ctx); err == nil {
+		t.Fatalf("ended session accepted after restart: %+v", who)
 	}
 }

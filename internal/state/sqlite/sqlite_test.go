@@ -24,6 +24,7 @@ import (
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/state"
+	"github.com/heliopsy/scrim/internal/state/migrate"
 	"github.com/heliopsy/scrim/internal/state/sqlite"
 	"github.com/heliopsy/scrim/internal/state/statetest"
 )
@@ -83,7 +84,7 @@ func TestWALAndPrivateFile(t *testing.T) {
 	if dst, _ := os.Stat(filepath.Dir(path)); dst.Mode().Perm() != 0o700 {
 		t.Errorf("state dir mode %04o, want 0700", dst.Mode().Perm())
 	}
-	if v, err := s.SchemaVersion(t.Context()); err != nil || v != 1 {
+	if v, err := s.SchemaVersion(t.Context()); err != nil || v != 2 {
 		t.Errorf("SchemaVersion = %d, %v", v, err)
 	}
 	raw, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
@@ -187,7 +188,7 @@ func TestRefusesNewerSchema(t *testing.T) {
 	}
 	defer func() { _ = s2.Close() }()
 	err = s2.Migrate(t.Context())
-	if !errors.Is(err, state.ErrSchemaTooNew) || !strings.Contains(err.Error(), "version 7") || !strings.Contains(err.Error(), "version 1") {
+	if !errors.Is(err, state.ErrSchemaTooNew) || !strings.Contains(err.Error(), "version 7") || !strings.Contains(err.Error(), "version 2") {
 		t.Fatalf("Migrate on a newer schema = %v", err)
 	}
 }
@@ -324,5 +325,51 @@ func TestNoValueInDatabaseFile(t *testing.T) {
 				t.Errorf("database file holds a seeded value (%d bytes form)", len(f))
 			}
 		}
+	}
+}
+
+// TestUpgradeKeepsSessions migrates a schema 1 database with a session in it
+// to the current schema: the row survives, the new columns take their
+// defaults, and the downgrade refusal still names the new version.
+func TestUpgradeKeepsSessions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	all, err := sqlite.Migrations()
+	if err != nil || len(all) < 2 {
+		t.Fatalf("Migrations = %d, %v", len(all), err)
+	}
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrate.Run(t.Context(), raw, migrate.SQLite, all[:1], migrate.Hooks{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO sessions (id, agent_id, agent, token_hash, created_at, expires_at, labels)
+		VALUES ('old', 'a1', '{"ID":"a1"}', 'sha256:old', 1, 2, '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	_ = raw.Close()
+
+	s := open(t, path, sqlite.Options{})
+	if v, err := s.SchemaVersion(t.Context()); err != nil || v != migrate.Latest(all) {
+		t.Fatalf("SchemaVersion = %d, %v", v, err)
+	}
+	err = s.View(t.Context(), func(tx state.Tx) error {
+		got, err := tx.GetSession(t.Context(), "old")
+		if err != nil {
+			return err
+		}
+		if got.Agent.ID != "a1" || got.TokenHash != "sha256:old" || got.UID != 0 || got.RootPID != 0 ||
+			got.Scopes != nil || got.Name != "" || got.EndReason != "" {
+			t.Errorf("upgraded session = %+v", got)
+		}
+		list, err := tx.ListSessions(t.Context(), state.SessionFilter{AgentID: "a1", Open: true})
+		if err != nil || len(list) != 1 {
+			t.Errorf("ListSessions after upgrade = %+v, %v", list, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

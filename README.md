@@ -278,7 +278,9 @@ scrim run -- claude
 
 `scrim run` starts the agent with provider base URLs, MCP registration, CA trust and a session
 identity set for that process only. Running `claude` later without the wrapper finds its
-configuration unchanged. Codex works the same way: `scrim run -- codex`.
+configuration unchanged. Codex works the same way: `scrim run -- codex`. If scrim cannot redact
+the session, the agent is not started. `scrim run --print-env -- claude` shows what would be set;
+[docs/run.md](docs/run.md) has the details per agent.
 
 ### 4. Check what the provider saw
 
@@ -288,7 +290,8 @@ Start the proxy with capture mode on and run a session that reads a secret:
 scrim proxy --capture
 ```
 
-Each request is written to the capture directory byte for byte as it left for the provider. Search
+Each request is written to the capture directory (`$XDG_STATE_HOME/scrim/capture`, or the
+directory you pass as `--capture DIR`) byte for byte as it left for the provider. Search
 it for the secret value: it is absent, and its placeholder is there instead. To run the whole leak
 suite against your setup, see [docs/leak-assurance.md](docs/leak-assurance.md).
 
@@ -308,6 +311,8 @@ suite against your setup, see [docs/leak-assurance.md](docs/leak-assurance.md).
 
 The wrapper, base URL and forward proxy modes rely on the agent using the settings it is given. The
 transparent, managed and Kubernetes modes enforce them.
+
+Setup, coverage, gaps and CA trust for each method: [docs/interception.md](docs/interception.md).
 
 ## Configuration
 

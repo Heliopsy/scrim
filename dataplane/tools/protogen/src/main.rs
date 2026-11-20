@@ -24,6 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ".scrim.dataplane.v1.ValueEntry",
         ".scrim.dataplane.v1.PlaceholderKey",
         ".scrim.dataplane.v1.CaptureRequest",
+        ".scrim.dataplane.v1.CaCertificate",
     ]);
 
     tonic_prost_build::configure()

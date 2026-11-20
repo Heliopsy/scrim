@@ -74,6 +74,67 @@ evaluating rules.
 - **WHEN** the same night-time deny rule exists and an agent makes a `store.write`
 - **THEN** the data plane asks the control plane, which evaluates the time and decides
 
+#### Scenario: Conformance vectors
+
+- **WHEN** the data plane evaluates every vector in `internal/policy/testdata/conformance.json`
+- **THEN** each outcome, deciding rule and reason to ask equals the Go reference evaluator's
+
+### Requirement: Provider requests are not stopped by the default
+
+A provider request (`op` `llm.forward`) SHALL be refused only by a deny rule that matches it, or by
+an ask rule or a rule the data plane cannot evaluate whose control-plane answer is not an allow. The
+default decision SHALL NOT refuse provider requests, and break-glass deny-all SHALL NOT stop them,
+since redaction applies to them whatever the rules say.
+
+#### Scenario: Default deny and no forward rule
+
+- **WHEN** the policy default is deny and no rule mentions `llm.forward`
+- **THEN** provider requests are redacted and forwarded
+
+#### Scenario: Break-glass during a session
+
+- **WHEN** break-glass deny-all is engaged
+- **THEN** provider requests are still redacted and forwarded, and no placeholder is restored or credential injected
+
+### Requirement: Asks are bounded
+
+An operation the data plane sends to the control plane SHALL be held at most for the approval
+timeout the snapshot carries, and SHALL be denied when no allow answer arrives in time or the
+control plane's ask stream is not connected.
+
+#### Scenario: Ask stream down
+
+- **WHEN** the control plane's ask stream is closed and a request needs an ask
+- **THEN** the request is denied at once
+
+### Requirement: Rules only restrict restore
+
+Restoring a placeholder into a response (`op` `restore`) SHALL be decided by the tool policy, and a
+deny or ask rule that matches, could match or errors on the restore SHALL keep the placeholder. Allow
+rules and the default decision SHALL NOT grant a restore the tool policy does not, and an ask SHALL
+keep the placeholder rather than hold the response.
+
+#### Scenario: Deny rule on restore
+
+- **WHEN** a rule denies `op == "restore"` for references under `bao://kv/prod/` and a read tool call carries a placeholder of such a value
+- **THEN** the tool receives the placeholder unresolved
+
+#### Scenario: Default deny
+
+- **WHEN** the policy default is deny and no rule matches a restore of a display value into a read tool
+- **THEN** the value is restored
+
+### Requirement: Restore request attributes
+
+A restore request SHALL carry the tool name, the value's reference, catalog name, store and class,
+and the agent identity where the listener knows it. A rule condition on a field the data plane does
+not have SHALL keep the placeholder.
+
+#### Scenario: Rule on an unknown agent
+
+- **WHEN** a rule denies unknown callers and the listener cannot establish the agent's identity for a restore
+- **THEN** the placeholder stays
+
 ### Requirement: Invalid rules fail closed
 
 The system SHALL validate rules when configuration loads. A configuration with an invalid rule SHALL

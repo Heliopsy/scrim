@@ -253,8 +253,10 @@ func TestSupervisorRefusesProtocolMismatch(t *testing.T) {
 func TestWipeClearsSentSecrets(t *testing.T) {
 	v := []byte("generated-in-test")
 	k := []byte{1, 2, 3}
-	wipe(&pb.Snapshot{Values: []*pb.ValueEntry{{Value: v}}, PlaceholderKeys: []*pb.PlaceholderKey{{Key: k}}})
-	for _, b := range append(v, k...) {
+	ca := []byte("generated-ca-key")
+	wipe(&pb.Snapshot{Values: []*pb.ValueEntry{{Value: v}}, PlaceholderKeys: []*pb.PlaceholderKey{{Key: k}},
+		ToolProxyCa: []*pb.CaCertificate{{CertPem: "public", KeyPem: ca}}})
+	for _, b := range append(append(v, k...), ca...) {
 		if b != 0 {
 			t.Fatal("secret bytes left after wipe")
 		}

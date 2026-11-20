@@ -71,9 +71,10 @@ command = "scrim"
 args = ["mcp"]
 ```
 
-Codex may start MCP servers with a reduced environment. If `scrim api whoami` inside the agent
-reports a session but the tools report the plain user identity, pass the variables through
-explicitly, for example with an `env` table naming `SCRIM_API_SOCKET` and `SCRIM_SESSION_TOKEN`.
+Codex starts MCP servers with a reduced environment, so the session variables have to be passed
+through by name with `env_vars = ["SCRIM_API_SOCKET", "SCRIM_SESSION_TOKEN", "SCRIM_SESSION_ID"]`
+(not an `env` table, which would put the token in the file). `scrim run -- codex` does this for the
+session with `-c` options; see [run.md](run.md).
 
 ## Tools
 

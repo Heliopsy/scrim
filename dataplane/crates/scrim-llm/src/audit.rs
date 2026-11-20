@@ -31,6 +31,9 @@ pub enum RefusalReason {
     ChainUnavailable,
     /// The provider could not be reached.
     UpstreamUnavailable,
+    /// The request gate ([`crate::RequestGate`]) refused it: a rule denied it, or an approval
+    /// was denied or did not come in time.
+    PolicyDenied,
 }
 
 impl RefusalReason {
@@ -49,6 +52,7 @@ impl RefusalReason {
             Self::CaptureFailed => "capture_failed",
             Self::ChainUnavailable => "chain_unavailable",
             Self::UpstreamUnavailable => "upstream_unavailable",
+            Self::PolicyDenied => "policy_denied",
         }
     }
 }

@@ -24,6 +24,7 @@ use crate::body::{
 use crate::capture::CaptureRule;
 use crate::codec::{Codings, decode_all, encode_all, parse_codings};
 use crate::credential::Location;
+use crate::decide::{InjectionDecision, InjectionRequest};
 use crate::digest;
 use crate::engine::Engine;
 use crate::error::{ErrorCode, Refusal};
@@ -601,6 +602,36 @@ impl Engine {
                         format!("the value of credential `{}` is not available", c.name),
                     ),
                 ));
+            }
+        }
+
+        // The per-request decision, once per credential, before anything is substituted.
+        if let Some(policy) = &self.injection {
+            let mut asked = BTreeSet::new();
+            for (ci, _) in &occurrences.items {
+                if !asked.insert(*ci) {
+                    continue;
+                }
+                let c = &self.credentials.credentials()[*ci];
+                let req = InjectionRequest {
+                    credential: c.name.clone(),
+                    reference: c.reference.clone(),
+                    destination: dest.clone(),
+                    method: method.to_string(),
+                    path: path_for_binding.clone(),
+                };
+                if let InjectionDecision::Deny(why) = policy.decide(&req, &parts.extensions).await {
+                    return Err(refuse(
+                        &used,
+                        Refusal::new(
+                            ErrorCode::PolicyDenied,
+                            format!(
+                                "injecting credential `{}` toward {dest} was denied: {why}",
+                                c.name
+                            ),
+                        ),
+                    ));
+                }
             }
         }
 

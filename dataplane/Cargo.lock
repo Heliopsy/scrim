@@ -1450,6 +1450,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "scrim-llm",
+ "scrim-policy",
  "scrim-proto",
  "scrim-redact",
  "scrim-toolproxy",
@@ -1499,6 +1500,22 @@ dependencies = [
  "tracing",
  "webpki-roots",
  "zeroize",
+]
+
+[[package]]
+name = "scrim-policy"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "regex",
+ "scrim-llm",
+ "scrim-policy",
+ "scrim-proto",
+ "scrim-redact",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

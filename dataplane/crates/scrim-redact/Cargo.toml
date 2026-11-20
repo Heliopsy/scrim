@@ -20,6 +20,11 @@ sha2 = "0.11.1"
 subtle = "2.6.1"
 zeroize = { workspace = true, features = ["std"] }
 
+[features]
+# Keeps the pre-optimisation guard next to the real one and exposes
+# `Guard::agrees_with_oracle`, for the fuzz targets. Never enable in production.
+oracle = []
+
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 proptest = "1.12.0"

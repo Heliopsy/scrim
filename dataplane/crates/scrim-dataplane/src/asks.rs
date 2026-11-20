@@ -85,6 +85,19 @@ impl Broker {
         reason: &str,
         timeout: Duration,
     ) -> Answer {
+        self.ask_as(request, None, rule, reason, timeout).await
+    }
+
+    /// Asks the control plane about `request` from `caller` (what the transport said about the
+    /// sender, for the control plane to resolve) and waits up to `timeout`.
+    pub async fn ask_as(
+        &self,
+        request: v1::PolicyRequest,
+        caller: Option<v1::AskCaller>,
+        rule: &str,
+        reason: &str,
+        timeout: Duration,
+    ) -> Answer {
         let Some(out) = self.out.lock().ok().and_then(|o| o.clone()) else {
             return Answer::deny("control plane not connected");
         };
@@ -103,6 +116,7 @@ impl Broker {
             deadline_unix_nano: deadline
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX)),
+            caller,
         };
         if out.send(msg).await.is_err() {
             self.forget(id);

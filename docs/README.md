@@ -9,12 +9,14 @@ to start. The behaviour contract, with every requirement and scenario, is the Op
 | Page | Covers |
 | --- | --- |
 | [architecture.md](architecture.md) | Components, the data plane boundary, request, tool, approval and snapshot flows, trust boundaries and deployments, with diagrams |
+| [interception.md](interception.md) | The seven ways agent traffic reaches scrim, managed settings as enforcement, CA trust per runtime, choosing and combining methods, verifying |
 
 ## Getting started
 
 | Page | Covers |
 | --- | --- |
 | [install.md](install.md) | Release archives, signature and provenance checks, container images, reproducible builds |
+| [running.md](running.md) | `scrim proxy`: the daemon, its listeners and sockets, snapshots, capture mode, shutdown, a systemd unit |
 | [configuration.md](configuration.md) | Config files, `SCRIM_*` environment variables, flags, precedence, profiles, reload and every setting |
 
 ## Secrets
@@ -27,11 +29,13 @@ to start. The behaviour contract, with every requirement and scenario, is the Op
 | [stores/vaultwarden.md](stores/vaultwarden.md) | Vaultwarden and Bitwarden-compatible servers, client-side decryption |
 | [stores/local.md](stores/local.md) | Environment variables and files |
 | [catalog.md](catalog.md) | Logical names, host bindings, declared placeholders, profiles and bulk mapping |
+| [ca.md](ca.md) | The tool proxy's interception CA: where it lives, rotation, export, per-user trust install and uninstall |
 
 ## Agents
 
 | Page | Covers |
 | --- | --- |
+| [run.md](run.md) | `scrim run`: what it sets for Claude Code, Codex and other agents, failing closed, signals |
 | [agent-tools.md](agent-tools.md) | The MCP server, `scrim secret` commands and the human entry page |
 | [identity.md](identity.md) | How scrim knows which agent is calling: peer credentials and session tokens |
 

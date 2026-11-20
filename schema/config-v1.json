@@ -7,6 +7,15 @@
     "admin": {
       "additionalProperties": false,
       "properties": {
+        "token": {
+          "default": "",
+          "description": "Reference to the bearer token operators present on a TCP admin listener (admin.url http://host:port). Required for TCP; the Unix socket uses peer credentials instead. scrim approve and friends send it.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_ADMIN_TOKEN",
+          "x-scrim-restart-required": false,
+          "x-scrim-secret-ref": true,
+          "x-scrim-weakening": false
+        },
         "url": {
           "default": "",
           "description": "Address of the scrim admin API for operator commands: unix:/path/to/socket or http(s)://host:port. Empty means unix:$XDG_RUNTIME_DIR/scrim/admin.sock.",
@@ -51,6 +60,15 @@
     "approvals": {
       "additionalProperties": false,
       "properties": {
+        "listen": {
+          "default": "",
+          "description": "TCP address that serves only the decision-link endpoint, for approvals.public-url to point at (usually through a TLS reverse proxy). Empty means decision links are served on the admin listener only.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_APPROVALS_LISTEN",
+          "x-scrim-flag": "--approvals-listen",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
         "poll-interval": {
           "default": "1s",
           "description": "How often a waiting operation re-reads its approval from the state backend; bounds how long a decision recorded elsewhere takes to release it.",
@@ -210,6 +228,15 @@
           "type": "string",
           "x-scrim-env": "SCRIM_DATAPLANE_PATH",
           "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "push-debounce": {
+          "default": "200ms",
+          "description": "How long the control plane waits after a store, catalog, configuration or policy change before it pushes a new snapshot, so bursts of changes become one push.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_DATAPLANE_PUSH_DEBOUNCE",
+          "x-scrim-restart-required": false,
           "x-scrim-weakening": false
         },
         "restart-max-backoff": {
@@ -559,6 +586,265 @@
       "x-scrim-restart-required": false,
       "x-scrim-weakening": false
     },
+    "proxy": {
+      "additionalProperties": false,
+      "properties": {
+        "capture": {
+          "additionalProperties": false,
+          "properties": {
+            "dir": {
+              "default": "",
+              "description": "Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture DIR` sets it.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_PROXY_CAPTURE_DIR",
+              "x-scrim-flag": "--proxy-capture-dir",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "retention": {
+              "default": "168h0m0s",
+              "description": "Captured files older than this are deleted.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_PROXY_CAPTURE_RETENTION",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
+        "chain": {
+          "additionalProperties": false,
+          "properties": {
+            "on-unavailable": {
+              "default": "fail",
+              "description": "When the chained upstream cannot be reached: fail refuses the request, direct sends the already redacted request to the provider and audits the skip.",
+              "enum": [
+                "fail",
+                "direct"
+              ],
+              "type": "string",
+              "x-scrim-env": "SCRIM_PROXY_CHAIN_ON_UNAVAILABLE",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            },
+            "url": {
+              "default": "",
+              "description": "Base URL of a chained upstream (for example a context compression proxy) that receives every redacted provider request in place of the provider. Empty means no chain.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_PROXY_CHAIN_URL",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
+        "forward-listen": {
+          "default": "127.0.0.1:9791",
+          "description": "TCP address of the forward proxy for agents with HTTPS_PROXY set (scrim run sets it): provider hosts go to the LLM proxy, every other host to the tool proxy with credential injection. Empty disables it; keep it on loopback.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_PROXY_FORWARD_LISTEN",
+          "x-scrim-flag": "--proxy-forward-listen",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "listen": {
+          "default": "127.0.0.1:9790",
+          "description": "TCP address of the LLM proxy base URL (agents use http://<address>/anthropic and http://<address>/openai/v1). Empty disables it; keep it on loopback.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_PROXY_LISTEN",
+          "x-scrim-flag": "--proxy-listen",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "socket": {
+          "default": "",
+          "description": "Unix socket path for the LLM proxy base URL, for agents that can connect to one. Empty disables it.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_PROXY_SOCKET",
+          "x-scrim-flag": "--proxy-socket",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "upstream": {
+          "additionalProperties": false,
+          "properties": {
+            "anthropic": {
+              "default": "https://api.anthropic.com",
+              "description": "Base URL Anthropic Messages requests are forwarded to after redaction.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_PROXY_UPSTREAM_ANTHROPIC",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            },
+            "chatgpt": {
+              "default": "https://chatgpt.com",
+              "description": "Base URL requests to chatgpt.com (Codex signed in with ChatGPT, through the forward proxy) are forwarded to after redaction.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_PROXY_UPSTREAM_CHATGPT",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            },
+            "openai": {
+              "default": "https://api.openai.com",
+              "description": "Base URL OpenAI Chat Completions and Responses requests are forwarded to after redaction.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_PROXY_UPSTREAM_OPENAI",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "redaction": {
+      "additionalProperties": false,
+      "properties": {
+        "min-value-length": {
+          "default": 8,
+          "description": "Shortest value matched in free text; shorter values are matched only in exact and encoded forms.",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "type": "integer",
+          "x-scrim-env": "SCRIM_REDACTION_MIN_VALUE_LENGTH",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "placeholder-key-dir": {
+          "default": "",
+          "description": "Directory of the generated placeholder key, used when redaction.placeholder-keys is empty. Empty means $XDG_STATE_HOME/scrim/keys (~/.local/state/scrim/keys).",
+          "type": "string",
+          "x-scrim-env": "SCRIM_REDACTION_PLACEHOLDER_KEY_DIR",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "placeholder-keys": {
+          "additionalProperties": {
+            "properties": {
+              "key": {
+                "type": "string",
+                "x-scrim-secret-ref": true
+              }
+            },
+            "required": [
+              "version",
+              "key"
+            ],
+            "type": "object"
+          },
+          "description": "Placeholder keys by name, each with `version` (1 to 255) and `key` (a reference to at least 16 bytes). The highest version is current; lower ones keep resolving placeholders made before a rotation. Every replica sharing conversations needs the same keys. Empty means a key generated once and kept in redaction.placeholder-key-dir.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+          },
+          "type": "object",
+          "x-scrim-collection": true,
+          "x-scrim-env": "SCRIM_REDACTION_PLACEHOLDER_KEYS",
+          "x-scrim-restart-required": false
+        }
+      },
+      "type": "object"
+    },
+    "restore": {
+      "additionalProperties": false,
+      "properties": {
+        "allow-reveal-credentials": {
+          "default": [],
+          "description": "Glob patterns over store references of credentials that scrim reveal may resolve locally. Empty means reveal never resolves a credential. Restore into responses never resolves credentials, whatever this holds.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_RESTORE_ALLOW_REVEAL_CREDENTIALS",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true
+        },
+        "allow-shell-data-commands": {
+          "default": [],
+          "description": "Commands a shell-role restore may pass display values to, beyond the built-in list of commands that run no code. A listed command that interprets an argument as code turns a restored value into code.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_RESTORE_ALLOW_SHELL_DATA_COMMANDS",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true
+        },
+        "builtin-tools": {
+          "default": true,
+          "description": "Use the built-in table of agent tool roles (Claude Code, Codex). When false only restore.tools have roles and every other tool is unknown, which restores nothing.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_RESTORE_BUILTIN_TOOLS",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "display-mode": {
+          "default": "values",
+          "description": "What the agent displays for display-class values: values resolves them in assistant text, placeholders keeps placeholders (for example while screen sharing). Tool arguments follow the tool roles either way; credentials are never restored.",
+          "enum": [
+            "values",
+            "placeholders"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_RESTORE_DISPLAY_MODE",
+          "x-scrim-flag": "--restore-display-mode",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "tools": {
+          "additionalProperties": {
+            "properties": {},
+            "required": [
+              "role"
+            ],
+            "type": "object"
+          },
+          "description": "Tool aliases by name: `role` (none, read, search, shell, edit, write, network), optional `name` (the tool name exactly as the model calls it, default the instance name), `command-field` for shell, `old-fields` and `new-fields` for edit. An alias overrides the built-in table.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+          },
+          "type": "object",
+          "x-scrim-collection": true,
+          "x-scrim-env": "SCRIM_RESTORE_TOOLS",
+          "x-scrim-restart-required": false
+        }
+      },
+      "type": "object"
+    },
+    "run": {
+      "additionalProperties": false,
+      "properties": {
+        "allow-unredacted-start": {
+          "default": false,
+          "description": "Start the agent anyway when scrim cannot start, its data plane is not ready or no session can be minted. The agent then reaches providers directly and unredacted; scrim run prints a warning.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_RUN_ALLOW_UNREDACTED_START",
+          "x-scrim-flag": "--run-allow-unredacted-start",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true
+        },
+        "mcp": {
+          "default": true,
+          "description": "Register scrim mcp with the agent for this session (Claude Code --mcp-config, Codex -c mcp_servers.scrim). Nothing is written to the agent's own configuration.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_RUN_MCP",
+          "x-scrim-flag": "--run-mcp",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "placeholder-env": {
+          "default": true,
+          "description": "Export each declared catalog placeholder that resolves for the session as an environment variable of the same name holding the placeholder, for example SCRIM_ACME_KEY=SCRIM_ACME_KEY.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_RUN_PLACEHOLDER_ENV",
+          "x-scrim-flag": "--run-placeholder-env",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
     "session": {
       "additionalProperties": false,
       "properties": {
@@ -588,7 +874,7 @@
       "properties": {
         "backend": {
           "default": "memory",
-          "description": "State backend for approvals, grants, sessions and audit metadata. memory writes nothing to disk.",
+          "description": "State backend for approvals, grants, sessions and audit metadata. The local profile uses sqlite ($XDG_STATE_HOME/scrim/state.db); ci and k8s use memory, which writes nothing to disk (set postgres for shared state).",
           "enum": [
             "memory",
             "sqlite",
@@ -705,6 +991,98 @@
       "x-scrim-collection": true,
       "x-scrim-env": "SCRIM_STORES",
       "x-scrim-restart-required": true
+    },
+    "tool-proxy": {
+      "additionalProperties": false,
+      "properties": {
+        "ca": {
+          "additionalProperties": false,
+          "properties": {
+            "cert-file": {
+              "default": "",
+              "description": "PEM certificate of an operator-supplied interception CA, used together with tool-proxy.ca.key. An operator-supplied CA is never rotated by scrim; a warning is logged once it is within tool-proxy.ca.rotate-before of expiry.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_TOOL_PROXY_CA_CERT_FILE",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "dir": {
+              "default": "",
+              "description": "Directory of the generated interception CA (certificates, private keys, rotation state, trust manifest). Empty means $XDG_STATE_HOME/scrim/ca (~/.local/state/scrim/ca). Created with mode 0700.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_TOOL_PROXY_CA_DIR",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "key": {
+              "default": "",
+              "description": "Reference to the PKCS#8 PEM private key of the operator-supplied CA in tool-proxy.ca.cert-file (env:, file:, cred: or a store reference). Empty means scrim generates and rotates its own CA.",
+              "pattern": "^$|^(env:[A-Za-z_][A-Za-z0-9_]*|file:/.*|cred:[A-Za-z0-9_@.:-]+|[a-z][a-z0-9+.-]*://[^#].*)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_TOOL_PROXY_CA_KEY",
+              "x-scrim-restart-required": true,
+              "x-scrim-secret-ref": true,
+              "x-scrim-weakening": false
+            },
+            "overlap": {
+              "default": "168h0m0s",
+              "description": "After a rotation, how long the previous CA stays trusted through a cross certificate and in the trust bundle. Capped at the previous certificate's expiry.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_TOOL_PROXY_CA_OVERLAP",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "rotate-before": {
+              "default": "720h0m0s",
+              "description": "A generated CA is rotated when less than this much of its validity remains. For an operator-supplied CA it is how early the expiry warning starts.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_TOOL_PROXY_CA_ROTATE_BEFORE",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "validity": {
+              "default": "17520h0m0s",
+              "description": "Validity of each generated CA certificate.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_TOOL_PROXY_CA_VALIDITY",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
+        "capture-rules": {
+          "additionalProperties": {
+            "properties": {},
+            "required": [
+              "hosts",
+              "store-ref"
+            ],
+            "type": "object"
+          },
+          "description": "Response capture rules by name: `hosts`, optional `methods`, `path` glob and `status` codes select the response; exactly one of `json-pointer` and `header` selects the field; `store-ref` is the store reference the value is written to. The agent receives the reference's placeholder instead.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+          },
+          "type": "object",
+          "x-scrim-collection": true,
+          "x-scrim-env": "SCRIM_TOOL_PROXY_CAPTURE_RULES",
+          "x-scrim-restart-required": false
+        },
+        "listen": {
+          "default": "",
+          "description": "TCP address of the HTTPS tool proxy (credential injection and response redaction) for tools pointed at it directly. Empty disables it.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_TOOL_PROXY_LISTEN",
+          "x-scrim-flag": "--tool-proxy-listen",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
     },
     "tools": {
       "additionalProperties": false,

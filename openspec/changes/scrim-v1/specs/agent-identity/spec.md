@@ -90,6 +90,28 @@ tokens of an agent at once. A revoked or expired token SHALL be refused on every
 - **WHEN** a revoked token is presented
 - **THEN** the call is refused and audited as a revoked credential
 
+### Requirement: Sessions are kept in the state backend
+
+The system SHALL store session tokens in the configured state backend, keeping only a hash of each
+token, and SHALL record creating and revoking a session in the audit log without the token or its
+hash. With a durable backend a session and its revocation SHALL survive a control plane restart;
+with the `memory` backend a restart SHALL end every session.
+
+#### Scenario: Restart with a durable backend
+
+- **WHEN** scrim with `state.backend: sqlite` restarts while a `scrim run` session is active
+- **THEN** the session's token is still accepted from its process tree after the restart
+
+#### Scenario: Revocation survives a restart
+
+- **WHEN** a session is revoked and scrim then restarts with a durable backend
+- **THEN** the token is refused as revoked
+
+#### Scenario: Restart with the memory backend
+
+- **WHEN** scrim with `state.backend: memory` restarts while a `scrim run` session is active
+- **THEN** the session's token is refused
+
 ### Requirement: Kubernetes service account identity
 
 The system SHALL identify in-cluster callers by projected service account tokens with a scrim-specific
@@ -137,6 +159,24 @@ account, labels, SPIFFE ID), so each agent can be limited to its own secrets, de
 
 - **WHEN** agent A may use GitHub and agent B only read-only Hetzner
 - **THEN** agent B's request to use the GitHub credential is denied
+
+### Requirement: Data-plane identity from the transport
+
+The data plane SHALL take a request's caller only from its transport: Unix socket peer credentials,
+the user of `Proxy-Authorization: Basic` on the forward proxy, or the `x-scrim-session` header on a
+base-URL listener, which SHALL NOT be forwarded. A request with none of these SHALL be an unknown
+caller. A rule on the agent of a request that carries one SHALL be decided by the control plane,
+with what the transport said in the ask, since the data plane cannot verify sessions.
+
+#### Scenario: Request without a session
+
+- **WHEN** a request through the forward proxy names no session and a rule denies unknown callers
+- **THEN** the data plane refuses it without asking the control plane
+
+#### Scenario: Request naming a session
+
+- **WHEN** a provider request carries `x-scrim-session` and a rule on `agent.session` could deny it
+- **THEN** the data plane asks the control plane with the session id, and the provider never sees the header
 
 ### Requirement: Identity is not taken from request content
 

@@ -46,28 +46,53 @@ for f in sent.findings { audit_guard_intervention(f.entry, f.view) }
 
 **Variants (`variants.rs`).** Each value is compiled with the forms agents and their tools produce:
 raw; JSON-escaped (minimal, `\/`, `\uXXXX` lower and upper case, PHP, Go and Gson HTML-safe, and
-double-escaped); the stable inner base64 substring at byte offsets 0, 1 and 2, standard and
+nested, see below); the stable inner base64 substring at byte offsets 0, 1 and 2, standard and
 URL-safe; hex lower and upper; percent-encoding (`%2F`, `%2f`, form encoding, Python `quote`,
 JavaScript `encodeURIComponent`). Duplicates are removed. Values below `min_len` (default 8) are
 short: matched verbatim and in whole encodings only (the full base64 of the value alone, padded and
 unpadded, instead of inner fragments). Values below `short_floor` (4) are rejected and reported.
 
+JSON text inside a JSON string (tool-call `arguments`, a tool result holding `JSON.stringify`
+output, an MCP text block wrapping JSON) escapes a value once per level. Each value is compiled
+escaped two to `json_depth` (default 3, at most 4) times: `inner^k outer^(d-k)`, the inner levels
+in any single-level style above, the outer levels in minimal, Go or Python escaping (one program,
+the agent, writes the outer levels). A value with nothing JSON escapes adds no pattern; one with
+only `"` and `\` adds one per level; the leak suite's password (all the symbols, ASCII) adds 15 at
+depth 3, and with a non-ASCII letter 43. Other mixes, and every character as `\uXXXX`, are the
+guard's: it unescapes to the same depth. Depth 3 covers `arguments` holding JSON that itself holds
+a JSON string (Codex code mode `text(JSON.stringify(result))` of a tool result); 4 is allowed for
+deeper tool chains at about 5 % more patterns. Measured on the bench sets (10, 1,000 and 10,000
+secrets): 73, 6,641 and 65,832 patterns before, 87, 7,044 and 69,963 at depth 3 (+19 %, +6 %,
++6 %; the 10-value set was already split into two Teddy automata and still is). Redact throughput
+on the 1 MB bench bodies, best of 40, moved within 0 to 13 % (machine noise is about as large);
+on a body made only of nested tool turns, the third JSON view costs the guard about 15 %.
+
 **Matching (`matcher.rs`).** Non-overlapping leftmost-longest over the raw bytes; the request is
 never decoded or re-serialised. Two engines, byte-identical output, chosen by pattern count
 (`engine_threshold`, default 256):
 
-* Aho-Corasick. Its SIMD prefilter only applies up to 64 patterns, and throughput falls about
-  tenfold past that, so sets of up to 256 patterns are split into automata of 64 whose matches are
-  merged.
-* Hash-window (D13). Every pattern of eight bytes or more is keyed by its first eight bytes. Each
-  eight-byte window of the input is hashed and tested against a blocked Bloom filter (one word, two
-  bits). A hit is looked up in a prefix table pointing at the lexicographically sorted patterns
-  with that prefix; the longest pattern that is a prefix of the input is the predecessor found by
-  binary search, or one of its precomputed longest-proper-prefix ancestors. Patterns shorter than
+* Aho-Corasick. Its SIMD (Teddy) prefilter only applies up to 64 patterns, and throughput falls
+  about tenfold past that. Sets of up to 128 patterns use the crate's packed Teddy searcher
+  directly, with its heuristic 64-pattern limit lifted (one pass); larger sets of up to 256
+  patterns, or CPUs without SSSE3, are split into automata of 64 whose matches are merged.
+* Hash-window (D13). Every pattern of eight bytes or more is keyed by its first eight bytes. A
+  first filter holds the five-byte grams at offsets 0 to 3 of every such pattern and is probed at
+  every fourth input position only; a hit there checks the (up to four) eight-byte windows that
+  can start a pattern containing that gram, each hashed and tested against a blocked Bloom filter
+  (one word, two bits). A window hit is looked up in a prefix table pointing at the
+  lexicographically sorted patterns with that prefix; the longest pattern that is a prefix of the
+  input is the predecessor found by binary search, or one of its precomputed longest-proper-prefix
+  ancestors. Patterns shorter than
   eight bytes go to a small Aho-Corasick tier merged by the same rule.
 
 A genuine placeholder already in the input (one that resolves) is copied byte for byte, so an
 unchanged conversation prefix redacts to identical bytes and prompt caching keeps working.
+
+In `protect`, bodies of at least `parallel_min_bytes` (512 KiB) are matched on up to
+`parallel_threads` (4) scoped threads: each region runs its own cursor, the region lists are
+stitched (a cursor from the last match's end runs until it meets a match the next region also
+found), and seeks past genuine placeholders resync the same way. The output is byte for byte what
+one thread produces; `redact` and `redact_with` stay on the calling thread.
 
 **Placeholders (`placeholder.rs`).** `⟦scrim:<slug>:<vv><tag>⟧`, slug `[a-z0-9-]{1,48}`, `vv` the
 key version in two hex digits, `tag` the first 8 bytes of
@@ -78,15 +103,25 @@ time.
 
 **Guard (`guard.rs`).** Shares no matching code with the redactor and works the other way round:
 it decodes the bytes into views and searches the raw values there, ASCII case-insensitively. Views:
-raw, JSON-unescaped once and twice, percent-decoded, every base64 run (both alphabets, joined
-across line breaks) at all four alignments, every hex run (any case) at both alignments. Values are
-indexed by five-byte grams at offsets 0 to 3, so only every fourth position of a view is probed.
-Exact necessary conditions keep the cost down: 64-byte blocks without an eleven-character base64
-run are skipped, runs whose character classes cannot hold any value's encoding are not decoded,
-and the second JSON view and the URL view are only scanned near decoded units, within the longest
-value containing a byte those units produced. Findings are mapped back to the outgoing bytes and
-replaced with the value's placeholder; the repaired body is checked again. A value still present,
-or more findings than `guard_max_repairs`, withholds the request.
+raw, JSON-unescaped once, twice and up to `json_depth` times, percent-decoded, every base64 run
+(both alphabets, joined across line breaks) at all four alignments, every hex run (any case) at both alignments. Values are
+indexed by five-byte grams at offsets 0 to 3, so only every fourth position of a view is probed;
+a probe folds bit 5 of every byte and tests a blocked Bloom filter (one word, two bits, about 16
+bits per gram) before the exact, case-insensitive check. Exact necessary conditions keep the cost
+down: one pass builds bitmaps of base64 and hex characters, from which runs of eleven base64
+characters and sixteen hex digits are found by shift-and, so other text is never walked byte by
+byte; runs whose character classes cannot hold any value's encoding are not decoded; each run is
+decoded once into its bit stream and the other alignments are read from it at a bit offset; values
+containing a backslash (which only the raw bytes show) are found from the backslash positions the
+JSON pass records; and the second JSON view and the URL view are only scanned near decoded units,
+within the longest value containing a byte those units produced. Bodies of at least
+`parallel_min_bytes` (512 KiB) are split into up to `parallel_threads` (4) regions checked on scoped
+threads, with region ends where no base64 run can cross; the verdict is the same as on one
+thread. Findings are mapped back to the outgoing bytes and replaced with the value's placeholder;
+the repaired body is checked again. A value still present, or more findings than
+`guard_max_repairs`, withholds the request. The guard as it was before these optimisations is kept
+as a test oracle (`guard_oracle.rs`, feature `oracle`): property tests and the `guard` fuzz target
+check that both reach the same verdict, repaired bytes and findings.
 
 **Detectors (`detect.rs`).** Pattern rules for AWS access keys, GitHub (classic and fine-grained),
 Anthropic, OpenAI, GitLab, Slack, Stripe, Google API keys, npm tokens, JWTs and private key blocks
@@ -103,6 +138,8 @@ explicit primitive for injection at the network edge.
 
 * Values shorter than 4 bytes are not protected; values shorter than `min_len` are not found
   inside longer base64 streams.
+* Base64 or hex of a JSON-escaped form (a base64-encoded JSON file holding the value with a
+  quote) is not compiled, and the guard does not JSON-unescape decoded base64.
 * The guard folds ASCII case only. Transforms other than the listed encodings (reversal, rot13,
   spacing, compression) are out of scope here; the leak checker and the bypass matrix cover them.
 * `aho-corasick` keeps its own copy of patterns that this crate cannot wipe. Pattern bytes owned by
@@ -113,27 +150,39 @@ explicit primitive for injection at the network edge.
 `cargo bench -p scrim-redact` (criterion). Conditions mirror `bench/redact-bench`: sets of 10,
 1,000 and 10,000 secrets with all variants, bodies of 100 KB, 1 MB and 4 MB with one hit per 4 KiB
 or none. `SCRIM_REDACT_GOFIX=<dir>` runs on the Go generator's fixtures instead. The bench also
-prints p50/p99 of `protect` per 1 MB request and of restoration per chunk.
+prints p50/p99 of redact, guard and `protect` per request (1 MB bodies;
+`SCRIM_REDACT_LATENCY_SIZES=100k,1m,4m` for all sizes) and of restoration per chunk.
+`SCRIM_REDACT_THREADS` overrides `parallel_threads`.
 
-Reference run: Intel Xeon W-2295 (18 cores, 3.0 GHz), one pinned core, rustc 1.100.0, on a shared
-machine with other load (load average around 10), so numbers carry some noise. Throughput in
-MiB/s (criterion median, 1 MB bodies, hits / clean); redact-bench numbers are from
-`bench/redact-bench/results/summary.md` (MB/s, same conditions).
+Reference run: Intel Xeon W-2295 (18 cores, 3.0 GHz), rustc 1.100.0, `json_depth` 3 (87, 7,044 and
+69,963 patterns), on a shared machine with other load (load average about 5 during the runs), so
+numbers carry noise, p99 most of all. Single-thread runs are pinned to one core whose hyperthread
+sibling was the least busy; four-thread runs to four such cores. Redact throughput (criterion
+median, auto engine, hits / clean):
 
-| set | redact, auto engine | redact, one AC automaton | redact-bench ac-auto | protect (redact + guard) |
-| --- | --- | --- | --- | --- |
-| 10 | 1,429 / 1,481 (split AC) | n/a (split applies) | 3,259 / 3,863 | 208 / 207 |
-| 1,000 | 508 / 503 (hash-window) | 98 / 99 | 119 / 119 (ac-dfa 301 / 378) | 141 / 146 |
-| 10,000 | 471 / 458 (hash-window) | n/a | 97 / 97 | 105 / 101 |
+| set | 100 KB | 1 MB | 4 MB |
+| --- | --- | --- | --- |
+| 10 (packed Teddy) | 1.91 / 2.05 GiB/s | 1.79 / 1.80 GiB/s | 1.77 / 1.71 GiB/s |
+| 1,000 (hash-window) | 1.07 / 1.05 GiB/s | 1,016 / 1,015 MiB/s | 1,011 / 1,020 MiB/s |
+| 10,000 (hash-window) | 1,024 / 1,042 MiB/s | 932 / 955 MiB/s | 923 / 884 MiB/s |
 
-Latency per 1 MB request, `protect` (p50 / p99): 10 secrets 4.9 / 7.9 ms, 1,000 secrets
-6.5 / 9.7 ms, 10,000 secrets 9.0 / 15.0 ms. Redact alone p99: 1.0, 3.5 and 3.6 ms. Restore per
-chunk p99: 0.27 to 0.36 µs. Snapshot build: 20 ms (10), 24 ms (1,000), 212 ms (10,000).
+`protect` per 1 MB request, p50 / p99 in ms, 300 requests per cell (hits / clean):
 
-Against the performance spec: restore per chunk is far inside its 50 µs budget. The redact + guard
-p99 budget (5 ms per 1 MB at 1,000 secrets, 10 ms at 10,000) is **not met**: the guard costs about
-4 to 6 ms per MB, more than the redactor. Task 2.0's 500 MB/s at 10,000 secrets is met on some
-bodies and missed by up to 15 % on others.
+| set | one thread | four threads (default) |
+| --- | --- | --- |
+| 10 | 3.11 / 3.56, 3.16 / 3.62 | 1.87 / 3.71, 1.63 / 2.43 |
+| 1,000 | 4.20 / 4.85, 4.03 / 4.60 | 2.38 / 4.43, 2.19 / 3.75 |
+| 10,000 | 4.43 / 5.06, 4.53 / 5.20 | 2.37 / 4.85, 2.26 / 4.20 |
+
+Of a single-thread `protect` on 1 MB, the redactor takes about 1 ms and the guard 3.1 to 3.5 ms.
+Restore per chunk p99: 0.25 to 0.36 µs.
+
+Against the performance spec: restore per chunk is far inside its 50 µs budget. With the default
+four threads, the redact + guard budget is met: at 1,000 secrets p99 3.8 to 4.4 ms against 5 ms,
+at 10,000 secrets 4.2 to 4.9 ms against 10 ms. On one thread it is met at 10,000 and just met at
+1,000 (4.6 to 4.9 ms). Under heavier machine load (15 and more) p99 at 1,000 secrets can go past
+5 ms, mostly from thread wake-up latency. Task 2.0's 500 MB/s at 10,000 secrets is met on every
+body size (880 MiB/s and up).
 
 ## Fuzzing
 

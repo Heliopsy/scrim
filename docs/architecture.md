@@ -84,7 +84,7 @@ flowchart TB
     llm["scrim-llm<br>provider codecs, LLM proxy"]
     redact["scrim-redact<br>Redactor, Independent guard,<br>Restorer"]
     tp["scrim-toolproxy<br>Tool proxy, CA, injection,<br>response redaction"]
-    dppolicy["scrim-policy<br>decision table evaluator"]
+    dppolicy["scrim-policy<br>decision table, restore policy,<br>escaping"]
   end
 
   subgraph listen["Listeners"]
@@ -144,8 +144,9 @@ Status: on `main` the data plane binds tool-proxy and forward-proxy listeners on
 forward-proxy host goes to the tool proxy. Base URL listeners, routing provider hosts from the
 forward proxy to `scrim-llm`, and the `scrim-redact` engine inside `scrim-llm` are in progress on
 `feat/dataplane-wiring`. The snapshot builder, the admin and decision-link listeners and
-`scrim proxy` are in progress on `feat/daemon`; `scrim-policy` on `feat/rust-policy`. The local
-agent API, entry page and metrics listener are on `main` (`scrim api serve`).
+`scrim proxy` are in progress on `feat/daemon`. The data plane decides with `scrim-policy` (decision
+table and restore policy from the snapshot, `policy_engine` `table/v1`). The local agent API, entry
+page and metrics listener are on `main` (`scrim api serve`).
 
 ## Request path
 
@@ -204,8 +205,11 @@ stays a placeholder, which is safe and visible.
 
 Status: the LLM proxy, codecs, restorer and fail-closed handling are on `main` in `scrim-llm`, and
 the redactor and guard in `scrim-redact`. Wiring them together in the data plane and binding the
-base URL listener is in progress on `feat/dataplane-wiring`. Until `scrim-policy` lands, that branch
-restores display values into assistant text only and keeps every placeholder in tool arguments.
+base URL listener is in progress on `feat/dataplane-wiring`. The data plane restores under
+`scrim-policy` ([README](../dataplane/crates/scrim-policy/README.md)): text follows the display mode,
+shell and edit tool calls are buffered and restored escaped, credentials are never restored, and
+deny or ask rules on `op == "restore"` keep the placeholder. Until the control plane fills
+`Snapshot.restore` (in progress on `feat/daemon`), a snapshot without it restores nothing.
 
 ## Tool call with a credential
 
@@ -262,8 +266,10 @@ answering, and the agent receives the placeholder. A response the proxy cannot s
 and so is a captured field whose store write fails.
 
 Status: the tool proxy, CA, bindings, injection, capture and response redaction are on `main` in
-`scrim-toolproxy`, and the supervisor's capture stream is on `main`. The control-plane capture
-handler and the CA carried in the snapshot are in progress on `feat/daemon`.
+`scrim-toolproxy`, and the supervisor's capture stream is on `main`. After the binding checks, every
+injection is decided by the decision table (`op == "inject"`), asking the control plane where a rule
+says so, and a denial is `403 policy_denied`. The control-plane capture handler and the CA carried in
+the snapshot are in progress on `feat/daemon`.
 
 ## Ask and approval
 
@@ -325,10 +331,13 @@ it is approved the grant it leaves behind lets the agent's retry through. Approv
 timeout, and break-glass denies everything except redaction.
 
 Status: the gate, approvals, signed links, notifiers, grants and break-glass are on `main`, as is
-the Go reference evaluator for the decision table. The Rust evaluator is in progress on
-`feat/rust-policy`; until it lands nothing in the data plane sends an ask. Connecting the
-supervisor's ask stream to the gate and serving decision links and the admin API are in progress on
-`feat/daemon`.
+the Go reference evaluator for the decision table. The data plane evaluates the table with
+`scrim-policy` for every injection and provider request and sends asks over the `Asks` stream,
+bounded by `Policy.ask_timeout_millis` (denied on timeout or with the stream down, grants never
+cached). An ask carries what the transport said about the caller (`AskCaller`: the session a
+request names, Unix peer credentials), since the data plane cannot verify sessions. Connecting the
+supervisor's ask stream to the gate, resolving `AskCaller`, filling `ask_timeout_millis`, and serving
+decision links and the admin API are in progress on `feat/daemon`.
 
 ## Snapshot lifecycle
 
@@ -522,5 +531,5 @@ image are on `main`.
 | Redactor, guard, restorer, placeholders | `dataplane/crates/scrim-redact` | D2, D3, D4, D13 | |
 | Tool proxy, CA, injection | `dataplane/crates/scrim-toolproxy` | D5 | |
 | Generated boundary code (Rust) | `dataplane/crates/scrim-proto` | D12 | |
-| Data plane policy (in progress) | `dataplane/crates/scrim-policy` | D7 | |
+| Data plane policy, restore policy, escaping | `dataplane/crates/scrim-policy` | D5, D7 | [README](../dataplane/crates/scrim-policy/README.md) |
 | Leak suite | `internal/leak` | D4 | [leak-assurance.md](leak-assurance.md) |

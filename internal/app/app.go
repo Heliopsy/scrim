@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/heliopsy/scrim/internal/config"
@@ -54,6 +55,41 @@ type App struct {
 	stop context.CancelFunc
 	// SnapshotSource builds data plane snapshots; nil sends an empty one.
 	SnapshotSource dataplane.SnapshotFunc
+
+	valuesMu   sync.Mutex
+	valuesSubs map[int]func(store string)
+	valuesNext int
+}
+
+// OnValuesChange calls fn with the store's name after every change to a
+// store's value set (load, refresh, write, expiry) and returns a function
+// that removes it. fn runs on the refresher's goroutine and must not block.
+func (a *App) OnValuesChange(fn func(store string)) (cancel func()) {
+	a.valuesMu.Lock()
+	defer a.valuesMu.Unlock()
+	if a.valuesSubs == nil {
+		a.valuesSubs = map[int]func(string){}
+	}
+	id := a.valuesNext
+	a.valuesNext++
+	a.valuesSubs[id] = fn
+	return func() {
+		a.valuesMu.Lock()
+		defer a.valuesMu.Unlock()
+		delete(a.valuesSubs, id)
+	}
+}
+
+func (a *App) valuesChanged(store string) {
+	a.valuesMu.Lock()
+	subs := make([]func(string), 0, len(a.valuesSubs))
+	for _, fn := range a.valuesSubs {
+		subs = append(subs, fn)
+	}
+	a.valuesMu.Unlock()
+	for _, fn := range subs {
+		fn(store)
+	}
 }
 
 // New builds the components from the configuration opts names and starts
@@ -121,7 +157,12 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 	a.Health.Live("process", func(context.Context) error { return nil })
 	a.Health.Ready("state", a.State.Health)
 
-	opened, err := storeconfig.Open(ctx, cfg, stores.DefaultRegistry)
+	opened, err := storeconfig.OpenWith(ctx, cfg, stores.DefaultRegistry, storeconfig.Options{
+		OnChange: a.valuesChanged,
+		OnStatus: func(st refresh.Status) {
+			a.Instruments.StoreHealth(st.Store, st.Healthy, st.LastSuccess, st.Values, st.State == refresh.StateDegraded)
+		},
+	})
 	if err != nil {
 		_ = a.State.Close()
 		return nil, err

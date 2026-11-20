@@ -15,7 +15,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4.13"
-scrim-redact = { path = ".." }
+scrim-redact = { path = "..", features = ["oracle"] }
 
 [workspace]
 members = ["."]
