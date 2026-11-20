@@ -418,14 +418,10 @@ fn ephemeral_key(taken: &[rc::PlaceholderKey]) -> Result<rc::PlaceholderKey, Rej
         .find(|v| taken.iter().all(|k| k.version() != *v))
         .ok_or_else(|| invalid("no free placeholder key version"))?;
     let mut key = zeroize::Zeroizing::new([0u8; 32]);
-    let mut filled = 0;
-    while filled < key.len() {
-        match rustix::rand::getrandom(&mut key[filled..], rustix::rand::GetRandomFlags::empty()) {
-            Ok(n) => filled += n,
-            Err(rustix::io::Errno::INTR) => {}
-            Err(e) => return Err(invalid(format!("no randomness for a placeholder key: {e}"))),
-        }
-    }
+    // The OS generator on every platform (getrandom(2) on Linux,
+    // getentropy(2) on macOS); it retries interrupted calls itself.
+    getrandom::fill(key.as_mut_slice())
+        .map_err(|e| invalid(format!("no randomness for a placeholder key: {e}")))?;
     rc::PlaceholderKey::new(version, key.as_slice())
         .map_err(|e| invalid(format!("placeholder key: {e}")))
 }

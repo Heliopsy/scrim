@@ -67,7 +67,7 @@ impl Secrets {
     /// Secrets whose display value is `db`.
     fn with_db(db: String) -> Self {
         let mut key = vec![0u8; 32];
-        rustix::rand::getrandom(&mut key, rustix::rand::GetRandomFlags::empty()).unwrap();
+        getrandom::fill(&mut key).unwrap();
         let api = random_value("sk_test_");
         let k = rc::PlaceholderKey::new(1, &key).unwrap();
         let db_ph =
