@@ -256,6 +256,14 @@
           "x-scrim-env": "SCRIM_DATAPLANE_START_TIMEOUT",
           "x-scrim-restart-required": false,
           "x-scrim-weakening": false
+        },
+        "upstream-ca-file": {
+          "default": "",
+          "description": "PEM bundle of extra root certificates the data plane trusts for upstream TLS, in the LLM proxy and the tool proxy (private API hosts, a corporate TLS-inspecting proxy). The system roots stay trusted. A file that is set but unreadable, or holds no certificate, stops the data plane from starting. Empty means the system roots only.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_DATAPLANE_UPSTREAM_CA_FILE",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
         }
       },
       "type": "object"

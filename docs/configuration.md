@@ -234,6 +234,7 @@ is out of date.
 | [`dataplane.push-debounce`](#dataplanepush-debounce) | duration | `200ms` | hot |
 | [`dataplane.restart-max-backoff`](#dataplanerestart-max-backoff) | duration | `30s` | hot |
 | [`dataplane.start-timeout`](#dataplanestart-timeout) | duration | `10s` | hot |
+| [`dataplane.upstream-ca-file`](#dataplaneupstream-ca-file) | string | `""` | restart required |
 | [`entry.listen`](#entrylisten) | string | `127.0.0.1:0` | restart required |
 | [`grants.default-ttl`](#grantsdefault-ttl) | duration | `30m0s` | hot |
 | [`grants.max-ttl`](#grantsmax-ttl) | duration | `8h0m0s` | hot |
@@ -634,6 +635,18 @@ How long the data plane may take to start and answer the handshake.
 | Environment | `SCRIM_DATAPLANE_START_TIMEOUT` |
 | Flag | none |
 | Reload | hot |
+
+#### `dataplane.upstream-ca-file`
+
+PEM bundle of extra root certificates the data plane trusts for upstream TLS, in the LLM proxy and the tool proxy (private API hosts, a corporate TLS-inspecting proxy). The system roots stay trusted. A file that is set but unreadable, or holds no certificate, stops the data plane from starting. Empty means the system roots only.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_DATAPLANE_UPSTREAM_CA_FILE` |
+| Flag | none |
+| Reload | restart required |
 
 ### entry
 
