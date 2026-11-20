@@ -154,34 +154,35 @@ prints p50/p99 of redact, guard and `protect` per request (1 MB bodies;
 `SCRIM_REDACT_LATENCY_SIZES=100k,1m,4m` for all sizes) and of restoration per chunk.
 `SCRIM_REDACT_THREADS` overrides `parallel_threads`.
 
-Reference run: Intel Xeon W-2295 (18 cores, 3.0 GHz), rustc 1.100.0, on a shared machine with
-other load (load average 5 to 15 during the runs), so numbers carry noise, p99 most of all. Single
-thread runs are pinned to one core whose hyperthread sibling was the least busy; four-thread runs
-to four such cores. Redact throughput (criterion median, auto engine, hits / clean):
+Reference run: Intel Xeon W-2295 (18 cores, 3.0 GHz), rustc 1.100.0, `json_depth` 3 (87, 7,044 and
+69,963 patterns), on a shared machine with other load (load average about 5 during the runs), so
+numbers carry noise, p99 most of all. Single-thread runs are pinned to one core whose hyperthread
+sibling was the least busy; four-thread runs to four such cores. Redact throughput (criterion
+median, auto engine, hits / clean):
 
 | set | 100 KB | 1 MB | 4 MB |
 |---|---|---|---|
-| 10 (packed Teddy) | 1.86 / 1.91 GiB/s | 1.71 / 1.71 GiB/s | 1.72 / 1.61 GiB/s |
-| 1,000 (hash-window) | 1.24 / 1.25 GiB/s | 1.17 / 1.20 GiB/s | 1.14 / 1.17 GiB/s |
-| 10,000 (hash-window) | 1.16 / 1.15 GiB/s | 1.02 / 1.09 GiB/s | 1.01 / 1.09 GiB/s |
+| 10 (packed Teddy) | 1.91 / 2.05 GiB/s | 1.79 / 1.80 GiB/s | 1.77 / 1.71 GiB/s |
+| 1,000 (hash-window) | 1.07 / 1.05 GiB/s | 1,016 / 1,015 MiB/s | 1,011 / 1,020 MiB/s |
+| 10,000 (hash-window) | 1,024 / 1,042 MiB/s | 932 / 955 MiB/s | 923 / 884 MiB/s |
 
-`protect` per 1 MB request with hits, p50 / p99 in ms, range over two rounds of 300 requests (load
-4 to 7):
+`protect` per 1 MB request, p50 / p99 in ms, 300 requests per cell (hits / clean):
 
-| set | one thread | four threads |
+| set | one thread | four threads (default) |
 |---|---|---|
-| 10 | 3.0-3.2 / 4.6-5.2 | 1.8 / 3.2-3.3 |
-| 1,000 | 3.9-4.2 / 5.0-7.5 | 2.2-2.6 / 5.0-5.5 |
-| 10,000 | 4.2-4.3 / 5.5-6.9 | 2.2-2.3 / 3.0-3.9 |
+| 10 | 3.11 / 3.56, 3.16 / 3.62 | 1.87 / 3.71, 1.63 / 2.43 |
+| 1,000 | 4.20 / 4.85, 4.03 / 4.60 | 2.38 / 4.43, 2.19 / 3.75 |
+| 10,000 | 4.43 / 5.06, 4.53 / 5.20 | 2.37 / 4.85, 2.26 / 4.20 |
 
-Of a single-thread `protect` on 1 MB, the redactor takes about 0.9 ms and the guard 3.1 to 3.4 ms.
+Of a single-thread `protect` on 1 MB, the redactor takes about 1 ms and the guard 3.1 to 3.5 ms.
 Restore per chunk p99: 0.25 to 0.36 µs.
 
 Against the performance spec: restore per chunk is far inside its 50 µs budget. With the default
-four threads, the redact + guard budget (p99 under 5 ms per 1 MB at 1,000 secrets, 10 ms at
-10,000) is met at 10,000 with a wide margin and at 1,000 at p50 with a wide margin, while p99 at
-1,000 sits close to 5 ms on this loaded machine and goes over it when the load spikes. Task 2.0's
-500 MB/s at 10,000 secrets is met on every body size (above 1 GiB/s).
+four threads, the redact + guard budget is met: at 1,000 secrets p99 3.8 to 4.4 ms against 5 ms,
+at 10,000 secrets 4.2 to 4.9 ms against 10 ms. On one thread it is met at 10,000 and just met at
+1,000 (4.6 to 4.9 ms). Under heavier machine load (15 and more) p99 at 1,000 secrets can go past
+5 ms, mostly from thread wake-up latency. Task 2.0's 500 MB/s at 10,000 secrets is met on every
+body size (880 MiB/s and up).
 
 ## Fuzzing
 
