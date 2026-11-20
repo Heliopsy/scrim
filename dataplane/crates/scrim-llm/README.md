@@ -26,8 +26,8 @@ Spec: `openspec/changes/scrim-v1/specs/llm-proxy`, plus the base-URL and forward
   value is redacted on its raw bytes and again percent-decoded (`+` as a space in the query), and
   re-encoded where it changed. Placeholders in header values leave in percent form
   (`%E2%9F%A6scrim:...%E2%9F%A7`), so values stay visible ASCII. The guard checks the exact request
-  line and header block plus the decoded target; a value it cannot repair in place (a header name) refuses the request. Response
-  headers are returned as sent, nothing restored in them.
+  line and header block plus the decoded target; a value it cannot repair in place (a header
+  name) refuses the request. Response headers are returned as sent, nothing restored in them.
 - **Request side.** The codec parses the body with a strict span scanner (no re-serialisation) and
   lists byte-stable spans: allowlisted configuration (`model`, `max_tokens`, `stream`, ...),
   thinking text and signatures, redacted thinking, `encrypted_content`, reasoning items, and base64
