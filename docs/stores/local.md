@@ -91,8 +91,8 @@ Formats:
 
 - `raw`: the whole file is one field, `value`. Use it for files holding a single token, such as
   Kubernetes secret mounts and systemd credentials.
-- `dotenv`: one field per `KEY=VALUE` line. Blank lines and `#` comments are skipped, `export ` before
-  a key is allowed, unquoted values lose surrounding spaces and a trailing ` # comment`,
+- `dotenv`: one field per `KEY=VALUE` line. Blank lines and `#` comments are skipped, an `export` prefix before
+  a key is allowed, unquoted values lose surrounding spaces and a trailing comment (space, then `#`),
   single-quoted values are literal, and double-quoted values decode `\n`, `\r`, `\t`, `\"`, `\\`,
   `\$` and `` \` ``. Quoted values may span lines. Variables are not expanded. A repeated key keeps
   its last value.
