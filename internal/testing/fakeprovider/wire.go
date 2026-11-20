@@ -11,10 +11,19 @@ import (
 
 // gen writes replies in each API's wire format.
 type gen struct {
+	// idSeed makes reply IDs a function of the request, so the same
+	// conversation replayed gets the same IDs and stays cacheable.
+	idSeed string
+	n      int
 	chunk  int
 	model  string
 	input  int
 	cached int
+}
+
+func (g *gen) id(prefix string) string {
+	g.n++
+	return StableID(prefix, fmt.Sprintf("%s/%d", g.idSeed, g.n))
 }
 
 func (g *gen) pieces(s string) []string {
@@ -93,7 +102,7 @@ func (g *gen) anthropicUsage(out int) map[string]any {
 }
 
 func (g *gen) anthropic(w http.ResponseWriter, r Reply, stream bool) {
-	id := newID("msg_")
+	id := g.id("msg_")
 	stop := "end_turn"
 	if len(r.ToolCalls) > 0 {
 		stop = "tool_use"
@@ -110,7 +119,7 @@ func (g *gen) anthropic(w http.ResponseWriter, r Reply, stream bool) {
 		blocks = append(blocks, block{typ: "text", text: r.Text})
 	}
 	for _, tc := range r.ToolCalls {
-		blocks = append(blocks, block{typ: "tool_use", id: newID("toolu_"), name: tc.Name, input: inputJSON(tc)})
+		blocks = append(blocks, block{typ: "tool_use", id: g.id("toolu_"), name: tc.Name, input: inputJSON(tc)})
 	}
 	out := outputTokens(r)
 	if !stream {
@@ -165,7 +174,7 @@ func (g *gen) chatUsage(out int) map[string]any {
 }
 
 func (g *gen) chat(w http.ResponseWriter, r Reply, stream, includeUsage bool) {
-	id := newID("chatcmpl-")
+	id := g.id("chatcmpl-")
 	created := time.Now().Unix()
 	finish := "stop"
 	if len(r.ToolCalls) > 0 {
@@ -174,7 +183,7 @@ func (g *gen) chat(w http.ResponseWriter, r Reply, stream, includeUsage bool) {
 	type call struct{ id, name, args string }
 	var calls []call
 	for _, tc := range r.ToolCalls {
-		calls = append(calls, call{newID("call_"), tc.Name, inputJSON(tc)})
+		calls = append(calls, call{g.id("call_"), tc.Name, inputJSON(tc)})
 	}
 	out := outputTokens(r)
 	if !stream {
@@ -235,7 +244,7 @@ func (g *gen) responsesUsage(out int) map[string]any {
 }
 
 func (g *gen) responses(w http.ResponseWriter, r Reply, stream bool) {
-	id := newID("resp_")
+	id := g.id("resp_")
 	created := time.Now().Unix()
 	type item struct {
 		m    map[string]any
@@ -245,14 +254,14 @@ func (g *gen) responses(w http.ResponseWriter, r Reply, stream bool) {
 	var items []item
 	if r.Text != "" {
 		items = append(items, item{m: map[string]any{
-			"type": "message", "id": newID("msg_"), "status": "completed", "role": "assistant",
+			"type": "message", "id": g.id("msg_"), "status": "completed", "role": "assistant",
 			"content": []any{map[string]any{"type": "output_text", "text": r.Text, "annotations": []any{}}},
 		}, text: r.Text})
 	}
 	for _, tc := range r.ToolCalls {
 		args := inputJSON(tc)
 		items = append(items, item{m: map[string]any{
-			"type": "function_call", "id": newID("fc_"), "call_id": newID("call_"), "name": tc.Name,
+			"type": "function_call", "id": g.id("fc_"), "call_id": g.id("call_"), "name": tc.Name,
 			"arguments": args, "status": "completed",
 		}, args: args})
 	}

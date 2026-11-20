@@ -17,7 +17,6 @@ package fakeprovider
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -288,7 +287,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.apiError(rw, ex.API, reply.Status, errorType(reply.Status), reply.Error)
 		return
 	}
-	g := &gen{chunk: s.opts.ChunkSize, model: ex.Model, cached: ex.CachedBytes / 4, input: max(1, ex.PromptBytes/4)}
+	sum := sha256.Sum256(body)
+	g := &gen{idSeed: hex.EncodeToString(sum[:]), chunk: s.opts.ChunkSize, model: ex.Model, cached: ex.CachedBytes / 4, input: max(1, ex.PromptBytes/4)}
 	switch ex.API {
 	case Anthropic:
 		g.anthropic(rw, reply, ex.Stream)
@@ -543,12 +543,6 @@ func (s *Server) cache(api API, model string, body []byte) (total, cached int) {
 	}
 	s.prefixes = append(s.prefixes, blocks)
 	return total, cached
-}
-
-func newID(prefix string) string {
-	b := make([]byte, 12)
-	_, _ = rand.Read(b)
-	return prefix + hex.EncodeToString(b)
 }
 
 // StableID derives a deterministic ID from content, for tests that compare

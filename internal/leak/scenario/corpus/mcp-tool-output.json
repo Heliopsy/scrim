@@ -1,0 +1,13 @@
+{
+  "name": "mcp-tool-output",
+  "description": "An MCP tool returns a JSON document with credential fields, which the agent receives as a tool result.",
+  "prompt": "Which service account does the staging deployer use?",
+  "steps": [
+    {
+      "tool": "mcp__vault__read_secret",
+      "input": {"path": "kv/staging/deployer"},
+      "output": "{\"data\":{\"username\":\"deployer\",\"password\":\"{{secret_json:password}}\",\"token\":\"{{secret_json:github-token}}\",\"ssh_key\":\"{{secret_json:private-key}}\"},\"metadata\":{\"version\":4}}"
+    },
+    {"text": "The staging deployer uses the deployer account, version 4 of kv/staging/deployer."}
+  ]
+}
