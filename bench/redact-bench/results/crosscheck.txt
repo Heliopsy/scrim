@@ -1,0 +1,4 @@
+340/343 checks passed, 3 xfail (nonconforming engine), 88/90 cross-check pairs identical
+XFAIL (nonconforming engine) go/coregx/body-rt-s1000.json: restore(redact(x)) == x: 
+XFAIL (nonconforming engine) crosscheck redact/coregx/body-rt-s1000.json == rust/ac-auto/body-rt-s1000.json: 
+XFAIL (nonconforming engine) crosscheck redact/coregx/body-rt-s1000.json == rust/ac-dfa/body-rt-s1000.json: 

@@ -12,8 +12,9 @@ context: |
   injection, agent hooks.
   State: SQLite locally, memory for throwaway runs, PostgreSQL for shared and multi-replica
   deployments; optional Valkey or NATS for events and rate limits at large scale.
-  Implementation language of the data plane (Go, Rust, or Go control plane with Rust data plane) is
-  decided by a benchmark before product code; requirements must not depend on that choice.
+  Go control plane, Rust data plane (decided by bench/redact-bench, design D1), shipped as one
+  binary that runs the data plane as an isolated child process. Requirements must not depend on
+  the language.
   Licence: AGPL-3.0 with a CLA. Sister project and conventions: heliopsy/tix.
 
 rules:

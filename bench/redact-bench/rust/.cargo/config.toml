@@ -1,0 +1,3 @@
+# Portable target, not native. Override with RUSTFLAGS for the v2 comparison run.
+[build]
+rustflags = ["-C", "target-cpu=x86-64-v3"]

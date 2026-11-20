@@ -1,0 +1,15 @@
+redact/engine=ac-auto/set=10/size=1m/hits
+                        time:   [315.41 µs 320.77 µs 325.96 µs]
+                        thrpt:  [3.0136 GiB/s 3.0623 GiB/s 3.1144 GiB/s]
+redact/engine=ac-auto/set=1000/size=1m/hits
+                        time:   [9.0830 ms 9.2512 ms 9.3893 ms]
+                        thrpt:  [106.84 MiB/s 108.43 MiB/s 110.44 MiB/s]
+redact/engine=ac-auto/set=10000/size=1m/hits
+                        time:   [11.022 ms 11.188 ms 11.420 ms]
+                        thrpt:  [87.861 MiB/s 89.687 MiB/s 91.033 MiB/s]
+restore/stream=2k/chunks=134
+                        time:   [741.26 µs 752.54 µs 768.29 µs]
+                        thrpt:  [322.13 MiB/s 328.87 MiB/s 333.88 MiB/s]
+restore/stream=20k/chunks=1258
+                        time:   [8.4187 ms 9.3569 ms 10.554 ms]
+                        thrpt:  [231.69 MiB/s 261.33 MiB/s 290.46 MiB/s]

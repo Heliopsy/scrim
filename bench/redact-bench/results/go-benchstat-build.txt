@@ -1,0 +1,48 @@
+goos: linux
+goarch: amd64
+pkg: redactbench/redact
+cpu: Intel(R) Xeon(R) W-2295 CPU @ 3.00GHz
+                                   │ /home/usr100/Private/Projects/ho/redact-bench/results/go-bench-build.txt │
+                                   │                                  sec/op                                  │
+Build/engine=petar-nfa/set=10                                                                    8.356m ± ∞ ¹
+Build/engine=pgavlin-nfa/set=10                                                                  7.959m ± ∞ ¹
+Build/engine=petar-dfa/set=10                                                                    175.9m ± ∞ ¹
+Build/engine=coregx/set=10                                                                       15.29m ± ∞ ¹
+Build/engine=petar-nfa/set=1000                                                                  438.0m ± ∞ ¹
+Build/engine=pgavlin-nfa/set=1000                                                                437.6m ± ∞ ¹
+Build/engine=petar-dfa/set=1000                                                                   6.007 ± ∞ ¹
+Build/engine=coregx/set=1000                                                                      1.134 ± ∞ ¹
+Build/engine=petar-nfa/set=10000                                                                  6.173 ± ∞ ¹
+Build/engine=pgavlin-nfa/set=10000                                                                6.061 ± ∞ ¹
+geomean                                                                                          312.0m
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                                   │ /home/usr100/Private/Projects/ho/redact-bench/results/go-bench-build.txt │
+                                   │                                   B/op                                   │
+Build/engine=petar-nfa/set=10                                                                   8.753Mi ± ∞ ¹
+Build/engine=pgavlin-nfa/set=10                                                                 8.753Mi ± ∞ ¹
+Build/engine=petar-dfa/set=10                                                                   106.8Mi ± ∞ ¹
+Build/engine=coregx/set=10                                                                      23.27Mi ± ∞ ¹
+Build/engine=petar-nfa/set=1000                                                                 299.7Mi ± ∞ ¹
+Build/engine=pgavlin-nfa/set=1000                                                               299.7Mi ± ∞ ¹
+Build/engine=petar-dfa/set=1000                                                                 3.659Gi ± ∞ ¹
+Build/engine=coregx/set=1000                                                                    873.5Mi ± ∞ ¹
+Build/engine=petar-nfa/set=10000                                                                2.799Gi ± ∞ ¹
+Build/engine=pgavlin-nfa/set=10000                                                              2.799Gi ± ∞ ¹
+geomean                                                                                         232.4Mi
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                                   │ /home/usr100/Private/Projects/ho/redact-bench/results/go-bench-build.txt │
+                                   │                                allocs/op                                 │
+Build/engine=petar-nfa/set=10                                                                    67.78k ± ∞ ¹
+Build/engine=pgavlin-nfa/set=10                                                                  67.78k ± ∞ ¹
+Build/engine=petar-dfa/set=10                                                                    7.227M ± ∞ ¹
+Build/engine=coregx/set=10                                                                       21.67k ± ∞ ¹
+Build/engine=petar-nfa/set=1000                                                                  2.178M ± ∞ ¹
+Build/engine=pgavlin-nfa/set=1000                                                                2.178M ± ∞ ¹
+Build/engine=petar-dfa/set=1000                                                                  260.7M ± ∞ ¹
+Build/engine=coregx/set=1000                                                                     755.0k ± ∞ ¹
+Build/engine=petar-nfa/set=10000                                                                 20.22M ± ∞ ¹
+Build/engine=pgavlin-nfa/set=10000                                                               20.22M ± ∞ ¹
+geomean                                                                                          1.753M
+¹ need >= 6 samples for confidence interval at level 0.95
