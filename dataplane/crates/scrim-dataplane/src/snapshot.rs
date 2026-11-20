@@ -128,6 +128,10 @@ impl fmt::Display for Rejected {
 /// Policy engines this build can run, besides the structured rules.
 const ENGINES: &[&str] = &[];
 
+/// Decision table formats this build accepts (`Policy.table_format`). The
+/// engine that evaluates the table reads it from the applied snapshot.
+const TABLE_FORMATS: &[u32] = &[1];
+
 impl Applied {
     /// Validates `snap` against the version in force and converts it. On
     /// error nothing changes and `snap`'s secret bytes are zeroed when it
@@ -160,6 +164,12 @@ impl Applied {
             return Err(Rejected::Invalid(format!(
                 "policy engine {:?} is not supported by this data plane",
                 policy.engine
+            )));
+        }
+        if !policy.table.is_empty() && !TABLE_FORMATS.contains(&policy.table_format) {
+            return Err(Rejected::Invalid(format!(
+                "policy table format {} is not supported by this data plane",
+                policy.table_format
             )));
         }
         for l in &snap.listeners {
@@ -285,6 +295,23 @@ mod tests {
             Applied::from_proto(s, 0),
             Err(Rejected::Invalid(_))
         ));
+        let mut s = snap(1);
+        s.policy = Some(v1::Policy {
+            table: vec![v1::TableRule::default()],
+            table_format: 2,
+            ..Default::default()
+        });
+        assert!(matches!(
+            Applied::from_proto(s, 0),
+            Err(Rejected::Invalid(_))
+        ));
+        let mut s = snap(1);
+        s.policy = Some(v1::Policy {
+            table: vec![v1::TableRule::default()],
+            table_format: 1,
+            ..Default::default()
+        });
+        assert!(Applied::from_proto(s, 0).is_ok());
         let mut s = snap(1);
         s.listeners = vec![v1::Listener {
             name: "x".into(),
