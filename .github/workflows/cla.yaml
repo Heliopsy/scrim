@@ -27,15 +27,15 @@ jobs:
       # repository, so there is no contributor and nothing to sign. It is
       # excluded because this action locks a pull request once it merges, and
       # release-please posts its completion comment to that pull request
-      # immediately afterwards: the lock landed 8 seconds after the merge and
-      # the comment 4 seconds after that, so every release since v0.4.0 has
-      # ended with the action reporting failure and nothing watching the
-      # release it had already created. The lock is kept for real
+      # immediately afterwards. On v0.1.0 the lock won, release-please failed
+      # after creating the release and never dispatched release.yaml. The
+      # branch is matched by prefix because release-please appends the
+      # component (`--components--scrim`). The lock is kept for real
       # contributions, where it is what stops a signature comment being
       # revoked after the fact.
       - name: CLA assistant
         if: >-
-          github.head_ref != 'release-please--branches--main' &&
+          !startsWith(github.head_ref, 'release-please--branches--main') &&
           (github.event_name == 'pull_request_target' ||
           github.event.comment.body == 'recheck' ||
           github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA')
