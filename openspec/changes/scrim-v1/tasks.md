@@ -12,7 +12,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 1.1 Record the `redact-bench` result and the chosen language split in design.md D1; verify: the decision rule's inputs (CPU per GB, p99, p999) are quoted with a link to the benchmark README
 - [ ] 1.2 Add the build toolchain, `justfile` (`build`, `test`, `check`, `bench`, `fuzz`, `spec`) and language-specific sections of AGENTS.md; verify: `just check` passes on an empty skeleton
 - [ ] 1.3 Add CI: lint, unit tests, `openspec validate --all --strict`, gitleaks, CodeQL, dependency review, Scorecard, release-please, every action pinned by SHA; verify: CI green on a no-op PR
-- [ ] 1.4 Add the release pipeline (static binaries, container image, SBOM, signatures, provenance); verify: a pre-release tag produces signed artifacts that `cosign verify` accepts
+- [x] 1.4 Add the release pipeline (static binaries, container image, SBOM, signatures, provenance); verify: a pre-release tag produces signed artifacts that `cosign verify` accepts
 
 ## 2. Redaction core
 
