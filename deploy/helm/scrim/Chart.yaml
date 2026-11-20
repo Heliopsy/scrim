@@ -11,7 +11,7 @@ kubeVersion: ">=1.29.0-0"
 home: https://github.com/Heliopsy/scrim
 sources:
   - https://github.com/Heliopsy/scrim
-icon: https://raw.githubusercontent.com/Heliopsy/scrim/main/scrim.svg
+icon: https://raw.githubusercontent.com/Heliopsy/scrim/main/docs/assets/scrim-mark.svg
 annotations:
   artifacthub.io/license: AGPL-3.0-only
   # Generated from values.yaml by ci/gen-images.py (verify.sh checks it).

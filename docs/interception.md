@@ -78,7 +78,21 @@ flowchart LR
   agent -- "HTTPS_PROXY, tool traffic" --> fwd["forward proxy"]
   llm --> prov["api.anthropic.com"]
   fwd --> tools["api.github.com, ..."]
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef cplane fill:#d8b4fe,stroke:#7e22ce,stroke-width:1.5px,color:#3b0764
+  classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  classDef human fill:#86efac,stroke:#15803d,stroke-width:1.5px,color:#052e16
+  class user human
+  class run,api cplane
+  class agent agent
+  class llm,fwd dplane
+  class prov,tools ext
 ```
+
+Colours, the same in every diagram on this page: blue is the agent and its tools, indigo the scrim
+data plane, purple the control plane, amber stores, green people, grey providers and tool hosts,
+teal OS and cluster enforcement. A red edge is traffic that is refused.
 
 ### Setup
 
@@ -233,6 +247,12 @@ flowchart LR
   fwd -- "any other host" --> tp["tool proxy<br>inject, redact"]
   llm --> prov["provider"]
   tp --> host["tool host"]
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  class agent agent
+  class fwd,llm,tp dplane
+  class prov,host ext
 ```
 
 ### Setup
@@ -325,6 +345,15 @@ flowchart LR
   nft -- "redirect" --> tl["transparent listener<br>original dst, SNI"]
   nft -. "direct egress rejected" .-x prov
   tl --> llm["LLM proxy"] --> prov["provider"]
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  classDef enforce fill:#5eead4,stroke:#0f766e,stroke-width:1.5px,color:#042f2e
+  class agent agent
+  class nft enforce
+  class tl,llm dplane
+  class prov ext
+  linkStyle 2 stroke:#dc2626,stroke-width:2px
 ```
 
 ### Setup
@@ -379,6 +408,14 @@ flowchart LR
   loader["privileged loader"] -. "attach connect4/connect6" .-> cg["agent cgroup"]
   agent["agent in cgroup"] -- "connect()" --> hook["eBPF hook<br>rewrite destination"]
   hook --> tl["transparent listener"] --> prov["provider"]
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  classDef enforce fill:#5eead4,stroke:#0f766e,stroke-width:1.5px,color:#042f2e
+  class loader,cg,hook enforce
+  class agent agent
+  class tl dplane
+  class prov ext
 ```
 
 It is Linux only and needs cgroup v2. The loader needs `CAP_BPF` and `CAP_NET_ADMIN`, or root;
@@ -401,6 +438,14 @@ flowchart LR
   agent["agent"] -- "resolve api.anthropic.com" --> dns["/etc/hosts or local DNS<br>answers scrim's address"]
   agent -- "TLS to scrim, SNI api.anthropic.com" --> tl["SNI listener :443"]
   tl --> prov["provider"]
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  classDef enforce fill:#5eead4,stroke:#0f766e,stroke-width:1.5px,color:#042f2e
+  class agent agent
+  class dns enforce
+  class tl dplane
+  class prov ext
 ```
 
 ### Setup
@@ -454,6 +499,16 @@ flowchart LR
   adm["admission policy"] -. "mutates on create" .-> pod
   np["NetworkPolicy<br>egress: scrim and DNS only"] -. "enforced by CNI" .-> pod
   pod -- "base URL or redirected" --> svc["scrim Service"] --> prov["providers"]
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  classDef enforce fill:#5eead4,stroke:#0f766e,stroke-width:1.5px,color:#042f2e
+  classDef zone fill:#94a3b81a,stroke:#64748b,stroke-width:1px,stroke-dasharray:4 3
+  class pod agent
+  class adm,np enforce
+  class svc dplane
+  class prov ext
+  class ns zone
 ```
 
 ### Setup
@@ -511,6 +566,12 @@ flowchart LR
   hook -- "tool output" --> api["scrim local API"]
   api -- "redacted output" --> hook --> agent["agent context"]
   agent -- "model request, not via scrim" --> prov["provider"]
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef cplane fill:#d8b4fe,stroke:#7e22ce,stroke-width:1.5px,color:#3b0764
+  classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  class tool,hook,agent agent
+  class api cplane
+  class prov ext
 ```
 
 ### What the agents offer
@@ -558,6 +619,14 @@ returns a value. See [agent-tools.md](agent-tools.md).
 flowchart LR
   agent["agent"] -- "MCP: secret_request, secret_gen, ..." --> mcp["scrim mcp"] --> api["agent API"] --> store[("store")]
   agent -- "model requests, not via scrim" --> prov["provider"]
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef cplane fill:#d8b4fe,stroke:#7e22ce,stroke-width:1.5px,color:#3b0764
+  classDef store fill:#fcd34d,stroke:#b45309,stroke-width:1.5px,color:#451a03
+  classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  class agent agent
+  class mcp,api cplane
+  class store store
+  class prov ext
 ```
 
 ### Setup
@@ -625,6 +694,15 @@ flowchart LR
   pol["managed-settings.json<br>allowedProviders, env"] -. "read at start" .-> agent["claude"]
   agent -- "only the pinned base URL" --> llm["LLM proxy"]
   agent -. "provider URL refused by the agent" .-x prov["api.anthropic.com"]
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  classDef enforce fill:#5eead4,stroke:#0f766e,stroke-width:1.5px,color:#042f2e
+  class pol enforce
+  class agent agent
+  class llm dplane
+  class prov ext
+  linkStyle 2 stroke:#dc2626,stroke-width:2px
 ```
 
 ### Claude Code
