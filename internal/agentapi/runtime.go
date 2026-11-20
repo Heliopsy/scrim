@@ -67,6 +67,9 @@ type Options struct {
 	// OnMint, when set, receives a copy of every session token minted (see
 	// identity.ManagerOptions.OnMint).
 	OnMint func(identity.Session, secret.Value)
+	// OnKubeToken, when set, receives every Kubernetes service account
+	// token scrim verified (see identity.KubeResolver.OnVerified).
+	OnKubeToken func(tok []byte, expires time.Time)
 }
 
 // New builds the local API and entry page from the composition root and
@@ -143,6 +146,9 @@ func New(a *app.App, o Options) (*Runtime, error) {
 		_ = entryLn.Close()
 		_ = sockLn.Close()
 		return nil, err
+	}
+	if kr != nil {
+		kr.OnVerified = o.OnKubeToken
 	}
 	resolver := &identity.Resolver{Peers: peers, Sessions: mgr, Kubernetes: kr}
 	api := &localapi.Server{Resolver: *resolver, Sessions: mgr, Tools: svc,

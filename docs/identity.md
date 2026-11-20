@@ -239,7 +239,15 @@ Unlike a session token, the control plane has to see a service account token to 
 proof cannot stand in for it. The data plane keeps the token in a zeroed type for the request (for
 a forward-proxy tunnel, for the life of the tunnel), sends it in the ask
 (`AskCaller.kubernetes_token`, a secret field with a redacting `Debug`), and the control plane
-wipes it once the ask is answered. The token is never logged, audited or forwarded.
+wipes the ask's copy once the ask is answered. The token is never logged, audited or forwarded.
+
+The agent can read its own token file, so a token could end up in a tool result sent to a
+provider. Every token the cluster accepts is added to the redaction set when scrim verifies it,
+redaction only (it is never injected), and removed when it expires (24 hours after its last
+verification for a token without an expiry). scrim verifies a token whenever a decision needs the
+caller (an injection, an approval, a rule on `agent.*` for provider requests). A token scrim has not
+verified yet is still caught by the fallback JWT detector, as `⟦scrim:det-jwt:...⟧`; once verified
+it shows as `⟦scrim:scrim-kubernetes-credential:...⟧`.
 
 What the rules see:
 

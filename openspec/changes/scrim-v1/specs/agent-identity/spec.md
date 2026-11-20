@@ -155,6 +155,24 @@ SHALL wipe it once the ask is answered.
 - **THEN** the ask carries the token, the decision names the pod's service account, and the tool API
   receives no proxy credentials
 
+### Requirement: Verified Kubernetes tokens are redacted
+
+Every service account token the cluster accepts for scrim's audience SHALL enter the redaction set
+as soon as scrim verifies it, for redaction only (never injectable), and SHALL leave it when the
+token expires (a token without an expiry 24 hours after its last verification). The copy SHALL live
+in memory only and be wiped when it leaves. A token scrim never verified relies on the fallback JWT
+detector.
+
+#### Scenario: Agent reads its own token file
+
+- **WHEN** a pod's verified token appears in a tool result the agent sends to a provider
+- **THEN** the provider receives scrim's placeholder for it, never the token
+
+#### Scenario: Token expires
+
+- **WHEN** a verified token's expiry passes
+- **THEN** it is removed from the redaction set and its copy is wiped
+
 ### Requirement: Verified Kubernetes tokens are cached briefly
 
 The system SHALL reuse a verified token's identity for at most `identity.kubernetes.cache-ttl` and never

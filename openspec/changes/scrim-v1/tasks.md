@@ -133,6 +133,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 - [x] 12.1 Postgres-notify events for multiple replicas; verify: two replicas sharing one PostgreSQL agree on grants and approvals
 - [x] 12.2 Kubernetes service account identity; verify: TokenReview-based identity in kind
+- [x] 12.2e Verified service account tokens in the redaction set until they expire, redaction only; verify: a pod's token in a tool result reaches the fake provider as `⟦scrim:scrim-kubernetes-credential:…⟧` through the real data plane, and the default JWT detector matches a projected token's shape
 - [ ] 12.2a scrim as identity provider: per-session signed tokens, discovery document, signing keys, rotation; verify: OpenBao JWT auth accepts scrim tokens and rejects expired or wrong-audience ones
 - [ ] 12.2b Per-agent store identity with token exchange (Vault and OpenBao JWT, AWS web identity, Google federation, Azure federated credentials, Infisical OIDC) and the intersection rule; verify: one agent is denied by store policy that another passes, and CloudTrail-style audit shows the agent's session name against LocalStack
 - [x] 12.2c Kubernetes service account passthrough and static per-agent fallback reported in doctor; verify: two agent pods with different service accounts get different OpenBao policies in kind

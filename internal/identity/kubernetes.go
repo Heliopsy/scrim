@@ -3,6 +3,7 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/heliopsy/scrim/internal/identity/kube"
 )
@@ -58,6 +60,13 @@ type KubeResolver struct {
 	Rules    []KubeRule
 	// Unmapped is UnmappedDerive (the default) or UnmappedUnknown.
 	Unmapped string
+	// OnVerified, when set, receives every token the cluster accepted for
+	// scrim's audience, with its expiry (zero when it has none), on every
+	// verification including cached ones. The daemon adds it to the
+	// redaction set (redaction only, never injectable): the agent can read
+	// its own token file, and the token must not reach a provider. tok
+	// belongs to the caller; OnVerified copies what it keeps.
+	OnVerified func(tok []byte, expires time.Time)
 }
 
 // KubeRulesFromMap turns identity.kubernetes.agents into rules. Each key is an
@@ -162,6 +171,9 @@ func (k *KubeResolver) Resolve(ctx context.Context, tok []byte) (Identity, error
 		return Unknown(Peer{}), &RefusedError{Reason: RefusalReason(err.Error())}
 	case err != nil:
 		return Unknown(Peer{}), err
+	}
+	if k.OnVerified != nil {
+		k.OnVerified(bytes.TrimSpace(tok), a.ExpiresAt)
 	}
 	return k.identityOf(a), nil
 }
