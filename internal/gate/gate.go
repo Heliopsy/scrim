@@ -33,6 +33,7 @@ import (
 	"github.com/heliopsy/scrim/internal/grant"
 	"github.com/heliopsy/scrim/internal/identity"
 	"github.com/heliopsy/scrim/internal/policy"
+	"github.com/heliopsy/scrim/internal/ratelimit"
 	"github.com/heliopsy/scrim/internal/state"
 )
 
@@ -247,6 +248,10 @@ func (g *Gate) ask(ctx context.Context, req policy.Request, d policy.Decision, o
 		Policy: req, Decision: d, Timeout: r.Approval.Timeout.D(), Notifiers: r.Approval.Notifiers, RequestID: o.RequestID,
 	})
 	if err != nil {
+		var limited *ratelimit.LimitedError
+		if errors.As(err, &limited) {
+			return Verdict{Status: Denied, Rule: d.Rule, Reason: limited.Error()}
+		}
 		g.logErr("creating approval failed; denying", err)
 		return Verdict{Status: Denied, Rule: d.Rule, Reason: "approval could not be created"}
 	}

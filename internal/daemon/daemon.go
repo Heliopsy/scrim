@@ -133,6 +133,9 @@ type Info struct {
 	// Stores is every store's freshness and the values each redact target
 	// holds.
 	Stores []status.Store `json:"stores"`
+	// AuditSinks is every external audit sink's queue and backpressure
+	// state (audit.sinks beyond db).
+	AuditSinks []status.AuditSink `json:"audit_sinks,omitempty"`
 }
 
 // DataPlaneInfo summarises the data plane's status. Counts and references,
@@ -764,6 +767,7 @@ func (d *Daemon) Info() Info {
 	d.mu.Unlock()
 	in.Runtime = d.runtimeInfo(ctx, in.Ready)
 	in.Stores = d.storeStatus()
+	in.AuditSinks = status.FromFanout(d.app.AuditSinks.Status())
 	for k, v := range rep.Checks {
 		if v != "ok" {
 			if in.Problems == nil {

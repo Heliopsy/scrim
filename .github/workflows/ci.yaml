@@ -86,6 +86,42 @@ jobs:
           podman pod ps -q --filter name=scrim-stores- | xargs -r podman pod rm -f
           podman volume prune -f
 
+  # GitHub-hosted, like the stores job: the events backends, rate limits and
+  # audit sinks against real Valkey, NATS, PostgreSQL, Loki, an OpenTelemetry
+  # collector and Redpanda, each in a memory-limited rootless container, then
+  # the three-daemon load test. Containers are named scrim-scale-* (and
+  # scrim-test-pg-* for PostgreSQL).
+  scale:
+    name: Scale backends and audit sinks (podman)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - run: podman version
+      - name: Contract suites and audit sinks
+        run: go test -race -count=1 -timeout 20m ./internal/events/... ./internal/ratelimit/... ./internal/audit/... ./internal/state/...
+        env:
+          SCRIM_TEST_PODMAN: "1"
+          SCRIM_TEST_CONTAINER_PREFIX: scrim-scale
+      - name: Multi-replica load test
+        run: go test -race -count=1 -timeout 10m -run 'TestReplicasLoad|TestReplicasShareChangesThroughPostgresEvents' -v ./internal/daemon/
+        env:
+          SCRIM_TEST_PODMAN: "1"
+          SCRIM_TEST_CONTAINER_PREFIX: scrim-scale
+      - name: Remove leftover containers
+        if: always()
+        run: |
+          podman ps -a --filter name=scrim-scale- --filter name=scrim-test-pg- --format '{{.Names}}'
+          podman ps -aq --filter name=scrim-scale- | xargs -r podman rm -f -v
+          podman ps -aq --filter name=scrim-test-pg- | xargs -r podman rm -f -v
+
   rust:
     name: Rust
     runs-on: ho-z10

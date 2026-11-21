@@ -121,6 +121,7 @@ func New(a *app.App, o Options) (*Runtime, error) {
 		Auditor:   auditor,
 		Notifier:  notifier,
 		Links:     links,
+		Limits:    a.RateLimits,
 		Logger:    a.Log,
 	})
 	if err != nil {

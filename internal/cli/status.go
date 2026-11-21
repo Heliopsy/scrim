@@ -104,7 +104,9 @@ func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) 
 	// from its bound listeners and open sessions, protections, providers
 	// and its data plane, and its stores with the values each redact
 	// target holds. Without one, the data plane is probed once.
+	var external []status.AuditSink
 	if info, err := daemon.Connect(ctx, cfg); err == nil {
+		external = info.AuditSinks
 		src.Runtime = info.StatusRuntime()
 		src.DataPlane = staticDataPlane(info.StatusDataPlane())
 		src.Stores = staticStores(info.Stores)
@@ -123,7 +125,7 @@ func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) 
 	}
 	st, closeFn := openStateForStatus(ctx, stateCfg)
 	src.State = st
-	src.Audit = status.DBAuditSink{State: st}
+	src.Audit = status.DBAuditSink{State: st, External: external}
 	return src, closeFn, nil
 }
 

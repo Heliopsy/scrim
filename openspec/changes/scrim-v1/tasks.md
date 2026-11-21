@@ -161,8 +161,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 14. Large deployments
 
-- [ ] 14.1 Valkey and NATS event backends, Valkey rate limits; verify: contract suites and a multi-replica load test
-- [ ] 14.2 Audit sinks OTLP, Loki and Kafka with backpressure policy; verify: a slow sink never drops silently
+- [x] 14.1 Valkey and NATS event backends, Valkey rate limits; verify: contract suites and a multi-replica load test
+- [x] 14.2 Audit sinks OTLP, Loki and Kafka with backpressure policy; verify: a slow sink never drops silently
 - [ ] 14.3 Proxy-level load test at 1,000 concurrent streams; verify: published numbers meet the performance spec
 
 ## 15. Remaining edge modes

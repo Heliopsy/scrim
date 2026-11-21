@@ -222,6 +222,66 @@ groups:
             is slow or failing.
           runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditdropping
 
+      - alert: ScrimAuditSinkDropping
+        expr: sum by (job, instance, sink, reason) (increase(scrim_audit_sink_dropped_total[15m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: an external audit sink lost entries
+          description: >-
+            The {{ $labels.sink }} audit sink on {{ $labels.instance }} did not receive entries in the
+            last 15 minutes (reason {{ $labels.reason }}). They are in the database audit log only.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditsinkdropping
+
+      - alert: ScrimAuditSinkRefusing
+        expr: sum by (job, instance, sink) (increase(scrim_audit_sink_refused_total[15m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: a blocking audit sink is refusing operations
+          description: >-
+            The {{ $labels.sink }} audit sink on {{ $labels.instance }} had no queue room within its
+            timeout, so audited operations were refused in the last 15 minutes.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditsinkrefusing
+
+      - alert: ScrimAuditSinkBacklog
+        expr: >-
+          max by (job, instance, sink) (scrim_audit_sink_queue_entries)
+          / max by (job, instance, sink) (scrim_audit_sink_queue_capacity) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: an audit sink queue is nearly full
+          description: >-
+            The {{ $labels.sink }} audit sink queue on {{ $labels.instance }} has been over 80% full
+            for 5 minutes. Next it drops entries (drop policy) or refuses operations (block policy).
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditsinkbacklog
+
+      - alert: ScrimAuditSinkDown
+        expr: max by (job, instance, sink) (scrim_audit_sink_up) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: an audit sink keeps failing
+          description: >-
+            Writes to the {{ $labels.sink }} audit sink on {{ $labels.instance }} have failed for 10
+            minutes; entries wait in its queue and are retried.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditsinkdown
+
+      - alert: ScrimRateLimitBackendErrors
+        expr: sum by (job, instance, backend) (increase(scrim_ratelimit_decisions_total{result="error"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: the rate-limit backend is failing
+          description: >-
+            The {{ $labels.backend }} rate-limit backend on {{ $labels.instance }} could not decide
+            requests for 5 minutes; those requests are refused.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimratelimitbackenderrors
+
       - alert: ScrimWeakenedSetting
         expr: max by (job, instance, setting) (scrim_config_weakened_settings) == 1
         for: 1h

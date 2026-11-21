@@ -116,6 +116,323 @@
       },
       "type": "object"
     },
+    "audit": {
+      "additionalProperties": false,
+      "properties": {
+        "kafka": {
+          "additionalProperties": false,
+          "properties": {
+            "batch-size": {
+              "default": 500,
+              "description": "How many audit entries one write to the kafka sink carries at most.",
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer",
+              "x-scrim-env": "SCRIM_AUDIT_KAFKA_BATCH_SIZE",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "brokers": {
+              "default": [],
+              "description": "Seed brokers (host:port) of the Kafka (or Redpanda) cluster of the kafka audit sink.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-scrim-env": "SCRIM_AUDIT_KAFKA_BROKERS",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "password": {
+              "default": "",
+              "description": "Reference to the SASL password of the kafka audit sink.",
+              "pattern": "^$|^(env:[A-Za-z_][A-Za-z0-9_]*|file:/.*|cred:[A-Za-z0-9_@.:-]+|[a-z][a-z0-9+.-]*://[^#].*)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_KAFKA_PASSWORD",
+              "x-scrim-restart-required": true,
+              "x-scrim-secret-ref": true,
+              "x-scrim-weakening": false
+            },
+            "policy": {
+              "default": "drop",
+              "description": "What happens when the kafka sink's queue is full because the sink is slow or down: block makes the audited operation wait up to audit.kafka.timeout and then refuses it; drop lets it through and counts the entry in scrim_audit_sink_dropped_total (it stays in the database audit log). Never silent either way.",
+              "enum": [
+                "block",
+                "drop"
+              ],
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_KAFKA_POLICY",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "queue-size": {
+              "default": 10000,
+              "description": "How many audit entries wait for the kafka sink at most.",
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer",
+              "x-scrim-env": "SCRIM_AUDIT_KAFKA_QUEUE_SIZE",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "sasl-mechanism": {
+              "default": "none",
+              "description": "SASL mechanism of the kafka audit sink; plain needs audit.kafka.tls.",
+              "enum": [
+                "none",
+                "plain",
+                "scram-sha-256",
+                "scram-sha-512"
+              ],
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_KAFKA_SASL_MECHANISM",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "timeout": {
+              "default": "5s",
+              "description": "With audit.kafka.policy block, how long an audited operation waits for room in the kafka queue before it is refused.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_KAFKA_TIMEOUT",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "tls": {
+              "default": false,
+              "description": "Connect to the Kafka brokers over TLS, verified against the system roots or audit.kafka.tls-ca-file.",
+              "type": "boolean",
+              "x-scrim-env": "SCRIM_AUDIT_KAFKA_TLS",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "tls-ca-file": {
+              "default": "",
+              "description": "PEM file of the certificate authorities that sign the Kafka broker certificates; empty uses the system roots.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_KAFKA_TLS_CA_FILE",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "topic": {
+              "default": "scrim-audit",
+              "description": "Topic the kafka audit sink produces to. Records are keyed by agent, so one agent's entries stay in order on one partition.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_KAFKA_TOPIC",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "username": {
+              "default": "",
+              "description": "SASL user of the kafka audit sink.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_KAFKA_USERNAME",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "write-timeout": {
+              "default": "10s",
+              "description": "How long one write to the kafka sink may take before it counts as failed and is retried.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_KAFKA_WRITE_TIMEOUT",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
+        "loki": {
+          "additionalProperties": false,
+          "properties": {
+            "batch-size": {
+              "default": 500,
+              "description": "How many audit entries one write to the loki sink carries at most.",
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer",
+              "x-scrim-env": "SCRIM_AUDIT_LOKI_BATCH_SIZE",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "labels": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Extra static stream labels for audit entries in Loki, added to service_name=scrim and source=audit. Keep them low-cardinality; per-entry fields are in the JSON line.",
+              "type": "object",
+              "x-scrim-env": "SCRIM_AUDIT_LOKI_LABELS",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "password": {
+              "default": "",
+              "description": "Reference to the basic auth password (or bearer token with an empty audit.loki.username) of the loki audit sink.",
+              "pattern": "^$|^(env:[A-Za-z_][A-Za-z0-9_]*|file:/.*|cred:[A-Za-z0-9_@.:-]+|[a-z][a-z0-9+.-]*://[^#].*)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_LOKI_PASSWORD",
+              "x-scrim-restart-required": true,
+              "x-scrim-secret-ref": true,
+              "x-scrim-weakening": false
+            },
+            "policy": {
+              "default": "drop",
+              "description": "What happens when the loki sink's queue is full because the sink is slow or down: block makes the audited operation wait up to audit.loki.timeout and then refuses it; drop lets it through and counts the entry in scrim_audit_sink_dropped_total (it stays in the database audit log). Never silent either way.",
+              "enum": [
+                "block",
+                "drop"
+              ],
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_LOKI_POLICY",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "queue-size": {
+              "default": 10000,
+              "description": "How many audit entries wait for the loki sink at most.",
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer",
+              "x-scrim-env": "SCRIM_AUDIT_LOKI_QUEUE_SIZE",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "tenant": {
+              "default": "",
+              "description": "Loki tenant (X-Scope-OrgID) for the loki audit sink; empty for a single-tenant Loki.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_LOKI_TENANT",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "timeout": {
+              "default": "5s",
+              "description": "With audit.loki.policy block, how long an audited operation waits for room in the loki queue before it is refused.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_LOKI_TIMEOUT",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "url": {
+              "default": "",
+              "description": "Base URL of Loki (or a compatible push endpoint) for the loki audit sink; entries are pushed to <url>/loki/api/v1/push.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_LOKI_URL",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "username": {
+              "default": "",
+              "description": "Basic auth user for the loki audit sink; empty for none.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_LOKI_USERNAME",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "write-timeout": {
+              "default": "10s",
+              "description": "How long one write to the loki sink may take before it counts as failed and is retried.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_LOKI_WRITE_TIMEOUT",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
+        "otlp": {
+          "additionalProperties": false,
+          "properties": {
+            "batch-size": {
+              "default": 500,
+              "description": "How many audit entries one write to the otlp sink carries at most.",
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer",
+              "x-scrim-env": "SCRIM_AUDIT_OTLP_BATCH_SIZE",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "endpoint": {
+              "default": "",
+              "description": "OTLP/HTTP logs endpoint of the otlp audit sink, a collector or a backend that takes OTLP logs: http(s)://host:4318 (the /v1/logs path is added unless the URL has a path).",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_OTLP_ENDPOINT",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "policy": {
+              "default": "drop",
+              "description": "What happens when the otlp sink's queue is full because the sink is slow or down: block makes the audited operation wait up to audit.otlp.timeout and then refuses it; drop lets it through and counts the entry in scrim_audit_sink_dropped_total (it stays in the database audit log). Never silent either way.",
+              "enum": [
+                "block",
+                "drop"
+              ],
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_OTLP_POLICY",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "queue-size": {
+              "default": 10000,
+              "description": "How many audit entries wait for the otlp sink at most.",
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer",
+              "x-scrim-env": "SCRIM_AUDIT_OTLP_QUEUE_SIZE",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "timeout": {
+              "default": "5s",
+              "description": "With audit.otlp.policy block, how long an audited operation waits for room in the otlp queue before it is refused.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_OTLP_TIMEOUT",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "token": {
+              "default": "",
+              "description": "Reference to a bearer token sent to the otlp audit sink; empty for none.",
+              "pattern": "^$|^(env:[A-Za-z_][A-Za-z0-9_]*|file:/.*|cred:[A-Za-z0-9_@.:-]+|[a-z][a-z0-9+.-]*://[^#].*)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_OTLP_TOKEN",
+              "x-scrim-restart-required": true,
+              "x-scrim-secret-ref": true,
+              "x-scrim-weakening": false
+            },
+            "write-timeout": {
+              "default": "10s",
+              "description": "How long one write to the otlp sink may take before it counts as failed and is retried.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_AUDIT_OTLP_WRITE_TIMEOUT",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
+        "sinks": {
+          "default": [
+            "db"
+          ],
+          "description": "Where audit entries go: db (the state backend's audit log, always written, in the transaction of the change it records) plus any of otlp, loki and kafka, each fed from its own bounded queue with the backpressure policy audit.<sink>.policy.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_AUDIT_SINKS",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
     "catalog": {
       "additionalProperties": false,
       "properties": {
@@ -281,7 +598,7 @@
       "properties": {
         "replicas": {
           "default": 1,
-          "description": "How many control plane replicas share this configuration and state. More than 1 needs a shared state backend (state.backend postgres) and a shared events backend (events.backend postgres); start-up fails otherwise.",
+          "description": "How many control plane replicas share this configuration and state. More than 1 needs a shared state backend (state.backend postgres) and a shared events backend (events.backend postgres, valkey or nats); start-up fails otherwise.",
           "maximum": 9223372036854775807,
           "minimum": -9223372036854775808,
           "type": "integer",
@@ -311,10 +628,12 @@
       "properties": {
         "backend": {
           "default": "local",
-          "description": "How replicas learn about state changes made elsewhere (approval decisions, grant and session changes, break-glass, configuration reloads). local reads the outbox every events.poll-interval and serves one process; postgres adds LISTEN/NOTIFY on the state database (needs state.backend postgres) and is required when deployment.replicas is more than 1.",
+          "description": "How replicas learn about state changes made elsewhere (approval decisions, grant and session changes, break-glass, configuration reloads). local reads the outbox every events.poll-interval and serves one process; postgres adds LISTEN/NOTIFY on the state database (needs state.backend postgres); valkey and nats publish a wake-up on a Valkey channel (valkey.*) or a NATS subject (nats.*). Every backend delivers from the outbox, so a lost wake-up costs latency, never an event. One of postgres, valkey or nats is required when deployment.replicas is more than 1.",
           "enum": [
             "local",
-            "postgres"
+            "postgres",
+            "valkey",
+            "nats"
           ],
           "type": "string",
           "x-scrim-env": "SCRIM_EVENTS_BACKEND",
@@ -322,14 +641,42 @@
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         },
+        "nats": {
+          "additionalProperties": false,
+          "properties": {
+            "subject": {
+              "default": "scrim.events",
+              "description": "NATS subject the nats events backend publishes and subscribes to. Replicas of one deployment share it; two deployments on one NATS account need different subjects.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_EVENTS_NATS_SUBJECT",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
         "poll-interval": {
           "default": "1s",
-          "description": "How often the outbox is read when nothing announces new events: always with events.backend local, and while the postgres listener is disconnected. It bounds how long a change made on another replica takes to arrive then.",
+          "description": "How often the outbox is read when nothing announces new events: always with events.backend local, and while the postgres listener or the valkey or nats subscription is disconnected. It bounds how long a change made on another replica takes to arrive then.",
           "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
           "type": "string",
           "x-scrim-env": "SCRIM_EVENTS_POLL_INTERVAL",
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
+        },
+        "valkey": {
+          "additionalProperties": false,
+          "properties": {
+            "channel": {
+              "default": "scrim:events",
+              "description": "Valkey channel the valkey events backend publishes and subscribes to. Replicas of one deployment share it; two deployments on one Valkey need different channels.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_EVENTS_VALKEY_CHANNEL",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
         }
       },
       "type": "object"
@@ -618,6 +965,76 @@
           "description": "Path of the Prometheus endpoint on metrics.listen.",
           "type": "string",
           "x-scrim-env": "SCRIM_METRICS_PATH",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "nats": {
+      "additionalProperties": false,
+      "properties": {
+        "credentials-file": {
+          "default": "",
+          "description": "Path to a NATS credentials file (JWT and NKey seed), for decentralised authentication; empty for none.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_NATS_CREDENTIALS_FILE",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "password": {
+          "default": "",
+          "description": "Reference to the password of nats.username.",
+          "pattern": "^$|^(env:[A-Za-z_][A-Za-z0-9_]*|file:/.*|cred:[A-Za-z0-9_@.:-]+|[a-z][a-z0-9+.-]*://[^#].*)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_NATS_PASSWORD",
+          "x-scrim-restart-required": true,
+          "x-scrim-secret-ref": true,
+          "x-scrim-weakening": false
+        },
+        "servers": {
+          "default": [],
+          "description": "NATS server URLs (nats://host:4222, tls://host:4222) used by events.backend nats.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_NATS_SERVERS",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "timeout": {
+          "default": "5s",
+          "description": "Dial timeout, and the bound on the round trip that confirms a subscription after each reconnect. The client also pings the server at this interval and treats two missed answers as a lost connection.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_NATS_TIMEOUT",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "tls-ca-file": {
+          "default": "",
+          "description": "PEM file of the certificate authorities that sign the NATS server certificate; empty uses the system roots.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_NATS_TLS_CA_FILE",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "token": {
+          "default": "",
+          "description": "Reference to a NATS authentication token; empty for none.",
+          "pattern": "^$|^(env:[A-Za-z_][A-Za-z0-9_]*|file:/.*|cred:[A-Za-z0-9_@.:-]+|[a-z][a-z0-9+.-]*://[^#].*)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_NATS_TOKEN",
+          "x-scrim-restart-required": true,
+          "x-scrim-secret-ref": true,
+          "x-scrim-weakening": false
+        },
+        "username": {
+          "default": "",
+          "description": "NATS user for user and password authentication; empty for none.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_NATS_USERNAME",
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         }
@@ -918,6 +1335,144 @@
               "type": "string",
               "x-scrim-env": "SCRIM_PROXY_UPSTREAM_OPENAI",
               "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "ratelimit": {
+      "additionalProperties": false,
+      "properties": {
+        "agent-api": {
+          "additionalProperties": false,
+          "properties": {
+            "burst": {
+              "default": 120,
+              "description": "How many agent API calls (local API and MCP tools) one agent may make at once before ratelimit.agent-api.rate applies.",
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer",
+              "x-scrim-env": "SCRIM_RATELIMIT_AGENT_API_BURST",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            },
+            "interval": {
+              "default": "1m0s",
+              "description": "The interval ratelimit.agent-api.rate counts over.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_RATELIMIT_AGENT_API_INTERVAL",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            },
+            "rate": {
+              "default": 600,
+              "description": "How many agent API calls (local API and MCP tools) one agent may make per ratelimit.agent-api.interval, after its burst; 0 turns the limit off.",
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer",
+              "x-scrim-env": "SCRIM_RATELIMIT_AGENT_API_RATE",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
+        "approvals": {
+          "additionalProperties": false,
+          "properties": {
+            "burst": {
+              "default": 10,
+              "description": "How many approval requests (tool calls and proxied requests held for a human) one agent may make at once before ratelimit.approvals.rate applies.",
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer",
+              "x-scrim-env": "SCRIM_RATELIMIT_APPROVALS_BURST",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            },
+            "interval": {
+              "default": "1h0m0s",
+              "description": "The interval ratelimit.approvals.rate counts over.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_RATELIMIT_APPROVALS_INTERVAL",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            },
+            "rate": {
+              "default": 60,
+              "description": "How many approval requests (tool calls and proxied requests held for a human) one agent may make per ratelimit.approvals.interval, after its burst; 0 turns the limit off.",
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer",
+              "x-scrim-env": "SCRIM_RATELIMIT_APPROVALS_RATE",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
+        "asks": {
+          "additionalProperties": false,
+          "properties": {
+            "burst": {
+              "default": 5,
+              "description": "How many secret_ask_human asks one agent may make at once before ratelimit.asks.rate applies.",
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer",
+              "x-scrim-env": "SCRIM_RATELIMIT_ASKS_BURST",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            },
+            "interval": {
+              "default": "1h0m0s",
+              "description": "The interval ratelimit.asks.rate counts over.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_RATELIMIT_ASKS_INTERVAL",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            },
+            "rate": {
+              "default": 30,
+              "description": "How many secret_ask_human asks one agent may make per ratelimit.asks.interval, after its burst; 0 turns the limit off.",
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer",
+              "x-scrim-env": "SCRIM_RATELIMIT_ASKS_RATE",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
+        "backend": {
+          "default": "local",
+          "description": "Where per-agent rate limits are counted. local counts in each replica's memory, so with several replicas an agent can get up to that many times each limit (approximate); valkey counts in Valkey (valkey.*), one exact limit shared by every replica. When the backend cannot answer, the request is refused.",
+          "enum": [
+            "local",
+            "valkey"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_RATELIMIT_BACKEND",
+          "x-scrim-flag": "--ratelimit-backend",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "valkey": {
+          "additionalProperties": false,
+          "properties": {
+            "prefix": {
+              "default": "scrim:rl:",
+              "description": "Prefix of the Valkey keys ratelimit.backend valkey keeps its counters in. Replicas of one deployment share it; two deployments on one Valkey need different prefixes.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_RATELIMIT_VALKEY_PREFIX",
+              "x-scrim-restart-required": true,
               "x-scrim-weakening": false
             }
           },
@@ -1369,6 +1924,76 @@
           "description": "Fraction of new root traces sampled, 0 to 1. A sampled incoming parent is always followed.",
           "type": "number",
           "x-scrim-env": "SCRIM_TRACING_SAMPLE_RATIO",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "valkey": {
+      "additionalProperties": false,
+      "properties": {
+        "addresses": {
+          "default": [],
+          "description": "Valkey (or Redis-compatible) servers as host:port, used by events.backend valkey and ratelimit.backend valkey. Several addresses of one cluster are seeds; the client discovers the rest.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_VALKEY_ADDRESSES",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "db": {
+          "default": 0,
+          "description": "Valkey logical database (standalone servers only).",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "type": "integer",
+          "x-scrim-env": "SCRIM_VALKEY_DB",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "password": {
+          "default": "",
+          "description": "Reference to the Valkey password (env:, file:, cred: or a store reference); empty for none.",
+          "pattern": "^$|^(env:[A-Za-z_][A-Za-z0-9_]*|file:/.*|cred:[A-Za-z0-9_@.:-]+|[a-z][a-z0-9+.-]*://[^#].*)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_VALKEY_PASSWORD",
+          "x-scrim-restart-required": true,
+          "x-scrim-secret-ref": true,
+          "x-scrim-weakening": false
+        },
+        "timeout": {
+          "default": "5s",
+          "description": "Dial timeout and the bound on one Valkey round trip; a connection that does not answer a ping within it is considered dead and replaced.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_VALKEY_TIMEOUT",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "tls": {
+          "default": false,
+          "description": "Connect to Valkey over TLS, verifying the server against the system roots or valkey.tls-ca-file.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_VALKEY_TLS",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "tls-ca-file": {
+          "default": "",
+          "description": "PEM file of the certificate authorities that sign the Valkey server certificate; empty uses the system roots.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_VALKEY_TLS_CA_FILE",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "username": {
+          "default": "",
+          "description": "Valkey ACL user; empty uses the default user.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_VALKEY_USERNAME",
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         }

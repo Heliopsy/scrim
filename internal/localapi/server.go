@@ -533,6 +533,7 @@ var statusOf = map[agenttools.Code]int{
 	agenttools.CodeNotFound:        http.StatusNotFound,
 	agenttools.CodeConflict:        http.StatusConflict,
 	agenttools.CodeUnavailable:     http.StatusServiceUnavailable,
+	agenttools.CodeRateLimited:     http.StatusTooManyRequests,
 	agenttools.CodeInternal:        http.StatusInternalServerError,
 }
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/heliopsy/scrim/internal/identity"
+	"github.com/heliopsy/scrim/internal/ratelimit"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -162,7 +163,7 @@ func (s *Service) Ask(ctx context.Context, id identity.Identity, in AskInput) (A
 }
 
 func (s *Service) askHuman(ctx context.Context, c *call, in AskInput) (AskOutput, error) {
-	if err := c.authorize(); err != nil {
+	if err := c.authorize(ctx); err != nil {
 		return AskOutput{}, err
 	}
 	if err := checkRef(in.Ref); err != nil {
@@ -190,6 +191,9 @@ func (s *Service) askHuman(ctx context.Context, c *call, in AskInput) (AskOutput
 		return AskOutput{}, Errorf(CodeUnavailable, "no notifier or entry page is configured, so no human can be asked")
 	}
 	if err := c.decide(ctx); err != nil {
+		return AskOutput{}, err
+	}
+	if err := c.limit(ctx, ratelimit.ClassAsks); err != nil {
 		return AskOutput{}, err
 	}
 	a, tok, err := s.asks.open(c.id, in, timeout)
