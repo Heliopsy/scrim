@@ -405,6 +405,11 @@ pub struct Listener {
     /// address is `host:port` or a Unix socket path.
     #[prost(string, tag = "3")]
     pub address: ::prost::alloc::string::String,
+    /// block_unrouted, for TRANSPARENT and SNI listeners: close connections to
+    /// hosts that are neither a provider host nor a host a credential or capture
+    /// rule is bound to, instead of passing them through untouched.
+    #[prost(bool, tag = "4")]
+    pub block_unrouted: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RedactionSettings {
@@ -1082,6 +1087,8 @@ pub enum ListenerKind {
     Transparent = 4,
     /// HTTPS tool proxy with credential injection
     ToolProxy = 5,
+    /// TLS for names resolved to scrim (DNS override), routed by SNI
+    Sni = 6,
 }
 impl ListenerKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1096,6 +1103,7 @@ impl ListenerKind {
             Self::ForwardProxy => "LISTENER_KIND_FORWARD_PROXY",
             Self::Transparent => "LISTENER_KIND_TRANSPARENT",
             Self::ToolProxy => "LISTENER_KIND_TOOL_PROXY",
+            Self::Sni => "LISTENER_KIND_SNI",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1107,6 +1115,7 @@ impl ListenerKind {
             "LISTENER_KIND_FORWARD_PROXY" => Some(Self::ForwardProxy),
             "LISTENER_KIND_TRANSPARENT" => Some(Self::Transparent),
             "LISTENER_KIND_TOOL_PROXY" => Some(Self::ToolProxy),
+            "LISTENER_KIND_SNI" => Some(Self::Sni),
             _ => None,
         }
     }

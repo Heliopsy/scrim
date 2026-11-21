@@ -36,6 +36,8 @@ func TestMain(m *testing.M) {
 	}
 	code := testhome.Run(m)
 	pgtest.Stop()
+	valkeySvc.Stop()
+	natsSvc.Stop()
 	os.Exit(code)
 }
 

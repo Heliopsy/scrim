@@ -455,6 +455,7 @@ enum ListenerKind {
   LISTENER_KIND_FORWARD_PROXY = 3;  // HTTP CONNECT proxy
   LISTENER_KIND_TRANSPARENT = 4;    // original-destination, routed by SNI
   LISTENER_KIND_TOOL_PROXY = 5;     // HTTPS tool proxy with credential injection
+  LISTENER_KIND_SNI = 6;            // TLS for names resolved to scrim (DNS override), routed by SNI
 }
 
 message Listener {
@@ -462,6 +463,10 @@ message Listener {
   ListenerKind kind = 2;
   // address is `host:port` or a Unix socket path.
   string address = 3;
+  // block_unrouted, for TRANSPARENT and SNI listeners: close connections to
+  // hosts that are neither a provider host nor a host a credential or capture
+  // rule is bound to, instead of passing them through untouched.
+  bool block_unrouted = 4;
 }
 
 message RedactionSettings {

@@ -66,6 +66,24 @@ identity.kubernetes.unmapped: {enum: [derive, unknown]}
 storeAuth.serviceAccountToken.expirationSeconds: {minimum: 600}
 storeAuth.serviceAccountToken.path: {pattern: "^/"}
 postgres.maxConns: {minimum: 1}
+events.backend: {enum: [postgres, valkey, nats]}
+valkey.addresses: {items: {type: string}}
+valkey.db: {minimum: 0}
+nats.servers: {items: {type: string}}
+nats.auth: {enum: [none, token, password]}
+rateLimit.backend: {enum: [local, valkey]}
+auditSinks.otlp.policy: {enum: [block, drop]}
+auditSinks.loki.policy: {enum: [block, drop]}
+auditSinks.kafka.policy: {enum: [block, drop]}
+auditSinks.otlp.queueSize: {minimum: 1}
+auditSinks.loki.queueSize: {minimum: 1}
+auditSinks.kafka.queueSize: {minimum: 1}
+auditSinks.loki.labels: {additionalProperties: {type: string}}
+auditSinks.kafka.brokers: {items: {type: string}}
+auditSinks.kafka.saslMechanism: {enum: [none, plain, scram-sha-256, scram-sha-512]}
+auditSinks.otlp.timeout: {pattern: "^[0-9]+(ms|s|m)$"}
+auditSinks.loki.timeout: {pattern: "^[0-9]+(ms|s|m)$"}
+auditSinks.kafka.timeout: {pattern: "^[0-9]+(ms|s|m)$"}
 agents.noProxy: {items: {type: string}}
 agents.namespaces: {items: {type: string}}
 agents.extraEnv: {items: {type: object}}

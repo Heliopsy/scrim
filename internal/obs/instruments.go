@@ -41,6 +41,16 @@ type Instruments struct {
 	auditDropped   *prometheus.CounterVec
 	stateTx        *prometheus.HistogramVec
 	weakened       *prometheus.GaugeVec
+
+	sinkDelivered *prometheus.CounterVec
+	sinkDropped   *prometheus.CounterVec
+	sinkRefused   *prometheus.CounterVec
+	sinkErrors    *prometheus.CounterVec
+	sinkWrite     *prometheus.HistogramVec
+	sinkQueued    *prometheus.GaugeVec
+	sinkCapacity  *prometheus.GaugeVec
+	sinkUp        *prometheus.GaugeVec
+	rateLimits    *prometheus.CounterVec
 }
 
 // DisabledInstruments returns instruments that record nothing.
@@ -72,6 +82,18 @@ func NewInstruments(m *Metrics, sc Scrubber) *Instruments {
 		auditDropped:   m.Counter("audit", "dropped_total", "Audit entries dropped under the drop policy, by sink.", "sink"),
 		stateTx:        m.Histogram("state", "transaction_seconds", "State transaction duration.", prometheus.DefBuckets, "backend", "kind"),
 		weakened:       m.Gauge("config", "weakened_settings", "1 for each weakening setting in effect.", "setting"),
+
+		sinkDelivered: m.Counter("audit_sink", "delivered_total", "Audit entries an external sink (otlp, loki, kafka) accepted.", "sink"),
+		sinkDropped: m.Counter("audit_sink", "dropped_total", "Audit entries an external sink never received: queue_full under the drop policy, "+
+			"or shutdown before delivery. Every entry is still in the database audit log.", "sink", "reason"),
+		sinkRefused: m.Counter("audit_sink", "refused_total", "Audit entries whose operation was refused because a block-policy sink had no queue room within its timeout.", "sink"),
+		sinkErrors:  m.Counter("audit_sink", "write_errors_total", "Failed writes to an external audit sink; the batch is retried.", "sink"),
+		sinkWrite: m.Histogram("audit_sink", "write_duration_seconds", "Duration of one write to an external audit sink, successful or not.",
+			[]float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}, "sink"),
+		sinkQueued:   m.Gauge("audit_sink", "queue_entries", "Audit entries waiting for an external sink.", "sink"),
+		sinkCapacity: m.Gauge("audit_sink", "queue_capacity", "Queue size of an external audit sink (audit.<sink>.queue-size).", "sink"),
+		sinkUp:       m.Gauge("audit_sink", "up", "1 when the external audit sink accepted its last write, 0 while writes fail.", "sink"),
+		rateLimits:   m.Counter("ratelimit", "decisions_total", "Rate-limit decisions by backend, class and result (allowed, limited, error; error refuses).", "backend", "class", "result"),
 	}
 }
 
@@ -163,6 +185,68 @@ func (in *Instruments) AuditDropped(sink string, n int) {
 		return
 	}
 	in.auditDropped.WithLabelValues(in.labels(sink)...).Add(float64(n))
+}
+
+// AuditSinkDelivered implements audit.Observer.
+func (in *Instruments) AuditSinkDelivered(sink string, n int, took time.Duration) {
+	if !in.On() {
+		return
+	}
+	l := in.labels(sink)
+	in.sinkDelivered.WithLabelValues(l...).Add(float64(n))
+	in.sinkWrite.WithLabelValues(l...).Observe(took.Seconds())
+}
+
+// AuditSinkWriteFailed implements audit.Observer.
+func (in *Instruments) AuditSinkWriteFailed(sink string, took time.Duration) {
+	if !in.On() {
+		return
+	}
+	l := in.labels(sink)
+	in.sinkErrors.WithLabelValues(l...).Inc()
+	in.sinkWrite.WithLabelValues(l...).Observe(took.Seconds())
+}
+
+// AuditSinkDropped implements audit.Observer.
+func (in *Instruments) AuditSinkDropped(sink, reason string, n int) {
+	if !in.On() {
+		return
+	}
+	in.sinkDropped.WithLabelValues(in.labels(sink, reason)...).Add(float64(n))
+}
+
+// AuditSinkRefused implements audit.Observer.
+func (in *Instruments) AuditSinkRefused(sink string, n int) {
+	if !in.On() {
+		return
+	}
+	in.sinkRefused.WithLabelValues(in.labels(sink)...).Add(float64(n))
+}
+
+// AuditSinkQueue implements audit.Observer.
+func (in *Instruments) AuditSinkQueue(sink string, queued, capacity int) {
+	if !in.On() {
+		return
+	}
+	l := in.labels(sink)
+	in.sinkQueued.WithLabelValues(l...).Set(float64(queued))
+	in.sinkCapacity.WithLabelValues(l...).Set(float64(capacity))
+}
+
+// AuditSinkUp implements audit.Observer.
+func (in *Instruments) AuditSinkUp(sink string, up bool) {
+	if !in.On() {
+		return
+	}
+	in.sinkUp.WithLabelValues(in.labels(sink)...).Set(b2f(up))
+}
+
+// RateLimit implements ratelimit.Observer.
+func (in *Instruments) RateLimit(backend, class, result string) {
+	if !in.On() {
+		return
+	}
+	in.rateLimits.WithLabelValues(in.labels(backend, class, result)...).Inc()
 }
 
 // StateTransaction records one state transaction; it fits the backends'

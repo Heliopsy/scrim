@@ -232,6 +232,21 @@ type CommitHook interface {
 	OnEventCommit(fn func())
 }
 
+// AuditTap is implemented by every backend: the audit sinks (package audit,
+// [audit.Fanout]) see each audit entry before the transaction that writes it
+// commits. fn runs inside every write transaction that appended at least one
+// entry, after the caller's function returned nil and before the commit,
+// with the entries as appended (IDs assigned). An error from fn rolls the
+// transaction back and is returned, so a change a blocking sink cannot take
+// is refused rather than done unaudited. done, when fn returns one, runs
+// after the commit or the rollback with whether the transaction committed.
+type AuditTap interface {
+	SetAuditTap(fn AuditTapFunc)
+}
+
+// AuditTapFunc is the function an [AuditTap] calls.
+type AuditTapFunc func(ctx context.Context, entries []audit.Entry) (done func(committed bool), err error)
+
 // Store opens transactions.
 type Store interface {
 	// View runs fn in a read-only transaction. Mutating methods return an

@@ -377,6 +377,8 @@ pub struct Client {
     pub proxy: SocketAddr,
     pub trust: Vec<CertificateDer<'static>>,
     pub h2: bool,
+    /// Speak TLS straight away, as to a transparent or SNI listener, instead of sending CONNECT.
+    pub direct: bool,
 }
 
 #[derive(Debug)]
@@ -415,6 +417,7 @@ impl Client {
             proxy: proxy.addr,
             trust,
             h2: false,
+            direct: false,
         }
     }
 
@@ -428,8 +431,13 @@ impl Client {
             .await
             .map_err(|e| ClientError::Connect(e.to_string()))?;
         let connect = format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n");
-        tcp.write_all(connect.as_bytes()).await.unwrap();
+        if !self.direct {
+            tcp.write_all(connect.as_bytes()).await.unwrap();
+        }
         let mut buf = Vec::new();
+        if self.direct {
+            buf.extend_from_slice(b"HTTP/1.1 200 direct\r\n\r\n");
+        }
         let mut byte = [0u8; 1];
         while !buf.ends_with(b"\r\n\r\n") {
             let n = tcp

@@ -147,6 +147,16 @@ An empty `route` on a refusal is a request no route matched; `route` and `provid
 | `scrim_config_weakened_settings` | gauge | setting | 1 per weakening setting in effect |
 | `scrim_audit_delivered_total` | counter | sink | audit entries written |
 | `scrim_audit_dropped_total` | counter | sink | audit entries lost |
+| `scrim_audit_sink_delivered_total` | counter | sink (`otlp`, `loki`, `kafka`) | entries an external audit sink accepted |
+| `scrim_audit_sink_dropped_total` | counter | sink, reason (`queue_full`, `rejected`, `shutdown`) | entries an external sink never received; they are in the database audit log |
+| `scrim_audit_sink_refused_total` | counter | sink | entries whose operation was refused because a `block` sink had no room in time |
+| `scrim_audit_sink_write_errors_total` | counter | sink | failed writes, retried |
+| `scrim_audit_sink_write_duration_seconds` | histogram | sink | one write, successful or not |
+| `scrim_audit_sink_queue_entries` | gauge | sink | entries waiting |
+| `scrim_audit_sink_queue_capacity` | gauge | sink | `audit.<sink>.queue-size` |
+| `scrim_audit_sink_up` | gauge | sink | 1 when the last write succeeded |
+| `scrim_ratelimit_decisions_total` | counter | backend, class (`agent-api`, `approvals`, `asks`), result (`allowed`, `limited`, `error`) | rate-limit decisions; `error` refuses |
+| `scrim_events_listener_up` | gauge | | 1 while the events backend's listener or subscription is connected |
 | `scrim_state_up` | gauge | backend | 1 when the state backend answered |
 | `scrim_state_transaction_seconds` | histogram | backend, kind (`view`, `update`) | state transactions |
 | `scrim_ca_certificate_not_after_timestamp_seconds` | gauge | generation (`current`, `previous`) | tool-proxy CA expiry |
@@ -278,6 +288,37 @@ still in force. `scrim status` shows the problems; fix the file and send SIGHUP 
 Warning. Audit entries were dropped in 15 minutes. Check the state backend (`scrim_state_up`,
 transaction latency) and `scrim_dataplane_events_dropped_total`, which counts events lost before
 they reached the control plane.
+
+### ScrimAuditSinkDropping
+
+Critical. An external audit sink did not receive entries in 15 minutes; the `reason` label says why.
+`queue_full`: the sink is slower than the audit traffic or down and its policy is `drop`; check
+`scrim_audit_sink_up`, the sink itself, and raise `audit.<sink>.queue-size`. `rejected`: the sink
+refused a batch as invalid (look for "rejected a batch" in scrim's log; Loki refuses entries older
+than its ingestion window). `shutdown`: scrim stopped before the sink took them. The entries are in
+the database audit log: `scrim audit log --since` exports them for a replay.
+
+### ScrimAuditSinkRefusing
+
+Critical. A sink with policy `block` had no queue room within `audit.<sink>.timeout`, so audited
+operations were refused. Restore the sink; if it is only slow, raise `queue-size` or `timeout`, or
+switch the sink to `drop` if losing copies is acceptable while the database keeps the record.
+
+### ScrimAuditSinkBacklog
+
+Warning. A sink's queue has been over 80% full for 5 minutes: it is falling behind. Next it drops
+(`drop`) or refuses (`block`). Check `scrim_audit_sink_write_duration_seconds` and the sink's health.
+
+### ScrimAuditSinkDown
+
+Warning. Every write to a sink has failed for 10 minutes. Entries wait and are retried; the queue
+fills. `scrim status` shows the last error, scrubbed.
+
+### ScrimRateLimitBackendErrors
+
+Warning. The rate-limit backend could not decide requests for 5 minutes, and those requests are
+refused. With `ratelimit.backend: valkey`, check that Valkey answers (`valkey.addresses`, the
+password reference, TLS).
 
 ### ScrimWeakenedSetting
 
