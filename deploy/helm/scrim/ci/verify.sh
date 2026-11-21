@@ -134,7 +134,7 @@ PY
 helm template "$RELEASE" "$CHART" --namespace "$NS" -f "$OUT/flux-values.yaml" > /dev/null
 
 step "optional objects: off by default"
-for kind in ClusterPolicy NetworkPolicy ServiceMonitor PodMonitor PrometheusRule ExternalSecret HorizontalPodAutoscaler; do
+for kind in MutatingPolicy ValidatingPolicy NetworkPolicy ServiceMonitor PodMonitor PrometheusRule ExternalSecret HorizontalPodAutoscaler; do
   ! grep -q "^kind: $kind\$" "$OUT/defaults.yaml" || fail "the defaults render a $kind"
 done
 

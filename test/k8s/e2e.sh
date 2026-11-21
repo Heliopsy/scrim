@@ -21,7 +21,11 @@
 #   - a placeholder sent toward an unbound host is refused and nothing
 #     reaches that host;
 #   - no secret value appears in scrim's logs;
-#   - Kyverno refuses a labelled pod in a namespace the chart did not prepare;
+#   - Kyverno refuses a labelled pod in a namespace the chart did not prepare,
+#     and leaves a labelled Deployment as written (it injects pods only);
+#   - the image signature example (deploy/examples/kyverno) admits the signed
+#     release image, rewritten to its digest, and refuses an unsigned
+#     artifact of the same repository (needs ghcr.io and Rekor);
 #   - `helm test` passes through the NetworkPolicy.
 #
 # It never touches another cluster or your kubeconfig: the cluster's
@@ -38,6 +42,8 @@
 #                              internal/dataplane/embedded/scrim-dataplane is
 #                              missing (default the release's scrim-dataplane)
 #   SCRIM_K8S_MIN_FREE_GB      refuse to start below this much free disk (6)
+#   SCRIM_K8S_KYVERNO_CHART    Kyverno chart version (default the pinned one;
+#                              3.7.2 is the oldest the chart supports, Kyverno 1.17)
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -55,7 +61,9 @@ calico_version="v3.33.1"
 # sha256: https://raw.githubusercontent.com/projectcalico/calico/{version}/manifests/calico.yaml
 calico_sha256="3368e62807b949438842e31f46c9b6df741731b4c755d0a622dd062b2cb20495"
 # renovate: datasource=helm depName=kyverno registryUrl=https://kyverno.github.io/kyverno/
-kyverno_chart_version="3.9.2"
+kyverno_chart_version="3.10.0"
+kyverno_pinned_chart="$kyverno_chart_version"
+kyverno_chart_version="${SCRIM_K8S_KYVERNO_CHART:-$kyverno_chart_version}"
 openbao_image="quay.io/openbao/openbao:2.7.3@sha256:ba4b133eb9586630024e71a617e66f37f29cc3534cdd46a6233e098ceded8dc9"
 embed="$root/internal/dataplane/embedded/scrim-dataplane"
 
@@ -151,7 +159,7 @@ else
   k apply -f "$work/calico.yaml" >/dev/null
   kwait 400 -n kube-system rollout status ds/calico-node --timeout=380s
   kwait 300 -n kube-system rollout status deploy/coredns --timeout=280s
-  log "install Kyverno"
+  log "install Kyverno (chart $kyverno_chart_version)"
   hl install kyverno kyverno --repo https://kyverno.github.io/kyverno/ --version "$kyverno_chart_version" \
     -n kyverno --create-namespace --set reportsController.enabled=false --set cleanupController.enabled=false \
     --wait --timeout 280s >/dev/null
@@ -231,7 +239,10 @@ hl upgrade --install scrim "$root/deploy/helm/scrim" -n scrim -f "$here/values-e
   --set image.registry=localhost --set image.repository="$(basename "${img_scrim%:*}")" --set image.tag="$tag" \
   --set sidecar.egressGuard.image="$img_tools" \
   --set 'agents.namespaces={agents}' --wait --timeout 240s >/dev/null
-kwait 120 wait --for=condition=Ready clusterpolicy/scrim-scrim-inject --timeout=100s >/dev/null
+for p in validatingpolicy/scrim-scrim-require-prepared-namespace mutatingpolicy/scrim-scrim-inject-central \
+  mutatingpolicy/scrim-scrim-inject-sidecar; do
+  kwait 120 wait --for=jsonpath='{.status.conditionStatus.ready}'=true "$p" --timeout=100s >/dev/null
+done
 # The chart's own helm test pods, through the NetworkPolicy.
 hl test scrim -n scrim --timeout 180s >/dev/null || fail "helm test failed"
 pass "helm test"
@@ -339,6 +350,41 @@ if sed -e "s|@TOOLS@|$img_tools|g" -e "s|@MODE@|central|g" "$here/agent.yaml" | 
   fail "Kyverno admitted a labelled pod in an unprepared namespace"
 fi
 pass "labelled pod refused outside the prepared namespaces"
+
+# Pods only: a labelled Deployment is stored as written, its pods are injected.
+deploy_env="$(sed -e "s|@TOOLS@|$img_tools|g" "$here/agent-deployment.yaml" |
+  k -n agents create --dry-run=server -o jsonpath='{.spec.template.spec.containers[0].env}' -f -)"
+[ -z "$deploy_env" ] || fail "Kyverno mutated a labelled Deployment: $deploy_env"
+pass "labelled Deployment left as written"
+
+log "image signature policy (deploy/examples/kyverno)"
+k apply -f "$root/deploy/examples/kyverno/verify-scrim-images.yaml" >/dev/null
+kwait 120 wait --for=jsonpath='{.status.conditionStatus.ready}'=true imagevalidatingpolicy/verify-scrim-images \
+  --timeout=100s >/dev/null
+# Server-side dry runs: admission runs, nothing is pulled or started.
+probe_pod() {
+  printf 'apiVersion: v1\nkind: Pod\nmetadata: {name: %s}\nspec: {containers: [{name: c, image: "%s"}]}\n' "$1" "$2" |
+    kwait 120 -n scrim-e2e create --dry-run=server -o jsonpath='{.spec.containers[0].image}' -f - 2>&1
+}
+signed_image="ghcr.io/heliopsy/scrim:0.2.0" # x-release-please-version
+# An OCI referrers index of the same repository: matched by the policy, never signed.
+unsigned_image="ghcr.io/heliopsy/scrim:sha256-490a9ca52efeba6f9ed4c886f0dba55e33325603988c6570dd29477827cf683e"
+out="$(probe_pod signed-scrim "$signed_image")" || fail "the signed release image was refused: $out"
+case "$out" in
+  "$signed_image@sha256:"*) pass "signed release image admitted and pinned to its digest" ;;
+  # Kyverno before 1.20 checks the signature but does not rewrite the tag
+  # (docs/kubernetes.md, Kyverno versions).
+  "$signed_image") [ "$kyverno_chart_version" != "$kyverno_pinned_chart" ] ||
+    fail "the signed image was not pinned to its digest: $out"
+    pass "signed release image admitted (tag not pinned on Kyverno chart $kyverno_chart_version)" ;;
+  *) fail "unexpected image after admission: $out" ;;
+esac
+if out="$(probe_pod unsigned-scrim "$unsigned_image")"; then
+  fail "an unsigned scrim image was admitted: $out"
+fi
+grep -q 'no signatures found' <<<"$out" || fail "the unsigned image was refused for another reason: $out"
+pass "unsigned image refused"
+k delete -f "$root/deploy/examples/kyverno/verify-scrim-images.yaml" >/dev/null
 
 failed=0
 log "PASS"

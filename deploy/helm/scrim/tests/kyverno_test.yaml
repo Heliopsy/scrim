@@ -9,45 +9,94 @@ set:
   kyverno.enabled: true
   agents.namespaces: [agents]
 tests:
-  - it: refuses labelled pods outside the prepared namespaces and injects central pods
+  - it: refuses labelled pods outside the prepared namespaces
+    documentSelector: {path: kind, value: ValidatingPolicy}
     asserts:
-      - isKind: {of: ClusterPolicy}
-      - equal: {path: 'spec.rules[0].name', value: require-prepared-namespace}
-      - equal: {path: 'spec.rules[1].name', value: inject-central}
-      - contains:
-          path: 'spec.rules[1].mutate.patchStrategicMerge.spec.volumes'
-          content:
-            name: scrim-identity
-            projected:
-              defaultMode: 292
-              sources: [{serviceAccountToken: {audience: scrim, expirationSeconds: 3600, path: token}}]
-      - equal: {path: 'metadata.annotations["pod-policies.kyverno.io/autogen-controllers"]', value: none}
+      - isAPIVersion: {of: policies.kyverno.io/v1}
+      - equal: {path: metadata.name, value: rel-scrim-ns-require-prepared-namespace}
+      - equal: {path: spec.validationActions, value: [Deny]}
+      - equal: {path: spec.failurePolicy, value: Fail}
+      - equal: {path: spec.evaluation.background.enabled, value: false}
+      - equal:
+          path: spec.matchConstraints.objectSelector
+          value: {matchExpressions: [{key: scrim.dev/inject, operator: Exists}]}
+      - equal: {path: 'spec.variables[0]', value: {name: namespaces, expression: '["agents"]'}}
+      - equal: {path: 'spec.variables[1]', value: {name: modes, expression: '["central"]'}}
+      - matchRegex:
+          path: 'spec.validations[0].expression'
+          pattern: 'request\.namespace in variables\.namespaces &&\s+object\.metadata\.\?labels\["scrim\.dev/inject"\]\.orValue\(""\) in variables\.modes'
+  - it: refuses every labelled pod when no namespace is prepared
+    documentSelector: {path: kind, value: ValidatingPolicy}
+    set:
+      agents.namespaces: []
+    asserts:
+      - equal: {path: 'spec.variables[0].expression', value: '[]'}
+  - it: injects central pods, never their controllers
+    documentSelector: {path: metadata.name, value: rel-scrim-ns-inject-central}
+    asserts:
+      - isKind: {of: MutatingPolicy}
+      - isAPIVersion: {of: policies.kyverno.io/v1}
+      - equal: {path: spec.failurePolicy, value: Fail}
+      - equal: {path: 'spec.matchConstraints.resourceRules[0].operations', value: [CREATE]}
+      # An object selector keeps Kyverno from generating Deployment, Job, ... variants.
+      - equal:
+          path: spec.matchConstraints.objectSelector
+          value: {matchExpressions: [{key: scrim.dev/inject, operator: Exists}]}
+      - equal:
+          path: spec.matchConditions
+          value: [{name: central, expression: 'object.metadata.?labels["scrim.dev/inject"].orValue("") == "central"'}]
+      - notExists: {path: spec.autogen}
+      - equal: {path: 'spec.mutations[0].patchType', value: JSONPatch}
+      - matchRegex: {path: 'spec.variables[0].expression', pattern: '"name": "ANTHROPIC_BASE_URL",\s+"value": "http://rel-scrim\.ns\.svc\.cluster\.local:9790/anthropic"'}
+      - matchRegex: {path: 'spec.variables[2].expression', pattern: '"mountPath": "/var/run/secrets/scrim",\s+"name": "scrim-identity"'}
+      # The projected identity token, mode 0444.
+      - matchRegex:
+          path: 'spec.variables[4].expression'
+          pattern: '"name": "scrim-identity",\s+"projected": \{\s+"defaultMode": 292,\s+"sources": \[\s+\{\s+"serviceAccountToken": \{\s+"audience": "scrim",\s+"expirationSeconds": 3600,\s+"path": "token"'
+      - matchRegex: {path: 'spec.variables[4].expression', pattern: '"key": "scrim-exec",\s+"mode": 365,'}
+      - notMatchRegex: {path: 'spec.mutations[0].jsonPatch.expression', pattern: initContainers}
   - it: renders nothing when off
     set:
       kyverno.enabled: false
     asserts:
       - hasDocuments: {count: 0}
-  - it: injects the sidecar with the guard, the API token and the store token
+  - it: injects the sidecar with the guard first, the API token and the store token
+    documentSelector: {path: metadata.name, value: rel-scrim-ns-inject-sidecar}
     set:
       sidecar: {enabled: true, egressGuard: {image: nft:1}}
       storeAuth.serviceAccountToken.enabled: true
     asserts:
-      - equal: {path: 'spec.rules[2].name', value: inject-sidecar}
-      - equal: {path: 'spec.rules[2].mutate.patchStrategicMerge.spec.initContainers[0].name', value: scrim-egress-guard}
-      - equal: {path: 'spec.rules[2].mutate.patchStrategicMerge.spec.initContainers[0].securityContext.capabilities.add', value: [NET_ADMIN]}
-      - equal: {path: 'spec.rules[2].mutate.patchStrategicMerge.spec.initContainers[1].restartPolicy', value: Always}
-      - contains:
-          path: 'spec.rules[2].mutate.patchStrategicMerge.spec.initContainers[1].volumeMounts'
-          content: {name: scrim-kube-api, mountPath: /var/run/secrets/scrim/kube-api, readOnly: true}
-      - contains:
-          path: 'spec.rules[2].mutate.patchStrategicMerge.spec.initContainers[1].volumeMounts'
-          content: {name: scrim-store-token, mountPath: /var/run/secrets/scrim, readOnly: true}
+      - equal:
+          path: spec.matchConditions
+          value: [{name: sidecar, expression: 'object.metadata.?labels["scrim.dev/inject"].orValue("") == "sidecar"'}]
+      - equal: {path: 'spec.variables[6].name', value: initContainers}
+      - matchRegex:
+          path: 'spec.variables[6].expression'
+          pattern: '(?s)"name": "scrim-egress-guard",.*"add": \[\s+"NET_ADMIN"\s+\].*"name": "scrim",.*"restartPolicy": "Always"'
+      - matchRegex:
+          path: 'spec.variables[6].expression'
+          pattern: '"mountPath": "/var/run/secrets/scrim/kube-api",\s+"name": "scrim-kube-api",\s+"readOnly": true'
+      - matchRegex:
+          path: 'spec.variables[6].expression'
+          pattern: '"mountPath": "/var/run/secrets/scrim",\s+"name": "scrim-store-token",\s+"readOnly": true'
+      # The guard and the in-pod scrim go in front of the pod's own init containers.
+      - matchRegex:
+          path: 'spec.mutations[0].jsonPatch.expression'
+          pattern: 'path: "/spec/initContainers",\s+value: variables\.initContainers \+'
   - it: mounts the metrics token Secret into sidecars
+    documentSelector: {path: metadata.name, value: rel-scrim-ns-inject-sidecar}
     set:
       sidecar: {enabled: true, egressGuard: {image: nft:1}}
       metrics.enabled: true
       secrets.existing.metrics: scrim-metrics
     asserts:
-      - contains:
-          path: 'spec.rules[2].mutate.patchStrategicMerge.spec.volumes'
-          content: {name: scrim-metrics-token, secret: {secretName: scrim-metrics, defaultMode: 292, items: [{key: token, path: token}]}}
+      - matchRegex:
+          path: 'spec.variables[4].expression'
+          pattern: '"name": "scrim-metrics-token",\s+"secret": \{\s+"defaultMode": 292,\s+"items": \[\s+\{\s+"key": "token",\s+"path": "token"\s+\}\s+\],\s+"secretName": "scrim-metrics"'
+  - it: refuses the other mode's label when only sidecar is on
+    documentSelector: {path: kind, value: ValidatingPolicy}
+    set:
+      central.enabled: false
+      sidecar: {enabled: true, egressGuard: {image: nft:1}}
+    asserts:
+      - equal: {path: 'spec.variables[1].expression', value: '["sidecar"]'}

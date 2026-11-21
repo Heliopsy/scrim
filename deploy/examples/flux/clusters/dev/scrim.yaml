@@ -35,6 +35,12 @@ spec:
   path: ./kyverno
   prune: true
   wait: true
+  # kstatus does not read this status; Ready once Kyverno has
+  # registered its webhook.
+  healthCheckExprs:
+    - apiVersion: policies.kyverno.io/v1
+      kind: ImageValidatingPolicy
+      current: status.conditionStatus.ready == true
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization

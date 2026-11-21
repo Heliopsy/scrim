@@ -12,8 +12,8 @@ metadata:
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "0"
-    # Kyverno fills in defaults on the chart's ClusterPolicy; the client-side
-    # diff then reports it OutOfSync after every sync. The server-side diff
+    # Kyverno fills in defaults on the chart's policies; the client-side diff
+    # then reports them OutOfSync after every sync. The server-side diff
     # compares what the API server would store.
     argocd.argoproj.io/compare-options: ServerSideDiff=true
   finalizers:

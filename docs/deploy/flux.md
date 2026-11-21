@@ -22,7 +22,8 @@ Files: [`deploy/examples/flux/`](../../deploy/examples/flux/) and
   image-reflector-controller,image-automation-controller`).
 - An age key for SOPS in each cluster, as the Secret `sops-age` in `flux-system`
   ([gitops-secrets.md](gitops-secrets.md#sops-with-age)).
-- Kyverno 1.13 to 1.19 for the image signature policy.
+- Kyverno 1.20 or later for the image signature policy, an ImageValidatingPolicy
+  ([kubernetes.md](../kubernetes.md#kyverno-versions)).
 
 ## Layout of the fleet repository
 
@@ -74,8 +75,10 @@ and `scrim-policies`. Put it and `sources/scrim-chart.yaml` in `clusters/<env>/`
 
 [`clusters/<env>/scrim.yaml`](../../deploy/examples/flux/clusters/) holds three Flux
 Kustomizations per cluster: `scrim-secrets` decrypts and applies `secrets/<env>` with SOPS,
-`scrim-policies` applies the image signature policy from `kyverno/`, and `scrim` applies
-`scrim/overlays/<env>` once both are ready, waiting for the rollout (`wait: true`).
+`scrim-policies` applies the image signature policy from `kyverno/` and is ready once Kyverno has
+registered the policy's webhook (a `healthCheckExprs` entry on `status.conditionStatus.ready`,
+which kstatus does not read), and `scrim` applies `scrim/overlays/<env>` once both are ready,
+waiting for the rollout (`wait: true`).
 
 The three environments differ only in their overlay, so a change moves through them as commits:
 
@@ -119,7 +122,7 @@ Releases, images and chart alike, are signed keyless with cosign by the release 
 checks the chart ([HelmRelease](#helmrelease)); two places check the images:
 
 - [`kyverno/verify-scrim-images.yaml`](../../deploy/examples/kyverno/verify-scrim-images.yaml), a
-  Kyverno ClusterPolicy, refuses any pod with a `ghcr.io/heliopsy/scrim` or `scrim-dataplane` image
+  Kyverno ImageValidatingPolicy, refuses any pod with a `ghcr.io/heliopsy/scrim` or `scrim-dataplane` image
   that this identity did not sign, and rewrites the tag to the verified digest. This is the
   enforcement. The `scrim-policies` Kustomization applies it before `scrim` and `scrim-helm`, so
   the first scrim pod is checked.

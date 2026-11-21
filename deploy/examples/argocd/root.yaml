@@ -2,7 +2,9 @@
 # repository, where the files below live, and Argo CD applies the children in
 # sync-wave order, each healthy before the next wave starts:
 #   -3  kyverno.yaml           Kyverno and its CRDs
-#   -2  policies.yaml          the image signature policy (needs the CRDs)
+#   -2  policies.yaml          the image signature policy (needs the CRDs;
+#                              Healthy once Kyverno registered its webhook,
+#                              Argo CD 3.6 or later)
 #   -1  external-secrets.yaml  scrim's Secrets from OpenBao
 #    0  application-helm.yaml  scrim itself
 apiVersion: argoproj.io/v1alpha1

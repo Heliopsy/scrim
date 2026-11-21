@@ -74,7 +74,7 @@ one("ConfigMap", "ci-extra")
 svc = one("Service", "ci-scrim")
 want(svc.get("metadata", {}).get("annotations", {}).get("example.com/expose") == "false", "objectMetadata on the Service")
 want(svc.get("metadata", {}).get("labels", {}).get("team") == "platform", "commonLabels")
-for kind in ("ClusterPolicy", "ServiceMonitor", "PrometheusRule", "ClusterRole", "ClusterRoleBinding"):
+for kind in ("ValidatingPolicy", "MutatingPolicy", "ServiceMonitor", "PrometheusRule", "ClusterRole", "ClusterRoleBinding"):
     want([d for d in docs if d["kind"] == kind], f"{kind} rendered")
 cfg = yaml.safe_load(one("ConfigMap", "ci-scrim-config").get("data", {}).get("chart.yaml", "{}"))
 want(cfg["deployment"]["replicas"] == 8, "deployment.replicas follows the HPA maximum")

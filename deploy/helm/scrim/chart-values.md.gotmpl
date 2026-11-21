@@ -27,7 +27,8 @@ helm test scrim -n scrim
 
 {{ template "chart.kubeVersionLine" . }}
 
-Optional, depending on values: Kyverno 1.13 to 1.19 (`kyverno`), prometheus-operator CRDs
+Optional, depending on values: Kyverno 1.17 or later (`kyverno`, the `policies.kyverno.io/v1`
+policy types), prometheus-operator CRDs
 (`serviceMonitor`, `podMonitor`, `prometheusRule`), external-secrets (`secrets.externalSecrets`), a
 CNI that enforces NetworkPolicies (`networkPolicy`), PostgreSQL (`postgres`), Reflector or
 kubernetes-replicator (`global.replication`).

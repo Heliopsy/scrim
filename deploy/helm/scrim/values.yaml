@@ -546,10 +546,11 @@ agents:
   # -- Mount path of the CA files in agent containers.
   trustPath: /etc/scrim/trust
 
-# -- Kyverno admission policy that configures labelled pods.
+# -- Kyverno admission policies that configure labelled pods.
 # @default -- See the keys below.
 kyverno:
-  # -- Install the ClusterPolicy (needs Kyverno 1.13 to 1.19).
+  # -- Install the injection MutatingPolicies and the namespace ValidatingPolicy
+  # (policies.kyverno.io/v1, needs Kyverno 1.17 or later).
   enabled: false
   # -- Refuse labelled pods when Kyverno cannot process them.
   failurePolicy: Fail

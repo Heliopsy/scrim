@@ -76,10 +76,9 @@ verifies the signature by its workflow identity, and a HelmRelease. Every value 
 [helm-values.md](helm-values.md).
 
 Requirements: Kubernetes 1.29 or later, a CNI that enforces NetworkPolicy (Calico, Cilium, Antrea,
-kube-network-policies; kindnet only from kind 0.24 on, plain flannel never), Kyverno 1.13 to 1.19
-for injection by label (Kyverno 1.20 no longer runs `kyverno.io/v1` ClusterPolicies, which the
-chart installs), and PostgreSQL for more than one replica. From a checkout instead of the
-registry:
+kube-network-policies; kindnet only from kind 0.24 on, plain flannel never), Kyverno 1.17 or
+later for injection by label ([Kyverno versions](#kyverno-versions)), and PostgreSQL for more than
+one replica. From a checkout instead of the registry:
 
 ```sh
 kubectl --context <ctx> create namespace scrim
@@ -222,8 +221,13 @@ spec:
       image: ghcr.io/example/agent:1
 ```
 
-The ClusterPolicy (`kyverno.enabled`) mutates Pods only, at creation (controllers are left as
-written, so a Deployment in Git does not drift), and adds to every container:
+`kyverno.enabled` installs two Kyverno MutatingPolicies, `<release>-scrim-<namespace>-inject-central`
+and `-inject-sidecar` (one per enabled mode), and a ValidatingPolicy,
+`<release>-scrim-<namespace>-require-prepared-namespace`. They select pods by the label in their
+object selector, so the API server sends Kyverno labelled pods only. They mutate Pods only, at
+creation: controllers are left as written, so a Deployment in Git does not drift (an object selector
+also turns off Kyverno's generated variants for Deployments, Jobs and the other pod controllers).
+Every container of a labelled pod gets:
 
 | Variable | Central value | Sidecar value |
 | --- | --- | --- |
@@ -239,10 +243,12 @@ written, so a Deployment in Git does not drift), and adds to every container:
 sets for an agent on a laptop (`internal/run`), with the Service in place of loopback. The `scrim-ca`
 ConfigMap is mounted at `agents.trustPath` (`/etc/scrim/trust`), with the `scrim-exec` launcher when
 identity is on, and the projected identity token at `identity.kubernetes.tokenPath`
-([Identity](#identity)). An injected variable replaces one
-of the same name in the pod spec. In sidecar mode the policy also adds the egress guard and the scrim
-container as a native sidecar (an init container with `restartPolicy: Always`), whose startup probe
-waits for `/readyz`, so the agent starts only once its scrim is ready.
+([Identity](#identity)). An injected variable replaces one of the same name in the pod spec, an
+injected mount one at the same path, an injected volume one of the same name. In sidecar mode the
+policy also adds the egress guard and the scrim container as a native sidecar (an init container
+with `restartPolicy: Always`), whose startup probe waits for `/readyz`, so the agent starts only
+once its scrim is ready. Both go in front of the pod's own init containers, so no init container of
+the agent runs before the guard.
 
 A labelled pod in a namespace not listed in `agents.namespaces`, or with a label value other than
 `central` or `sidecar` (for the modes enabled), is refused: its CA, environment and NetworkPolicies
@@ -251,6 +257,36 @@ Kyverno is down, rather than started unconfigured.
 
 MCP registration is not injected. `scrim mcp` talks to the agent API over a Unix socket in scrim's
 pod; reaching it from an agent pod needs the edge forwarder (tasks.md 12.5).
+
+### Kyverno versions
+
+The policies use the `policies.kyverno.io/v1` API, served from Kyverno 1.17 on. The CI end-to-end
+test runs them on the Kyverno the repository pins (`test/k8s/e2e.sh`, Kyverno 1.20 now); run it
+with `SCRIM_K8S_KYVERNO_CHART=3.7.2` for Kyverno 1.17, the oldest the chart supports.
+
+| Kyverno | Chart 0.2.0 and earlier (`kyverno.io/v1` ClusterPolicy) | This chart (`policies.kyverno.io/v1`) |
+| --- | --- | --- |
+| 1.13 to 1.16 | yes | no: the API is missing, the install fails on the unknown kinds |
+| 1.17 to 1.19 | yes | yes |
+| 1.20 and later | no: Kyverno neither creates, updates nor runs a ClusterPolicy | yes |
+
+There is no setting that renders the old ClusterPolicy: on Kyverno 1.16 or older, stay on chart
+0.2.0 or upgrade Kyverno first. To move an installation of chart 0.2.0 to Kyverno 1.20, keep this
+order:
+
+1. On Kyverno 1.17 to 1.19, upgrade the scrim chart. Helm creates the new policies and deletes the
+   ClusterPolicy `<release>-scrim-<namespace>-inject`. While both exist for the moment of the
+   upgrade a pod may be patched by both; they add the same values, so the pod is the same.
+2. Check that no ClusterPolicy is left (`kubectl get clusterpolicies`), then upgrade Kyverno to
+   1.20. Its chart refuses to install or upgrade while a `kyverno.io` policy remains
+   (`upgrade.acknowledgeLegacyPoliciesNotEnforced` overrides that, but a ClusterPolicy left behind
+   is no longer enforced: labelled pods would start unconfigured).
+
+The image signature example ([deploy/examples/kyverno](../deploy/examples/kyverno/verify-scrim-images.yaml))
+is an ImageValidatingPolicy. Use it on Kyverno 1.20 or later: there it refuses an unsigned scrim
+image and rewrites a verified tag to its digest. Kyverno 1.17.2 checks the signature and refuses
+an unsigned image too, but admits the tag unchanged (no digest pinning, `verifyDigest` not
+enforced); 1.18 and 1.19 are not tested.
 
 ### Without Kyverno
 
@@ -289,8 +325,9 @@ spec:
 
 Keep the `scrim.dev/inject: central` label so the NetworkPolicy applies. `env` entries in the
 container win over `envFrom`, so remove any `ANTHROPIC_BASE_URL` or proxy variables the spec already
-sets. Sidecar mode without Kyverno means copying the sidecar and guard containers from
-`helm template --show-only templates/kyverno.yaml` into your pod spec.
+sets. Sidecar mode without Kyverno means copying the sidecar and guard containers into your pod
+spec: `helm template --set kyverno.enabled=true --show-only templates/kyverno.yaml` prints them, as
+JSON, in the `initContainers` and `volumes` variables of the `-inject-sidecar` MutatingPolicy.
 
 ## NetworkPolicy
 
@@ -526,10 +563,13 @@ model provider, a TLS tool host and the chart, then starts one agent pod per mod
   nothing; the agent gets the placeholder back;
 - a placeholder sent toward an unbound name of the same server is refused and nothing reaches it;
 - no secret value or agent token is in scrim's logs, and Kyverno refuses a labelled pod in an
-  unprepared namespace.
+  unprepared namespace and leaves a labelled Deployment as written;
+- the image signature example admits the signed release image, pinned to its digest, and refuses
+  an unsigned artifact of the same repository (this step needs ghcr.io and Rekor).
 
-It uses its own kubeconfig in a temporary directory and removes the cluster, its images and the
-`kind` network it created. It needs about 10 GB of free disk while it runs. `SCRIM_K8S_KEEP=1` keeps the cluster for
+`SCRIM_K8S_KYVERNO_CHART` installs another Kyverno chart version (`3.7.2` for Kyverno 1.17, the oldest the chart
+supports). It uses its own kubeconfig in a temporary directory and removes the cluster, its images and the `kind`
+network it created. It needs about 10 GB of free disk while it runs. `SCRIM_K8S_KEEP=1` keeps the cluster for
 debugging and `SCRIM_K8S_REUSE=1` reuses it.
 
 Rootless kind needs cgroup v2 with the cpu, memory and pids controllers delegated to the user

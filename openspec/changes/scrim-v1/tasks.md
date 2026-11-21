@@ -144,6 +144,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [ ] 12.2d Separate redaction identity and the stricter per-agent redaction option marked as weakening; verify: a value the agent cannot use is still redacted
 - [x] 12.3 Helm chart (Deployment, Service, PDB, HPA, NetworkPolicy) and Kyverno injection policy; verify: agent pod in kind reaches providers only through scrim
 - [x] 12.3a Chart on the shared chart template (component library, Secret slots, `global.ha`, closed generated schema, helm test, helm-unittest), published to `oci://ghcr.io/heliopsy/charts/scrim` signed keyless with SBOM and provenance; verify: `deploy/helm/scrim/ci/verify.sh` on Helm 3 and 4, `ct install` on kind in CI
+- [x] 12.3b Kyverno policies on `policies.kyverno.io/v1` (MutatingPolicy, ValidatingPolicy, ImageValidatingPolicy) for Kyverno 1.17 and later, Kyverno pin removed; verify: `test/k8s/e2e.sh` on the latest Kyverno injects both modes, refuses a pod in an unprepared namespace, leaves a labelled Deployment as written, admits the signed release image and refuses an unsigned one
 - [x] 12.4 OpenBao and Infisical Kubernetes auth; verify: no static store credentials in the kind test
 - [ ] 12.5 Edge forwarder for ssh-agent, localhost database ports and the exec broker in agent pods; verify: `git push` over SSH and `psql` from an agent pod with a central scrim in kind
 
