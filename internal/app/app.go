@@ -229,11 +229,11 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 
 // SecretLabels is the label set policy sees for the secret ref names
 // (refresh.SecretLabels over the configured stores).
-func (a *App) SecretLabels(ref stores.Ref) map[string]string {
+func (a *App) SecretLabels(ctx context.Context, ref stores.Ref) (map[string]string, error) {
 	if a.Stores == nil {
-		return nil
+		return nil, nil
 	}
-	return refresh.SecretLabels(a.Stores, a.Refreshers, ref)
+	return refresh.SecretLabels(ctx, a.Stores, a.Refreshers, ref)
 }
 
 // Start runs every store refresher until ctx ends.

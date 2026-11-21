@@ -674,7 +674,10 @@ func TestSecretLabels(t *testing.T) {
 		t.Fatal(err)
 	}
 	set.SetLabeling("mem", memstore.Kind, nil)
-	got := refresh.SecretLabels(set, []*refresh.Refresher{r}, ref.WithField("token"))
+	got, err := refresh.SecretLabels(t.Context(), set, []*refresh.Refresher{r}, ref.WithField("token"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for k, want := range map[string]string{
 		"scrim.hosts": "api.example.test", "memory.top": "team", "store.kind": "memory", "store.field": "token",
 	} {
@@ -691,8 +694,90 @@ func TestSecretLabels(t *testing.T) {
 	if seen["scrim.hosts"] != "api.example.test" {
 		t.Errorf("EachValue labels = %v", seen)
 	}
-	got = refresh.SecretLabels(set, []*refresh.Refresher{r}, stores.MustParseRef("mem://ops/new"))
-	if got["memory.top"] != "ops" || got["scrim.hosts"] != "" || got["store.name"] != "mem" {
+	got, err = refresh.SecretLabels(t.Context(), set, []*refresh.Refresher{r}, stores.MustParseRef("mem://ops/new"))
+	if err != nil || got["memory.top"] != "ops" || got["scrim.hosts"] != "" || got["store.name"] != "mem" {
 		t.Errorf("new item labels = %v", got)
+	}
+}
+
+// trackingStore records every value its Read hands out and can fail reads.
+type trackingStore struct {
+	*memstore.Store
+	handed  []secret.Value
+	readErr error
+	reads   int
+}
+
+func (s *trackingStore) Read(ctx context.Context, ref stores.Ref) (stores.Secret, error) {
+	s.reads++
+	if s.readErr != nil {
+		return stores.Secret{}, s.readErr
+	}
+	sec, err := s.Store.Read(ctx, ref)
+	for _, v := range sec.Fields {
+		s.handed = append(s.handed, v)
+	}
+	return sec, err
+}
+
+// metaStore also reads metadata without values.
+type metaStore struct{ *trackingStore }
+
+func (s metaStore) ReadMetadata(_ context.Context, ref stores.Ref) (stores.Metadata, error) {
+	return stores.Metadata{Ref: ref, Labels: map[string]string{"memory.top": "from-metadata"}}, nil
+}
+
+func labelSet(t *testing.T, a stores.Adapter) *stores.Set {
+	t.Helper()
+	set := stores.NewSet()
+	if err := set.Add(a); err != nil {
+		t.Fatal(err)
+	}
+	set.SetLabeling(a.Name(), memstore.Kind, nil)
+	return set
+}
+
+// TestSecretLabelsOutsideTheRedactionSet: an existing item no refresher
+// holds is labelled from its store's metadata; the fallback read wipes
+// every value before returning, and a failed lookup is an error.
+func TestSecretLabelsOutsideTheRedactionSet(t *testing.T) {
+	ts := &trackingStore{Store: memstore.New("mem")}
+	ref := stores.MustParseRef("mem://prod/db")
+	if _, err := ts.Write(t.Context(), ref, map[string]secret.Value{"password": secret.FromString(gen(t))},
+		stores.WriteOptions{Labels: map[string]string{"scrim.hosts": "db.example.test"}}); err != nil {
+		t.Fatal(err)
+	}
+	set := labelSet(t, ts)
+	got, err := refresh.SecretLabels(t.Context(), set, nil, ref)
+	if err != nil || got["scrim.hosts"] != "db.example.test" || got["memory.top"] != "prod" {
+		t.Fatalf("labels = %v, %v", got, err)
+	}
+	if len(ts.handed) == 0 {
+		t.Fatal("no read was made")
+	}
+	for _, v := range ts.handed {
+		if !v.Wiped() {
+			t.Fatal("a value from the metadata read was not wiped")
+		}
+	}
+
+	// Not found: a new item, labelled from its reference.
+	got, err = refresh.SecretLabels(t.Context(), set, nil, stores.MustParseRef("mem://prod/new"))
+	if err != nil || got["memory.top"] != "prod" || got["scrim.hosts"] != "" {
+		t.Fatalf("new item = %v, %v", got, err)
+	}
+
+	// Any other failure is an error.
+	ts.readErr = stores.NewError("mem", stores.OpRead, ref, stores.ErrUnavailable, nil)
+	got, err = refresh.SecretLabels(t.Context(), set, nil, ref)
+	if err == nil || got["store.name"] != "mem" {
+		t.Fatalf("failed lookup = %v, %v", got, err)
+	}
+
+	// A MetadataReader is preferred: no value is read at all.
+	ts.readErr, ts.reads = nil, 0
+	got, err = refresh.SecretLabels(t.Context(), labelSet(t, metaStore{ts}), nil, ref)
+	if err != nil || got["memory.top"] != "from-metadata" || ts.reads != 0 {
+		t.Fatalf("metadata reader: %v, %v, %d reads", got, err, ts.reads)
 	}
 }

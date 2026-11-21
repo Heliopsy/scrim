@@ -3,6 +3,7 @@
 package agentapi
 
 import (
+	"context"
 	"testing"
 
 	"github.com/heliopsy/scrim/internal/agenttools"
@@ -27,7 +28,7 @@ func TestPolicyAdapterLabels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := Policy{Engine: eng, Labels: set.WriteLabels}
+	p := Policy{Engine: eng, Labels: func(_ context.Context, r stores.Ref) (map[string]string, error) { return set.WriteLabels(r), nil }}
 	id := agenttoolstest.Session("dev", "s1", 1000)
 	for ref, want := range map[string]agenttools.Effect{
 		"mem://prod/new":   agenttools.EffectAsk,

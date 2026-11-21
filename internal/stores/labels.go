@@ -3,6 +3,9 @@
 package stores
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -169,6 +172,15 @@ func UserMeta(labels map[string]string, kind, key, value string) {
 	labels[full] = value
 }
 
+// MetadataReader is implemented by adapters that can return a secret's
+// metadata, labels included, without reading its values. Policy uses it to
+// label a request naming a secret that is not in a redaction set (a write
+// to an existing item); without it scrim reads the secret and wipes the
+// values at once. It returns [ErrNotFound] for a secret that does not exist.
+type MetadataReader interface {
+	ReadMetadata(ctx context.Context, ref Ref) (Metadata, error)
+}
+
 // WriteLabeler is implemented by adapters that know labels a secret would
 // get before it exists (from its reference alone, without a store call), so
 // a store.write or secret.gen rule sees them for a new item. The result
@@ -240,4 +252,35 @@ func foreignKinds(kind string) map[string]bool {
 		}
 	}
 	return out
+}
+
+// Metadata looks up the metadata of the secret ref names, never keeping a
+// value: through the adapter's [MetadataReader] when it has one, otherwise
+// by reading the secret and wiping every value before returning. exists is
+// false (with a nil error) when the store says the secret does not exist.
+// Any other failure, including a store that can neither read metadata nor
+// read secrets, is an error; errors carry no value.
+func (s *Set) Metadata(ctx context.Context, ref Ref) (m Metadata, exists bool, err error) {
+	a, err := s.Lookup(ref)
+	if err != nil {
+		return Metadata{}, false, err
+	}
+	ref = ref.Secret()
+	if mr, ok := a.(MetadataReader); ok {
+		m, err = mr.ReadMetadata(ctx, ref)
+	} else if a.Capabilities().Has(CapRead) {
+		var sec Secret
+		sec, err = a.Read(ctx, ref)
+		sec.Wipe()
+		m = sec.Meta
+	} else {
+		return Metadata{}, false, fmt.Errorf("store %s can neither read metadata nor read secrets", a.Name())
+	}
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return Metadata{}, false, nil
+	case err != nil:
+		return Metadata{}, false, err
+	}
+	return m, true, nil
 }

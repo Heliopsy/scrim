@@ -271,12 +271,24 @@ No production value is restored into a tool call, whatever store it lives in:
   when: op == "restore" && "tier" in secret.labels && secret.labels.tier == "prod"
 ```
 
-A write or generate to an item that does not exist yet sees the labels it would get: the `store.*`
-labels from its reference, the derived labels below, and whatever native labels its adapter can tell
-from the reference alone (a backend that can implements `stores.WriteLabeler`). So `store.container`
-works for "any write under this folder" before anything is there. Labels that only exist on the item
-itself (a collection it is later shared into) are not known until scrim has read it; a secret in a
-store's redaction set always carries its full labels.
+Where the labels come from:
+
+- A secret in a store's redaction set carries the labels its store reported at the last refresh.
+- Any other secret a request names (a write to an existing item, a grant on a secret scrim has not
+  loaded) is looked up in its store when the request is decided, so "any write into collection Prod
+  asks" holds for items scrim never loaded. The lookup reads metadata only where the backend can
+  (`stores.MetadataReader`); otherwise scrim reads the secret and wipes its values at once. Nothing
+  new is cached: the next request looks it up again.
+- An item that does not exist yet gets the labels it would have: the `store.*` labels from its
+  reference, the derived labels below, and the native labels its adapter can tell from the reference
+  alone (`stores.WriteLabeler`). So `store.container` works for "any write under this folder" before
+  anything is there.
+
+If the store cannot answer the lookup (it is down, or refuses scrim), the labels are **unknown**:
+every rule whose outcome depends on `secret.labels` counts as erroring, so a deny or ask rule
+matches and an allow rule does not, while a rule decided without them (`op == "inject" && ...` on
+a write) is unaffected. The decision's audit entry carries `secret_labels: unknown: <error>`. A
+store outage can therefore stop writes that a label rule governs; it never lets one through.
 
 ### Deriving your own labels
 

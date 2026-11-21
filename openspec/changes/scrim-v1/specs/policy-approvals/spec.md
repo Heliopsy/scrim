@@ -171,10 +171,27 @@ labels"). A write or generate to an item that does not exist yet SHALL see the l
 - **WHEN** a rule asks for `op in ["store.write", "secret.gen"]` when `"vaultwarden.collection.Prod" in secret.labels`
 - **THEN** an agent's write to a Vaultwarden item in collection Prod waits for approval and a write elsewhere does not
 
+#### Scenario: Write to an existing item scrim never loaded
+
+- **WHEN** a rule asks for writes when `"vaultwarden.collection.Prod" in secret.labels`, and an agent overwrites an item in Prod that is in no redaction set
+- **THEN** scrim looks the item's labels up in the store without keeping a value and the write waits for approval
+
 #### Scenario: New item in a governed place
 
 - **WHEN** a rule asks for writes whose `secret.labels["store.container"]` is `prod`, and an agent creates `bao://prod/new-token`, which does not exist yet
 - **THEN** the write waits for approval
+
+### Requirement: Unknown labels fail closed
+
+When the store cannot answer a label lookup for a secret a request names, the system SHALL treat
+`secret.labels` as unknown: a rule whose outcome depends on them SHALL count as erroring (deny and
+ask match, allow does not), and the decision's audit entry SHALL name the failure. A lookup that
+finds no such secret SHALL label the request as a new item instead.
+
+#### Scenario: Store down during a governed write
+
+- **WHEN** a rule asks for writes into collection Prod and the store fails the label lookup for the target
+- **THEN** the write waits for approval and the audit entry records that the labels were unknown
 
 ### Requirement: Data plane decides on the same labels
 

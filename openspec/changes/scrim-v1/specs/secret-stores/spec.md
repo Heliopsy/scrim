@@ -540,6 +540,18 @@ or an adapter kind's prefix SHALL be rejected when configuration loads.
 - **WHEN** a store's `labels` option names a label `vaultwarden.org`
 - **THEN** configuration validation fails naming `labels.vaultwarden.org`
 
+### Requirement: Metadata without values
+
+An adapter that can return a secret's metadata without its values SHALL offer it, and the system
+SHALL use it to label a secret that is not in a redaction set. Where an adapter cannot, the system
+SHALL read the secret and wipe every value before the lookup returns, and SHALL cache nothing beyond
+what the refresher holds.
+
+#### Scenario: Fallback read
+
+- **WHEN** an adapter without a metadata read is asked for the labels of a secret outside every redaction set
+- **THEN** the secret is read, every value read is wiped before the labels are used, and no value is kept
+
 ### Requirement: Labels of a new item
 
 Before a secret exists, the system SHALL label a write or generate target with the generic `store.*`

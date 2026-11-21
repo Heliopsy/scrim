@@ -4,7 +4,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -66,8 +65,8 @@ type labelSet struct {
 	exists bool
 }
 
-// secretLabels reads ref's metadata from its store (a listing, else a read
-// whose values are wiped at once) and composes the labels policy sees.
+// secretLabels reads ref's metadata from its store (stores.Set.Metadata: no
+// value is kept) and composes the labels policy sees.
 func secretLabels(ctx context.Context, e *Env, ref stores.Ref) (labelSet, error) {
 	a, err := e.App(ctx)
 	if err != nil {
@@ -78,26 +77,11 @@ func secretLabels(ctx context.Context, e *Env, ref stores.Ref) (labelSet, error)
 		return labelSet{}, err
 	}
 	var out labelSet
-	if ad.Capabilities().Has(stores.CapList) {
-		if metas, err := a.Stores.List(ctx, ref.Secret()); err == nil {
-			for _, m := range metas {
-				if m.Ref.Path == ref.Path {
-					out.native, out.exists = m.Labels, true
-					break
-				}
-			}
-		}
+	m, exists, err := a.Stores.Metadata(ctx, ref)
+	if err != nil {
+		return labelSet{}, err
 	}
-	if !out.exists && ad.Capabilities().Has(stores.CapRead) {
-		s, err := a.Stores.Read(ctx, ref.Secret())
-		switch {
-		case err == nil:
-			s.Wipe()
-			out.native, out.exists = s.Meta.Labels, true
-		case !errors.Is(err, stores.ErrNotFound):
-			return labelSet{}, err
-		}
-	}
+	out.native, out.exists = m.Labels, exists
 	if out.exists {
 		out.labels = a.Stores.Labels(ref, out.native)
 	} else {

@@ -978,20 +978,36 @@ func copyValue(v secret.Value) secret.Value {
 }
 
 // SecretLabels is the label set policy sees for the secret ref names
-// (specs/policy "Store labels in rules"): the labels its store reported when
-// the secret is in a refresher's memory, else the labels a new item there
-// would get ([stores.Set.WriteLabels]), composed by set with the generic
-// store.* labels and the instance's derived labels.
-func SecretLabels(set *stores.Set, rs []*Refresher, ref stores.Ref) map[string]string {
+// (specs/policy "Store labels in rules"), composed by set with the generic
+// store.* labels and the instance's derived labels, from:
+//
+//   - the labels its store reported, when the secret is in a refresher's
+//     memory;
+//   - otherwise the store's metadata for it, looked up now without keeping a
+//     value ([stores.Set.Metadata]; nothing new is cached);
+//   - for a secret the store does not hold, the labels a new item there
+//     would get ([stores.Set.WriteLabels]).
+//
+// When the lookup fails the error is returned with the labels known without
+// the store (store.*, derived, WriteLabeler); the caller must then treat
+// secret.labels as unknown (policy.Request.SecretLabelsUnknown).
+func SecretLabels(ctx context.Context, set *stores.Set, rs []*Refresher, ref stores.Ref) (map[string]string, error) {
 	if a, err := set.Lookup(ref); err == nil {
 		for _, r := range rs {
 			if r.Store() != a.Name() {
 				continue
 			}
 			if l, ok := r.Labels(ref); ok {
-				return set.Labels(ref, l)
+				return set.Labels(ref, l), nil
 			}
 		}
 	}
-	return set.WriteLabels(ref)
+	m, exists, err := set.Metadata(ctx, ref)
+	if err != nil {
+		return set.WriteLabels(ref), err
+	}
+	if !exists {
+		return set.WriteLabels(ref), nil
+	}
+	return set.Labels(ref, m.Labels), nil
 }

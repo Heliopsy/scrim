@@ -185,6 +185,11 @@ Adapters put their attributes into `Metadata.Labels` with the helpers in `intern
   attributes, so one collection still gets its presence key.
 - `stores.UserMeta(labels, kind, key, value)` records user-editable metadata as
   `<kind>.meta.<key>` and never overwrites a key already set.
+- `stores.MetadataReader` (`ReadMetadata(ctx, ref) (Metadata, error)`) is optional: implement it
+  when the store can return a secret's metadata, labels included, without its values, and return
+  `ErrNotFound` for a missing secret. Policy uses it to label a request naming a secret that is not
+  in a redaction set (a write to an existing item). Without it scrim reads the secret and wipes the
+  values at once.
 - `stores.WriteLabeler` (`WriteLabels(ref) map[string]string`) is optional: an adapter that can
   tell from a reference alone, without a store call, which labels a new item would get implements
   it, and `store.write` and `secret.gen` rules see them before the item exists.

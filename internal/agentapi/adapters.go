@@ -64,8 +64,9 @@ type Policy struct {
 	Engine policy.Engine
 	// Labels, when set, gives the labels policy sees for the secret a tool
 	// names (secret.labels): its store's labels, or for a new item the
-	// labels it would get.
-	Labels func(stores.Ref) map[string]string
+	// labels it would get. An error marks them unknown (rules that read
+	// them count as erroring) and is named in the decision's reason.
+	Labels func(context.Context, stores.Ref) (map[string]string, error)
 }
 
 // Decide implements agenttools.Policy. A reference that does not parse is
@@ -75,6 +76,7 @@ func (p Policy) Decide(ctx context.Context, id identity.Identity, op agenttools.
 	if req.Action == "" {
 		req.Action = policy.ActionTool
 	}
+	var labelsErr error
 	if op.Ref != "" {
 		r, err := resolveRef(op.Ref, op.Store)
 		if err != nil {
@@ -82,14 +84,19 @@ func (p Policy) Decide(ctx context.Context, id identity.Identity, op agenttools.
 		}
 		req.Ref, req.Store = r, r.Scheme
 		if p.Labels != nil {
-			req.SecretLabels = p.Labels(r)
+			req.SecretLabels, labelsErr = p.Labels(ctx, r)
+			req.SecretLabelsUnknown = labelsErr != nil
 		}
 	}
 	d, err := p.Engine.Decide(ctx, req)
 	if err != nil {
 		return agenttools.Decision{}, err
 	}
-	return agenttools.Decision{Effect: effect(d.Effect), Reason: d.Reason, Rule: d.Rule}, nil
+	reason := d.Reason
+	if labelsErr != nil {
+		reason = strings.TrimPrefix(reason+"; secret labels unknown: "+labelsErr.Error(), "; ")
+	}
+	return agenttools.Decision{Effect: effect(d.Effect), Reason: reason, Rule: d.Rule}, nil
 }
 
 func effect(e policy.Effect) agenttools.Effect {

@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	"cel.dev/cel-go/cel"
+	celast "cel.dev/cel-go/common/ast"
 	"cel.dev/cel-go/common/types"
 	"cel.dev/cel-go/common/types/ref"
 	"cel.dev/cel-go/ext"
@@ -38,6 +39,10 @@ type compiledRule struct {
 	effect Effect
 	ast    *cel.Ast // nil when When is empty (always matches)
 	prg    cel.Program
+	// labels: the expression reads secret.labels (or the whole secret).
+	labels bool
+	// partial evaluates with secret.labels unknown; set when labels is.
+	partial cel.Program
 }
 
 var (
@@ -146,7 +151,17 @@ func Compile(cfg Config) (*RuleSet, error) {
 				errs = append(errs, &RuleError{Index: i, Name: r.Name, Err: err})
 				continue
 			}
-			cr.ast, cr.prg = ast, prg
+			cr.ast, cr.prg, cr.labels = ast, prg, readsSecretLabels(ast)
+			if cr.labels {
+				if cr.partial, err = env.Program(ast,
+					cel.CostLimit(costLimit),
+					cel.EvalOptions(cel.OptPartialEval),
+					cel.InterruptCheckFrequency(100),
+				); err != nil {
+					errs = append(errs, &RuleError{Index: i, Name: r.Name, Err: err})
+					continue
+				}
+			}
 		}
 		rs.rules[i] = cr
 	}
@@ -217,7 +232,13 @@ func (rs *RuleSet) Evaluate(req Request) Result {
 	var best *compiledRule
 	for i := range rs.rules {
 		cr := &rs.rules[i]
-		matched, err := cr.eval(act)
+		var matched bool
+		var err error
+		if req.SecretLabelsUnknown && cr.labels {
+			matched, err = cr.evalLabelsUnknown(act)
+		} else {
+			matched, err = cr.eval(act)
+		}
 		if err != nil {
 			res.Errors = append(res.Errors, EvalError{Rule: cr.rule.Name, Message: err.Error()})
 			matched = cr.effect != Allow
@@ -248,6 +269,53 @@ func (rs *RuleSet) Decide(_ context.Context, req Request) (Decision, error) {
 		d.GrantTTL = r.grant.TTL.D()
 	}
 	return d, nil
+}
+
+// errLabelsUnknown is the evaluation error of a rule that reads
+// secret.labels when the secret's store could not say what they are.
+var errLabelsUnknown = errors.New("secret.labels unknown: the store's metadata could not be read")
+
+// readsSecretLabels reports whether a rule reads secret.labels, directly or
+// by using the secret variable as a whole.
+func readsSecretLabels(a *cel.Ast) bool {
+	idents, selects, labels := 0, 0, false
+	celast.PreOrderVisit(a.NativeRep().Expr(), celast.NewExprVisitor(func(e celast.Expr) {
+		switch e.Kind() {
+		case celast.IdentKind:
+			if e.AsIdent() == "secret" {
+				idents++
+			}
+		case celast.SelectKind:
+			s := e.AsSelect()
+			if op := s.Operand(); op.Kind() == celast.IdentKind && op.AsIdent() == "secret" {
+				selects++
+				labels = labels || s.FieldName() == "labels"
+			}
+		}
+	}))
+	return labels || idents > selects
+}
+
+// evalLabelsUnknown evaluates the rule with secret.labels unknown. A rule
+// whose outcome depends on them errors (errLabelsUnknown); one that is
+// decided without them (op == "inject" && ... for a write) is not affected.
+func (cr *compiledRule) evalLabelsUnknown(act map[string]any) (bool, error) {
+	vars, err := cel.PartialVars(act, cel.AttributePattern("secret").QualString("labels"))
+	if err != nil {
+		return false, err
+	}
+	out, _, err := cr.partial.Eval(vars)
+	if err != nil {
+		return false, err
+	}
+	if types.IsUnknown(out) {
+		return false, errLabelsUnknown
+	}
+	b, ok := out.Value().(bool)
+	if !ok {
+		return false, fmt.Errorf("rule returned %s, not bool", out.Type())
+	}
+	return b, nil
 }
 
 func (cr *compiledRule) eval(act map[string]any) (bool, error) {
