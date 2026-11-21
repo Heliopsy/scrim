@@ -131,6 +131,8 @@ pub(crate) struct Engine {
     pub(crate) redactors: RedactorChain,
     pub(crate) capture_rules: Vec<CaptureRule>,
     pub(crate) injection: Option<Arc<dyn InjectionPolicy>>,
+    /// Public keys of the placeholder certificates of client certificate credentials.
+    pub(crate) cert_keys: Vec<([u8; 32], usize)>,
 }
 
 impl Engine {
@@ -159,7 +161,24 @@ impl Engine {
                     .map_err(|e| ValidationError::Matcher(e.0))?,
             )
         };
+        let mut cert_keys = Vec::new();
+        for (i, c) in s.credentials.credentials().iter().enumerate() {
+            if !c.client_certificate {
+                continue;
+            }
+            for p in &c.placeholders {
+                cert_keys.push((crate::clientcert::placeholder_public_key(&p.text), i));
+                if p.kind == crate::credential::PlaceholderKind::Generated {
+                    let pct = p
+                        .text
+                        .replace('\u{27e6}', "%E2%9F%A6")
+                        .replace('\u{27e7}', "%E2%9F%A7");
+                    cert_keys.push((crate::clientcert::placeholder_public_key(&pct), i));
+                }
+            }
+        }
         Ok(Self {
+            cert_keys,
             version: s.version,
             credentials: s.credentials,
             injector,
@@ -167,6 +186,14 @@ impl Engine {
             capture_rules: s.capture_rules,
             injection: s.injection,
         })
+    }
+
+    /// The client certificate credential whose placeholder certificate has `key`.
+    pub(crate) fn client_certificate_by_key(&self, key: &[u8; 32]) -> Option<usize> {
+        self.cert_keys
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, i)| *i)
     }
 
     pub(crate) fn credential_name(&self, i: usize) -> &str {

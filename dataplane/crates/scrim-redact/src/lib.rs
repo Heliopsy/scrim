@@ -105,6 +105,7 @@ mod placeholder;
 mod redactor;
 mod restore;
 mod secret;
+mod shape;
 mod variants;
 
 pub use detect::{DetectorConfig, ENTROPY_RULE, EntropyConfig, builtin_rule_names};
@@ -125,6 +126,7 @@ pub use restore::{
     restore_text,
 };
 pub use secret::{Entry, EntryId, EntryMeta, RefSlug, SecretValue, ValueClass};
+pub use shape::{MAX_SHAPED_LEN, MIN_SHAPED_LEN, PREFIXES, shaped_placeholder_for};
 pub use variants::{B64Alphabet, DEFAULT_JSON_DEPTH, MAX_JSON_DEPTH, Variant, json_escape_into};
 
 #[cfg(test)]

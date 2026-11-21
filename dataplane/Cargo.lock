@@ -1482,6 +1482,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "arc-swap",
+ "crc32fast",
  "criterion",
  "hmac",
  "memchr",
@@ -1505,6 +1506,7 @@ dependencies = [
  "bytes",
  "flate2",
  "futures-util",
+ "hmac",
  "http",
  "http-body",
  "http-body-util",
@@ -1515,6 +1517,7 @@ dependencies = [
  "memchr",
  "percent-encoding",
  "rcgen",
+ "ring",
  "rustls",
  "rustls-native-certs",
  "rustls-pemfile",

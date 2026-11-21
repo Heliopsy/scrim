@@ -14,6 +14,11 @@
   },
   "packageRules": [
     {
+      "description": "LocalStack images after 4.14 need a license token to start; the tool proxy's aws end-to-end test stays on the last community image.",
+      "matchDepNames": ["docker.io/localstack/localstack"],
+      "allowedVersions": "<5"
+    },
+    {
       "description": "release-please owns every scrim version in this repository (x-release-please-version markers), except SCRIM_VERSION in scripts/deploy-examples/tools.env, which installs a published release and so moves after it.",
       "matchPackageNames": ["/^ghcr\\.io/heliopsy//", "/^oci://ghcr\\.io/heliopsy//"],
       "enabled": false
@@ -135,6 +140,7 @@
         "/^deploy/helm/scrim/ci/kind-test\\.sh$/",
         "/^deploy/helm/scrim/Chart\\.yaml$/",
         "/^test/k8s/e2e\\.sh$/",
+        "/^test/e2e/toolproxy-(aws|kube)\\.sh$/",
         "/^test/k8s/identity/run\\.sh$/",
         "/^test/k8s/golden/out/.+\\.yaml$/",
         "/^internal/testing/pgtest/pgtest\\.go$/",

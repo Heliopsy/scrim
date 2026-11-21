@@ -127,3 +127,42 @@ paths = ['''^deploy/examples/''']
 matchCondition = "AND"
 regexTarget = "line"
 regexes = ['''UkVQTEFDRS1NRQ==''', '''^\s+key: placeholder-k1$''']
+
+[[allowlists]]
+description = """
+Format-preserving placeholders and their test values. A shaped placeholder is
+built to look like the token it stands for (ghp_ and 36 characters, AKIA and
+16, a JWT), so the redaction core's tests, the tool proxy's SigV4 tests and the
+vectors shared with the control plane are full of token-shaped strings. Test
+values carry the marker TeSt, TEST or PLACEHOLDER, or are AWS's documented
+EXAMPLE keys; every line of the vector file is one generated vector.
+"""
+paths = [
+  '''^dataplane/crates/scrim-redact/src/shape\.rs$''',
+  '''^dataplane/crates/scrim-redact/tests/shaped\.rs$''',
+  '''^dataplane/crates/scrim-toolproxy/tests/sigv4\.rs$''',
+]
+matchCondition = "AND"
+regexTarget = "line"
+regexes = ['''TeSt|TEST|PLACEHOLDER|EXAMPLE''']
+
+[[allowlists]]
+description = """
+The shaped placeholder vectors the Rust and Go implementations both check:
+one generated vector per line, test values with the TeSt marker and the
+placeholders derived from them.
+"""
+paths = ['''^internal/placeholder/testdata/shaped\.json$''']
+matchCondition = "AND"
+regexTarget = "line"
+regexes = ['''^\s*\{"key_version": [0-9]+, "key_hex": "[0-9a-f]+", ''']
+
+[[allowlists]]
+description = """
+AWS's SigV4 signing test suite (Apache-2.0, see its NOTICE): the published
+example session token in signed requests.
+"""
+paths = ['''^dataplane/crates/scrim-toolproxy/testdata/aws-sigv4-test-suite/''']
+matchCondition = "AND"
+regexTarget = "line"
+regexes = ['''(?i)x-amz-security-token''']
