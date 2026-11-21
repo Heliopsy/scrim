@@ -959,6 +959,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "scrim-dns"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "hyper-util",
+ "tokio",
+ "tower-service",
+ "tracing",
+]
+
+[[package]]
 name = "scrim-proto"
 version = "0.1.0"
 dependencies = [
@@ -1008,6 +1019,7 @@ dependencies = [
  "ring",
  "rustls",
  "rustls-native-certs",
+ "scrim-dns",
  "scrim-proto",
  "scrim-redact",
  "serde",
