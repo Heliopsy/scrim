@@ -107,8 +107,8 @@ Delete `dsn` once the Secret exists, or create the Secret with SOPS or External 
 ## Sidecar mode
 
 ```sh
-podman build -t registry.example.com/platform/nft:3.22 "$EX/egress-guard"
-podman push registry.example.com/platform/nft:3.22
+podman build -t registry.example.com/platform/nft:3.24 "$EX/egress-guard"
+podman push registry.example.com/platform/nft:3.24
 helm --kube-context "$CONTEXT" upgrade --install scrim oci://ghcr.io/heliopsy/charts/scrim \
   --version "$VERSION" -n scrim --create-namespace -f "$EX/values-sidecar.yaml"
 ```

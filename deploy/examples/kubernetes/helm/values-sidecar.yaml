@@ -41,7 +41,7 @@ sidecar:
   enabled: true
   egressGuard:
     enabled: true
-    image: registry.example.com/platform/nft:3.22
+    image: registry.example.com/platform/nft:3.24
 networkPolicy:
   enabled: true
   sidecarEgress:

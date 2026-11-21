@@ -9,7 +9,10 @@
 # cosign against the release workflow's identity), and a Python virtualenv in
 # DIR/venv with ansible-lint, ansible-core and podman-compose from
 # deploy/examples/ansible/requirements-lint.txt, installed with
-# --require-hashes. linux/amd64 only, like the CI runner.
+# --require-hashes. linux/amd64 only, like the CI runner. The virtualenv is
+# made with $PYTHON (default python3), which must be Python 3.13 or later
+# (ansible-core's floor); CI sets up the version requirements-lint.txt was
+# compiled for.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -81,8 +84,11 @@ fi
 req=$root/deploy/examples/ansible/requirements-lint.txt
 stamp=$(sha256sum "$req" | cut -c1-16)
 if ! [ -f "$dir/venv/.req-$stamp" ]; then
+  py=${PYTHON:-python3}
+  "$py" -I -c 'import sys; sys.exit(sys.version_info < (3, 13))' ||
+    { echo "$py is older than Python 3.13; set PYTHON to a newer interpreter" >&2; exit 1; }
   rm -rf "$dir/venv"
-  python3 -m venv "$dir/venv"
+  "$py" -m venv "$dir/venv"
   "$dir/venv/bin/pip" install --quiet --disable-pip-version-check --no-deps --require-hashes -r "$req"
   touch "$dir/venv/.req-$stamp"
 fi

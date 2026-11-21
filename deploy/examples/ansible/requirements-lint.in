@@ -1,3 +1,6 @@
-ansible-lint==26.10.1
-ansible-core==2.21.6
+# Lint tools for `just deploy-examples-check`. requirements-lint.txt pins them
+# and their dependencies with hashes (installed with `pip install --no-deps
+# --require-hashes`); regenerate it with the uv command in its header.
+ansible-lint==26.11.0
+ansible-core==2.22.0
 podman-compose==1.6.0
