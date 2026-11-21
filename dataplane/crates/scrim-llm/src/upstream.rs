@@ -15,7 +15,11 @@ use hyper_util::rt::TokioExecutor;
 use crate::config::{ProxyConfig, Roots};
 
 /// The client type used for every upstream.
-pub type UpstreamClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
+///
+/// Names resolve through [`scrim_dns::LoopSafeResolver`], which never answers with scrim's own SNI
+/// listener (DNS override mode points provider names at it).
+pub type UpstreamClient =
+    Client<HttpsConnector<HttpConnector<scrim_dns::LoopSafeResolver>>, Full<Bytes>>;
 
 /// Upstream TLS setup failed.
 #[derive(Debug, thiserror::Error)]
@@ -77,7 +81,7 @@ pub fn build_client(cfg: &ProxyConfig) -> Result<UpstreamClient, TlsError> {
         .map_err(|_| TlsError::NoRoots)?
         .with_root_certificates(root_store(cfg)?)
         .with_no_client_auth();
-    let mut http = HttpConnector::new();
+    let mut http = HttpConnector::new_with_resolver(scrim_dns::LoopSafeResolver);
     http.enforce_http(false);
     http.set_connect_timeout(Some(cfg.connect_timeout()));
     http.set_nodelay(true);

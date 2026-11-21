@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/heliopsy/scrim/internal/ca"
+	"github.com/heliopsy/scrim/internal/daemon"
 	"github.com/heliopsy/scrim/internal/install"
 	"github.com/heliopsy/scrim/internal/version"
 )
@@ -47,6 +48,7 @@ type installFlags struct {
 	user, system, quadlet, dryRun, purge bool
 	image                                string
 	agents                               []string
+	intercept                            install.Interception
 }
 
 // Install sets scrim up as a local service (specs/deployment "Local service
@@ -65,6 +67,14 @@ func (Commands) Install(e *Env) *cobra.Command {
 			"trust store.\n" +
 			"--quadlet: the container image under rootless podman for this user; with --system under root's podman as " +
 			"the user scrim.\n\n" +
+			"Host-level interception, with --system (Linux):\n" +
+			"--transparent: nftables rules redirect TCP 80 and 443 of the --cover-user users and --cover-cgroup control " +
+			"groups to scrim's transparent listener, which routes by TLS server name; their direct and QUIC egress is " +
+			"rejected, so an agent needs no configuration and cannot reach providers around scrim. The rules load from " +
+			"scrim-transparent.service and stay while scrim is stopped (connections fail instead of going direct).\n" +
+			"--dns: provider host names resolve to scrim's SNI listener through /etc/hosts. Connections made by address " +
+			"bypass it; combine it with --transparent where that matters.\n" +
+			"Both add the CA to the Java truststores as well as the system store.\n\n" +
 			"See docs/service.md.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -81,6 +91,15 @@ func (Commands) Install(e *Env) *cobra.Command {
 	c.Flags().StringVar(&f.image, "image", "", "image for --quadlet (default "+install.DefaultImage+":<this version>)")
 	c.Flags().StringSliceVar(&f.agents, "agent-user", nil, "with --system: add this user to the group scrim-agents and map it to an agent of the same name (repeatable)")
 	c.Flags().BoolVar(&f.dryRun, "dry-run", false, "show the changes without making them")
+	c.Flags().BoolVar(&f.intercept.Transparent, "transparent", false, "with --system: redirect the covered users' and control groups' provider connections to scrim with nftables and block their direct egress")
+	c.Flags().StringSliceVar(&f.intercept.CoverUsers, "cover-user", nil, "with --transparent: a user whose connections are redirected (repeatable)")
+	c.Flags().StringSliceVar(&f.intercept.CoverCgroups, "cover-cgroup", nil, "with --transparent: a control group below /sys/fs/cgroup, such as agents.slice, whose connections are redirected (repeatable)")
+	c.Flags().IntVar(&f.intercept.Port, "transparent-port", install.DefaultTransparentPort, "with --transparent: the port of the transparent listener on 127.0.0.1 and ::1")
+	c.Flags().BoolVar(&f.intercept.BlockUnrouted, "block-unrouted", false, "with --transparent or --dns: close connections to hosts scrim has no route for instead of passing them through untouched")
+	c.Flags().BoolVar(&f.intercept.DNS, "dns", false, "with --system: resolve provider host names to scrim's SNI listener through /etc/hosts (connections by address bypass it)")
+	c.Flags().StringSliceVar(&f.intercept.DNSHosts, "dns-host", nil, "with --dns: a host name to resolve to scrim (repeatable; default the provider hosts of the configured routes)")
+	c.Flags().StringVar(&f.intercept.DNSAddress, "dns-address", install.DefaultDNSAddress, "with --dns: the loopback address the names resolve to; the SNI listener binds port 443 on it")
+	c.Flags().StringSliceVar(&f.intercept.JavaHomes, "java-home", nil, "with --transparent or --dns: a JDK outside /usr/lib/jvm whose truststore gets the CA (repeatable)")
 	return c
 }
 
@@ -125,7 +144,14 @@ func newInstaller(cmd *cobra.Command, e *Env, f installFlags, installing bool) (
 		return nil, errors.New("scrim install supports Linux with systemd; on " + installGOOS + " run `scrim proxy` from a launch agent (not automated yet)")
 	}
 	in := &install.Installer{Root: installRoot, Runner: installRunner, Probe: installProbe, Chown: installChown,
-		Out: cmd.OutOrStdout(), DryRun: f.dryRun, Purge: f.purge, AgentUsers: f.agents}
+		Out: cmd.OutOrStdout(), DryRun: f.dryRun, Purge: f.purge, AgentUsers: f.agents, Intercept: f.intercept}
+	if f.intercept.DNS && len(f.intercept.DNSHosts) == 0 {
+		cfg, err := e.Config()
+		if err != nil {
+			return nil, err
+		}
+		in.Intercept.DNSHosts = daemon.ProviderHosts(cfg)
+	}
 	switch {
 	case f.quadlet:
 		in.Mode, in.System = install.ModeQuadlet, f.system

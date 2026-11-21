@@ -111,6 +111,9 @@ type Installer struct {
 	// AgentUsers are added to the agent group and mapped to agents in a
 	// new system config file.
 	AgentUsers []string
+	// Intercept selects the host-level interception modes (transparent,
+	// DNS override) of a system install.
+	Intercept Interception
 
 	// The user scope: home, the scrim state directory (holds the manifest),
 	// the scrim config directory and $XDG_RUNTIME_DIR.
@@ -286,6 +289,9 @@ func (in *Installer) Install(ctx context.Context) error {
 			return fmt.Errorf("install: agent user %q cannot name an agent (lower-case letters, digits, '.', '_', '-')", u)
 		}
 	}
+	if err := in.checkInterception(); err != nil {
+		return err
+	}
 	in.mpath = in.ManifestPath()
 	mf, found, err := ReadManifest(in.mpath)
 	if err != nil {
@@ -376,6 +382,9 @@ func (in *Installer) installSystem(ctx context.Context, again bool) error {
 	}
 	if in.Mode == ModeSystem {
 		_, err = in.unitFile(in.path(SystemUnitPath), []byte(SystemUnit(SystemBinary)), ScopeSystem)
+		if err == nil {
+			err = in.writeDropIn()
+		}
 	} else {
 		var unit string
 		unit, err = in.systemQuadlet()
@@ -400,7 +409,10 @@ func (in *Installer) installSystem(ctx context.Context, again bool) error {
 	if err != nil {
 		return err
 	}
-	return in.systemTrust(ctx, pem)
+	if err := in.systemTrust(ctx, pem); err != nil {
+		return err
+	}
+	return in.installInterception(ctx, pem)
 }
 
 func (in *Installer) systemQuadlet() (string, error) {

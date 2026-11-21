@@ -204,6 +204,12 @@ e2e-ntfy port="":
 service-vm-test:
     test/service/vm-test.sh
 
+# Transparent mode, DNS override and Java trust (`scrim install --transparent` and `--dns`) in a
+# disposable systemd host under rootless podman with its own network namespace
+# (test/service/transparent-test.sh). SCRIM_SVC_BIN as for service-vm-test.
+service-transparent-test:
+    test/service/transparent-test.sh
+
 clean:
     rm -rf bin/ dist/ {{embed}}
     cd dataplane && cargo clean

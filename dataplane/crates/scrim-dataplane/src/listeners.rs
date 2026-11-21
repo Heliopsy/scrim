@@ -7,7 +7,8 @@
 //! | `BASE_URL` | `host:port` | the LLM proxy: agents set their provider base URL to it |
 //! | `UNIX` | socket path (mode 0600) | the LLM proxy, as above |
 //! | `FORWARD_PROXY`, `TOOL_PROXY` | `host:port` | the HTTPS tool proxy (`CONNECT` with TLS interception); provider hosts of the LLM routes are handed to the LLM proxy |
-//! | `TRANSPARENT` | | not implemented yet: reported unbound |
+//! | `TRANSPARENT` | `host:port` | connections redirected to it by nftables (Linux): the original destination's port and the TLS server name (or `Host`) pick the route, see [`scrim_toolproxy::ToolProxy::serve_transparent`] |
+//! | `SNI` | `host:port` | TLS for provider names resolved to scrim (DNS override), routed by server name like `TRANSPARENT` |
 //!
 //! A listener that cannot be bound, or whose kind is not implemented, reports itself unbound
 //! with the reason, which keeps the data plane not ready: nothing is served that cannot be
@@ -180,7 +181,10 @@ fn start(l: &v1::Listener, shared: &Shared) -> Running {
                 "LLM proxy"
             })
         }
-        other => {
+        v1::ListenerKind::Transparent | v1::ListenerKind::Sni => {
+            start_transparent(l, shared, shutdown, &mut status)
+        }
+        other @ v1::ListenerKind::Unspecified => {
             status.error = format!(
                 "listener kind {} is not implemented yet",
                 other.as_str_name()
@@ -250,6 +254,124 @@ async fn serve_counted(
                 });
             }
         }
+    }
+}
+
+/// Binds a `TRANSPARENT` or `SNI` listener and starts its accept loop.
+fn start_transparent(
+    l: &v1::Listener,
+    shared: &Shared,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+    status: &mut v1::ListenerStatus,
+) -> std::io::Result<&'static str> {
+    let transparent = l.kind() == v1::ListenerKind::Transparent;
+    if transparent {
+        original_dst_supported()?;
+    }
+    let listener = bind_tcp(&l.address)?;
+    status.address = local(&listener, &l.address);
+    if !transparent && let Ok(a) = listener.local_addr() {
+        // Upstream connections must not resolve provider names back to this listener.
+        scrim_dns::add_self_address(a.ip());
+    }
+    let proxy = shared.tool_proxy.clone();
+    tokio::spawn(serve_transparent(
+        proxy,
+        listener,
+        shutdown,
+        transparent,
+        l.block_unrouted,
+    ));
+    Ok(if transparent {
+        "transparent listener"
+    } else {
+        "SNI listener"
+    })
+}
+
+/// The accept loop of a `TRANSPARENT` or `SNI` listener. A connection to the transparent listener
+/// that was not redirected to it has no original destination and is closed.
+async fn serve_transparent(
+    proxy: scrim_toolproxy::ToolProxy,
+    listener: tokio::net::TcpListener,
+    shutdown: impl std::future::Future<Output = ()>,
+    transparent: bool,
+    block_unrouted: bool,
+) {
+    let me = listener.local_addr().ok();
+    tokio::pin!(shutdown);
+    loop {
+        tokio::select! {
+            () = &mut shutdown => return,
+            accepted = listener.accept() => {
+                let (stream, peer) = match accepted {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "accept failed");
+                        continue;
+                    }
+                };
+                let _ = stream.set_nodelay(true);
+                let (port, dialled) = if transparent {
+                    match original_dst(&stream) {
+                        Some(o) if Some(o) != me && stream.local_addr().ok() != Some(o) => (o.port(), Some(o)),
+                        _ => {
+                            tracing::debug!(%peer, "connection to the transparent listener was not redirected; closed");
+                            continue;
+                        }
+                    }
+                } else {
+                    (443, stream.local_addr().ok())
+                };
+                let conn = scrim_toolproxy::TransparentConn {
+                    peer: Some(peer),
+                    port,
+                    dialled,
+                    block_unrouted,
+                    tls_only: !transparent,
+                };
+                let proxy = proxy.clone();
+                tokio::spawn(async move { proxy.serve_transparent(stream, conn).await });
+            }
+        }
+    }
+}
+
+/// The destination a connection had before nftables redirected it (`SO_ORIGINAL_DST`).
+#[cfg(target_os = "linux")]
+fn original_dst(stream: &tokio::net::TcpStream) -> Option<std::net::SocketAddr> {
+    use std::net::SocketAddr;
+    match stream.local_addr().ok()? {
+        SocketAddr::V4(_) => rustix::net::sockopt::ip_original_dst(stream)
+            .ok()
+            .map(SocketAddr::V4),
+        SocketAddr::V6(local) => {
+            // A dual-stack socket sees IPv4 clients as mapped addresses.
+            if local.ip().to_ipv4_mapped().is_some() {
+                rustix::net::sockopt::ip_original_dst(stream)
+                    .ok()
+                    .map(SocketAddr::V4)
+            } else {
+                rustix::net::sockopt::ipv6_original_dst(stream)
+                    .ok()
+                    .map(SocketAddr::V6)
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn original_dst(_stream: &tokio::net::TcpStream) -> Option<std::net::SocketAddr> {
+    None
+}
+
+fn original_dst_supported() -> std::io::Result<()> {
+    if cfg!(target_os = "linux") {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(
+            "transparent listeners need Linux (nftables redirect and SO_ORIGINAL_DST)",
+        ))
     }
 }
 

@@ -404,6 +404,7 @@ const (
 	ListenerKind_LISTENER_KIND_FORWARD_PROXY ListenerKind = 3 // HTTP CONNECT proxy
 	ListenerKind_LISTENER_KIND_TRANSPARENT   ListenerKind = 4 // original-destination, routed by SNI
 	ListenerKind_LISTENER_KIND_TOOL_PROXY    ListenerKind = 5 // HTTPS tool proxy with credential injection
+	ListenerKind_LISTENER_KIND_SNI           ListenerKind = 6 // TLS for names resolved to scrim (DNS override), routed by SNI
 )
 
 // Enum value maps for ListenerKind.
@@ -415,6 +416,7 @@ var (
 		3: "LISTENER_KIND_FORWARD_PROXY",
 		4: "LISTENER_KIND_TRANSPARENT",
 		5: "LISTENER_KIND_TOOL_PROXY",
+		6: "LISTENER_KIND_SNI",
 	}
 	ListenerKind_value = map[string]int32{
 		"LISTENER_KIND_UNSPECIFIED":   0,
@@ -423,6 +425,7 @@ var (
 		"LISTENER_KIND_FORWARD_PROXY": 3,
 		"LISTENER_KIND_TRANSPARENT":   4,
 		"LISTENER_KIND_TOOL_PROXY":    5,
+		"LISTENER_KIND_SNI":           6,
 	}
 )
 
@@ -2067,7 +2070,11 @@ type Listener struct {
 	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	Kind  ListenerKind           `protobuf:"varint,2,opt,name=kind,proto3,enum=scrim.dataplane.v1.ListenerKind" json:"kind,omitempty"`
 	// address is `host:port` or a Unix socket path.
-	Address       string `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
+	Address string `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
+	// block_unrouted, for TRANSPARENT and SNI listeners: close connections to
+	// hosts that are neither a provider host nor a host a credential or capture
+	// rule is bound to, instead of passing them through untouched.
+	BlockUnrouted bool `protobuf:"varint,4,opt,name=block_unrouted,json=blockUnrouted,proto3" json:"block_unrouted,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2121,6 +2128,13 @@ func (x *Listener) GetAddress() string {
 		return x.Address
 	}
 	return ""
+}
+
+func (x *Listener) GetBlockUnrouted() bool {
+	if x != nil {
+		return x.BlockUnrouted
+	}
+	return false
 }
 
 type RedactionSettings struct {
@@ -3959,11 +3973,12 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\n" +
 	"RouteChain\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x122\n" +
-	"\x15direct_on_unavailable\x18\x02 \x01(\bR\x13directOnUnavailable\"n\n" +
+	"\x15direct_on_unavailable\x18\x02 \x01(\bR\x13directOnUnavailable\"\x95\x01\n" +
 	"\bListener\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x124\n" +
 	"\x04kind\x18\x02 \x01(\x0e2 .scrim.dataplane.v1.ListenerKindR\x04kind\x12\x18\n" +
-	"\aaddress\x18\x03 \x01(\tR\aaddress\"=\n" +
+	"\aaddress\x18\x03 \x01(\tR\aaddress\x12%\n" +
+	"\x0eblock_unrouted\x18\x04 \x01(\bR\rblockUnrouted\"=\n" +
 	"\x11RedactionSettings\x12(\n" +
 	"\x10min_value_length\x18\x01 \x01(\rR\x0eminValueLength\"}\n" +
 	"\x15ApplySnapshotResponse\x12\x1a\n" +
@@ -4156,14 +4171,15 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x13CONDITION_OP_SUFFIX\x10\x03\x12\x19\n" +
 	"\x15CONDITION_OP_CONTAINS\x10\x04\x12\x15\n" +
 	"\x11CONDITION_OP_GLOB\x10\x05\x12\x18\n" +
-	"\x14CONDITION_OP_HAS_KEY\x10\x06*\xbf\x01\n" +
+	"\x14CONDITION_OP_HAS_KEY\x10\x06*\xd6\x01\n" +
 	"\fListenerKind\x12\x1d\n" +
 	"\x19LISTENER_KIND_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16LISTENER_KIND_BASE_URL\x10\x01\x12\x16\n" +
 	"\x12LISTENER_KIND_UNIX\x10\x02\x12\x1f\n" +
 	"\x1bLISTENER_KIND_FORWARD_PROXY\x10\x03\x12\x1d\n" +
 	"\x19LISTENER_KIND_TRANSPARENT\x10\x04\x12\x1c\n" +
-	"\x18LISTENER_KIND_TOOL_PROXY\x10\x05*\xb7\x02\n" +
+	"\x18LISTENER_KIND_TOOL_PROXY\x10\x05\x12\x15\n" +
+	"\x11LISTENER_KIND_SNI\x10\x06*\xb7\x02\n" +
 	"\tEventKind\x12\x1a\n" +
 	"\x16EVENT_KIND_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14EVENT_KIND_REDACTION\x10\x01\x12\x1b\n" +

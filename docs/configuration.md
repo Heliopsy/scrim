@@ -281,7 +281,10 @@ is out of date.
 | [`proxy.chain.url`](#proxychainurl) | string | `""` | hot |
 | [`proxy.forward-listen`](#proxyforward-listen) | string | `127.0.0.1:9791` | restart required |
 | [`proxy.listen`](#proxylisten) | string | `127.0.0.1:9790` | restart required |
+| [`proxy.sni-listen`](#proxysni-listen) | string | `""` | restart required |
 | [`proxy.socket`](#proxysocket) | string | `""` | restart required |
+| [`proxy.transparent-listen`](#proxytransparent-listen) | list | `[]` | restart required |
+| [`proxy.transparent-unrouted`](#proxytransparent-unrouted) | string | `pass` | restart required |
 | [`proxy.upstream.anthropic`](#proxyupstreamanthropic) | string | `https://api.anthropic.com` | hot |
 | [`proxy.upstream.chatgpt`](#proxyupstreamchatgpt) | string | `https://chatgpt.com` | hot |
 | [`proxy.upstream.chatgpt-ab`](#proxyupstreamchatgpt-ab) | string | `https://ab.chatgpt.com` | hot |
@@ -1252,6 +1255,18 @@ TCP address of the LLM proxy base URL (agents use http://<address>/anthropic and
 | Flag | `--proxy-listen` |
 | Reload | restart required |
 
+#### `proxy.sni-listen`
+
+TCP address of the SNI listener for DNS override mode: provider names resolve to its address (scrim install --dns writes /etc/hosts entries and sets 127.0.83.1:443), it serves certificates for them from the scrim CA and routes by TLS server name. Connections made by address bypass it. Empty disables it.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_PROXY_SNI_LISTEN` |
+| Flag | `--proxy-sni-listen` |
+| Reload | restart required |
+
 #### `proxy.socket`
 
 Unix socket path for the LLM proxy base URL, for agents that can connect to one. Empty disables it.
@@ -1263,6 +1278,31 @@ Unix socket path for the LLM proxy base URL, for agents that can connect to one.
 | Environment | `SCRIM_PROXY_SOCKET` |
 | Flag | `--proxy-socket` |
 | Reload | restart required |
+
+#### `proxy.transparent-listen`
+
+TCP addresses of the transparent listener (Linux): connections redirected to it by nftables are routed by TLS server name or Host header, provider hosts to the LLM proxy, bound tool hosts to the tool proxy. scrim install --transparent sets 127.0.0.1:9792 and [::1]:9792. Empty disables it.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_PROXY_TRANSPARENT_LISTEN` |
+| Flag | `--proxy-transparent-listen` |
+| Reload | restart required |
+
+#### `proxy.transparent-unrouted`
+
+What the transparent and SNI listeners do with a host that is neither a provider host nor bound to a credential or capture rule: pass relays the connection untouched to that host name (never to the address the client dialled), block closes it. TLS without a server name is always closed.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `pass` |
+| Environment | `SCRIM_PROXY_TRANSPARENT_UNROUTED` |
+| Flag | none |
+| Reload | restart required |
+| Values | `pass`, `block` |
 
 #### `proxy.upstream.anthropic`
 
