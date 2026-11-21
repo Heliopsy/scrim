@@ -372,6 +372,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	}
 	d.addrs.AgentAPI, d.addrs.EntryPage = d.runtime.Socket, d.runtime.EntryURL
 	d.runtime.SetEndpoints(d.agentEndpoints)
+	d.runtime.SetRedactor(d.redact)
 	// Asks name their caller by transport; the gate verifies sessions and
 	// maps peers with the agent API's resolver. Set before anything runs.
 	pp.Gate.Callers = d.runtime.Resolver
