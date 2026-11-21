@@ -200,6 +200,137 @@ A wrong identity ID, a token outside the allowed names, namespaces or audience, 
 empty token file are all reported as permission errors naming the store; the token file error also
 names the file and the option.
 
+## Policy labels
+
+Every secret the adapter reads or lists carries labels describing where it lives in Infisical and how
+Infisical treats it, so [policy rules](../policy.md) can match on project, environment, folder, tags
+and the rest through `secret.labels`. Labels are metadata: they never hold a secret value.
+
+Infisical's own attributes are under `infisical.<attr>`. A multi-valued attribute has a comma-joined
+key plus one presence key per value set to `"true"`, so `"infisical.tag.pci" in secret.labels` tests
+for a tag without parsing a list. Secret metadata (the key/value pairs on a secret) is copied under
+`infisical.meta.<key>`.
+
+| Key | Example | Meaning |
+| --- | --- | --- |
+| `infisical.org.id` | `0b7c...` | Organisation ID of the project. The organisation's name is not read: the identity has no organisation permission. |
+| `infisical.project` | `payments` | Project slug; the project ID when the project is addressed by ID and its details cannot be read. |
+| `infisical.project.id` | `6a1b2c3d-...` | Project ID. |
+| `infisical.project.slug` | `payments` | Project slug. |
+| `infisical.project.name` | `Payments` | Project display name. |
+| `infisical.environment` | `prod` | Environment slug from the reference. |
+| `infisical.environment.name` | `Production` | Environment display name. |
+| `infisical.environment.id` | `9f2e...` | Environment ID. |
+| `infisical.folder` | `/db/Primary` | Folder path as Infisical spells it, `/` at the root. |
+| `infisical.folder.<a>[.<b>...]` | `infisical.folder.db`, `infisical.folder.db.Primary` = `true` | One presence key per folder on the way down: the path below `/` with `/` written as `.`, folder names as spelt. Nothing for the root. |
+| `infisical.key` | `PASSWORD` | Secret key name, case kept. |
+| `infisical.path` | `/db/Primary/PASSWORD` | Folder and key together. |
+| `infisical.type` | `shared` | Secret type. scrim reads shared secrets only, so this is `shared`. |
+| `infisical.version` | `3` | Version number. |
+| `infisical.created`, `infisical.updated` | `2026-03-04T05:06:07Z` | Creation and last update time, RFC 3339 in UTC; `timestamp(secret.labels["infisical.updated"])` turns one into a CEL timestamp. |
+| `infisical.tag` | `pci,prod` | Tag slugs, comma-joined. Absent when the secret has no tags. |
+| `infisical.tag.<slug>` | `infisical.tag.pci` = `true` | One presence key per tag. |
+| `infisical.meta.<key>` | `infisical.meta.owner` = `payments-team` | Unencrypted secret metadata, key normalised as below, value as stored. |
+| `infisical.encrypted-meta` | `card-pin` | Keys of encrypted metadata entries, comma-joined; their values are never read into labels. Absent when there are none. |
+| `infisical.encrypted-meta.<key>` | `infisical.encrypted-meta.card-pin` = `true` | One presence key per encrypted metadata key. |
+| `infisical.rotation` | `true` / `false` | The secret is managed by an Infisical secret rotation. |
+| `infisical.rotation.id` | `1111...` | ID of that rotation. |
+| `infisical.reminder` | `true` / `false` | A secret reminder is set. Listings only: Infisical leaves reminders out of a single read, so a read omits the key rather than say `false`. The reminder note is free text and is not exposed. |
+| `infisical.reminder.days` | `30` | Reminder interval in days. |
+| `infisical.imported` | `true` / `false` | The value was served through a secret import rather than stored in the folder itself. Only a read can tell; listings never include imported secrets, so they say `false`. |
+| `infisical.import.environment`, `infisical.import.path` | `dev`, `/shared` | Where an imported secret really lives. |
+
+Keys an attribute does not apply to are left out (`infisical.tag` on an untagged secret,
+`infisical.rotation.id` without a rotation, names when the identity may not read the project), so
+test them with `in`. Booleans are always written as `true` or `false` when Infisical reports the
+attribute, so a rule can compare them without guarding against a missing key.
+
+### Normalisation
+
+The fixed part of a key is lower-case ASCII. The part that names a value is kept as Infisical spells
+it: tag slugs (already lower-case letters, digits and `-`) and folder names (letters, digits, `-` and
+`_`, case kept), so `/db/Primary` gives `infisical.folder.db.Primary` and a rule matches exactly the
+folder it names. Metadata keys are free text, so they are folded: lower-cased, split on `.`, empty
+segments dropped, and every character other than a letter, digit, `-` or `_` replaced by `_`.
+Metadata key `Cost Center` is `infisical.meta.cost_center`; if two keys fold to the same name, the
+first one Infisical returns wins. Tags are identified by slug, not by display name, because names are
+free text that can be renamed.
+
+### What metadata can and cannot do
+
+Native keys are computed by scrim from what Infisical reports and set before `infisical.meta.*`,
+which never overwrites a key, and every metadata key in the `infisical.` namespace (in any case,
+with or without surrounding space) is left out of the top level. A metadata entry
+`infisical.environment = dev` on a secret in `prod` therefore shows up as
+`infisical.meta.infisical.environment` and cannot change `infisical.environment`. Anyone who can
+edit metadata can set `infisical.meta.*` keys, so rules that grant access should match native keys;
+use metadata for asks and denies, or for keys only trusted people edit.
+
+Unencrypted metadata also keeps arriving under its own key, as it did before native labels existed:
+`scrim.hosts`, `scrim.placeholder` and the other [catalog](../catalog.md) keys work unchanged. Two
+things changed with native labels:
+
+- Encrypted metadata entries are no longer copied. Infisical returns them decrypted, and they exist
+  for sensitive text, so only their keys appear, in `infisical.encrypted-meta`.
+- A write drops labels in the `infisical.` namespace instead of storing them as metadata, where they
+  could only pose as native keys. Other labels are stored as before.
+
+The secret comment and the reminder note are not exposed at all, not even behind an option: both are
+free text that people do paste values into, and labels are shown to agents, logged and audited.
+Put attributes a rule needs into metadata instead.
+
+### Example rules
+
+Anything in project `payments` that is in `prod`, under `/db` or tagged `pci` needs a human, for reads
+and writes alike; a tag `agents-never` keeps agents away; everything else in the store is allowed:
+
+<!-- policy-example -->
+```yaml
+default: deny
+rules:
+  - name: payments-sensitive
+    decision: ask
+    reason: prod, /db and PCI secrets of payments need a human
+    when: >-
+      op in ["store.read", "store.write", "inject"] && secret.store == "inf" &&
+      secret.labels["infisical.project.slug"] == "payments" &&
+      (secret.labels["infisical.environment"] == "prod" ||
+       "infisical.folder.db" in secret.labels ||
+       "infisical.tag.pci" in secret.labels)
+  - name: agents-never
+    decision: deny
+    when: secret.store == "inf" && "infisical.tag.agents-never" in secret.labels
+  - name: infisical-rest
+    decision: allow
+    when: op in ["store.read", "store.write"] && secret.store == "inf"
+```
+
+A rule that indexes a label the secret does not have fails, and a failing ask or deny rule counts as
+matching, so a project whose details the identity cannot read is asked about rather than allowed.
+
+More patterns:
+
+```cel
+secret.labels["infisical.path"].glob("/db/**")                      // anything below /db
+secret.labels["infisical.project.slug"] in ["payments", "billing"]  // either project
+secret.labels["infisical.imported"] == "true"                       // served through an import
+"infisical.meta.owner" in secret.labels && secret.labels["infisical.meta.owner"] != agent.labels.team
+timestamp(secret.labels["infisical.updated"]) < now - duration("2160h")  // not rotated in 90 days
+```
+
+For `store.write`, the adapter also tells scrim which labels a secret at the target reference would
+get (`infisical.project*`, `infisical.environment*`, `infisical.folder*`, `infisical.key`,
+`infisical.path` and `infisical.type`) without contacting Infisical, so a write rule matches on
+environment and folder before the secret exists. Project and environment names appear there once an
+earlier read or listing has fetched them.
+
+### Cost
+
+A project addressed by slug is described by the call that resolves the slug, which scrim already
+made. A project addressed by ID costs one `GET /api/v1/projects/{id}` the first time. If that is
+refused, labels carry the ID only and the lookup is retried after five minutes rather than at every
+read. Everything else comes with the secret itself.
+
 ## Watch and refresh
 
 Self-hosted Infisical has no change feed scrim can subscribe to, so the adapter polls the listing of
@@ -240,7 +371,9 @@ such values.
   Values themselves never become strings: they move between the JSON body and scrim's secret type
   directly, and request and response bodies are zeroed after use.
 - Personal secret overrides are ignored; scrim reads and writes shared secrets only.
-- Secret imports are not followed when listing. Reference the source project directly.
+- Secret imports are not followed when listing. Reference the source project directly. A read that
+  Infisical answers from an import is labelled `infisical.imported`.
+- Dynamic secrets are not read, so there are no labels for them.
 - OIDC token exchange for per-agent identities and Infisical's own approval workflows are not used
   yet. Per-agent store identity (`identity.store-login`, `identity.store-credentials`, see
   [Agent identity](../identity.md#store-identity-per-agent)) is not implemented for Infisical: a
