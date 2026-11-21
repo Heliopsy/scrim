@@ -1,6 +1,13 @@
 # scrim chart: values reference
 
-![Version: 0.2.0](https://img.shields.io/badge/Version-0.2.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.2.0](https://img.shields.io/badge/AppVersion-0.2.0-informational?style=flat-square)
+<!-- release-please bumps the first version on each line of the x-release-please blocks in the
+same commit as Chart.yaml, so the release pull request needs no helm-docs run. Keep one version per
+line, followed by a character that cannot continue a semver (not "-"). -->
+<!-- x-release-please-start-version -->
+![Version](https://img.shields.io/static/v1?label=Version&message=0.2.0&color=informational&style=flat-square)
+![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square)
+![AppVersion](https://img.shields.io/static/v1?label=AppVersion&message=0.2.0&color=informational&style=flat-square)
+<!-- x-release-please-end -->
 
 Keeps secret values away from LLM providers while AI agents keep working
 
@@ -10,11 +17,13 @@ file: change values.yaml and run `deploy/helm/scrim/ci/verify.sh --generate`. Th
 
 ## Install
 
+<!-- x-release-please-start-version -->
 ```sh
 helm install scrim oci://ghcr.io/heliopsy/charts/scrim --version 0.2.0 \
   -n scrim --create-namespace -f my-values.yaml
 helm test scrim -n scrim
 ```
+<!-- x-release-please-end -->
 
 ## Examples
 

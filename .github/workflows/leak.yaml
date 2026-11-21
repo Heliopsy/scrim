@@ -1,6 +1,9 @@
 name: Leak suite
 
 on:
+  # The release-please workflow dispatches this on the release pull request,
+  # which GITHUB_TOKEN opened and so started no pull_request run.
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -9,7 +12,7 @@ permissions: read-all
 
 concurrency:
   group: leak-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   leak:

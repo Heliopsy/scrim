@@ -24,8 +24,12 @@
 #      SKIP_UPGRADE_CHECK=1)
 #   8. `helm package` works
 #
-#   ci/verify.sh              check
-#   ci/verify.sh --generate   rewrite the generated files first
+#   ci/verify.sh                  check
+#   ci/verify.sh --generate       rewrite the generated files first
+#   ci/verify.sh --generate-only  rewrite the generated files and stop (needs
+#                                 helm-docs and python3 with PyYAML only; the
+#                                 release-please workflow runs it on the
+#                                 release pull request)
 #
 # Needs helm, kubeconform, helm-docs, the helm-unittest plugin, python3 with
 # PyYAML, go (golden.sh builds scrim; or SCRIM_BIN), promtool optional.
@@ -58,13 +62,14 @@ helm_docs() {
     --sort-values-order file --skip-version-footer >/dev/null 2>&1
 }
 
-if [[ "${1:-}" == --generate ]]; then
+if [[ "${1:-}" == --generate || "${1:-}" == --generate-only ]]; then
   step "regenerate"
   python3 "$CHART/ci/gen-schema.py"
   python3 "$CHART/ci/gen-images.py"
   helm_docs
   cp deploy/monitoring/rules/scrim.rules.yaml "$CHART/monitoring/scrim.rules.yaml"
   cp deploy/monitoring/grafana/scrim-dashboard.json "$CHART/monitoring/scrim-dashboard.json"
+  [[ "$1" == --generate-only ]] && exit 0
 fi
 
 step "generated files are current"
