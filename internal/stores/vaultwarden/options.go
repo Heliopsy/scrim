@@ -33,6 +33,7 @@ const (
 	OptDeviceID          = "device-id"
 	OptCAFile            = "ca-file"
 	OptAllowInsecureHTTP = "allow-insecure-http"
+	OptMetaLabels        = "meta-labels"
 )
 
 // Options is the decoded configuration of one instance.
@@ -64,6 +65,9 @@ type Options struct {
 	// AllowInsecureHTTP permits plain http:// to a non-loopback host. It
 	// weakens transport security: tokens would travel in clear text.
 	AllowInsecureHTTP bool
+	// NoMetaLabels stops text custom fields being reported as
+	// vaultwarden.meta.<field> labels (option meta-labels: false).
+	NoMetaLabels bool
 }
 
 var refPrefix = regexp.MustCompile(`^[a-z][a-z0-9+.-]*:\S`)
@@ -78,7 +82,7 @@ func decodeOptions(instance string, m map[string]any) (Options, error) {
 	o := Options{PollInterval: 30 * time.Second, Timeout: 30 * time.Second}
 	known := map[string]bool{}
 	for _, k := range []string{OptURL, OptClientID, OptClientSecret, OptEmail, OptUnlock, OptScope,
-		OptPollInterval, OptTimeout, OptDeviceID, OptCAFile, OptAllowInsecureHTTP} {
+		OptPollInterval, OptTimeout, OptDeviceID, OptCAFile, OptAllowInsecureHTTP, OptMetaLabels} {
 		known[k] = true
 	}
 	for k := range m {
@@ -159,12 +163,20 @@ func decodeOptions(instance string, m map[string]any) (Options, error) {
 			return o, fmt.Errorf("vaultwarden %s: option %s must be positive", instance, d.k)
 		}
 	}
-	if v, ok := m[OptAllowInsecureHTTP]; ok && v != nil {
+	for _, d := range []struct {
+		k   string
+		dst *bool
+		neg bool
+	}{{OptAllowInsecureHTTP, &o.AllowInsecureHTTP, false}, {OptMetaLabels, &o.NoMetaLabels, true}} {
+		v, ok := m[d.k]
+		if !ok || v == nil {
+			continue
+		}
 		b, ok := v.(bool)
 		if !ok {
-			return o, fmt.Errorf("vaultwarden %s: option %s must be a boolean", instance, OptAllowInsecureHTTP)
+			return o, fmt.Errorf("vaultwarden %s: option %s must be a boolean", instance, d.k)
 		}
-		o.AllowInsecureHTTP = b
+		*d.dst = b != d.neg
 	}
 	if v, ok := m[OptScope]; ok && v != nil {
 		switch t := v.(type) {

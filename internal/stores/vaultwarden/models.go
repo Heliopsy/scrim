@@ -19,6 +19,10 @@ const (
 	cipherSSHKey     = 5
 )
 
+// uriMatchRegex is the login URI match type that treats the URI as a
+// regular expression rather than an address.
+const uriMatchRegex = 4
+
 // Custom field types.
 const (
 	fieldText    = 0
@@ -46,6 +50,9 @@ type orgJSON struct {
 	ID   string `json:"id"`
 	Name string `json:"name"` // plaintext: organisation names are not encrypted
 	Key  string `json:"key"`  // org key wrapped for the user's public key
+	// Type is this account's role in the organisation: 0 owner, 1 admin,
+	// 2 user, 3 manager, 4 custom.
+	Type *int `json:"type"`
 }
 
 type folderJSON struct {
@@ -59,6 +66,10 @@ type collectionJSON struct {
 	OrganizationID string `json:"organizationId"`
 	Name           string `json:"name"`
 	ReadOnly       bool   `json:"readOnly"`
+	HidePasswords  bool   `json:"hidePasswords"`
+	// Manage is reported by servers with collection management
+	// (Vaultwarden 1.32 and later); nil on older ones.
+	Manage *bool `json:"manage"`
 }
 
 type fieldJSON struct {
@@ -99,6 +110,11 @@ type cipherJSON struct {
 	RevisionDate   string          `json:"revisionDate,omitempty"`
 	CreationDate   string          `json:"creationDate,omitempty"`
 	DeletedDate    *string         `json:"deletedDate,omitempty"`
+	// Response-only fields: what this account may do with the item and the
+	// attachments it has. Never sent back on writes.
+	Edit         *bool           `json:"edit,omitempty"`
+	ViewPassword *bool           `json:"viewPassword,omitempty"`
+	Attachments  json.RawMessage `json:"attachments,omitempty"`
 }
 
 // cipherRequest is the body of create and update calls: a cipher plus the
@@ -116,6 +132,7 @@ type cipherRequest struct {
 func (r *cipherRequest) MarshalJSON() ([]byte, error) {
 	c := r.cipherJSON
 	c.ID, c.RevisionDate, c.CreationDate, c.DeletedDate, c.CollectionIDs = "", "", "", nil, nil
+	c.Edit, c.ViewPassword, c.Attachments = nil, nil, nil
 	type plain cipherJSON
 	b, err := json.Marshal(plain(c))
 	if err != nil {

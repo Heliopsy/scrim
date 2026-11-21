@@ -269,6 +269,107 @@ func TestVaultwarden(t *testing.T) {
 		}
 	})
 
+	t.Run("NativeLabels", func(t *testing.T) {
+		e := newEnv(t, srv, bwcrypto.DefaultPBKDF2())
+		acc := e.account
+		org := acc.CreateOrg(t, "Acme Team", "Prod")
+		shared := acc.CreateCollection(t, org, "Shared/Team A")
+		hidden := secret.FromString("hid_" + vwtest.RandHex(t, 16))
+		pw := secret.FromString("pw_" + vwtest.RandHex(t, 16))
+		acc.CreateItem(t, vwtest.Item{
+			Org: org, Collections: []string{shared}, Name: "DB", Password: pw, ItemKey: true,
+			Favorite: true, Reprompt: true,
+			URIs:   []string{"https://ci:" + expose(t, pw) + "@DB.example.com:5432/x?k=" + expose(t, hidden), "app.example.org"},
+			Fields: map[string]secret.Value{"token": hidden},
+			Labels: map[string]string{"vaultwarden.org": "Evil", "vaultwarden.owner": "personal", "Env": "prod", "scrim.hosts": "db.example.com"},
+		})
+		acc.CreateItem(t, vwtest.Item{Folder: "Agents/CI", Name: "Deploy", Password: pw,
+			Labels: map[string]string{"vaultwarden.folder": "Elsewhere"}})
+
+		a := e.adapter(t, srv.URL, nil)
+		defer func() { _ = a.Close() }()
+		ctx := vwtest.Ctx(t, 30*time.Second)
+		check := func(where string, got map[string]string, want map[string]string, absent ...string) {
+			t.Helper()
+			for k, v := range want {
+				if got[k] != v {
+					t.Errorf("%s: %s = %q, want %q", where, k, got[k], v)
+				}
+			}
+			for _, k := range absent {
+				if v, ok := got[k]; ok {
+					t.Errorf("%s: %s = %q, want absent", where, k, v)
+				}
+			}
+			for k, v := range got {
+				for _, s := range []secret.Value{hidden, pw} {
+					if strings.Contains(k+"="+v, expose(t, s)) {
+						t.Errorf("%s: label %s carries a value", where, k)
+					}
+				}
+			}
+		}
+		orgWant := map[string]string{
+			"vaultwarden.owner": "org", "vaultwarden.org": "Acme Team", "vaultwarden.org.id": org.ID,
+			"vaultwarden.org.role": "owner", "vaultwarden.type": "login", "vaultwarden.name": "DB",
+			"vaultwarden.collection":                        "Prod,Shared/Team A",
+			"vaultwarden.collection.Prod":                   "true",
+			"vaultwarden.collection.Shared":                 "true",
+			"vaultwarden.collection.Shared/Team A":          "true",
+			"vaultwarden.collection-id." + org.CollectionID: "true",
+			"vaultwarden.collection-id." + shared:           "true",
+			"vaultwarden.uri-host":                          "app.example.org,db.example.com",
+			"vaultwarden.uri-host.db.example.com":           "true",
+			"vaultwarden.favorite":                          "true",
+			"vaultwarden.reprompt":                          "true",
+			"vaultwarden.item-key":                          "true",
+			"vaultwarden.has-password":                      "true",
+			"vaultwarden.has-username":                      "false",
+			"vaultwarden.has-attachments":                   "false",
+			"vaultwarden.edit":                              "true",
+			"vaultwarden.meta.env":                          "prod",
+			"vaultwarden.meta.vaultwarden.org":              "Evil",
+			"scrim.hosts":                                   "db.example.com",
+		}
+		s, err := a.Read(ctx, stores.MustParseRef("vw://Shared/Team A/DB?org=Acme Team#password"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		check("Read", s.Meta.Labels, orgWant, "vaultwarden.folder", "vaultwarden.meta.token")
+		s.Wipe()
+		ms, err := a.List(ctx, stores.MustParseRef("vw://Prod"))
+		if err != nil || len(ms) != 1 {
+			t.Fatalf("List: %v %v", ms, err)
+		}
+		check("List", ms[0].Labels, orgWant)
+
+		ps, err := a.Read(ctx, stores.MustParseRef("vw://Agents/CI/Deploy#password"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		check("personal", ps.Meta.Labels, map[string]string{
+			"vaultwarden.owner": "personal", "vaultwarden.folder": "Agents/CI",
+			"vaultwarden.folder.Agents": "true", "vaultwarden.folder.Agents/CI": "true",
+			"vaultwarden.meta.vaultwarden.folder": "Elsewhere",
+		}, "vaultwarden.org", "vaultwarden.collection")
+		ps.Wipe()
+
+		// store.write rules see where a new item would land.
+		check("WriteLabels", a.WriteLabels(stores.MustParseRef("vw://Prod/New?org=Acme Team")), map[string]string{
+			"vaultwarden.owner": "org", "vaultwarden.org": "Acme Team", "vaultwarden.collection.Prod": "true",
+			"vaultwarden.collection-id." + org.CollectionID: "true",
+		}, "vaultwarden.folder")
+		check("WriteLabels", a.WriteLabels(stores.MustParseRef("vw://Agents/CI/New")), map[string]string{
+			"vaultwarden.owner": "personal", "vaultwarden.folder.Agents": "true", "vaultwarden.folder.Agents/CI": "true",
+		}, "vaultwarden.org")
+		// A written item reports the same native labels.
+		m, err := a.Write(ctx, stores.MustParseRef("vw://Prod/New?org=Acme Team"), map[string]secret.Value{"token": hidden}, stores.WriteOptions{CreateOnly: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		check("Write", m.Labels, map[string]string{"vaultwarden.owner": "org", "vaultwarden.org.id": org.ID})
+	})
+
 	t.Run("Scope", func(t *testing.T) {
 		e := newEnv(t, srv, bwcrypto.DefaultPBKDF2())
 		e.account.CreateItem(t, vwtest.Item{Folder: "Agents", Name: "In", Password: secret.FromString("in_" + vwtest.RandHex(t, 8))})

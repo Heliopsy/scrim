@@ -166,7 +166,7 @@ func TestVaultIndex(t *testing.T) {
 	// Garbage metadata: skipped and reported by id only.
 	f.sync.Ciphers = append(f.sync.Ciphers, cipherJSON{ID: "bad", Type: cipherLogin, Name: "2.AAAA|AAAA|AAAA"})
 
-	v := buildVault(f.sync, f.keys, 1, []string{"Agents", "Loose"})
+	v := buildVault(f.sync, f.keys, 1, []string{"Agents", "Loose"}, true)
 	if len(v.warnings) != 1 || !strings.Contains(v.warnings[0], "item bad") {
 		t.Fatalf("warnings: %v", v.warnings)
 	}

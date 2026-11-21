@@ -121,6 +121,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 ## 11. Vaultwarden and more providers
 
 - [x] 11.1 Vaultwarden adapter with client-side decryption and unlock key by reference; verify: contract suite against Vaultwarden in podman
+- [x] 11.1b Vaultwarden native labels (organisation, collections, folder and ancestors, item attributes, text fields as `vaultwarden.meta.*`) and write labels; verify: unit tests and `TestVaultwarden/NativeLabels` against Vaultwarden in podman, forged and hidden fields never become native labels
 - [x] 11.2 OpenAI Chat Completions and Responses codecs; verify: recorded fixtures and Codex end-to-end run (`TestCodexSession` in `test/e2e/session`)
 - [ ] 11.3 Gemini codec; verify: recorded fixtures
 - [ ] 11.4 Bedrock, Vertex, Foundry and Claude Platform on AWS with re-signing after redaction; verify: Claude Code end-to-end against faithful fake upstreams

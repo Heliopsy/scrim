@@ -3,6 +3,7 @@
 package vaultwarden
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -86,6 +87,9 @@ type item struct {
 	custom   map[string]int    // custom field name -> index in raw.Fields
 	labels   map[string]string // scrim.* label name -> value
 	labelIdx map[string]int    // scrim.* label name -> index in raw.Fields
+	// all is what metadata reports: the scrim.* labels, the text custom
+	// fields as vaultwarden.meta.*, and the native vaultwarden.* labels.
+	all      map[string]string
 	created  time.Time
 	updated  time.Time
 	inScope  bool
@@ -98,11 +102,14 @@ type vault struct {
 	email       string
 	userID      string
 	orgNames    map[string]string // id -> name
+	orgRoles    map[string]int    // id -> this account's role
 	folders     map[string]string // id -> name
 	collections map[string]collectionJSON
 	collNames   map[string]string // id -> decrypted name
 	items       []*item
 	warnings    []string
+	// metaLabels copies text custom fields into vaultwarden.meta.* labels.
+	metaLabels bool
 }
 
 func parseTime(s string) time.Time {
@@ -111,20 +118,26 @@ func parseTime(s string) time.Time {
 }
 
 // buildVault decrypts the metadata of a sync response with the keyring.
+// metaLabels reports text custom fields as vaultwarden.meta.* labels.
 // Items whose key is unavailable or whose metadata does not decrypt are
 // skipped and reported in warnings, by id only.
-func buildVault(s *syncResponse, keys *keyring, revision int64, scope []string) *vault {
+func buildVault(s *syncResponse, keys *keyring, revision int64, scope []string, metaLabels bool) *vault {
 	v := &vault{
+		metaLabels:  metaLabels,
 		revision:    revision,
 		email:       s.Profile.Email,
 		userID:      s.Profile.ID,
 		orgNames:    map[string]string{},
+		orgRoles:    map[string]int{},
 		folders:     map[string]string{},
 		collections: map[string]collectionJSON{},
 		collNames:   map[string]string{},
 	}
 	for _, o := range s.Profile.Organizations {
 		v.orgNames[o.ID] = o.Name
+		if o.Type != nil {
+			v.orgRoles[o.ID] = *o.Type
+		}
 	}
 	for _, f := range s.Folders {
 		name, err := keys.user.DecryptMetadata(f.Name)
@@ -212,14 +225,18 @@ func (v *vault) decryptItem(c cipherJSON, keys *keyring) (*item, error) {
 	} else {
 		it.personal = true
 	}
+	var folder, folderID string
 	if c.FolderID != nil {
 		if f, ok := v.folders[*c.FolderID]; ok {
 			it.paths = append(it.paths, f+"/"+name)
+			folder, folderID = f, *c.FolderID
 		}
 	}
+	var colls []string
 	for _, cid := range c.CollectionIDs {
 		if cn, ok := v.collNames[cid]; ok {
 			it.paths = append(it.paths, cn+"/"+name)
+			colls = append(colls, cid)
 		}
 	}
 	if len(it.paths) == 0 {
@@ -231,6 +248,7 @@ func (v *vault) decryptItem(c cipherJSON, keys *keyring) (*item, error) {
 			it.fields = append(it.fields, f)
 		}
 	}
+	user := map[string]string{}
 	if c.Type == cipherLogin && c.Login != nil {
 		if c.Login.Username != nil && *c.Login.Username != "" {
 			add(FieldUsername)
@@ -274,6 +292,13 @@ func (v *vault) decryptItem(c cipherJSON, keys *keyring) (*item, error) {
 		if _, dup := it.custom[fn]; dup {
 			continue // first field of a name wins, as in Bitwarden clients
 		}
+		if f.Type == fieldText && v.metaLabels && f.Value != nil {
+			// A text field is shown in clear by Bitwarden clients: item
+			// metadata. Hidden fields never become labels.
+			if val, err := k.DecryptMetadata(*f.Value); err == nil {
+				addMeta(user, fn, val)
+			}
+		}
 		it.custom[fn] = i
 		if c.Type == cipherLogin && isLoginBuiltin(fn) {
 			continue // shadowed by the built-in
@@ -281,7 +306,127 @@ func (v *vault) decryptItem(c cipherJSON, keys *keyring) (*item, error) {
 		add(fn)
 	}
 	sort.Strings(it.fields)
+	for k, val := range it.labels {
+		user[k] = val
+	}
+	it.all = mergeNative(user, v.native(it, k, folder, folderID, colls))
 	return it, nil
+}
+
+// native computes the native labels of an item from the sync data. k is the
+// item's key, used only to decrypt login URIs.
+func (v *vault) native(it *item, k bwcrypto.SymmetricKey, folder, folderID string, colls []string) nativeLabels {
+	c := it.raw
+	n := nativeLabels{}
+	n.set("id", c.ID)
+	n.set("name", it.name)
+	n.set("type", typeName(c.Type))
+	if it.personal {
+		n.set("owner", "personal")
+	} else {
+		n.set("owner", "org")
+		n.set("org.id", it.orgID)
+		if it.orgName != "" {
+			n.set("org", it.orgName)
+		}
+		if r, ok := v.orgRoles[it.orgID]; ok {
+			n.set("org.role", orgRole(r))
+		}
+	}
+	if folder != "" {
+		n.set("folder", folder)
+		n.set("folder-id", folderID)
+		for _, f := range ancestors(folder) {
+			n[nativePrefix+"folder."+f] = "true"
+		}
+	}
+	v.addCollections(n, colls)
+	n.setBool("favorite", c.Favorite)
+	n.setBool("reprompt", c.Reprompt != 0)
+	n.setBool("item-key", c.Key != nil && *c.Key != "")
+	n.setBool("has-notes", c.Notes != nil && *c.Notes != "")
+	n.setBool("has-attachments", hasEntries(c.Attachments))
+	if c.Edit != nil {
+		n.setBool("edit", *c.Edit)
+	}
+	if c.ViewPassword != nil {
+		n.setBool("view-password", *c.ViewPassword)
+	}
+	if c.RevisionDate != "" {
+		n.set("revision-date", c.RevisionDate)
+	}
+	if c.CreationDate != "" {
+		n.set("creation-date", c.CreationDate)
+	}
+	if c.Type == cipherLogin {
+		l := c.Login
+		if l == nil {
+			l = &loginJSON{}
+		}
+		set := func(p *string) bool { return p != nil && *p != "" }
+		n.setBool("has-username", set(l.Username))
+		n.setBool("has-password", set(l.Password))
+		n.setBool("has-totp", set(l.Totp))
+		n.setBool("has-passkey", hasEntries(l.Fido2Credentials))
+		if set(l.PasswordRevisionDate) {
+			n.set("password-revision-date", *l.PasswordRevisionDate)
+		}
+		n.setMulti("uri-host", false, uriHosts(loginURIs(l.URIs, k))...)
+	}
+	return n
+}
+
+// addCollections records the collections with the given ids and this
+// account's permissions on them.
+func (v *vault) addCollections(n nativeLabels, ids []string) {
+	var names, readOnly, hide, manage []string
+	for _, cid := range ids {
+		cn := v.collNames[cid]
+		names = append(names, cn)
+		cj := v.collections[cid]
+		if cj.ReadOnly {
+			readOnly = append(readOnly, cn)
+		}
+		if cj.HidePasswords {
+			hide = append(hide, cn)
+		}
+		if cj.Manage != nil && *cj.Manage {
+			manage = append(manage, cn)
+		}
+	}
+	n.setMulti("collection", true, names...)
+	n.setMulti("collection-id", false, ids...)
+	n.setMulti("collection-read-only", true, readOnly...)
+	n.setMulti("collection-hide-passwords", true, hide...)
+	n.setMulti("collection-manage", true, manage...)
+}
+
+// loginURIs decrypts the URIs of a login item, skipping those matched as
+// regular expressions and those that do not decrypt.
+func loginURIs(raw []byte, k bwcrypto.SymmetricKey) []string {
+	var uris []struct {
+		URI   *string `json:"uri"`
+		Match *int    `json:"match"`
+	}
+	if err := jsonUnmarshal(raw, &uris); err != nil {
+		return nil
+	}
+	var out []string
+	for _, u := range uris {
+		if u.URI == nil || *u.URI == "" || (u.Match != nil && *u.Match == uriMatchRegex) {
+			continue
+		}
+		if s, err := k.DecryptMetadata(*u.URI); err == nil {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// hasEntries reports whether a JSON array has at least one element.
+func hasEntries(raw []byte) bool {
+	var xs []json.RawMessage
+	return jsonUnmarshal(raw, &xs) == nil && len(xs) > 0
 }
 
 func isLoginBuiltin(name string) bool {

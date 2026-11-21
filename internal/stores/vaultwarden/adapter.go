@@ -18,7 +18,9 @@
 // Field selectors are username, password, totp and notes on login items,
 // private-key and public-key on SSH key items, notes on every item, and any
 // custom field by name. Custom fields whose names start with "scrim." are
-// catalog labels, never values.
+// catalog labels, never values. Every item also carries native
+// "vaultwarden.*" labels describing its organisation, collections, folder
+// and attributes (labels.go), which policy rules see as secret.labels.
 package vaultwarden
 
 import (
@@ -26,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strconv"
@@ -322,7 +325,7 @@ func (a *Adapter) refresh(ctx context.Context, op stores.Op) (*vault, error) {
 	if err := a.unlock(ctx, op, s); err != nil {
 		return nil, err
 	}
-	a.v = buildVault(s, a.keys, rev, a.opts.Scope)
+	a.v = buildVault(s, a.keys, rev, a.opts.Scope, !a.opts.NoMetaLabels)
 	for _, o := range a.orgWarnings {
 		a.v.warnings = append(a.v.warnings, "organisation key does not unwrap: "+o)
 	}
@@ -366,11 +369,8 @@ func (a *Adapter) metadata(ref stores.Ref, path string, it *item) stores.Metadat
 		CreatedAt: it.created,
 		UpdatedAt: it.updated,
 	}
-	if len(it.labels) > 0 {
-		m.Labels = make(map[string]string, len(it.labels))
-		for k, v := range it.labels {
-			m.Labels[k] = v
-		}
+	if len(it.all) > 0 {
+		m.Labels = maps.Clone(it.all)
 	}
 	return m
 }
