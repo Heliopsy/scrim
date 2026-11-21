@@ -66,6 +66,8 @@ type Adapter struct {
 	jitter   func(time.Duration) time.Duration
 	// agents caches Kubernetes passthrough logins (agent.go).
 	agents agentLogins
+	// mounts caches mount information for labels (labels.go).
+	mounts mountCache
 }
 
 // New builds an adapter for inst without contacting the store.
@@ -210,15 +212,31 @@ func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, erro
 	}
 	defer wipeRaw(rr.Data.Data)
 	md := rr.Data.Metadata
-	if md.DeletionTime != "" || md.Destroyed {
+	// A deletion time still to come was scheduled by delete_version_after;
+	// the version is readable until then.
+	if (md.DeletionTime != "" && !a.future(md.DeletionTime)) || md.Destroyed {
 		return stores.Secret{}, a.err(stores.OpRead, ref, stores.ErrNotFound, "")
+	}
+	destroyed := md.Destroyed
+	in := labelInput{
+		mount: mount, path: rest, version: md.Version, custom: md.CustomMetadata,
+		versionCreated: md.CreatedTime, deletion: md.DeletionTime, destroyed: &destroyed,
+	}
+	var createdAt time.Time
+	if a.c.opts.LabelLookups {
+		if m, err := a.optionalMetadata(ctx, ref, mount, rest); err == nil {
+			in.meta = &m
+			createdAt = parseTime(m.CreatedTime)
+		}
+		in.mountInfo = a.mount(ctx, ref, mount)
 	}
 	out := stores.Secret{
 		Meta: stores.Metadata{
 			Ref:       ref.Secret(),
 			Version:   strconv.Itoa(md.Version),
+			CreatedAt: createdAt,
 			UpdatedAt: parseTime(md.CreatedTime),
-			Labels:    md.CustomMetadata,
+			Labels:    a.labels(in),
 		},
 		Fields: map[string]secret.Value{},
 	}
@@ -244,32 +262,37 @@ func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, erro
 }
 
 type secretMeta struct {
-	CreatedTime    string            `json:"created_time"`
-	UpdatedTime    string            `json:"updated_time"`
-	CurrentVersion int               `json:"current_version"`
-	CustomMetadata map[string]string `json:"custom_metadata"`
-	Versions       map[string]struct {
+	CreatedTime        string            `json:"created_time"`
+	UpdatedTime        string            `json:"updated_time"`
+	CurrentVersion     int               `json:"current_version"`
+	OldestVersion      int               `json:"oldest_version"`
+	MaxVersions        int               `json:"max_versions"`
+	CASRequired        bool              `json:"cas_required"`
+	DeleteVersionAfter string            `json:"delete_version_after"`
+	CustomMetadata     map[string]string `json:"custom_metadata"`
+	Versions           map[string]struct {
+		CreatedTime  string `json:"created_time"`
 		DeletionTime string `json:"deletion_time"`
 		Destroyed    bool   `json:"destroyed"`
 	} `json:"versions"`
 }
 
 // live reports whether the current version can be read.
-func (m secretMeta) live() bool {
+func (a *Adapter) live(m secretMeta) bool {
 	if m.CurrentVersion == 0 {
 		return false
 	}
 	v, ok := m.Versions[strconv.Itoa(m.CurrentVersion)]
-	return !ok || (v.DeletionTime == "" && !v.Destroyed)
+	return !ok || ((v.DeletionTime == "" || a.future(v.DeletionTime)) && !v.Destroyed)
 }
 
-func (a *Adapter) metadata(ref stores.Ref, m secretMeta) stores.Metadata {
+func (a *Adapter) metadata(ref stores.Ref, mount, p string, m secretMeta, mi *mountInfo) stores.Metadata {
 	return stores.Metadata{
 		Ref:       ref,
 		Version:   strconv.Itoa(m.CurrentVersion),
 		CreatedAt: parseTime(m.CreatedTime),
 		UpdatedAt: parseTime(m.UpdatedTime),
-		Labels:    m.CustomMetadata,
+		Labels:    a.labels(labelInput{mount: mount, path: p, meta: &m, mountInfo: mi}),
 		WriteOnly: a.writeOnly(ref.Path),
 	}
 }
@@ -333,8 +356,8 @@ func (a *Adapter) listFolder(ctx context.Context, prefix stores.Ref, mount, fold
 				return err
 			}
 		}
-		if m.live() {
-			*out = append(*out, a.metadata(ref, m))
+		if a.live(m) {
+			*out = append(*out, a.metadata(ref, mount, child, m, a.mount(ctx, prefix, mount)))
 		}
 	}
 	return nil
@@ -393,9 +416,20 @@ func (a *Adapter) listKeys(ctx context.Context, prefix stores.Ref, mount, folder
 }
 
 func (a *Adapter) readMetadata(ctx context.Context, ref stores.Ref, mount, p string) (secretMeta, error) {
+	return a.getMetadata(ctx, ref, mount, p, false)
+}
+
+// optionalMetadata reads a secret's metadata for its labels on Read. A
+// refusal is returned without logging in again; the caller ignores errors.
+func (a *Adapter) optionalMetadata(ctx context.Context, ref stores.Ref, mount, p string) (secretMeta, error) {
+	return a.getMetadata(ctx, ref, mount, p, true)
+}
+
+func (a *Adapter) getMetadata(ctx context.Context, ref stores.Ref, mount, p string, optional bool) (secretMeta, error) {
 	resp, err := a.c.do(ctx, request{
 		op: stores.OpList, ref: ref, method: http.MethodGet,
-		path: escapePath(mount) + "/metadata/" + escapePath(p),
+		path:     escapePath(mount) + "/metadata/" + escapePath(p),
+		optional: optional,
 	})
 	defer resp.wipe()
 	if err != nil {
@@ -483,15 +517,23 @@ func (a *Adapter) Write(ctx context.Context, ref stores.Ref, fields map[string]s
 	if wr.Data.Version == 1 {
 		m.CreatedAt = m.UpdatedAt
 	}
+	// Labels describe what is known without another request: the custom
+	// metadata only once it is stored.
+	in := labelInput{
+		mount: mount, path: rest, version: wr.Data.Version,
+		versionCreated: wr.Data.CreatedTime, mountInfo: a.cachedMount(mount),
+	}
 	if len(opts.Labels) > 0 {
 		if err := a.writeLabels(ctx, ref, mount, rest, opts.Labels); err != nil {
 			if se, ok := err.(*stores.Error); ok {
 				se.Detail = strings.TrimSpace(fmt.Sprintf("secret written as version %d but its labels were not: %s", wr.Data.Version, se.Detail))
 			}
+			m.Labels = a.labels(in)
 			return m, err
 		}
-		m.Labels = opts.Labels
+		in.custom = opts.Labels
 	}
+	m.Labels = a.labels(in)
 	return m, nil
 }
 
