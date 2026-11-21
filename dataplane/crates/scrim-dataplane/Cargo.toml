@@ -19,13 +19,13 @@ scrim-llm = { path = "../scrim-llm", features = ["intercept", "redact"] }
 scrim-redact = { path = "../scrim-redact" }
 scrim-policy = { path = "../scrim-policy", features = ["llm"] }
 scrim-metrics = { path = "../scrim-metrics" }
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 http = "1"
 rustls-pki-types = { version = "1.16.0", features = ["std"] }
 arc-swap.workspace = true
 prost.workspace = true
-getrandom = "0.3"
+getrandom = "0.4"
 rustix = { workspace = true, features = ["process", "mm", "fs", "std"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros", "sync", "time", "signal"] }
 tokio-stream = { workspace = true, features = ["sync", "net"] }
@@ -42,7 +42,7 @@ scrim-llm = { path = "../scrim-llm", features = ["test-util", "intercept", "reda
 bytes = "1"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "server", "http1"] }
-rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde_json = "1"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
