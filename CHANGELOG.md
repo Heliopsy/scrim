@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0](https://github.com/Heliopsy/scrim/compare/v0.2.0...v0.3.0) (2026-11-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deploy:** kyverno.enabled needs Kyverno 1.17 or later. Upgrade the chart while Kyverno is still on 1.17 to 1.19, then Kyverno to 1.20 (docs/kubernetes.md, Kyverno versions).
+
+### Features
+
+* **deploy:** port the Kyverno policies to policies.kyverno.io/v1 ([#63](https://github.com/Heliopsy/scrim/issues/63)) ([664f9b4](https://github.com/Heliopsy/scrim/commit/664f9b4741dac63b0080c0f02f4454a727e2ace9))
+
+
+### Bug Fixes
+
+* **ci:** treat an empty 200 from the module proxy as not found ([#65](https://github.com/Heliopsy/scrim/issues/65)) ([69a6393](https://github.com/Heliopsy/scrim/commit/69a6393b46bf4d78eea7f1154a2a0b09346648ce))
+
 ## [0.2.0](https://github.com/Heliopsy/scrim/compare/v0.1.0...v0.2.0) (2026-11-20)
 
 
