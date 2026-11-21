@@ -76,8 +76,9 @@ verifies the signature by its workflow identity, and a HelmRelease. Every value 
 [helm-values.md](helm-values.md).
 
 Requirements: Kubernetes 1.29 or later, a CNI that enforces NetworkPolicy (Calico, Cilium, Antrea,
-kube-network-policies; kindnet only from kind 0.24 on, plain flannel never), Kyverno 1.13 or later
-for injection by label, and PostgreSQL for more than one replica. From a checkout instead of the
+kube-network-policies; kindnet only from kind 0.24 on, plain flannel never), Kyverno 1.13 to 1.19
+for injection by label (Kyverno 1.20 no longer runs `kyverno.io/v1` ClusterPolicies, which the
+chart installs), and PostgreSQL for more than one replica. From a checkout instead of the
 registry:
 
 ```sh

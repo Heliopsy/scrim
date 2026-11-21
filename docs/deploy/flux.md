@@ -22,7 +22,7 @@ Files: [`deploy/examples/flux/`](../../deploy/examples/flux/) and
   image-reflector-controller,image-automation-controller`).
 - An age key for SOPS in each cluster, as the Secret `sops-age` in `flux-system`
   ([gitops-secrets.md](gitops-secrets.md#sops-with-age)).
-- Kyverno 1.13 or later for the image signature policy.
+- Kyverno 1.13 to 1.19 for the image signature policy.
 
 ## Layout of the fleet repository
 

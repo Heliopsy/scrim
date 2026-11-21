@@ -1407,7 +1407,7 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Install the ClusterPolicy (needs Kyverno 1.13 or later)."
+          "description": "Install the ClusterPolicy (needs Kyverno 1.13 to 1.19)."
         },
         "failurePolicy": {
           "type": "string",

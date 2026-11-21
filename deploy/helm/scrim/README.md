@@ -20,7 +20,7 @@ with descriptions is [docs/helm-values.schema.json](../../../docs/helm-values.sc
 
 Kubernetes 1.29 or later (sidecar mode uses native sidecar containers). NetworkPolicy needs a CNI
 that enforces it (Calico, Cilium, Antrea, kube-network-policies; not kindnet before 0.24 or plain
-flannel). The Kyverno policy needs Kyverno 1.13 or later.
+flannel). The Kyverno policy needs Kyverno 1.13 to 1.19.
 
 ## What it creates
 

@@ -13,7 +13,7 @@ own [`examples/`](../../deploy/helm/scrim/examples/).
 ## Prerequisites
 
 - Kubernetes 1.29 or later, Helm 3.8 or later (OCI charts), cosign to check the chart signature.
-- Kyverno 1.13 or later for injection by label, a CNI that enforces NetworkPolicy, PostgreSQL for
+- Kyverno 1.13 to 1.19 for injection by label, a CNI that enforces NetworkPolicy, PostgreSQL for
   more than one replica.
 - A store scrim can log in to with its service account: OpenBao or Vault with Kubernetes auth, or
   Infisical with Kubernetes auth. Static credentials work too ([chart

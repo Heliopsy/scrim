@@ -52,7 +52,7 @@ img_tools="localhost/scrim-k8s-tools:$tag"
 dp_image="${SCRIM_K8S_DATAPLANE_IMAGE:-ghcr.io/heliopsy/scrim-dataplane:0.2.0}" # x-release-please-version
 calico_version="v3.33.1"
 calico_sha256="3368e62807b949438842e31f46c9b6df741731b4c755d0a622dd062b2cb20495"
-kyverno_chart_version="3.10.0"
+kyverno_chart_version="3.9.2"
 openbao_image="quay.io/openbao/openbao:2.7.3@sha256:ba4b133eb9586630024e71a617e66f37f29cc3534cdd46a6233e098ceded8dc9"
 embed="$root/internal/dataplane/embedded/scrim-dataplane"
 
