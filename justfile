@@ -174,7 +174,8 @@ e2e-tools *args:
 e2e-chain *args:
     test/e2e/run.sh chain {{args}}
 
-# A realistic Claude Code session under scrim run; skipped without claude.
+# Realistic Claude Code and Codex sessions under scrim run; each skipped without its agent
+# (SCRIM_E2E_CODEX names the codex binary).
 e2e-session *args:
     test/e2e/run.sh session {{args}}
 

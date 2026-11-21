@@ -250,7 +250,13 @@ set
     of seeded secrets, cats a config, runs `git diff` on a file with a key in it, calls a bound tool
     API through `HTTPS_PROXY` with `SCRIM_API_TOKEN`, and calls `secrets_list`. Every provider
     request and scrim's capture of it are checked with the leak suite's checker. Skipped without
-    `claude`.
+    `claude`. `TestCodexSession` runs the same session with `codex exec` over the Responses API:
+    the fake model calls whichever shell tool Codex offers (`exec_command`, `shell_command` or
+    `shell`), then `secrets_list` in the `mcp__scrim` namespace tool. `SCRIM_E2E_CODEX` names the
+    native `codex` binary (from the `@openai/codex` npm package, installed into a temporary
+    directory), otherwise it is looked up on `PATH` and skipped when missing. CI installs both
+    agents at pinned versions into the runner's temporary directory and runs it with
+    `SCRIM_E2E_REQUIRE_TOOLS=1`.
 
   Each needs unprivileged user namespaces; on Ubuntu 24.04 with AppArmor's restriction on, run
   `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` first.
