@@ -113,15 +113,15 @@ struct TlsUpstream {
 }
 
 async fn tls_upstream(alpn: Vec<Vec<u8>>) -> TlsUpstream {
-    use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair};
+    use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, IsCa, KeyPair};
     let ca_key = KeyPair::generate().unwrap();
     let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    let ca = ca_params.self_signed(&ca_key).unwrap();
+    let ca = CertifiedIssuer::self_signed(ca_params, ca_key).unwrap();
     let leaf_key = KeyPair::generate().unwrap();
     let leaf = CertificateParams::new(vec!["localhost".to_string()])
         .unwrap()
-        .signed_by(&leaf_key, &ca, &ca_key)
+        .signed_by(&leaf_key, &ca)
         .unwrap();
 
     let provider = Arc::new(rustls::crypto::ring::default_provider());

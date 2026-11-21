@@ -37,7 +37,9 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
-use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
+use rcgen::{
+    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, IsCa, KeyPair, KeyUsagePurpose,
+};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
 use scrim_llm::testing::{FakeUpstream, Recorded, Scripted, random_value};
@@ -421,7 +423,7 @@ struct ToolApi {
     seen: Arc<Mutex<Vec<http::HeaderMap>>>,
 }
 
-fn upstream_ca() -> (rcgen::Certificate, KeyPair) {
+fn upstream_ca() -> CertifiedIssuer<'static, KeyPair> {
     let key = KeyPair::generate().unwrap();
     let mut p = CertificateParams::default();
     p.distinguished_name
@@ -431,14 +433,14 @@ fn upstream_ca() -> (rcgen::Certificate, KeyPair) {
         KeyUsagePurpose::KeyCertSign,
         KeyUsagePurpose::DigitalSignature,
     ];
-    (p.self_signed(&key).unwrap(), key)
+    CertifiedIssuer::self_signed(p, key).unwrap()
 }
 
-async fn tool_api(ca: &(rcgen::Certificate, KeyPair)) -> ToolApi {
+async fn tool_api(ca: &CertifiedIssuer<'static, KeyPair>) -> ToolApi {
     let key = KeyPair::generate().unwrap();
     let cert = CertificateParams::new(vec!["localhost".to_owned()])
         .unwrap()
-        .signed_by(&key, &ca.0, &ca.1)
+        .signed_by(&key, ca)
         .unwrap();
     let mut cfg = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
@@ -725,7 +727,7 @@ async fn secrets_never_reach_the_provider_and_credentials_reach_only_bound_hosts
     let dir = test_dir("main");
     let ca = upstream_ca();
     let ca_file = dir.join("upstream-ca.pem");
-    std::fs::write(&ca_file, ca.0.pem()).unwrap();
+    std::fs::write(&ca_file, ca.pem()).unwrap();
     let unix = dir.join("llm.sock");
 
     let provider = FakeUpstream::start_with(provider_stream).await;
@@ -952,7 +954,7 @@ async fn break_glass_injects_nothing_and_restores_nothing() {
     let dir = test_dir("bg");
     let ca = upstream_ca();
     let ca_file = dir.join("upstream-ca.pem");
-    std::fs::write(&ca_file, ca.0.pem()).unwrap();
+    std::fs::write(&ca_file, ca.pem()).unwrap();
     let unix = dir.join("llm.sock");
     let provider = FakeUpstream::start_with(provider_stream).await;
     let api = tool_api(&ca).await;
@@ -1011,7 +1013,7 @@ async fn unresolved_placeholders_toward_bound_hosts_are_refused() {
     let dir = test_dir("unres");
     let ca = upstream_ca();
     let ca_file = dir.join("upstream-ca.pem");
-    std::fs::write(&ca_file, ca.0.pem()).unwrap();
+    std::fs::write(&ca_file, ca.pem()).unwrap();
     let unix = dir.join("llm.sock");
     let provider = FakeUpstream::start_with(provider_stream).await;
     let api = tool_api(&ca).await;
@@ -1237,7 +1239,7 @@ async fn display_values_are_restored_escaped_into_shell_commands_and_credentials
     let dir = test_dir("sh");
     let ca = upstream_ca();
     let ca_file = dir.join("upstream-ca.pem");
-    std::fs::write(&ca_file, ca.0.pem()).unwrap();
+    std::fs::write(&ca_file, ca.pem()).unwrap();
     let provider = FakeUpstream::start_with(shell_stream).await;
     let mut dp = DataPlane::launch(&ca_file).await;
     let mut snap = snapshot(&s, &provider, 1, &dir.join("llm.sock"));
@@ -1338,7 +1340,7 @@ async fn rules_deny_injection_and_asks_round_trip_over_the_asks_stream() {
     let dir = test_dir("ask");
     let ca = upstream_ca();
     let ca_file = dir.join("upstream-ca.pem");
-    std::fs::write(&ca_file, ca.0.pem()).unwrap();
+    std::fs::write(&ca_file, ca.pem()).unwrap();
     let provider = FakeUpstream::start_with(provider_stream).await;
     let api = tool_api(&ca).await;
     let mut dp = DataPlane::launch(&ca_file).await;

@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use aho_corasick::{AhoCorasick, MatchKind};
 use bytes::Bytes;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use http_body_util::{BodyExt, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::{Request, Response};
@@ -512,7 +512,7 @@ impl Fixture {
 
     /// Adds a value.
     pub fn add(&mut self, reference: &str, value: &str, class: ValueClass) {
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&self.key).expect("hmac key");
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&self.key).expect("hmac key");
         mac.update(value.as_bytes());
         let h = mac.finalize().into_bytes();
         let hex: String = h
