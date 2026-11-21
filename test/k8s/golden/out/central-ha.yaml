@@ -438,7 +438,6 @@ data:
         max-conns: 16
     events:
       backend: postgres
-    
 ---
 # Source: scrim/templates/rbac.yaml
 # TokenReview only, to verify the projected tokens agent pods present. Narrower than
@@ -554,7 +553,7 @@ spec:
         app.kubernetes.io/name: scrim-proxy
         app.kubernetes.io/component: proxy
       annotations:
-        checksum/config: e604276ece90827effe9d8dfff5f8632828284333f649faa3ee13f1ce48f1c34
+        checksum/config: fc18c848d5b805baf6fa0124a08dd45f067363299eac529220c3baf3a47118d1
     spec:
       serviceAccountName: scrim-proxy
       automountServiceAccountToken: true

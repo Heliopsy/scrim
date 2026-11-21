@@ -324,7 +324,6 @@ data:
       backend: memory
     events:
       backend: local
-    
 ---
 # Source: scrim/templates/deployment.yaml
 apiVersion: v1
@@ -393,7 +392,7 @@ spec:
         app.kubernetes.io/name: scrim-proxy
         app.kubernetes.io/component: proxy
       annotations:
-        checksum/config: 66ba8ad0d3e38050a24f09f7d467bd3b403fe6cd6c5d245a53ef50bde1510532
+        checksum/config: 2bbceb356aeb766c04af43bb653fcdd5ba696503b666b4dfc60014e5863b40bc
     spec:
       serviceAccountName: scrim-proxy
       automountServiceAccountToken: false

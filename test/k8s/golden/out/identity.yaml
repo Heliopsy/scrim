@@ -608,7 +608,6 @@ data:
       backend: memory
     events:
       backend: local
-    
 ---
 # Source: scrim/templates/rbac.yaml
 # TokenReview only, to verify the projected tokens agent pods present. Narrower than
@@ -719,7 +718,7 @@ spec:
         app.kubernetes.io/name: scrim-proxy
         app.kubernetes.io/component: proxy
       annotations:
-        checksum/config: 0ff5be1c50a4162ffddd7fe8c32eb3fb1306842ab17586c56f050a861f314a3c
+        checksum/config: d794fb377b4c83461319d73033c2604cd8c33801d1f085c03285e0b596bb836d
     spec:
       serviceAccountName: scrim-proxy
       automountServiceAccountToken: true

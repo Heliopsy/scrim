@@ -55,7 +55,9 @@ data:
     events:
       backend: local
     {{- end }}
-    {{- include "scrim.scaleSettings" . | trim | nindent 4 }}
+    {{- with include "scrim.scaleSettings" . | trim }}
+    {{- . | nindent 4 }}
+    {{- end }}
   {{- with .Values.policyRules }}
   policy.yaml: |
     {{- toYaml . | nindent 4 }}
