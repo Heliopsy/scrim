@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -15,7 +16,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/heliopsy/scrim/internal/catalog"
+	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/obs"
+	"github.com/heliopsy/scrim/internal/profiles"
 	agentrun "github.com/heliopsy/scrim/internal/run"
 )
 
@@ -79,6 +82,12 @@ func (Commands) Run(e *Env) *cobra.Command {
 					return cat.Placeholders(), nil
 				}
 			}
+			want := profiles.Enabled.Get(cfg)
+			if !slices.Contains(want, profiles.None) {
+				o.Profiles = func(ctx context.Context, agentName string, sess profiles.Session) (*profiles.Rendered, error) {
+					return renderProfiles(ctx, cfg, agentName, want, sess)
+				}
+			}
 			ctx := cmd.Context()
 			d, err := runDaemon(ctx, e)
 			if err != nil {
@@ -104,6 +113,31 @@ func (Commands) Run(e *Env) *cobra.Command {
 	f.StringVar(&name, "name", "", "session name shown in audit and whoami (default: the agent's command name)")
 	f.DurationVar(&ttl, "ttl", 0, "session token lifetime (default session.ttl); the session ends earlier when the agent exits")
 	return cmd
+}
+
+// renderProfiles selects and renders the session's tool profiles against the
+// catalog the agent's session resolves.
+func renderProfiles(ctx context.Context, cfg *config.Config, agentName string, want []string, sess profiles.Session) (*profiles.Rendered, error) {
+	set, err := profiles.Load(cfg)
+	if err != nil {
+		return nil, err
+	}
+	sel := catalog.SelectionFrom(cfg)
+	sel.Agent = agentName
+	cat, err := catalog.Load(ctx, cfg, nil, sel)
+	if err != nil {
+		return nil, err
+	}
+	chosen, err := set.Select(want, cat)
+	if err != nil {
+		return nil, err
+	}
+	r, err := profiles.Render(chosen.Profiles, cat, sess)
+	if err != nil {
+		return nil, err
+	}
+	r.Warnings = append(chosen.Warnings, r.Warnings...)
+	return r, nil
 }
 
 // runExit maps the run's outcome to scrim's exit code.
@@ -139,6 +173,9 @@ func writePlan(w io.Writer, p *agentrun.Plan, format string) error {
 			kv = v.Name + "=<secret>"
 		}
 		_, _ = fmt.Fprintf(w, "  %-*s  # %s\n", width, kv, v.Why)
+	}
+	if len(p.Profiles) > 0 {
+		_, _ = fmt.Fprintf(w, "\ntool profiles\n  %s\n", strings.Join(p.Profiles, "\n  "))
 	}
 	if len(p.Unset) > 0 {
 		_, _ = fmt.Fprintf(w, "\nunset\n  %s\n", strings.Join(p.Unset, "\n  "))

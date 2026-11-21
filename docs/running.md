@@ -6,10 +6,15 @@ guard and tool proxy) as a child process. Everything else talks to it: agents th
 or the forward proxy, `scrim mcp` and `scrim secret` through the agent API socket, `scrim approve`
 and friends through the admin API.
 
-```sh
+```sh test daemon
 scrim proxy                        # until SIGINT or SIGTERM
 scrim proxy --capture              # capture mode into $XDG_STATE_HOME/scrim/capture
 scrim proxy --capture="$HOME/scrim-cap"  # or into a directory of your choice
+```
+
+While it runs, an agent pointed at its base URL by hand goes through it too:
+
+```sh test proxied
 ANTHROPIC_BASE_URL=http://127.0.0.1:9790/anthropic claude
 ```
 
@@ -155,6 +160,8 @@ invalid reload is rejected and the previous configuration stays in force.
 
 `scrim install` sets the daemon up as a service and `scrim uninstall` removes it again
 ([service.md](service.md)):
+
+<!-- docs-test: skip: installs a service on the host; the install tests in internal/cli render every unit -->
 
 ```sh
 scrim install --user            # systemd user unit, sockets in $XDG_RUNTIME_DIR/scrim/

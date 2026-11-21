@@ -201,6 +201,34 @@ configuration.
 - **WHEN** transparent mode covers a user and an agent of that user connects to a provider directly
 - **THEN** the connection is redirected to scrim and redacted
 
+### Requirement: Transparent listener routing
+
+The transparent mode SHALL redirect TCP ports 80 and 443 of the covered users and control groups
+to a transparent listener, which SHALL route by the TLS server name (or the `Host` header of plain
+HTTP): provider hosts to the LLM proxy, hosts bound to a credential or capture rule to the tool
+proxy, any other host relayed untouched to that name or closed, as configured. TLS without a server
+name SHALL be closed, and the covered users' unredirected and QUIC egress SHALL be rejected.
+
+#### Scenario: Connection by address
+
+- **WHEN** a covered agent connects to a provider's address without a server name, or with the server name of another host
+- **THEN** the connection does not reach the provider: it is closed, or relayed to the host it names, never to the address it dialled
+
+#### Scenario: Uncovered user
+
+- **WHEN** a user that transparent mode does not cover connects to a provider
+- **THEN** the connection is not redirected and not rejected
+
+### Requirement: Transparent mode excludes scrim
+
+The transparent rules SHALL never redirect scrim's own user or loopback destinations, so scrim's
+upstream connections and local chained upstreams do not loop.
+
+#### Scenario: No loop through scrim
+
+- **WHEN** scrim connects to a provider or to a chained upstream on loopback while transparent mode is active
+- **THEN** its connections are not redirected
+
 ### Requirement: Transparent mode with eBPF
 
 scrim SHALL offer a Linux transparent mode that attaches connection hooks to selected control
@@ -228,6 +256,22 @@ by address.
 - **WHEN** an agent resolves a provider host name under the DNS override
 - **THEN** it connects to scrim and its traffic is redacted
 
+#### Scenario: Status names the gap
+
+- **WHEN** the DNS override is active
+- **THEN** `scrim status` lists it with the note that connections made by address bypass it
+
+### Requirement: DNS override does not loop
+
+In DNS override mode the provider names SHALL point at an SNI listener on a loopback address, port
+443, and scrim's own upstream connections SHALL NOT resolve to it: when the system resolver answers
+with the SNI listener, scrim SHALL ask the upstream name servers directly.
+
+#### Scenario: scrim reaches the provider by the overridden name
+
+- **WHEN** scrim's upstream for a provider is named by a host the override points at scrim
+- **THEN** scrim connects to the address the name servers give, not to itself
+
 ### Requirement: Kubernetes injection
 
 In Kubernetes, pods carrying a configured label SHALL receive the provider settings, CA trust, MCP
@@ -242,13 +286,37 @@ name resolution.
 ### Requirement: Managed agent settings
 
 scrim SHALL install managed settings for agents that support them (for example Claude Code's
-managed settings with a pinned custom endpoint and allowed providers restricted to it), so the agent
-can only use scrim's endpoint.
+managed settings with a pinned custom endpoint and allowed providers restricted to it, and Codex's
+admin-enforced requirements pinning its model provider), so the agent can only use scrim's
+endpoint.
 
 #### Scenario: Managed settings installed
 
 - **WHEN** managed settings are installed and a user tries to point the agent at the provider directly
 - **THEN** the agent refuses the direct endpoint
+
+#### Scenario: Endpoint override ignored
+
+- **WHEN** managed settings are installed and the agent's base URL is set elsewhere in the shell, the
+  user settings or the command line
+- **THEN** every model request still goes to scrim's endpoint
+
+### Requirement: Managed agent settings are kept apart and reverted
+
+scrim SHALL leave an administrator's own managed files unchanged, SHALL record every managed
+settings change in a manifest that uninstall reverts, and status and doctor SHALL report the mode
+and any managed file changed since install.
+
+#### Scenario: Administrator's file kept
+
+- **WHEN** the agent already has an administrator's managed file that scrim cannot add to without
+  editing it
+- **THEN** install stops, changes nothing and prints the lines to add
+
+#### Scenario: Managed settings uninstalled
+
+- **WHEN** managed settings are uninstalled
+- **THEN** the files scrim wrote are removed and the agent's own settings apply again
 
 ### Requirement: Hooks-only mode is reported as partial
 
@@ -260,6 +328,29 @@ traffic.
 
 - **WHEN** only hooks are installed
 - **THEN** status reports protection as partial and lists what is not covered
+
+### Requirement: Agent hooks redact through the data plane and fail closed
+
+The hooks SHALL pass tool results and prompts through the data plane's redactor and guard. Where
+the agent's hook API can replace a tool result, the hook SHALL replace it with the redacted result;
+where it can only block, it SHALL block a result holding a known value. A prompt holding a known
+value SHALL be blocked. When scrim cannot redact, the hook SHALL withhold the result and block the
+prompt.
+
+#### Scenario: Tool result redacted by the hook
+
+- **WHEN** only hooks are installed and a tool reads a file holding a known value
+- **THEN** what reaches the provider holds the placeholder and not the value
+
+#### Scenario: Prompt with a known value
+
+- **WHEN** a prompt holding a known value is submitted with hooks installed
+- **THEN** the prompt is not sent and the user is shown the redacted prompt
+
+#### Scenario: scrim unavailable to the hook
+
+- **WHEN** the hook cannot reach scrim or scrim cannot redact
+- **THEN** the tool result is withheld from the agent and the prompt is blocked
 
 ### Requirement: CA trust installation
 
@@ -276,6 +367,12 @@ to the processes that mode covers, and SHALL remove every trust change it made o
 
 - **WHEN** transparent or DNS mode is installed
 - **THEN** the CA is also installed into the system trust store and the Java truststore
+
+#### Scenario: Java truststores
+
+- **WHEN** transparent or DNS mode is installed on a host with JDKs
+- **THEN** a truststore the system trust tool rebuilds (Debian's ca-certificates-java, Fedora's extracted Java store) is checked to hold the CA, and every other JDK truststore found under `/usr/lib/jvm` or named with `--java-home` gets the CA imported and recorded
+- **AND** uninstall removes the CA from each of them
 
 #### Scenario: Node-based agent
 

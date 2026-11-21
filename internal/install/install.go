@@ -24,6 +24,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -111,6 +112,9 @@ type Installer struct {
 	// AgentUsers are added to the agent group and mapped to agents in a
 	// new system config file.
 	AgentUsers []string
+	// Intercept selects the host-level interception modes (transparent,
+	// DNS override) of a system install.
+	Intercept Interception
 
 	// The user scope: home, the scrim state directory (holds the manifest),
 	// the scrim config directory and $XDG_RUNTIME_DIR.
@@ -124,6 +128,17 @@ type Installer struct {
 	// MemlockUnlimited says the user's hard memlock limit is unlimited, so
 	// the user unit may raise it.
 	MemlockUnlimited bool
+
+	// Agents are the agents of an agent-side mode (ModeHooks,
+	// ModeManaged).
+	Agents []string
+	// ClaudeConfigDir ($CLAUDE_CONFIG_DIR or ~/.claude) and CodexHome
+	// ($CODEX_HOME or ~/.codex) hold the agents' user hooks files.
+	ClaudeConfigDir, CodexHome string
+	// HookExecutable is the scrim binary the hooks run.
+	HookExecutable string
+	// Managed are the endpoints managed settings pin.
+	Managed ManagedOptions
 
 	Runner Runner
 	Probe  Probe
@@ -150,7 +165,13 @@ type Installer struct {
 }
 
 // SystemScope reports whether the install is system-wide.
-func (in *Installer) SystemScope() bool { return in.Mode == ModeSystem || in.System }
+func (in *Installer) SystemScope() bool {
+	return in.Mode == ModeSystem || in.Mode == ModeManaged || in.System
+}
+
+// AgentMode reports whether the mode changes agents' configuration rather
+// than installing the service.
+func (in *Installer) AgentMode() bool { return in.Mode == ModeHooks || in.Mode == ModeManaged }
 
 func (in *Installer) path(p string) string {
 	if in.Root == "" {
@@ -161,6 +182,12 @@ func (in *Installer) path(p string) string {
 
 // ManifestPath is where the manifest of this scope lives.
 func (in *Installer) ManifestPath() string {
+	switch in.Mode {
+	case ModeManaged:
+		return in.path(ManagedManifest)
+	case ModeHooks:
+		return filepath.Join(in.StateDir, HooksManifestName)
+	}
 	if in.SystemScope() {
 		return in.path(SystemManifest)
 	}
@@ -172,6 +199,14 @@ func (in *Installer) scope() string {
 		return ScopeSystem
 	}
 	return ScopeUser
+}
+
+// uninstallFlag is the `scrim uninstall` flag that reverts this install.
+func (in *Installer) uninstallFlag() string {
+	if in.AgentMode() {
+		return string(in.Mode)
+	}
+	return in.scope()
 }
 
 func (in *Installer) printf(format string, a ...any) { _, _ = fmt.Fprintf(in.Out, format, a...) }
@@ -286,6 +321,9 @@ func (in *Installer) Install(ctx context.Context) error {
 			return fmt.Errorf("install: agent user %q cannot name an agent (lower-case letters, digits, '.', '_', '-')", u)
 		}
 	}
+	if err := in.checkInterception(); err != nil {
+		return err
+	}
 	in.mpath = in.ManifestPath()
 	mf, found, err := ReadManifest(in.mpath)
 	if err != nil {
@@ -303,7 +341,7 @@ func (in *Installer) Install(ctx context.Context) error {
 	}
 	if err := in.install(ctx, found); err != nil {
 		if !in.DryRun {
-			in.printf("\ninstall stopped: %v\nscrim uninstall --%s reverts the changes made so far.\n", err, in.scope())
+			in.printf("\ninstall stopped: %v\nscrim uninstall --%s reverts the changes made so far.\n", err, in.uninstallFlag())
 		}
 		return err
 	}
@@ -313,6 +351,10 @@ func (in *Installer) Install(ctx context.Context) error {
 
 func describeMode(m Mode, system bool) string {
 	switch {
+	case m == ModeHooks:
+		return "agent hooks"
+	case m == ModeManaged:
+		return "managed agent settings"
 	case m == ModeQuadlet && system:
 		return "system Quadlet container"
 	case m == ModeQuadlet:
@@ -324,6 +366,12 @@ func describeMode(m Mode, system bool) string {
 }
 
 func (in *Installer) install(ctx context.Context, again bool) error {
+	switch in.Mode {
+	case ModeHooks:
+		return in.installHooks()
+	case ModeManaged:
+		return in.installManaged()
+	}
 	if in.SystemScope() {
 		return in.installSystem(ctx, again)
 	}
@@ -376,6 +424,9 @@ func (in *Installer) installSystem(ctx context.Context, again bool) error {
 	}
 	if in.Mode == ModeSystem {
 		_, err = in.unitFile(in.path(SystemUnitPath), []byte(SystemUnit(SystemBinary)), ScopeSystem)
+		if err == nil {
+			err = in.writeDropIn()
+		}
 	} else {
 		var unit string
 		unit, err = in.systemQuadlet()
@@ -400,7 +451,10 @@ func (in *Installer) installSystem(ctx context.Context, again bool) error {
 	if err != nil {
 		return err
 	}
-	return in.systemTrust(ctx, pem)
+	if err := in.systemTrust(ctx, pem); err != nil {
+		return err
+	}
+	return in.installInterception(ctx, pem)
 }
 
 func (in *Installer) systemQuadlet() (string, error) {
@@ -827,6 +881,25 @@ func (in *Installer) trust() UserTrust {
 func (in *Installer) summary() {
 	if in.DryRun {
 		in.printf("\nNothing was changed (dry run).\n")
+		return
+	}
+	switch in.Mode {
+	case ModeHooks:
+		in.printf("\nHooks installed for %s. This is partial protection: model traffic does not pass scrim, and nothing\n"+
+			"restores placeholders. `scrim status` lists what is not covered. scrim must be running (scrim install --user,\n"+
+			"or scrim proxy) for the hooks to redact; while it is not, tool results are withheld and prompts blocked.\n", strings.Join(in.Agents, " and "))
+		if slices.Contains(in.Agents, AgentCodex) {
+			in.printf("Codex runs a new user hook only after you trust it: open /hooks in Codex once.\n")
+		}
+		in.printf("Remove them with `scrim uninstall --hooks`.\n")
+		return
+	case ModeManaged:
+		in.printf("\nManaged settings installed for %s: the agent can only use %s", strings.Join(in.Agents, " and "), in.Managed.AnthropicBaseURL)
+		if slices.Contains(in.Agents, AgentCodex) {
+			in.printf(" (Codex: %s)", in.Managed.OpenAIBaseURL)
+		}
+		in.printf(".\nThey take effect when the agent next starts; run /status in Claude Code to see the managed source.\n" +
+			"Remove them with `scrim uninstall --managed-settings`.\n")
 		return
 	}
 	in.printf("\nscrim runs as %s. Check it with `scrim status`; logs: ", UnitName)

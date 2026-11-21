@@ -7,8 +7,9 @@
 // that has the agent read a .env of seeded secrets, cat a config, git diff a
 // file with a key in it, call a bound tool API through HTTPS_PROXY and call
 // scrim's MCP tool. Every request the provider received, and scrim's capture
-// of them, must hold zero seeded values. Run it with `just e2e-session`; it
-// is skipped when Claude Code is not installed.
+// of them, must hold zero seeded values. TestCodexSession does the same with
+// the Codex CLI. Run them with `just e2e-session`; each is skipped when its
+// agent is not installed.
 package session
 
 import (
@@ -56,12 +57,25 @@ func model(t fp.Turn) fp.Reply {
 	return fp.Reply{Text: "Done."}
 }
 
-func TestClaudeCodeSession(t *testing.T) {
-	bin := harness.Require(t)
-	// Run it as `claude`, the way users do: scrim run picks its preset from
-	// the command name, and the native installer's symlink target is a
-	// version number.
-	claudeDir := filepath.Dir(harness.LookPath(t, "claude"))
+// session is a running `scrim proxy` in front of a fake model, a project
+// with seeded secrets for the agent to find, and a TLS tool API that wants
+// the bound token.
+type session struct {
+	d     *harness.Daemon
+	fake  *fp.Server
+	work  string
+	token leak.Seed
+	all   []leak.Seed
+
+	mu      sync.Mutex
+	apiAuth []string
+}
+
+// newSession starts everything an agent session needs; responder plays the
+// model.
+func newSession(t *testing.T, bin harness.Binaries, responder fp.Responder) *session {
+	t.Helper()
+	s := &session{}
 	harness.LookPath(t, "git")
 	harness.LookPath(t, "curl")
 
@@ -69,18 +83,16 @@ func TestClaudeCodeSession(t *testing.T) {
 	token := leak.Generate(leak.KindAPIKey)
 	all := append([]leak.Seed{token}, seeds...)
 	secrets := map[string]string{"api-token": token.Value()}
-	for i, s := range seeds {
-		secrets[fmt.Sprintf("seed-%d", i)] = s.Value()
+	for i, v := range seeds {
+		secrets[fmt.Sprintf("seed-%d", i)] = v.Value()
 	}
 
 	// The tool API the agent calls with the bound credential.
 	pki := harness.NewPKI(t)
-	var mu sync.Mutex
-	var apiAuth []string
 	harness.ServeTLS(t, pki, harness.APIHost, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		apiAuth = append(apiAuth, r.Header.Get("Authorization"))
-		mu.Unlock()
+		s.mu.Lock()
+		s.apiAuth = append(s.apiAuth, r.Header.Get("Authorization"))
+		s.mu.Unlock()
 		if r.Header.Get("Authorization") != "Bearer "+token.Value() {
 			http.Error(w, `{"error":"bad token"}`, http.StatusUnauthorized)
 			return
@@ -88,9 +100,9 @@ func TestClaudeCodeSession(t *testing.T) {
 		_, _ = fmt.Fprintf(w, `{"user":"deploy-bot","token":%q}`, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	}))
 
-	fake := fp.New(fp.Options{Responder: model})
+	fake := fp.New(fp.Options{Responder: responder})
 	provider := httptest.NewServer(fake)
-	defer provider.Close()
+	t.Cleanup(provider.Close)
 
 	d := harness.Start(t, bin, harness.Options{
 		Secrets:  secrets,
@@ -124,12 +136,12 @@ rules:
 		}
 	}
 	var env strings.Builder
-	for _, s := range seeds {
-		if s.Kind == leak.KindPrivateKey {
-			fmt.Fprintf(&env, "%s=%q\n", strings.ToUpper(strings.ReplaceAll(string(s.Kind), "-", "_")), s.Value())
+	for _, v := range seeds {
+		if v.Kind == leak.KindPrivateKey {
+			fmt.Fprintf(&env, "%s=%q\n", strings.ToUpper(strings.ReplaceAll(string(v.Kind), "-", "_")), v.Value())
 			continue
 		}
-		fmt.Fprintf(&env, "%s=%s\n", strings.ToUpper(strings.ReplaceAll(string(s.Kind), "-", "_")), s.Value())
+		fmt.Fprintf(&env, "%s=%s\n", strings.ToUpper(strings.ReplaceAll(string(v.Kind), "-", "_")), v.Value())
 	}
 	fmt.Fprintf(&env, "DEPLOY_API_TOKEN=%s\n", token.Value())
 	write(".env", env.String())
@@ -152,6 +164,47 @@ rules:
 	// The uncommitted change pastes a key into the script.
 	write("deploy.sh", "#!/bin/sh\nexport GITHUB_TOKEN="+byKind(seeds, leak.KindGitHubToken)+"\ncurl -H \"Authorization: Bearer "+token.Value()+"\" https://"+harness.APIHost+"/v1/deploy\n")
 
+	s.d, s.fake, s.work, s.token, s.all = d, fake, work, token, all
+	return s
+}
+
+// checkLeaks audits every provider request, and every byte scrim captured
+// on the way out, for every seeded value under every encoding the leak suite
+// knows.
+func (s *session) checkLeaks(t *testing.T) []fp.Exchange {
+	t.Helper()
+	checker := leak.NewChecker(s.all)
+	ex := s.fake.Exchanges()
+	for _, e := range ex {
+		if f := checker.Check(e.Capture); len(f) > 0 {
+			raw, _ := json.Marshal(f)
+			t.Errorf("leak in provider request %d (%s): %s", e.Seq, e.Path, raw)
+		}
+	}
+	captured := scanCaptures(t, checker, s.d.CaptureDir())
+	t.Logf("%d provider requests, %d captured files, zero leaks unless reported above", len(ex), captured)
+	return ex
+}
+
+// checkAPI fails unless the tool API received the real token exactly once.
+func (s *session) checkAPI(t *testing.T) {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.apiAuth) != 1 || s.apiAuth[0] != "Bearer "+s.token.Value() {
+		t.Errorf("the tool API did not receive the real token (%d requests)", len(s.apiAuth))
+	}
+}
+
+func TestClaudeCodeSession(t *testing.T) {
+	bin := harness.Require(t)
+	// Run it as `claude`, the way users do: scrim run picks its preset from
+	// the command name, and the native installer's symlink target is a
+	// version number.
+	claudeDir := filepath.Dir(harness.LookPath(t, "claude"))
+	s := newSession(t, bin, model)
+	d, work := s.d, s.work
+
 	allowed := "Bash(cat:*),Bash(git diff:*),Bash(curl:*),mcp__scrim__secrets_list"
 	r := d.Run(t, work, []string{
 		"PATH=" + claudeDir + string(os.PathListSeparator) + os.Getenv("PATH"),
@@ -166,25 +219,13 @@ rules:
 		t.Errorf("the task did not complete: %s", r.Output())
 	}
 
-	// The audit: every provider request, and every byte scrim captured on
-	// the way out, checked for every seeded value under every encoding the
-	// leak suite knows.
-	checker := leak.NewChecker(all)
-	ex := fake.Exchanges()
 	var main []fp.Exchange
-	for _, e := range ex {
-		if f := checker.Check(e.Capture); len(f) > 0 {
-			raw, _ := json.Marshal(f)
-			t.Errorf("leak in provider request %d (%s): %s", e.Seq, e.Path, raw)
-		}
+	for _, e := range s.checkLeaks(t) {
 		var body map[string]any
 		if json.Unmarshal(e.Body, &body) == nil && body["tools"] != nil {
 			main = append(main, e)
 		}
 	}
-	captured := scanCaptures(t, checker, d.CaptureDir())
-	t.Logf("%d provider requests (%d with tools), %d captured files, zero leaks unless reported above", len(ex), len(main), captured)
-
 	if len(main) < len(steps)+2 {
 		t.Fatalf("%d tool-enabled requests, want %d (one per tool result and the final one)", len(main), len(steps)+2)
 	}
@@ -195,9 +236,9 @@ rules:
 	for i, r := range results {
 		t.Logf("tool result %d as the model saw it: %.160q", i, r)
 	}
-	for i, s := range steps {
+	for i, st := range steps {
 		if !fp.DefaultPlaceholderPattern.MatchString(results[i]) && !strings.Contains(results[i], "SCRIM_API_TOKEN") {
-			t.Errorf("result of %q reached the model without placeholders: %.300s", s.command, results[i])
+			t.Errorf("result of %q reached the model without placeholders: %.300s", st.command, results[i])
 		}
 	}
 	if !strings.Contains(results[3], "deploy-bot") {
@@ -206,11 +247,7 @@ rules:
 	if !strings.Contains(results[len(steps)], "e2e://tools/") {
 		t.Errorf("the MCP result did not reach the model: %.300s", results[len(steps)])
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(apiAuth) != 1 || apiAuth[0] != "Bearer "+token.Value() {
-		t.Errorf("the tool API did not receive the real token (%d requests)", len(apiAuth))
-	}
+	s.checkAPI(t)
 }
 
 func byKind(seeds []leak.Seed, k leak.Kind) string {

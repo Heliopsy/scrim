@@ -110,6 +110,11 @@ func RealPath(t *testing.T, name string) string {
 		if out, err := exec.Command(p, probe...).Output(); err == nil { //nolint:gosec // the user's own tool
 			p = strings.TrimSpace(string(out))
 		}
+	} else if strings.Contains(p, "/shims/") {
+		// asdf picks the version from the user's HOME, which the tests replace.
+		if out, err := exec.Command("asdf", "which", name).Output(); err == nil { //nolint:gosec // the user's own tool
+			p = strings.TrimSpace(string(out))
+		}
 	}
 	if r, err := filepath.EvalSymlinks(p); err == nil {
 		p = r
@@ -126,6 +131,33 @@ func PathWith(t *testing.T, names ...string) string {
 		dirs = append(dirs, filepath.Dir(RealPath(t, n)))
 	}
 	return "PATH=" + strings.Join(append(dirs, os.Getenv("PATH")), string(os.PathListSeparator))
+}
+
+// ProfileHosts are the hosts the sandbox resolves to [ProfileAddr] for the
+// tool profile tests: the default endpoints of real CLIs and a few test
+// hosts. One server answers for all of them.
+var ProfileHosts = []string{
+	"api.github.com", "github.com", "uploads.github.com", "registry.npmjs.org", "app.terraform.io",
+	"cloudresourcemanager.googleapis.com", "login.microsoftonline.com", "management.azure.com",
+	"upload.pypi.org", "crates.io", "index.crates.io", "static.crates.io", "api.hetzner.cloud",
+	"api.digitalocean.com", "k8s.scrim.test", "registry.scrim.test", "pypi.scrim.test",
+}
+
+// ProfileAddr is where the sandbox puts [ProfileHosts].
+const ProfileAddr = "127.0.0.10:443"
+
+// ServeTLSNames serves h on addr with one leaf from p for every name, until
+// the test ends.
+func ServeTLSNames(t *testing.T, p *PKI, addr string, names []string, h http.Handler) {
+	t.Helper()
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second,
+		TLSConfig: &tls.Config{Certificates: []tls.Certificate{p.Leaf(t, names...)}, MinVersion: tls.VersionTLS12}}
+	go func() { _ = srv.ServeTLS(ln, "", "") }()
+	t.Cleanup(func() { _ = srv.Close() })
 }
 
 // HostAddr is the loopback address:443 the sandbox gives a host.

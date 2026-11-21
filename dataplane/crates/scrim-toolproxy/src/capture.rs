@@ -129,6 +129,11 @@ impl CaptureRule {
         })
     }
 
+    /// Whether the rule names the host of `dest`.
+    pub fn matches_host(&self, dest: &Destination) -> bool {
+        self.hosts.iter().any(|h| h.matches(dest))
+    }
+
     /// Whether the rule applies to this request (before the response arrives).
     pub fn matches_request(&self, dest: &Destination, method: &Method, path: &str) -> bool {
         self.hosts.iter().any(|h| h.matches(dest))

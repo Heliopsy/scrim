@@ -25,7 +25,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 2.3 Deterministic placeholders with versioned key and rotation; verify: same value gives same bytes across processes; old-key placeholders still resolve after rotation
 - [x] 2.4 Independent guard over exact outgoing bytes (separate code from 2.2), repair or withhold; verify: a value the redactor is made to miss is caught by the guard in tests
 - [x] 2.5 Fallback detectors (pattern rules, entropy), configurable; verify: rule fixtures and false-positive corpus thresholds
-- [ ] 2.6 Fuzz targets for matcher, variants and guard; verify: fuzzing runs in CI for a fixed budget with zero findings
+- [x] 2.6 Fuzz targets for matcher, variants and guard; verify: fuzzing runs in CI for a fixed budget with zero findings (`.github/workflows/fuzz.yaml`: every cargo-fuzz target 60 s on data plane changes, 15 min weekly, reproducers uploaded)
 - [x] 2.7 Nested JSON (JSON text in JSON strings) to `redaction.json_depth` in the variants and the guard, and no restore of a value escaping changes inside a quoted part of tool-call arguments; verify: OpenAI Chat tool-call arguments and a three-level tool result redacted by the real engine, the guard alone catches every style mix to the depth
 
 ## 3. Anthropic Messages proxy (M0 exit)
@@ -87,10 +87,10 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 - [x] 9.1 Per-tool restore policy, tool aliases, display modes, `scrim share` and `scrim reveal`; verify: policy tests per tool role, including none for unknown and network-capable tools (data plane: `scrim-policy` `RestoreEngine`, settings in `Snapshot.restore`, wired into the data plane with shell and edit tool calls restored escaped; the CLI commands and the control plane filling `Snapshot.restore` follow)
 - [x] 9.2 Context-aware escaping and no restore where output becomes code; verify: injection test suite and an escaping fuzzer that executes commands with zero code execution (`scrim-policy` `escape`, `tests/escape_exec.rs` runs commands under `unshare -rn`)
-- [ ] 9.3 `scrim run -- <agent>` wrapper for Claude Code and Codex; verify: real agent CLIs complete a task through scrim against a fake model
+- [x] 9.3 `scrim run -- <agent>` wrapper for Claude Code and Codex; verify: real agent CLIs complete a task through scrim against a fake model (`just e2e-session`: Claude Code and Codex against the real `scrim proxy`, CI job `e2e-agents`)
 - [x] 9.4 Bypass matrix as a regression gate; verify: every transform is blocked, withheld or redacted
 - [x] 9.5 `scrim audit` harness with leak checker stricter than the redactor and cache-hit reporting; verify: CI runs it with zero leaks
-- [ ] 9.6 User documentation for M1 (install, run, configure, verify with capture, limitations); verify: every documented command is exercised by a docs test
+- [x] 9.6 User documentation for M1 (install, run, configure, verify with capture, limitations); verify: every documented command is exercised by a docs test (`just docs-test`, CI job `docs-commands`: every shell block in the README, install, run, running, configuration, agent-tools and ca docs runs as written in the sandbox or names why it cannot)
 
 ## 10. Credential injection
 
@@ -105,22 +105,23 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 10a. Command-line tools
 
-- [ ] 10a.1 Tool profiles with generated placeholder env and config files, removed at session end; verify: gh, git over HTTPS, kubectl, helm, npm and docker login work through `scrim run` with no real value in the session
+- [x] 10a.1 Tool profiles with generated placeholder env and config files, removed at session end; verify: gh, git over HTTPS, kubectl, helm, npm and docker login work through `scrim run` with no real value in the session
 - [ ] 10a.2 AWS SigV4 re-signing toward bound endpoints; verify: `aws s3 ls` and `aws sts get-caller-identity` succeed against LocalStack with placeholder keys, unbound region refused
 - [ ] 10a.3 Format-preserving placeholders; verify: a client that checks the token prefix sends the placeholder and the guard still catches it
 - [ ] 10a.4 Upstream client certificates; verify: kubectl with certificate auth in kind
-- [ ] 10a.6 Environment override mapping per profile; verify: each built-in profile's tool reads only the generated placeholder config in a session test
+- [x] 10a.6 Environment override mapping per profile; verify: each built-in profile's tool reads only the generated placeholder config in a session test
 - [ ] 10a.7 Linux session filesystem view (mount namespace, placeholder or hidden credential paths); verify: a tool reading `~/.aws/credentials` via the password-database home sees the placeholder and `cat` of a real key file fails
 - [ ] 10a.8 macOS and no-namespace fallback with gaps reported; verify: status lists the fallback on macOS CI
 - [ ] 10a.9 Credential helpers for git, docker, AWS `credential_process` and kubectl exec; verify: each tool authenticates through its helper and only placeholders are returned
-- [ ] 10a.10 Credential-printing commands show placeholders; verify: `gh auth token`, `aws configure get`, `kubectl config view --raw` print no real value in a session
+- [x] 10a.10 Credential-printing commands show placeholders; verify: `gh auth token`, `aws configure get`, `kubectl config view --raw` print no real value in a session
 - [ ] 10a.11 Project file scan, registration, watch and move-to-store offer; verify: a fixture `.env` key is redacted from the first request and moved only after confirmation
-- [ ] 10a.5 Profiles for terraform and OpenTofu, gcloud, az, pip and twine, cargo, hcloud, doctl; verify: one end-to-end command per profile against a fake or test endpoint
+- [x] 10a.5 Profiles for terraform and OpenTofu, gcloud, az, pip and twine, cargo, hcloud, doctl; verify: one end-to-end command per profile against a fake or test endpoint
+  - progress: `just e2e-profiles` (CI job e2e-profiles, CLIs pinned in scripts/cli-tools/tools.env) runs gh, git, kubectl, helm, skopeo on REGISTRY_AUTH_FILE and DOCKER_CONFIG, npm, terraform, tofu, gcloud, az, pip, twine, cargo, hcloud, doctl and aws against fakes on their default hosts; `docker login` itself runs in dockerd outside the session, so the docker profile is verified through containers/image reading DOCKER_CONFIG; psql, mysql and ssh go through the database proxy and ssh agent, not profiles
 
 ## 11. Vaultwarden and more providers
 
 - [x] 11.1 Vaultwarden adapter with client-side decryption and unlock key by reference; verify: contract suite against Vaultwarden in podman
-- [ ] 11.2 OpenAI Chat Completions and Responses codecs; verify: recorded fixtures and Codex end-to-end run
+- [x] 11.2 OpenAI Chat Completions and Responses codecs; verify: recorded fixtures and Codex end-to-end run (`TestCodexSession` in `test/e2e/session`)
 - [ ] 11.3 Gemini codec; verify: recorded fixtures
 - [ ] 11.4 Bedrock, Vertex, Foundry and Claude Platform on AWS with re-signing after redaction; verify: Claude Code end-to-end against faithful fake upstreams
 
@@ -153,9 +154,10 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 13.1 systemd unit and Quadlet with a dedicated user, `scrim install` and `scrim uninstall`; verify: uninstall leaves no trace in a VM test (`test/service/vm-test.sh`: system and user units in a systemd container; Quadlet in unit tests)
 - [x] 13.2 Forward proxy listener; verify: an agent with HTTPS_PROXY set is redacted
 - [x] 13.2a `chatgpt.com` and `ab.chatgpt.com` routed to the LLM proxy (Responses codec for `/responses`, generic JSON elsewhere); verify: CONNECT to either through the forward proxy reaches the fake provider with placeholders only
-- [ ] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
-- [ ] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
-- [ ] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
+- [x] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
+- [x] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
+  - done: `scrim install --managed-settings` (Claude Code drop-in `managed-settings.d/90-scrim.json`, Codex `requirements.toml`), manifest and uninstall, status and doctor; `just e2e-managed-settings` runs Claude Code 2.1.330 in a podman container: shell, user settings and `--settings` overrides all go to scrim, Bedrock refused. Codex unit-tested only
+- [x] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
   - progress: the system trust store (`update-ca-certificates`, `update-ca-trust`) is installed and reverted by `scrim install --system`, and a system-store client trusts scrim through the forward proxy in the VM test; Java truststore and transparent mode open
 - [x] 13.6 Deployment guides with tested examples for every target and GitOps tool (docs/deploy, deploy/examples); verify: `just deploy-examples-check` and `just deploy-examples-smoke` pass in CI
 
@@ -168,8 +170,9 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 ## 15. Remaining edge modes
 
 - [ ] 15.1 eBPF cgroup interception with a privileged loader; verify: per-cgroup redirect and direct-egress denial on a test kernel
-- [ ] 15.2 DNS override mode; verify: an agent resolving the provider host reaches scrim
-- [ ] 15.3 Agent hooks mode reported as partial; verify: status shows partial protection
+- [x] 15.2 DNS override mode; verify: an agent resolving the provider host reaches scrim
+- [x] 15.3 Agent hooks mode reported as partial; verify: status shows partial protection
+  - done: `scrim install --hooks`, `scrim hooks run`, local API `POST /v1/redact` over the data plane's new `Redact` call; `just e2e-agentmodes` runs Claude Code 2.1.330 against the fake provider with hooks only: `Bash` and `Read` results of a seeded `.env` reach it with placeholders, a prompt with the value is blocked, status reports partial. Codex hook unit-tested only
 - [ ] 15.4 ssh-agent with keys from stores and per-signature approval; verify: git over SSH works and a denied signature fails
 - [ ] 15.5 Database auth proxies and the read-only database tool with bound parameters; verify: Postgres and MySQL queries by placeholder, writes refused
 - [ ] 15.6 Store and notifier plugins with a documented contract; verify: an example plugin passes the contract suites

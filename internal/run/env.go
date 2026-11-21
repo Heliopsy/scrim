@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/heliopsy/scrim/internal/localapi"
+	"github.com/heliopsy/scrim/internal/profiles"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -35,6 +36,8 @@ const (
 	FileCA     = "scrim-ca.pem"
 	FileBundle = "ca-bundle.pem"
 	FileMCP    = "mcp.json"
+	// ProfilesDir holds what tool profiles generate.
+	ProfilesDir = "profiles"
 )
 
 // proxyVars are set to the forward proxy, in both spellings clients read.
@@ -93,8 +96,12 @@ type Plan struct {
 	// Args is the agent's command line after the preset's additions.
 	Args []string `json:"args"`
 	// Files are written into the session directory before the agent
-	// starts, keyed by file name.
+	// starts, keyed by slash-separated path relative to it.
 	Files map[string][]byte `json:"-"`
+	// Dirs are created in the session directory, mode 0700.
+	Dirs []string `json:"-"`
+	// Profiles are the tool profiles applied (docs/cli-tools.md).
+	Profiles []string `json:"profiles,omitempty"`
 	// Warnings are shown before the agent starts.
 	Warnings []string `json:"warnings,omitempty"`
 }
@@ -124,6 +131,9 @@ type Input struct {
 	// Reserved reports names that must not be exported as placeholders
 	// (scrim's own settings). Optional.
 	Reserved func(name string) bool
+	// Profiles is what the session's tool profiles set, rendered under
+	// SessionDir/profiles. Optional.
+	Profiles *profiles.Rendered
 	// SystemRoots is the PEM of the trust store the session bundle starts
 	// from. NodeExtra is the PEM of an inherited NODE_EXTRA_CA_CERTS file.
 	SystemRoots, NodeExtra []byte
@@ -246,6 +256,7 @@ func Build(in Input) (*Plan, error) {
 		}
 	}
 	b.placeholders()
+	b.profiles()
 
 	for n := range b.unset {
 		b.plan.Unset = append(b.plan.Unset, n)
@@ -345,6 +356,36 @@ func (b *builder) placeholders() {
 			b.warn("%s from your environment is replaced by its declared placeholder", ph)
 		}
 		b.setVar(ph, ph, "declared placeholder, swapped for the value toward its bound hosts")
+	}
+}
+
+// profiles applies the rendered tool profiles: their variables (never over
+// one scrim run sets itself), the inherited variables they remove and their
+// generated files.
+func (b *builder) profiles() {
+	r := b.in.Profiles
+	if r == nil {
+		return
+	}
+	b.plan.Profiles = slices.Clone(r.Profiles)
+	b.plan.Warnings = append(b.plan.Warnings, r.Warnings...)
+	for _, e := range r.Env {
+		if _, taken := b.set[e.Name]; taken {
+			b.warn("tool profile %s does not set %s: scrim run sets it itself", e.Profile, e.Name)
+			continue
+		}
+		b.setVar(e.Name, e.Value, "tool profile "+e.Profile)
+	}
+	for name := range b.env {
+		if _, set := b.set[name]; !set && profiles.Unsets(r.Unset, name) {
+			b.unsetVar(name)
+		}
+	}
+	for _, f := range r.Files {
+		b.plan.Files[ProfilesDir+"/"+f.Path] = f.Data
+	}
+	for _, d := range r.Dirs {
+		b.plan.Dirs = append(b.plan.Dirs, ProfilesDir+"/"+d)
 	}
 }
 

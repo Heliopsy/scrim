@@ -6,11 +6,11 @@ metadata:
   name: scrim
   namespace: scrim
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
     app.kubernetes.io/name: scrim-proxy
     app.kubernetes.io/component: proxy
 spec:
@@ -73,11 +73,11 @@ metadata:
   name: scrim-agents-central
   namespace: agents
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
 spec:
   podSelector:
     matchLabels:
@@ -117,11 +117,11 @@ metadata:
   name: scrim
   namespace: scrim
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
     app.kubernetes.io/name: scrim-proxy
     app.kubernetes.io/component: proxy
 spec:
@@ -138,11 +138,11 @@ metadata:
   name: scrim-proxy
   namespace: scrim
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
     app.kubernetes.io/name: scrim-proxy
     app.kubernetes.io/component: proxy
 automountServiceAccountToken: false
@@ -154,11 +154,11 @@ metadata:
   name: scrim-ca
   namespace: scrim
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
   annotations:
     # Agents trust this CA; deleting it with the release would break them, so it stays.
     helm.sh/resource-policy: keep
@@ -174,11 +174,11 @@ metadata:
   name: scrim-placeholder-keys
   namespace: scrim
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
   annotations:
     # Placeholders in running conversations are derived from this key.
     helm.sh/resource-policy: keep
@@ -193,11 +193,11 @@ metadata:
   name: scrim-agent-env
   namespace: agents
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
 data:
   ANTHROPIC_BASE_URL: "http://scrim.scrim.svc.cluster.local:9790/anthropic"
   OPENAI_BASE_URL: "http://scrim.scrim.svc.cluster.local:9790/openai/v1"
@@ -226,11 +226,11 @@ metadata:
   name: scrim-ca
   namespace: scrim
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
 data:
   # scrim's interception CA, for runtimes that add to their roots (NODE_EXTRA_CA_CERTS).
   scrim-ca.pem: |
@@ -250,11 +250,11 @@ metadata:
   name: scrim-ca
   namespace: agents
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
 data:
   # scrim's interception CA, for runtimes that add to their roots (NODE_EXTRA_CA_CERTS).
   scrim-ca.pem: |
@@ -274,11 +274,11 @@ metadata:
   name: scrim-config
   namespace: scrim
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
     app.kubernetes.io/name: scrim-proxy
     app.kubernetes.io/component: proxy
 data:
@@ -333,11 +333,11 @@ metadata:
   name: scrim
   namespace: scrim
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
     app.kubernetes.io/name: scrim-proxy
     app.kubernetes.io/component: proxy
 spec:
@@ -363,11 +363,11 @@ metadata:
   name: scrim
   namespace: scrim
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
     app.kubernetes.io/name: scrim-proxy
     app.kubernetes.io/component: proxy
 spec:
@@ -385,15 +385,15 @@ spec:
   template:
     metadata:
       labels:
-        helm.sh/chart: scrim-0.3.0
+        helm.sh/chart: scrim-1.2.3
         app.kubernetes.io/part-of: scrim
         app.kubernetes.io/instance: scrim
         app.kubernetes.io/managed-by: Helm
-        app.kubernetes.io/version: "0.3.0"
+        app.kubernetes.io/version: "1.2.3"
         app.kubernetes.io/name: scrim-proxy
         app.kubernetes.io/component: proxy
       annotations:
-        checksum/config: 98d2b1a3d4c0dbbaf5a3d61b3029438b08f9016c3bfe3de7a11194e80a6c7a74
+        checksum/config: 66ba8ad0d3e38050a24f09f7d467bd3b403fe6cd6c5d245a53ef50bde1510532
     spec:
       serviceAccountName: scrim-proxy
       automountServiceAccountToken: false
@@ -414,7 +414,7 @@ spec:
             value: /etc/scrim/config/config.yaml:/etc/scrim/config/chart.yaml
           - name: XDG_RUNTIME_DIR
             value: /run/scrim
-          image: ghcr.io/heliopsy/scrim:0.3.0
+          image: ghcr.io/heliopsy/scrim:1.2.3
           imagePullPolicy: IfNotPresent
           livenessProbe:
             failureThreshold: 3
@@ -509,11 +509,11 @@ kind: MutatingPolicy
 metadata:
   name: scrim-scrim-inject-central
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
   annotations:
     policies.kyverno.io/title: scrim agent injection, central
     policies.kyverno.io/description: >-
@@ -684,11 +684,11 @@ kind: ValidatingPolicy
 metadata:
   name: scrim-scrim-require-prepared-namespace
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
   annotations:
     policies.kyverno.io/title: scrim agent namespaces
     policies.kyverno.io/description: >-
@@ -731,11 +731,11 @@ metadata:
   name: scrim-test-llm
   namespace: scrim
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
     app.kubernetes.io/name: scrim-test
     app.kubernetes.io/component: test
     scrim.dev/helm-test: "true"
@@ -787,11 +787,11 @@ metadata:
   name: scrim-test-forward
   namespace: scrim
   labels:
-    helm.sh/chart: scrim-0.3.0
+    helm.sh/chart: scrim-1.2.3
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/version: "1.2.3"
     app.kubernetes.io/name: scrim-test
     app.kubernetes.io/component: test
     scrim.dev/helm-test: "true"

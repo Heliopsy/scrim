@@ -174,12 +174,33 @@ e2e-tools *args:
 e2e-chain *args:
     test/e2e/run.sh chain {{args}}
 
-# A realistic Claude Code session under scrim run; skipped without claude.
+# Realistic Claude Code and Codex sessions under scrim run; each skipped without its agent
+# (SCRIM_E2E_CODEX names the codex binary).
 e2e-session *args:
     test/e2e/run.sh session {{args}}
 
+# Every shell block marked ```sh test in the user docs, run as written in the sandbox
+# (test/e2e/docs); shell blocks without the mark must say why with a docs-test: skip comment.
+docs-test *args:
+    test/e2e/run.sh docs {{args}}
+
+# Real CLIs (gh, git, kubectl, helm, podman, npm, terraform, tofu, gcloud, az, pip, twine,
+# cargo, hcloud, doctl, aws) with their tool profiles against fakes of their APIs. A CLI that is
+# not installed is skipped; SCRIM_E2E_REQUIRE_TOOLS=1 fails instead.
+e2e-profiles *args:
+    test/e2e/run.sh profiles {{args}}
+
+# Claude Code with scrim's agent hooks only, no scrim run (tasks.md 15.3); skipped without claude.
+e2e-agentmodes *args:
+    test/e2e/run.sh agentmodes {{args}}
+
+# Claude Code under scrim's managed settings, in a disposable rootless podman container with no
+# network (tasks.md 13.4): managed settings live in /etc, never written on the host.
+e2e-managed-settings:
+    test/e2e/agentmodes/managed-settings.sh
+
 # Every end-to-end run above.
-e2e: e2e-tools e2e-chain e2e-session
+e2e: e2e-tools e2e-chain e2e-session docs-test e2e-profiles e2e-agentmodes e2e-managed-settings
 
 ntfy_image := "docker.io/binwiederhier/ntfy:v2.38.1"
 
@@ -203,6 +224,12 @@ e2e-ntfy port="":
 # without it `just build` runs first.
 service-vm-test:
     test/service/vm-test.sh
+
+# Transparent mode, DNS override and Java trust (`scrim install --transparent` and `--dns`) in a
+# disposable systemd host under rootless podman with its own network namespace
+# (test/service/transparent-test.sh). SCRIM_SVC_BIN as for service-vm-test.
+service-transparent-test:
+    test/service/transparent-test.sh
 
 clean:
     rm -rf bin/ dist/ {{embed}}

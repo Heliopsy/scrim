@@ -1,0 +1,21 @@
+description: GitHub CLI (gh)
+tools: [gh]
+credentials:
+  - name: token
+    description: A GitHub token (fine-grained or classic personal access token, or an app installation token).
+    hosts: [api.github.com, github.com, uploads.github.com]
+    inject: ["header:Authorization"]
+    required: true
+env:
+  GH_TOKEN: '{{ placeholder "token" }}'
+  GH_CONFIG_DIR: '{{ path "config" }}'
+  GH_NO_UPDATE_NOTIFIER: "1"
+unset: [GITHUB_TOKEN, GH_ENTERPRISE_TOKEN, GITHUB_ENTERPRISE_TOKEN]
+dirs: [config]
+paths:
+  - home: .config/gh/hosts.yml
+test:
+  command: [gh, auth, token]
+  expect: '{{ placeholder "token" }}'
+notes:
+  - GH_TOKEN applies to github.com. For GitHub Enterprise Server override the profile to set GH_ENTERPRISE_TOKEN and bind the entry to your server's host.
