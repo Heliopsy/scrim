@@ -1,0 +1,26 @@
+description: Terraform and OpenTofu registry and remote backend tokens (TF_CLI_CONFIG_FILE)
+tools: [terraform, tofu]
+credentials:
+  - name: token
+    description: An API token for a module or provider registry or remote backend (HCP Terraform, a private registry); one credentials block per bound host.
+    hosts: [app.terraform.io]
+    inject: ["header:Authorization"]
+    required: true
+env:
+  TF_CLI_CONFIG_FILE: '{{ path "terraformrc" }}'
+unset: ["TF_TOKEN_*"]
+files:
+  - path: terraformrc
+    content: |
+      {{- range $c := creds "token" }}{{ range $c.Hosts }}
+      credentials "{{ stripport . }}" {
+        token = "{{ $c.Placeholder }}"
+      }
+      {{- end }}{{ end }}
+paths:
+  - home: .terraformrc
+    generated: terraformrc
+  - home: .terraform.d/credentials.tfrc.json
+notes:
+  - TF_CLI_CONFIG_FILE replaces ~/.terraformrc for the session, including provider mirrors and the plugin cache; set TF_PLUGIN_CACHE_DIR to keep the cache.
+  - Provider credentials (AWS, Google, Azure) come from those tools' profiles.

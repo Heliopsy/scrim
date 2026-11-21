@@ -1109,6 +1109,20 @@
           "x-scrim-flag": "--run-placeholder-env",
           "x-scrim-restart-required": false,
           "x-scrim-weakening": false
+        },
+        "profiles": {
+          "default": [
+            "auto"
+          ],
+          "description": "Tool profiles scrim run applies: profile names, `auto` for every profile at least one catalog entry fills (an entry naming the profile in its tools list), or `none`. Profiles a selected one requires are added. See docs/cli-tools.md.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_RUN_PROFILES",
+          "x-scrim-flag": "--run-profiles",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
         }
       },
       "type": "object"
@@ -1259,6 +1273,20 @@
       "x-scrim-collection": true,
       "x-scrim-env": "SCRIM_STORES",
       "x-scrim-restart-required": true
+    },
+    "tool-profiles": {
+      "additionalProperties": {
+        "properties": {},
+        "type": "object"
+      },
+      "description": "Tool profiles by name: description, tools, requires, credentials (name, hosts, inject, required), params, env, unset, dirs, files (path, content), paths (home, generated), test (command, expect), notes. A name that matches a built-in profile overrides the fields it sets (params are merged key by key). Templates hold placeholders only, never values. See docs/cli-tools.md.",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+      },
+      "type": "object",
+      "x-scrim-collection": true,
+      "x-scrim-env": "SCRIM_TOOL_PROFILES",
+      "x-scrim-restart-required": false
     },
     "tool-proxy": {
       "additionalProperties": false,

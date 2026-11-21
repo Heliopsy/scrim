@@ -1,0 +1,25 @@
+description: Azure CLI (az) and Azure SDKs with a service principal secret
+tools: [az, azd]
+credentials:
+  - name: client-secret
+    description: A service principal client secret. az login --service-principal sends it in the token request body to login.microsoftonline.com.
+    hosts: [login.microsoftonline.com]
+    inject: [body]
+    required: true
+params:
+  client-id: ""
+  tenant-id: ""
+env:
+  AZURE_CONFIG_DIR: '{{ path "config" }}'
+  AZURE_CLIENT_SECRET: '{{ placeholder "client-secret" }}'
+  AZURE_CLIENT_ID: '{{ param "client-id" }}'
+  AZURE_TENANT_ID: '{{ param "tenant-id" }}'
+  AZURE_CORE_COLLECT_TELEMETRY: "false"
+  AZURE_CORE_ONLY_SHOW_ERRORS: "true"
+unset: [AZURE_CLIENT_CERTIFICATE_PATH, AZURE_CLIENT_CERTIFICATE_PASSWORD, AZURE_FEDERATED_TOKEN_FILE, AZURE_USERNAME, AZURE_PASSWORD]
+dirs: [config]
+paths:
+  - home: .azure
+notes:
+  - 'Log in inside the session with az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID".'
+  - The access token Entra ID returns is a live credential and lands in the session's AZURE_CONFIG_DIR; it is removed with the session. Add a capture rule to keep it a placeholder.

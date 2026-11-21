@@ -1,0 +1,22 @@
+description: Podman, Buildah and Skopeo registry credentials (REGISTRY_AUTH_FILE)
+tools: [podman, buildah, skopeo]
+credentials:
+  - name: registry
+    description: Password or token for a container registry; one auth entry per bound host.
+    inject: ["header:Authorization"]
+    required: true
+params:
+  username: scrim
+env:
+  REGISTRY_AUTH_FILE: '{{ path "auth.json" }}'
+files:
+  - path: auth.json
+    content: '{{ authsjson "registry" (param "username") }}'
+paths:
+  - home: .config/containers/auth.json
+    generated: auth.json
+test:
+  command: [podman, login, --get-login, '{{ host "registry" }}']
+  expect: '{{ param "username" }}'
+notes:
+  - REGISTRY_AUTH_FILE hides ${XDG_RUNTIME_DIR}/containers/auth.json as well, which is not under the home directory.

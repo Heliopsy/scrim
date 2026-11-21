@@ -1,0 +1,27 @@
+description: npm and pnpm registry tokens (NPM_CONFIG_USERCONFIG)
+tools: [npm, pnpm, npx]
+credentials:
+  - name: token
+    description: An npm access token; one _authToken line per bound host.
+    hosts: [registry.npmjs.org]
+    inject: ["header:Authorization"]
+    required: true
+env:
+  NPM_CONFIG_USERCONFIG: '{{ path "npmrc" }}'
+  # Project .npmrc files often read ${NPM_TOKEN} or ${NODE_AUTH_TOKEN}.
+  NPM_TOKEN: '{{ placeholder "token" }}'
+  NODE_AUTH_TOKEN: '{{ placeholder "token" }}'
+unset: [NPM_CONFIG__AUTH, NPM_CONFIG__AUTHTOKEN]
+files:
+  - path: npmrc
+    content: "{{ range $c := creds \"token\" }}{{ range $c.Hosts }}//{{ . }}/:_authToken={{ $c.Placeholder }}\n{{ end }}{{ end }}"
+paths:
+  - home: .npmrc
+    generated: npmrc
+test:
+  # npm never prints a token it holds ("protected"), so the test shows
+  # which file it read credentials from.
+  command: [npm, config, list]
+  expect: '"user" config from {{ path "npmrc" }}'
+notes:
+  - NPM_CONFIG_USERCONFIG replaces your ~/.npmrc for the session; settings other than credentials belong in the project's .npmrc.

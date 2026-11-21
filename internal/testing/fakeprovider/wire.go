@@ -260,10 +260,14 @@ func (g *gen) responses(w http.ResponseWriter, r Reply, stream bool) {
 	}
 	for _, tc := range r.ToolCalls {
 		args := inputJSON(tc)
-		items = append(items, item{m: map[string]any{
+		m := map[string]any{
 			"type": "function_call", "id": g.id("fc_"), "call_id": g.id("call_"), "name": tc.Name,
 			"arguments": args, "status": "completed",
-		}, args: args})
+		}
+		if tc.Namespace != "" {
+			m["namespace"] = tc.Namespace
+		}
+		items = append(items, item{m: m, args: args})
 	}
 	out := outputTokens(r)
 	full := func(status string, withOutput bool) map[string]any {
@@ -310,6 +314,9 @@ func (g *gen) responses(w http.ResponseWriter, r Reply, stream bool) {
 			ev("response.content_part.done", map[string]any{"item_id": itemID, "output_index": oi, "content_index": 0, "part": map[string]any{"type": "output_text", "text": it.text, "annotations": []any{}}})
 		} else {
 			added := map[string]any{"type": "function_call", "id": itemID, "call_id": it.m["call_id"], "name": it.m["name"], "arguments": "", "status": "in_progress"}
+			if ns, ok := it.m["namespace"]; ok {
+				added["namespace"] = ns
+			}
 			ev("response.output_item.added", map[string]any{"output_index": oi, "item": added})
 			for _, p := range g.pieces(it.args) {
 				ev("response.function_call_arguments.delta", map[string]any{"item_id": itemID, "output_index": oi, "delta": p})

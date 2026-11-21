@@ -1,0 +1,19 @@
+description: Helm OCI registry credentials (cluster access comes from the kubectl profile's KUBECONFIG)
+tools: [helm]
+credentials:
+  - name: registry
+    description: Password or token for an OCI chart registry; one auth entry per bound host.
+    inject: ["header:Authorization"]
+    required: true
+params:
+  username: scrim
+env:
+  HELM_REGISTRY_CONFIG: '{{ path "registry/config.json" }}'
+files:
+  - path: registry/config.json
+    content: '{{ authsjson "registry" (param "username") }}'
+paths:
+  - home: .config/helm/registry/config.json
+    generated: registry/config.json
+notes:
+  - Registries that check the user name need the username param set in a tool-profiles.helm override.

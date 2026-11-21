@@ -808,6 +808,35 @@ pub struct MetricSample {
     #[prost(double, tag = "5")]
     pub sum: f64,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[prost(skip_debug)]
+pub struct RedactRequest {
+    #[prost(uint32, tag = "1")]
+    pub protocol: u32,
+    /// text is the bytes to redact, for example a tool result. It may hold
+    /// secret values: a secret field.
+    #[prost(bytes = "vec", tag = "2")]
+    pub text: ::prost::alloc::vec::Vec<u8>,
+}
+/// RedactResponse holds no secret: text passed the guard.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RedactResponse {
+    #[prost(uint32, tag = "1")]
+    pub protocol: u32,
+    /// text is the redacted bytes.
+    #[prost(bytes = "vec", tag = "2")]
+    pub text: ::prost::alloc::vec::Vec<u8>,
+    /// replacements counts the values replaced, by the redactor and by the
+    /// guard's repair.
+    #[prost(uint32, tag = "3")]
+    pub replacements: u32,
+    /// refs are the store references of the values found, for the audit log.
+    #[prost(string, repeated, tag = "4")]
+    pub refs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// snapshot_version is the snapshot whose values were matched.
+    #[prost(uint64, tag = "5")]
+    pub snapshot_version: u64,
+}
 /// ProtocolVersion is the boundary protocol version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -1454,6 +1483,34 @@ pub mod data_plane_client {
                 .insert(GrpcMethod::new("scrim.dataplane.v1.DataPlane", "Metrics"));
             self.inner.unary(req, path, codec).await
         }
+        /// Redact runs text through the same redactor and guard as a provider
+        /// request and returns the result: every known value replaced by its
+        /// placeholder. The control plane calls it for agent hooks that hand it a
+        /// tool result (hooks-only interception). No applied snapshot, a redactor
+        /// error or a guard that withholds the result is an error, never the input
+        /// back. A data plane older than this call answers UNIMPLEMENTED, which the
+        /// control plane reports as redaction unavailable.
+        pub async fn redact(
+            &mut self,
+            request: impl tonic::IntoRequest<super::RedactRequest>,
+        ) -> std::result::Result<tonic::Response<super::RedactResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/scrim.dataplane.v1.DataPlane/Redact",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("scrim.dataplane.v1.DataPlane", "Redact"));
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -1542,6 +1599,17 @@ pub mod data_plane_server {
             &self,
             request: tonic::Request<super::MetricsRequest>,
         ) -> std::result::Result<tonic::Response<super::MetricsResponse>, tonic::Status>;
+        /// Redact runs text through the same redactor and guard as a provider
+        /// request and returns the result: every known value replaced by its
+        /// placeholder. The control plane calls it for agent hooks that hand it a
+        /// tool result (hooks-only interception). No applied snapshot, a redactor
+        /// error or a guard that withholds the result is an error, never the input
+        /// back. A data plane older than this call answers UNIMPLEMENTED, which the
+        /// control plane reports as redaction unavailable.
+        async fn redact(
+            &self,
+            request: tonic::Request<super::RedactRequest>,
+        ) -> std::result::Result<tonic::Response<super::RedactResponse>, tonic::Status>;
     }
     #[derive(Debug)]
     pub struct DataPlaneServer<T> {
@@ -1914,6 +1982,49 @@ pub mod data_plane_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = MetricsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/scrim.dataplane.v1.DataPlane/Redact" => {
+                    #[allow(non_camel_case_types)]
+                    struct RedactSvc<T: DataPlane>(pub Arc<T>);
+                    impl<T: DataPlane> tonic::server::UnaryService<super::RedactRequest>
+                    for RedactSvc<T> {
+                        type Response = super::RedactResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::RedactRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as DataPlane>::redact(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = RedactSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

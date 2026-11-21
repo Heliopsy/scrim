@@ -286,13 +286,37 @@ name resolution.
 ### Requirement: Managed agent settings
 
 scrim SHALL install managed settings for agents that support them (for example Claude Code's
-managed settings with a pinned custom endpoint and allowed providers restricted to it), so the agent
-can only use scrim's endpoint.
+managed settings with a pinned custom endpoint and allowed providers restricted to it, and Codex's
+admin-enforced requirements pinning its model provider), so the agent can only use scrim's
+endpoint.
 
 #### Scenario: Managed settings installed
 
 - **WHEN** managed settings are installed and a user tries to point the agent at the provider directly
 - **THEN** the agent refuses the direct endpoint
+
+#### Scenario: Endpoint override ignored
+
+- **WHEN** managed settings are installed and the agent's base URL is set elsewhere in the shell, the
+  user settings or the command line
+- **THEN** every model request still goes to scrim's endpoint
+
+### Requirement: Managed agent settings are kept apart and reverted
+
+scrim SHALL leave an administrator's own managed files unchanged, SHALL record every managed
+settings change in a manifest that uninstall reverts, and status and doctor SHALL report the mode
+and any managed file changed since install.
+
+#### Scenario: Administrator's file kept
+
+- **WHEN** the agent already has an administrator's managed file that scrim cannot add to without
+  editing it
+- **THEN** install stops, changes nothing and prints the lines to add
+
+#### Scenario: Managed settings uninstalled
+
+- **WHEN** managed settings are uninstalled
+- **THEN** the files scrim wrote are removed and the agent's own settings apply again
 
 ### Requirement: Hooks-only mode is reported as partial
 
@@ -304,6 +328,29 @@ traffic.
 
 - **WHEN** only hooks are installed
 - **THEN** status reports protection as partial and lists what is not covered
+
+### Requirement: Agent hooks redact through the data plane and fail closed
+
+The hooks SHALL pass tool results and prompts through the data plane's redactor and guard. Where
+the agent's hook API can replace a tool result, the hook SHALL replace it with the redacted result;
+where it can only block, it SHALL block a result holding a known value. A prompt holding a known
+value SHALL be blocked. When scrim cannot redact, the hook SHALL withhold the result and block the
+prompt.
+
+#### Scenario: Tool result redacted by the hook
+
+- **WHEN** only hooks are installed and a tool reads a file holding a known value
+- **THEN** what reaches the provider holds the placeholder and not the value
+
+#### Scenario: Prompt with a known value
+
+- **WHEN** a prompt holding a known value is submitted with hooks installed
+- **THEN** the prompt is not sent and the user is shown the redacted prompt
+
+#### Scenario: scrim unavailable to the hook
+
+- **WHEN** the hook cannot reach scrim or scrim cannot redact
+- **THEN** the tool result is withheld from the agent and the prompt is blocked
 
 ### Requirement: CA trust installation
 

@@ -216,6 +216,12 @@ a `daemon-reload`), the configuration file, the binary, the group memberships, t
 groups, and the directories install created. Without `--user` or `--system` it picks the system
 install as root and yours otherwise; the manifest says whether it was a unit or Quadlet.
 
+`scrim uninstall --user` also reverts the agent hooks of `scrim install --hooks`, and
+`scrim uninstall --system` the managed agent settings of `scrim install --managed-settings`; each
+has a manifest of its own (`agent-hooks.json` in the state directory,
+`/etc/scrim/managed-settings.json`), and `scrim uninstall --hooks` or `--managed-settings` reverts
+only that one ([interception.md](interception.md)).
+
 The state (CA and key, placeholder keys, the state database, the audit log) is kept unless you
 pass `--purge`, and so are the Quadlet volume and the pulled image. A kept item stays in the
 manifest, so a later `scrim uninstall --purge` removes it.
