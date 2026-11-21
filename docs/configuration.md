@@ -386,7 +386,7 @@ is out of date.
 
 ### `catalog.entries.<name>`
 
-Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools. References only, never values.
+Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools, placeholder_format, aws_sigv4, client_certificate. References only, never values.
 
 | | |
 |---|---|
