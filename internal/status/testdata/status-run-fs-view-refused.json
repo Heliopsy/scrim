@@ -1,0 +1,30 @@
+{
+  "version": "0.1.0",
+  "interception_modes": [],
+  "protections": [],
+  "providers": [],
+  "stores": [],
+  "state": {
+    "backend": "memory",
+    "schema_version": 0,
+    "healthy": true
+  },
+  "audit_sinks": [],
+  "data_plane": {
+    "running": true,
+    "pid": 7,
+    "healthy": true
+  },
+  "degraded": [
+    {
+      "name": "run-fs-view",
+      "reason": "run.fs-view is namespace and this host has none, so scrim run refuses to start agents: creating a user namespace is not allowed: operation not permitted"
+    }
+  ],
+  "weakened_protections": [],
+  "run_fs_view": {
+    "requested": "namespace",
+    "mode": "refused",
+    "fallback": "creating a user namespace is not allowed: operation not permitted"
+  }
+}

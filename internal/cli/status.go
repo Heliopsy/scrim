@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/daemon"
 	"github.com/heliopsy/scrim/internal/dataplane"
+	"github.com/heliopsy/scrim/internal/fsview"
 	"github.com/heliopsy/scrim/internal/install"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/state/sqlite"
@@ -111,6 +113,7 @@ func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) 
 		src.DataPlane = staticDataPlane(info.StatusDataPlane())
 		src.Stores = staticStores(info.Stores)
 	}
+	src.RunView = runViewStatus(ctx, cfg)
 	src.Service = installedService(ctx, cfg)
 	src.AgentModes = installedAgentModes(cfg)
 	stateCfg := cfg
@@ -128,6 +131,33 @@ func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) 
 	src.State = st
 	src.Audit = status.DBAuditSink{State: st, External: external}
 	return src, closeFn, nil
+}
+
+// runViewProbe checks the namespace filesystem view; tests replace it.
+var runViewProbe = func(ctx context.Context) fsview.Availability {
+	exe, err := os.Executable()
+	if err != nil {
+		return fsview.Availability{Reason: err.Error()}
+	}
+	return fsview.Probe(ctx, exe)
+}
+
+// runViewStatus reports the filesystem view scrim run gives sessions on
+// this host: what run.fs-view resolves to, and its gaps.
+func runViewStatus(ctx context.Context, cfg *config.Config) *status.RunView {
+	req := fsview.Setting.Get(cfg)
+	v := &status.RunView{Requested: req}
+	var avail fsview.Availability
+	if req == fsview.ModeAuto || req == fsview.ModeNamespace {
+		avail = runViewProbe(ctx)
+	}
+	mode, fallback, err := fsview.Resolve(req, avail)
+	if err != nil {
+		v.Mode, v.Fallback = status.RunViewRefused, avail.Reason
+		return v
+	}
+	v.Mode, v.Fallback, v.Gaps = mode, fallback, fsview.Gaps(mode)
+	return v
 }
 
 // installedService reports the service `scrim install` set up: the system

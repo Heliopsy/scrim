@@ -159,6 +159,21 @@ func fixtures() map[string]Sources {
 					Manifest:   "/etc/scrim/managed-settings.json"},
 			},
 		},
+		// scrim run on a host without user namespaces: the home mirror.
+		"run-fs-view-fallback": {
+			Version:   "0.1.0",
+			DataPlane: fakeDP{Running: true, PID: 7, Healthy: true},
+			State:     fakeState{Backend: "memory", Healthy: true},
+			RunView: &RunView{Requested: "auto", Mode: "home", Fallback: "darwin has no user or mount namespaces",
+				Gaps: []string{"tools that find the home directory through the password database instead of HOME (ssh) read the real files"}},
+		},
+		// run.fs-view: namespace on a host without user namespaces.
+		"run-fs-view-refused": {
+			Version:   "0.1.0",
+			DataPlane: fakeDP{Running: true, PID: 7, Healthy: true},
+			State:     fakeState{Backend: "memory", Healthy: true},
+			RunView:   &RunView{Requested: "namespace", Mode: RunViewRefused, Fallback: "creating a user namespace is not allowed: operation not permitted"},
+		},
 		// Weakened settings taken from the configuration manager.
 		"config-weakened": {
 			Version: "0.1.0",

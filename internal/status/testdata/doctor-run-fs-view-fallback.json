@@ -1,0 +1,22 @@
+{
+  "findings": [
+    {
+      "check": "data-plane",
+      "outcome": "pass",
+      "message": "ok"
+    },
+    {
+      "check": "run-fs-view",
+      "outcome": "warn",
+      "message": "scrim run falls back to the home mirror: darwin has no user or mount namespaces; tools that bypass HOME still read the real credential files",
+      "fix": "allow unprivileged user namespaces (on Ubuntu: sysctl kernel.apparmor_restrict_unprivileged_userns=0, or an AppArmor profile for scrim that allows userns), or accept the gaps listed in `scrim status`"
+    },
+    {
+      "check": "state",
+      "outcome": "pass",
+      "message": "ok"
+    }
+  ],
+  "failed": 0,
+  "warned": 1
+}

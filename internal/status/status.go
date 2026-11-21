@@ -122,7 +122,30 @@ type Report struct {
 	// Coverage is "partial" when agent hooks are the only interception: no
 	// listener of scrim's carries the agent's traffic.
 	Coverage string `json:"coverage,omitempty"`
+	// RunView is the filesystem view `scrim run` gives its sessions on
+	// this host.
+	RunView *RunView `json:"run_fs_view,omitempty"`
 }
+
+// RunView is the session filesystem view of `scrim run` on this host
+// (specs/credential-injection, "Filesystem view fallback without
+// namespaces").
+type RunView struct {
+	// Requested is run.fs-view.
+	Requested string `json:"requested"`
+	// Mode is the view sessions get: namespace, home or off; "refused"
+	// when run.fs-view is namespace and the host has none, so scrim run
+	// refuses to start agents.
+	Mode string `json:"mode"`
+	// Fallback is why the namespace view is unavailable, when auto falls
+	// back to the home mirror (or namespace refuses).
+	Fallback string `json:"fallback,omitempty"`
+	// Gaps are what the view does not cover.
+	Gaps []string `json:"gaps,omitempty"`
+}
+
+// RunViewRefused is RunView.Mode when scrim run refuses to start agents.
+const RunViewRefused = "refused"
 
 // Agent-side modes and their coverage.
 const (
@@ -223,6 +246,8 @@ type Sources struct {
 	Service *Service
 	// AgentModes are the installed agent-side modes.
 	AgentModes []AgentMode
+	// RunView is scrim run's filesystem view on this host, if checked.
+	RunView *RunView
 }
 
 // Collect gathers a report and derives the degraded list.
@@ -292,6 +317,7 @@ func Collect(ctx context.Context, src Sources) Report {
 	sort.Slice(r.Weakened, func(i, j int) bool { return r.Weakened[i].Key < r.Weakened[j].Key })
 
 	r.Service = src.Service
+	r.RunView = src.RunView
 	r.Degraded = derive(r)
 	return r
 }
@@ -337,6 +363,9 @@ func derive(r Report) []Component {
 		if len(m.Changed) > 0 {
 			out = append(out, Component{Name: "agent-mode:" + m.Mode, Reason: "changed or removed since install: " + strings.Join(m.Changed, ", ")})
 		}
+	}
+	if v := r.RunView; v != nil && v.Mode == RunViewRefused {
+		out = append(out, Component{Name: "run-fs-view", Reason: "run.fs-view is namespace and this host has none, so scrim run refuses to start agents: " + v.Fallback})
 	}
 	if !r.DataPlane.Running || !r.DataPlane.Healthy {
 		out = append(out, Component{Name: "data-plane", Reason: orDefault(r.DataPlane.Detail, "not running or unhealthy")})

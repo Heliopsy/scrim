@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/fsview"
 	"github.com/heliopsy/scrim/internal/leak"
 	"github.com/heliopsy/scrim/internal/leak/stub"
 	"github.com/heliopsy/scrim/internal/localapi"
@@ -39,6 +40,7 @@ import (
 const envAgent = "SCRIM_RUN_TEST_AGENT"
 
 func TestMain(m *testing.M) {
+	fsview.Main()
 	if mode := os.Getenv(envAgent); mode != "" {
 		os.Exit(testAgent(mode))
 	}
@@ -54,6 +56,8 @@ func testAgent(mode string) int {
 	case "sleep":
 		time.Sleep(time.Minute)
 		return 0
+	case "fsview":
+		return agentFSView()
 	case "env":
 		tok := os.Getenv(localapi.EnvToken)
 		for _, kv := range os.Environ() {
