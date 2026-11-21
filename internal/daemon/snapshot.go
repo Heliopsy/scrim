@@ -61,6 +61,9 @@ type SnapshotBuilder struct {
 	// Listeners are the sockets the data plane serves. They are fixed at
 	// start: listener addresses need a restart.
 	Listeners []*pb.Listener
+	// Labels composes the labels rules see for a value from the labels its
+	// store reported (stores.Set.Labels); nil sends store.name only.
+	Labels func(ref stores.Ref, native map[string]string) map[string]string
 
 	mu   sync.Mutex
 	keys *placeholder.Ring
@@ -181,6 +184,11 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 	}
 	snap.Values = b.values(cat)
 	snap.Unavailable = unavailable(cat, snap.Values)
+	for _, u := range snap.Unavailable {
+		if r, err := stores.ParseRef(u.GetRef()); err == nil {
+			u.Labels = b.labels(r, nil)
+		}
+	}
 
 	if b.CA != nil {
 		gens := b.CA()
@@ -209,6 +217,11 @@ func (b *SnapshotBuilder) values(cat *catalog.Catalog) []*pb.ValueEntry {
 		store := src.Store()
 		src.EachValue(func(s refresh.Source, v secret.Value) {
 			e := &pb.ValueEntry{Store: store, Class: pb.ValueClass_VALUE_CLASS_CREDENTIAL}
+			if s.Ref.IsZero() {
+				e.Labels = b.labels(stores.Ref{Scheme: store}, nil)
+			} else {
+				e.Labels = b.labels(s.Ref, s.Labels)
+			}
 			if err := v.Expose(func(raw []byte) error { e.Value = slices.Clone(raw); return nil }); err != nil || len(e.Value) == 0 {
 				clear(e.Value)
 				return
@@ -242,6 +255,23 @@ func (b *SnapshotBuilder) values(cat *catalog.Catalog) []*pb.ValueEntry {
 		})
 	}
 	return uniqueNames(out)
+}
+
+// labels is what rules see as secret.labels for the value at ref. It is
+// never empty: the data plane reads an empty map as "no labels sent" and
+// treats secret.labels as unknown.
+func (b *SnapshotBuilder) labels(ref stores.Ref, native map[string]string) map[string]string {
+	var out map[string]string
+	if b.Labels != nil {
+		out = b.Labels(ref, native)
+	}
+	if out[stores.LabelStoreName] == "" {
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[stores.LabelStoreName] = ref.Scheme
+	}
+	return out
 }
 
 // uniqueNames drops repeated values and gives every credential entry a name no

@@ -208,6 +208,9 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 		return nil, err
 	}
 	a.Stores, a.Refreshers = opened.Set, opened.Refreshers
+	if a.PolicyParts != nil && a.PolicyParts.Gate != nil {
+		a.PolicyParts.Gate.Labels = a.SecretLabels
+	}
 	for _, r := range a.Refreshers {
 		// Not ready until the store's first load: requests that depend on
 		// it are refused rather than forwarded with a partial redaction set.
@@ -222,6 +225,15 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 		}
 	}()
 	return a, nil
+}
+
+// SecretLabels is the label set policy sees for the secret ref names
+// (refresh.SecretLabels over the configured stores).
+func (a *App) SecretLabels(ref stores.Ref) map[string]string {
+	if a.Stores == nil {
+		return nil
+	}
+	return refresh.SecretLabels(a.Stores, a.Refreshers, ref)
 }
 
 // Start runs every store refresher until ctx ends.

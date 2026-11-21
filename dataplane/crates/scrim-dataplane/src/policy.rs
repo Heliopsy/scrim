@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use scrim_llm::{Admission, RequestGate, RequestInfo};
 use scrim_policy::{
-    AskReason, Caller, DecidedBy, Effect, LlmRestorePolicy, Outcome, Request, RestoreEngine,
+    AskReason, Caller, DecidedBy, Effect, Field, LlmRestorePolicy, Outcome, Request, RestoreEngine,
     Settings, Table, ValueIndex,
 };
 use scrim_proto::v1;
@@ -412,15 +412,21 @@ impl InjectionPolicy for ToolGate {
                 ..Request::default()
             };
             req.secret.reference.clone_from(&r.reference);
-            if let Some(info) = d.restore.values().lookup(&r.reference) {
+            let info = d.restore.values().lookup(&r.reference);
+            if let Some(info) = info {
                 req.secret.name = info.name.to_string();
                 req.secret.store = info.store.to_string();
                 info.class.as_str().clone_into(&mut req.secret.class);
+                req.secret.labels.clone_from(&info.labels);
             }
             req.dest.host.clone_from(&r.destination.host);
             req.dest.method.clone_from(&r.method);
             req.dest.path.clone_from(&r.path);
             who.apply(&mut req);
+            if info.is_none_or(|i| i.labels.is_empty()) {
+                // No labels from the control plane: a rule on them could match.
+                req.unknown = req.unknown.with(Field::SecretLabels);
+            }
             let v = d.decide(&req, &who, &r.destination.to_string()).await;
             if v.allowed {
                 InjectionDecision::Allow
@@ -530,6 +536,77 @@ mod tests {
         };
         sess.apply(&mut r);
         assert!(d.decide(&r, &sess, "t").await.asked);
+    }
+
+    #[tokio::test]
+    async fn inject_rules_see_value_labels() {
+        use scrim_policy::{ValueClass, ValueInfo, escape::ValueTraits};
+        use scrim_toolproxy::{Destination, Scheme};
+        let mut prod = cond("secret.labels", "");
+        prod.key = "vaultwarden.collection.Prod".into();
+        prod.op = v1::ConditionOp::HasKey.into();
+        prod.values = vec![];
+        let mut policy = v1::Policy {
+            default_effect: v1::Effect::Deny.into(),
+            table_format: 1,
+            table: vec![
+                rule("prod-collection", v1::Effect::Deny, vec![prod]),
+                rule("inject", v1::Effect::Allow, vec![cond("op", "inject")]),
+            ],
+            ..Default::default()
+        };
+        normalise(&mut policy);
+        let mut ix = ValueIndex::new();
+        for (slug, labels) in [
+            (
+                "prod",
+                vec![
+                    ("store.name", "vw"),
+                    ("vaultwarden.collection.Prod", "true"),
+                ],
+            ),
+            ("dev", vec![("store.name", "vw")]),
+            ("old", vec![]),
+        ] {
+            ix.push(ValueInfo {
+                reference: format!("vw://{slug}#v").as_str().into(),
+                slug: slug.into(),
+                class: ValueClass::Credential,
+                name: "".into(),
+                store: "vw".into(),
+                traits: ValueTraits::of(b"secret-bytes"),
+                labels: Arc::new(
+                    labels
+                        .into_iter()
+                        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                        .collect(),
+                ),
+            });
+        }
+        let d = Arc::new(Decisions::new(1, &policy, None, ix, Hooks::default()).unwrap());
+        let gate = d.injection_policy();
+        let ext = http::Extensions::new();
+        let decide = |slug: &str| InjectionRequest {
+            credential: slug.into(),
+            reference: format!("vw://{slug}#v"),
+            destination: Destination::new(Scheme::Https, "api.test", 443),
+            method: "GET".into(),
+            path: "/".into(),
+        };
+        assert_eq!(
+            gate.decide(&decide("dev"), &ext).await,
+            InjectionDecision::Allow
+        );
+        match gate.decide(&decide("prod"), &ext).await {
+            InjectionDecision::Deny(why) => assert!(why.contains("prod-collection"), "{why}"),
+            InjectionDecision::Allow => panic!("a prod credential was injected"),
+        }
+        // Without labels from the control plane the rule could match: it asks, and with no
+        // control plane attached the ask denies.
+        assert!(matches!(
+            gate.decide(&decide("old"), &ext).await,
+            InjectionDecision::Deny(_)
+        ));
     }
 
     #[tokio::test]

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! What the restore policy knows about each value: its reference, slug, class, catalog name and
-//! store, and the [`ValueTraits`] the streaming path needs. Never the value itself.
+//! What the restore policy knows about each value: its reference, slug, class, catalog name,
+//! store and labels, and the [`ValueTraits`] the streaming path needs. Never the value itself.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -52,6 +52,9 @@ pub struct ValueInfo {
     pub store: Arc<str>,
     /// Character classes of the value.
     pub traits: ValueTraits,
+    /// What rules see as `secret.labels` (`ValueEntry.labels`). Empty means the control plane
+    /// sent none, and rules on `secret.labels` are then unknown.
+    pub labels: Arc<HashMap<String, String>>,
 }
 
 /// Every value of a snapshot, by reference and by slug.
@@ -82,6 +85,7 @@ impl ValueIndex {
                 name: e.name.as_str().into(),
                 store: e.store.as_str().into(),
                 traits: ValueTraits::of(&e.value),
+                labels: Arc::new(e.labels.clone()),
             });
         }
         ix

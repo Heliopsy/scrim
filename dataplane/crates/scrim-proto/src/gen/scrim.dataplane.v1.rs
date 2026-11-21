@@ -149,7 +149,7 @@ pub struct RestoreSettings {
     #[prost(string, repeated, tag = "5")]
     pub reveal_credential_refs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 #[prost(skip_debug)]
 pub struct ValueEntry {
     /// ref is the store reference the value was read from, for example
@@ -194,6 +194,17 @@ pub struct ValueEntry {
     /// allow_plaintext_http also injects over plain `<http://`.> Weakening.
     #[prost(bool, tag = "12")]
     pub allow_plaintext_http: bool,
+    /// labels are what rules see as `secret.labels` for this value
+    /// (docs/policy.md "Labels from stores"): the store's native labels, the
+    /// generic `store.*` labels and the instance's derived labels. Metadata
+    /// only, never a value. The control plane always sends at least
+    /// `store.name`; an empty map means a control plane that sends no labels,
+    /// and the data plane then treats `secret.labels` as unknown.
+    #[prost(map = "string, string", tag = "13")]
+    pub labels: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
 }
 /// CaptureRule stores a value an API returns (a newly created token) under
 /// `store_ref` and hands the agent its placeholder instead.

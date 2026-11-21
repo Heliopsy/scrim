@@ -348,6 +348,7 @@ fn value_index(values: &[v1::ValueEntry], slugs: &[rc::RefSlug]) -> scrim_policy
             name: e.name.as_str().into(),
             store: e.store.as_str().into(),
             traits: scrim_policy::escape::ValueTraits::of(&e.value),
+            labels: Arc::new(e.labels.clone()),
         });
     }
     ix
