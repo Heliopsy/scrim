@@ -312,8 +312,22 @@ path its reference uses.
 ### Requirement: Vaultwarden labels carry no values and cannot be forged
 
 Text custom fields that are not `scrim.*` labels SHALL be reported as `vaultwarden.meta.<key>`
-unless disabled. Hidden fields, passwords, TOTP seeds, notes and key material SHALL never become
-labels. Native labels SHALL override any user-supplied label.
+only when the operator enables it, and doctor SHALL warn while it is on. A meta label whose value
+equals or contains a secret value of the store SHALL NOT be reported. Hidden fields, passwords, TOTP
+seeds, notes and key material SHALL never become labels. Native labels SHALL override any
+user-supplied label.
+
+#### Scenario: Meta labels are off by default
+
+- **WHEN** a Vaultwarden store is configured without `meta-labels`
+- **THEN** no `vaultwarden.meta.*` label is reported
+- **AND** with `meta-labels: true`, `scrim doctor` warns that text fields are visible as labels
+
+#### Scenario: Meta label repeating a secret is dropped
+
+- **WHEN** `meta-labels` is on and a text custom field holds a value that equals or contains a
+  password, hidden field, TOTP seed, note or key of any item in the store
+- **THEN** that field is not reported as a label
 
 #### Scenario: Native label cannot be forged
 

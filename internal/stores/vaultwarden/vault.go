@@ -3,9 +3,11 @@
 package vaultwarden
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -88,8 +90,13 @@ type item struct {
 	labels   map[string]string // scrim.* label name -> value
 	labelIdx map[string]int    // scrim.* label name -> index in raw.Fields
 	// all is what metadata reports: the scrim.* labels, the text custom
-	// fields as vaultwarden.meta.*, and the native vaultwarden.* labels.
-	all      map[string]string
+	// fields as vaultwarden.meta.* that passed the guard, and the native
+	// vaultwarden.* labels.
+	all map[string]string
+	// meta holds vaultwarden.meta.* candidates until guardMeta checks them;
+	// native holds the native labels.
+	meta     map[string]string
+	native   nativeLabels
 	created  time.Time
 	updated  time.Time
 	inScope  bool
@@ -173,6 +180,9 @@ func buildVault(s *syncResponse, keys *keyring, revision int64, scope []string, 
 		it.inScope = inScope(it.paths, scope)
 		v.items = append(v.items, it)
 	}
+	if metaLabels {
+		guardMeta(v.items, v.items, keys)
+	}
 	return v
 }
 
@@ -248,7 +258,6 @@ func (v *vault) decryptItem(c cipherJSON, keys *keyring) (*item, error) {
 			it.fields = append(it.fields, f)
 		}
 	}
-	user := map[string]string{}
 	if c.Type == cipherLogin && c.Login != nil {
 		if c.Login.Username != nil && *c.Login.Username != "" {
 			add(FieldUsername)
@@ -296,7 +305,10 @@ func (v *vault) decryptItem(c cipherJSON, keys *keyring) (*item, error) {
 			// A text field is shown in clear by Bitwarden clients: item
 			// metadata. Hidden fields never become labels.
 			if val, err := k.DecryptMetadata(*f.Value); err == nil {
-				addMeta(user, fn, val)
+				if it.meta == nil {
+					it.meta = map[string]string{}
+				}
+				addMeta(it.meta, fn, val)
 			}
 		}
 		it.custom[fn] = i
@@ -306,11 +318,101 @@ func (v *vault) decryptItem(c cipherJSON, keys *keyring) (*item, error) {
 		add(fn)
 	}
 	sort.Strings(it.fields)
-	for k, val := range it.labels {
-		user[k] = val
-	}
-	it.all = mergeNative(user, v.native(it, k, folder, folderID, colls))
+	it.native = v.native(it, k, folder, folderID, colls)
+	it.finish()
 	return it, nil
+}
+
+// finish computes the reported labels from the scrim.* labels, the meta
+// candidates still standing and the native labels.
+func (it *item) finish() {
+	user := maps.Clone(it.labels)
+	if user == nil {
+		user = map[string]string{}
+	}
+	maps.Copy(user, it.meta)
+	it.all = mergeNative(user, it.native)
+}
+
+// guardMeta is the second guard on vaultwarden.meta.* labels: it drops every
+// candidate of targets whose value equals or contains a secret value of any
+// of sources (passwords, usernames, TOTP seeds, notes, SSH keys and hidden
+// custom fields), the values scrim can load into the redaction set from this
+// store. Text and boolean custom fields are not secret values here: they are
+// what meta labels describe. Values are decrypted one at a time and wiped.
+// If a value does not decrypt, the guard cannot vouch for anything and drops
+// every candidate. Only targets change, so items shared with readers can be
+// left out of them.
+func guardMeta(targets, sources []*item, keys *keyring) {
+	var cands []*item
+	for _, it := range targets {
+		if len(it.meta) > 0 {
+			cands = append(cands, it)
+		}
+	}
+	if len(cands) == 0 {
+		return
+	}
+	failed := false
+	for _, it := range sources {
+		for _, f := range it.secretFields() {
+			val, ok, err := it.decryptField(keys, f)
+			if err != nil {
+				failed = true
+				continue
+			}
+			if !ok {
+				continue
+			}
+			_ = val.Expose(func(b []byte) error {
+				if len(b) == 0 {
+					return nil
+				}
+				for _, c := range cands {
+					for k, m := range c.meta {
+						if bytes.Contains([]byte(m), b) {
+							delete(c.meta, k)
+						}
+					}
+				}
+				return nil
+			})
+			val.Wipe()
+		}
+	}
+	for _, c := range cands {
+		if failed {
+			c.meta = nil
+		}
+		c.finish()
+	}
+}
+
+// secretFields lists the item's value selectors other than text and boolean
+// custom fields.
+func (it *item) secretFields() []string {
+	var out []string
+	for _, f := range it.fields {
+		if i, ok := it.custom[f]; ok && !isLoginBuiltinOn(it, f) {
+			if t := it.raw.Fields[i].Type; t == fieldText || t == fieldBoolean {
+				continue
+			}
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// isLoginBuiltinOn reports whether f names a built-in field of the item
+// rather than its custom field of the same name.
+func isLoginBuiltinOn(it *item, f string) bool {
+	switch {
+	case f == FieldNotes:
+		return true
+	case it.raw.Type == cipherSSHKey:
+		return f == FieldPrivateKey || f == FieldPublicKey
+	}
+	return it.raw.Type == cipherLogin && isLoginBuiltin(f)
 }
 
 // native computes the native labels of an item from the sync data. k is the

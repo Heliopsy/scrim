@@ -79,6 +79,11 @@ func (a *Adapter) Write(ctx context.Context, ref stores.Ref, fields map[string]s
 	if derr != nil {
 		return stores.Metadata{Ref: ref, Version: resp.RevisionDate}, nil
 	}
+	if v.metaLabels {
+		// Only the new item is guarded here: the vault's items are shared
+		// with readers, and the next sync rebuilds them.
+		guardMeta([]*item{written}, append(slices.Clone(v.items), written), a.keys)
+	}
 	m := a.metadata(ref, ref.Path, written)
 	m.Ref = ref
 	return m, nil

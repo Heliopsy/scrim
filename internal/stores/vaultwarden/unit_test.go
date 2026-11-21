@@ -25,15 +25,22 @@ func TestDecodeOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if o.MetaLabels {
+		t.Fatal("meta-labels is on by default")
+	}
 	if o.PollInterval == 0 || o.URL.Host != "vault.example.com" {
 		t.Fatalf("defaults not applied: %+v", o)
 	}
 	m := base()
 	m[OptScope] = []any{"/Agents/", "Shared/CI"}
 	m[OptPollInterval] = "5s"
+	m[OptMetaLabels] = true
 	o, err = decodeOptions("vw", m)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !o.MetaLabels {
+		t.Fatal("meta-labels: true ignored")
 	}
 	if strings.Join(o.Scope, ",") != "Agents,Shared/CI" {
 		t.Fatalf("scope: %v", o.Scope)

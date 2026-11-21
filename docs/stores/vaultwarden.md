@@ -42,7 +42,7 @@ stores:
 | `device-id` | derived | Device identifier shown in the account's device list. By default it is derived from the instance name, URL and account, so restarts reuse one device. |
 | `ca-file` | | Extra PEM roots for a server with a private CA. |
 | `allow-insecure-http` | `false` | Allows plain `http://` to a non-loopback host. Tokens then cross the network in clear text. |
-| `meta-labels` | `true` | Reports text custom fields as `vaultwarden.meta.<key>` labels (see [Native labels](#native-labels)). Set `false` if the vault keeps secrets in text fields. |
+| `meta-labels` | `false` | Reports text custom fields as `vaultwarden.meta.<key>` labels (see [Meta labels](#meta-labels)). Weakens confidentiality if any text field holds a secret; `scrim doctor` warns while it is on. |
 
 A `file:` unlock reference that is readable by group or others is refused and the store reports
 itself as locked.
@@ -130,7 +130,7 @@ card or identity data never become labels, and of the login URIs only the host n
 | `vaultwarden.item-key` | `true`, `false` | The item is encrypted with its own item key. |
 | `vaultwarden.edit`, `vaultwarden.view-password` | `true`, `false` | This account may edit the item / see its password (when the server reports it). |
 | `vaultwarden.revision-date`, `creation-date`, `password-revision-date` | RFC 3339 | As reported by the server. |
-| `vaultwarden.meta.<key>` | text | A text custom field that is not a `scrim.*` label (at most 256 bytes; the first field of a key wins). Hidden, boolean and linked fields are never reported. Off with `meta-labels: false`. |
+| `vaultwarden.meta.<key>` | text | Only with `meta-labels: true`: a text custom field that is not a `scrim.*` label (see [Meta labels](#meta-labels)). |
 
 Keys that are absent have no value: a personal item has no `vaultwarden.org`, an item outside any
 folder no `vaultwarden.folder`. Trashed items are invisible to scrim, so there is no trash label.
@@ -155,6 +155,22 @@ becomes `_`. Two fields that fold to the same key keep the first one.
 | folder `Agents/CI` | `vaultwarden.folder.Agents`, `vaultwarden.folder.Agents/CI` |
 | text field `Owner Team` | `vaultwarden.meta.owner_team` |
 | text field `vaultwarden.org` | `vaultwarden.meta.vaultwarden.org` (never `vaultwarden.org`) |
+
+### Meta labels
+
+Text custom fields are often used for things a policy wants to match (an environment, an owning
+team), but just as often for tokens. Labels show up in policy views and audit entries, so scrim
+reports text fields only when the store sets `meta-labels: true`, and `scrim doctor` warns for as
+long as it is on.
+
+When it is on, a text custom field that is not a `scrim.*` label becomes `vaultwarden.meta.<key>`
+(at most 256 bytes; the first field of a key wins). Hidden, boolean and linked fields are never
+reported. As a second guard, scrim decrypts the secret values of every item of the account
+(passwords, usernames, TOTP seeds, notes, SSH keys and hidden custom fields, in or outside the
+scope) after each sync and drops any meta label whose value equals or contains one of them; values
+are compared one at a time and wiped. If any of those values fails to decrypt, no meta labels are
+reported at all. The guard catches a secret copied into a text field next to its hidden original;
+a secret that lives only in a text field is still reported, so keep secrets in hidden fields.
 
 ### Example policy
 

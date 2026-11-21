@@ -281,12 +281,16 @@ func TestVaultwarden(t *testing.T) {
 			Favorite: true, Reprompt: true,
 			URIs:   []string{"https://ci:" + expose(t, pw) + "@DB.example.com:5432/x?k=" + expose(t, hidden), "app.example.org"},
 			Fields: map[string]secret.Value{"token": hidden},
-			Labels: map[string]string{"vaultwarden.org": "Evil", "vaultwarden.owner": "personal", "Env": "prod", "scrim.hosts": "db.example.com"},
+			Labels: map[string]string{
+				"vaultwarden.org": "Evil", "vaultwarden.owner": "personal", "Env": "prod", "scrim.hosts": "db.example.com",
+				// Text fields that repeat a secret value: the meta guard drops them.
+				"copy": expose(t, pw), "snippet": "TOKEN=" + expose(t, hidden) + " make deploy",
+			},
 		})
 		acc.CreateItem(t, vwtest.Item{Folder: "Agents/CI", Name: "Deploy", Password: pw,
 			Labels: map[string]string{"vaultwarden.folder": "Elsewhere"}})
 
-		a := e.adapter(t, srv.URL, nil)
+		a := e.adapter(t, srv.URL, func(o *vaultwarden.Options) { o.MetaLabels = true })
 		defer func() { _ = a.Close() }()
 		ctx := vwtest.Ctx(t, 30*time.Second)
 		check := func(where string, got map[string]string, want map[string]string, absent ...string) {
@@ -297,8 +301,8 @@ func TestVaultwarden(t *testing.T) {
 				}
 			}
 			for _, k := range absent {
-				if v, ok := got[k]; ok {
-					t.Errorf("%s: %s = %q, want absent", where, k, v)
+				if _, ok := got[k]; ok {
+					t.Errorf("%s: %s present, want absent", where, k)
 				}
 			}
 			for k, v := range got {
@@ -335,8 +339,34 @@ func TestVaultwarden(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		check("Read", s.Meta.Labels, orgWant, "vaultwarden.folder", "vaultwarden.meta.token")
+		check("Read", s.Meta.Labels, orgWant, "vaultwarden.folder", "vaultwarden.meta.token",
+			"vaultwarden.meta.copy", "vaultwarden.meta.snippet")
 		s.Wipe()
+
+		// Off by default: no meta labels, and doctor says when it is on.
+		plain := e.adapter(t, srv.URL, nil)
+		defer func() { _ = plain.Close() }()
+		ps0, err := plain.Read(ctx, stores.MustParseRef("vw://Prod/DB#password"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for k := range ps0.Meta.Labels {
+			if strings.HasPrefix(k, "vaultwarden.meta.") {
+				t.Errorf("meta label %s with meta-labels off", k)
+			}
+		}
+		ps0.Wipe()
+		onMsg := func(ad *vaultwarden.Adapter) bool {
+			for _, f := range status.Diagnose(ctx, 10*time.Second, ad.DoctorChecks()...).Findings {
+				if strings.Contains(f.Message, "meta-labels is on") {
+					return true
+				}
+			}
+			return false
+		}
+		if on, off := onMsg(a), onMsg(plain); !on || off {
+			t.Errorf("doctor meta-labels finding: on=%v off=%v", on, off)
+		}
 		ms, err := a.List(ctx, stores.MustParseRef("vw://Prod"))
 		if err != nil || len(ms) != 1 {
 			t.Fatalf("List: %v %v", ms, err)

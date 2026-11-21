@@ -140,8 +140,8 @@ func TestNativeLabels(t *testing.T) {
 			}
 		}
 		for _, k := range absent {
-			if val, ok := l[k]; ok {
-				t.Errorf("%s = %q, want absent", k, val)
+			if _, ok := l[k]; ok {
+				t.Errorf("%s present, want absent", k)
 			}
 		}
 	}
@@ -315,3 +315,51 @@ func TestWriteLabels(t *testing.T) {
 func ptr(s string) *string { return &s }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// TestMetaGuard checks the second guard on vaultwarden.meta.*: a text field
+// whose value equals or contains a secret value of any item in the store is
+// never reported, even with meta labels on.
+func TestMetaGuard(t *testing.T) {
+	f := newLabelFixture(t)
+	uk := f.keys.user
+	const (
+		token = "tok-3b9f0c2a77e1"
+		pw    = "pw-c41d8e0f9a"
+		seed  = "JBSWY3DPEHPK3PXP"
+	)
+	f.sync.Ciphers = append(f.sync.Ciphers, cipherJSON{
+		ID: "c1", Type: cipherLogin, Name: *f.enc(t, uk, "Source"), FolderID: ptr("f1"),
+		Login:  &loginJSON{Password: f.enc(t, uk, pw)},
+		Notes:  f.enc(t, uk, "rotate monthly"),
+		Fields: []fieldJSON{f.field(t, uk, fieldHidden, "token", token), f.field(t, uk, fieldText, "env", "prod")},
+	}, cipherJSON{
+		ID: "c2", Type: cipherLogin, Name: *f.enc(t, uk, "Leaky"), FolderID: ptr("f1"),
+		Login: &loginJSON{Totp: f.enc(t, uk, seed)},
+		Fields: []fieldJSON{
+			f.field(t, uk, fieldText, "contains", "export TOKEN="+token+" # ci"),
+			f.field(t, uk, fieldText, "equals", pw),
+			f.field(t, uk, fieldText, "own-totp", seed),
+			f.field(t, uk, fieldText, "notes-copy", "rotate monthly"),
+			f.field(t, uk, fieldText, "env", "prod"),
+		},
+	})
+	v := buildVault(f.sync, f.keys, 1, nil, true)
+	it, _, err := v.lookup("Agents/CI/Leaky", "")
+	if err != nil || it == nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	for _, k := range []string{"contains", "equals", "own-totp", "notes-copy"} {
+		if _, ok := it.all[metaPrefix+k]; ok {
+			t.Errorf("%s%s present: a meta label carries a secret value", metaPrefix, k)
+		}
+	}
+	if it.all[metaPrefix+"env"] != "prod" {
+		t.Errorf("a text field without a secret value was dropped: %v", it.all)
+	}
+	// Off by default: no meta labels at all.
+	off := buildVault(f.sync, f.keys, 1, nil, false)
+	src, _, _ := off.lookup("Agents/CI/Source", "")
+	if _, ok := src.all[metaPrefix+"env"]; ok {
+		t.Error("meta label with meta labels off")
+	}
+}

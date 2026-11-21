@@ -65,9 +65,11 @@ type Options struct {
 	// AllowInsecureHTTP permits plain http:// to a non-loopback host. It
 	// weakens transport security: tokens would travel in clear text.
 	AllowInsecureHTTP bool
-	// NoMetaLabels stops text custom fields being reported as
-	// vaultwarden.meta.<field> labels (option meta-labels: false).
-	NoMetaLabels bool
+	// MetaLabels reports text custom fields as vaultwarden.meta.<key>
+	// labels (option meta-labels, off by default). It weakens value
+	// confidentiality where a vault keeps secrets in text fields: labels are
+	// visible in policy views and audit.
+	MetaLabels bool
 }
 
 var refPrefix = regexp.MustCompile(`^[a-z][a-z0-9+.-]*:\S`)
@@ -166,8 +168,7 @@ func decodeOptions(instance string, m map[string]any) (Options, error) {
 	for _, d := range []struct {
 		k   string
 		dst *bool
-		neg bool
-	}{{OptAllowInsecureHTTP, &o.AllowInsecureHTTP, false}, {OptMetaLabels, &o.NoMetaLabels, true}} {
+	}{{OptAllowInsecureHTTP, &o.AllowInsecureHTTP}, {OptMetaLabels, &o.MetaLabels}} {
 		v, ok := m[d.k]
 		if !ok || v == nil {
 			continue
@@ -176,7 +177,7 @@ func decodeOptions(instance string, m map[string]any) (Options, error) {
 		if !ok {
 			return o, fmt.Errorf("vaultwarden %s: option %s must be a boolean", instance, d.k)
 		}
-		*d.dst = b != d.neg
+		*d.dst = b
 	}
 	if v, ok := m[OptScope]; ok && v != nil {
 		switch t := v.(type) {
