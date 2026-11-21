@@ -96,6 +96,11 @@ type Addrs struct {
 	ForwardProxy string `json:"forward_proxy,omitempty"`
 	// ToolProxy is host:port of the tool proxy.
 	ToolProxy string `json:"tool_proxy,omitempty"`
+	// Transparent are host:port of the transparent listeners nftables
+	// redirects covered users to.
+	Transparent []string `json:"transparent,omitempty"`
+	// SNI is host:port of the SNI listener of DNS override mode.
+	SNI string `json:"sni,omitempty"`
 	// AgentAPI is the agent local API socket (SCRIM_API_SOCKET).
 	AgentAPI string `json:"agent_api,omitempty"`
 	// EntryPage is the human entry page base URL.
@@ -618,6 +623,7 @@ func (d *Daemon) setDataPlaneAddrs(st *pb.StatusResponse) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.addrs.Transparent = nil
 	for _, l := range d.builder.Listeners {
 		addr := l.GetAddress()
 		if b, ok := bound[l.GetName()]; ok {
@@ -632,6 +638,10 @@ func (d *Daemon) setDataPlaneAddrs(st *pb.StatusResponse) {
 			d.addrs.ForwardProxy = addr
 		case pb.ListenerKind_LISTENER_KIND_TOOL_PROXY:
 			d.addrs.ToolProxy = addr
+		case pb.ListenerKind_LISTENER_KIND_TRANSPARENT:
+			d.addrs.Transparent = append(d.addrs.Transparent, addr)
+		case pb.ListenerKind_LISTENER_KIND_SNI:
+			d.addrs.SNI = addr
 		default:
 		}
 	}

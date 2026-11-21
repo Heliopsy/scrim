@@ -154,10 +154,10 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 13.1 systemd unit and Quadlet with a dedicated user, `scrim install` and `scrim uninstall`; verify: uninstall leaves no trace in a VM test (`test/service/vm-test.sh`: system and user units in a systemd container; Quadlet in unit tests)
 - [x] 13.2 Forward proxy listener; verify: an agent with HTTPS_PROXY set is redacted
 - [x] 13.2a `chatgpt.com` and `ab.chatgpt.com` routed to the LLM proxy (Responses codec for `/responses`, generic JSON elsewhere); verify: CONNECT to either through the forward proxy reaches the fake provider with placeholders only
-- [ ] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
+- [x] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
 - [x] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
   - done: `scrim install --managed-settings` (Claude Code drop-in `managed-settings.d/90-scrim.json`, Codex `requirements.toml`), manifest and uninstall, status and doctor; `just e2e-managed-settings` runs Claude Code 2.1.330 in a podman container: shell, user settings and `--settings` overrides all go to scrim, Bedrock refused. Codex unit-tested only
-- [ ] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
+- [x] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
   - progress: the system trust store (`update-ca-certificates`, `update-ca-trust`) is installed and reverted by `scrim install --system`, and a system-store client trusts scrim through the forward proxy in the VM test; Java truststore and transparent mode open
 - [x] 13.6 Deployment guides with tested examples for every target and GitOps tool (docs/deploy, deploy/examples); verify: `just deploy-examples-check` and `just deploy-examples-smoke` pass in CI
 
@@ -170,7 +170,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 ## 15. Remaining edge modes
 
 - [ ] 15.1 eBPF cgroup interception with a privileged loader; verify: per-cgroup redirect and direct-egress denial on a test kernel
-- [ ] 15.2 DNS override mode; verify: an agent resolving the provider host reaches scrim
+- [x] 15.2 DNS override mode; verify: an agent resolving the provider host reaches scrim
 - [x] 15.3 Agent hooks mode reported as partial; verify: status shows partial protection
   - done: `scrim install --hooks`, `scrim hooks run`, local API `POST /v1/redact` over the data plane's new `Redact` call; `just e2e-agentmodes` runs Claude Code 2.1.330 against the fake provider with hooks only: `Bash` and `Read` results of a seeded `.env` reach it with placeholders, a prompt with the value is blocked, status reports partial. Codex hook unit-tested only
 - [ ] 15.4 ssh-agent with keys from stores and per-signature approval; verify: git over SSH works and a denied signature fails

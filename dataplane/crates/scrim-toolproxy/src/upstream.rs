@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
-use hyper_util::client::legacy::connect::dns::{GaiResolver, Name};
+use hyper_util::client::legacy::connect::dns::Name;
 use hyper_util::rt::TokioExecutor;
 use rustls::RootCertStore;
 use rustls::pki_types::CertificateDer;
@@ -45,11 +45,11 @@ impl Default for UpstreamSettings {
     }
 }
 
-/// DNS with fixed overrides.
+/// DNS with fixed overrides, then the system resolver through [`scrim_dns::resolve`], which never
+/// answers with scrim's own SNI listener (DNS override mode).
 #[derive(Clone)]
 pub(crate) struct OverrideResolver {
     overrides: Arc<HashMap<String, Vec<SocketAddr>>>,
-    gai: GaiResolver,
 }
 
 type Addrs = std::vec::IntoIter<SocketAddr>;
@@ -68,11 +68,8 @@ impl Service<Name> for OverrideResolver {
             let addrs = addrs.clone();
             return Box::pin(async move { Ok(addrs.into_iter()) });
         }
-        let mut gai = self.gai.clone();
-        Box::pin(async move {
-            let it = gai.call(name).await?;
-            Ok(it.collect::<Vec<_>>().into_iter())
-        })
+        let host = name.as_str().to_owned();
+        Box::pin(async move { scrim_dns::resolve(&host).await.map(Vec::into_iter) })
     }
 }
 
@@ -108,7 +105,6 @@ pub(crate) fn build_client(s: &UpstreamSettings) -> Result<HttpsClient, Upstream
         .with_no_client_auth();
     let resolver = OverrideResolver {
         overrides: Arc::new(s.resolve_overrides.clone()),
-        gai: GaiResolver::new(),
     };
     let mut http = HttpConnector::new_with_resolver(resolver);
     http.enforce_http(false);
