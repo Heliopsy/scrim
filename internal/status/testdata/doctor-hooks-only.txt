@@ -1,0 +1,8 @@
+[warn] agent-mode:hooks: agent hooks are the only interception: partial protection; not covered: model requests; model replies; network egress
+       fix: run the agent with scrim run, or point it at the forward proxy, for full coverage
+[fail] agent-mode:managed-settings: /etc/codex/requirements.toml was changed or removed since scrim installed it
+       fix: scrim install --managed-settings to write it again, or scrim uninstall --managed-settings
+[pass] data-plane: ok
+[pass] state: ok
+
+1 check(s) failed, 1 warning(s)

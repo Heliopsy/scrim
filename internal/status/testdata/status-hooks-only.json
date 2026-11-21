@@ -1,0 +1,75 @@
+{
+  "version": "0.1.0",
+  "interception_modes": [
+    "hooks (partial): claude, codex",
+    "managed-settings (enforcement add-on): claude, codex"
+  ],
+  "protections": [],
+  "providers": [],
+  "stores": [],
+  "state": {
+    "backend": "sqlite",
+    "schema_version": 1,
+    "healthy": true
+  },
+  "audit_sinks": [],
+  "data_plane": {
+    "running": true,
+    "pid": 4242,
+    "version": "0.1.0",
+    "healthy": true
+  },
+  "degraded": [
+    {
+      "name": "agent-mode:managed-settings",
+      "reason": "changed or removed since install: /etc/codex/requirements.toml"
+    }
+  ],
+  "weakened_protections": [],
+  "agent_modes": [
+    {
+      "mode": "hooks",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "coverage": "partial",
+      "covers": [
+        "tool results"
+      ],
+      "not_covered": [
+        "model requests",
+        "model replies",
+        "network egress"
+      ],
+      "files": [
+        "/home/u/.claude/settings.json",
+        "/home/u/.codex/hooks.json"
+      ],
+      "manifest": "/home/u/.local/state/scrim/agent-hooks.json"
+    },
+    {
+      "mode": "managed-settings",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "coverage": "enforcement add-on",
+      "covers": [
+        "endpoint pinned"
+      ],
+      "not_covered": [
+        "processes the agent starts"
+      ],
+      "files": [
+        "/etc/claude-code/managed-settings.d/90-scrim.json",
+        "/etc/codex/requirements.toml"
+      ],
+      "changed": [
+        "/etc/codex/requirements.toml"
+      ],
+      "manifest": "/etc/scrim/managed-settings.json"
+    }
+  ],
+  "coverage": "partial"
+}

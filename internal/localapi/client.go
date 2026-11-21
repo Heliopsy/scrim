@@ -272,3 +272,12 @@ func (c *Client) Grants(ctx context.Context) (agenttools.GrantsOutput, error) {
 	var out agenttools.GrantsOutput
 	return out, c.do(ctx, http.MethodGet, "/grants", nil, nil, "", &out)
 }
+
+// Redact sends text to be redacted by scrim's data plane and returns the
+// redacted copy. text is wiped before Redact returns.
+func (c *Client) Redact(ctx context.Context, text []byte) (RedactOutput, error) {
+	defer secret.WipeBytes(text)
+	var out RedactOutput
+	err := c.do(ctx, http.MethodPost, "/redact", nil, bytes.NewReader(text), "application/octet-stream", &out)
+	return out, err
+}
