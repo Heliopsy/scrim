@@ -124,6 +124,11 @@ func TestReadDecodesFieldsAndRefusesUnknownSelectors(t *testing.T) {
 		if r.Header.Get("X-Vault-Namespace") != "team-a" {
 			t.Errorf("namespace header = %q", r.Header.Get("X-Vault-Namespace"))
 		}
+		if strings.HasPrefix(r.URL.Path, "/v1/sys/") || strings.Contains(r.URL.Path, "/metadata/") {
+			// Label lookups this token may not make.
+			writeJSON(w, 403, map[string]any{"errors": []string{"permission denied"}})
+			return
+		}
 		if r.URL.Path != "/v1/kv/data/agents/git%20hub" && r.URL.EscapedPath() != "/v1/kv/data/agents/git%20hub" {
 			t.Errorf("path %s", r.URL.EscapedPath())
 		}
@@ -475,6 +480,8 @@ func listFallsBack(t *testing.T, code int) {
 		case strings.HasPrefix(r.URL.Path, "/v1/kv/metadata/agents/"):
 			writeJSON(w, 200, map[string]any{"data": map[string]any{"current_version": 4, "updated_time": "2026-01-01T00:00:00Z",
 				"custom_metadata": map[string]string{"scrim.hosts": "h"}, "versions": map[string]any{"4": map[string]any{}}}})
+		case strings.HasPrefix(r.URL.Path, "/v1/sys/"):
+			writeJSON(w, code, map[string]any{"errors": []string{"permission denied"}})
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
