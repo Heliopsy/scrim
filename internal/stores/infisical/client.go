@@ -70,6 +70,40 @@ type client struct {
 
 	projMu   sync.Mutex
 	projects map[string]string // slug -> id
+	// info caches what scrim may know about a project for labels, by
+	// project ID. A failed lookup is cached too, for infoRetry, so an
+	// identity without access to the project does not cost a call per read.
+	info map[string]projectInfo
+}
+
+// infoRetry is how long a failed project lookup is remembered.
+const infoRetry = 5 * time.Minute
+
+// projectInfo is the part of a project Infisical returns that labels use:
+// names and IDs, never a value.
+type projectInfo struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Slug         string `json:"slug"`
+	OrgID        string `json:"orgId"`
+	Environments []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Slug string `json:"slug"`
+	} `json:"environments"`
+
+	ok      bool
+	fetched time.Time
+}
+
+// env returns the display name and ID of the environment with slug.
+func (p projectInfo) env(slug string) (name, id string) {
+	for _, e := range p.Environments {
+		if e.Slug == slug {
+			return e.Name, e.ID
+		}
+	}
+	return "", ""
 }
 
 func newClient(s *settings) (*client, error) {
@@ -87,6 +121,7 @@ func newClient(s *settings) (*client, error) {
 		settings: s,
 		now:      time.Now,
 		projects: map[string]string{},
+		info:     map[string]projectInfo{},
 	}, nil
 }
 
@@ -398,16 +433,61 @@ func (c *client) projectID(ctx context.Context, project string) (string, error) 
 		return "", err
 	}
 	defer secret.WipeBytes(b)
-	var p struct {
-		ID string `json:"id"`
-	}
+	var p projectInfo
 	if err := json.Unmarshal(b, &p); err != nil || p.ID == "" {
 		return "", &apiError{kind: stores.ErrUnavailable, msg: "malformed project response"}
 	}
+	p.ok, p.fetched = true, c.now()
 	c.projMu.Lock()
 	c.projects[project] = p.ID
+	c.info[p.ID] = p
 	c.projMu.Unlock()
 	return p.ID, nil
+}
+
+// projectDetails returns the project's names for labels, looked up once.
+// The slug lookup in projectID fills the cache as a side effect; a project
+// addressed by ID costs one GET /api/v1/projects/{id}. A failure is not an
+// error: labels then carry what the reference itself says, and the lookup is
+// retried after infoRetry.
+func (c *client) projectDetails(ctx context.Context, id string) projectInfo {
+	c.projMu.Lock()
+	p, ok := c.info[id]
+	c.projMu.Unlock()
+	if ok && (p.ok || c.now().Sub(p.fetched) < infoRetry) {
+		return p
+	}
+	p = projectInfo{fetched: c.now()}
+	b, err := c.do(ctx, http.MethodGet, "/api/v1/projects/"+url.PathEscape(id), nil, nil, nil)
+	if err == nil {
+		var resp struct {
+			Project projectInfo `json:"project"`
+		}
+		if json.Unmarshal(b, &resp) == nil && resp.Project.ID == id {
+			p = resp.Project
+			p.ok, p.fetched = true, c.now()
+		}
+		secret.WipeBytes(b)
+	} else if errors.Is(err, stores.ErrUnavailable) || ctx.Err() != nil {
+		// A transient failure is not remembered.
+		return p
+	}
+	c.projMu.Lock()
+	c.info[id] = p
+	c.projMu.Unlock()
+	return p
+}
+
+// cachedProject returns what is cached about a project without contacting
+// Infisical, for labels computed without a context.
+func (c *client) cachedProject(project string) projectInfo {
+	c.projMu.Lock()
+	defer c.projMu.Unlock()
+	id := project
+	if !uuidPattern.MatchString(project) {
+		id = c.projects[project]
+	}
+	return c.info[id]
 }
 
 // status checks the unauthenticated status endpoint.

@@ -42,15 +42,28 @@ type fake struct {
 	seenJWTs   []string
 	// echoJWT makes a refused Kubernetes login quote the JWT back.
 	echoJWT bool
+
+	// orgID is the organisation every project belongs to; hiddenProjects
+	// are projects whose details GET /api/v1/projects/{id} refuses.
+	orgID          string
+	hiddenProjects map[string]bool
+	// imports maps a destination folder (projectID|env|/path) to the
+	// source folder (env|/path) it imports, as a secret import does.
+	imports map[string]string
 }
 
 type fakeSecret struct {
+	env      string
 	key      string
 	path     string
 	versions []string
 	created  time.Time
 	updated  time.Time
 	metadata []kv
+	tags     []apiTag
+	rotation string // rotation ID when managed by a secret rotation
+	reminder int    // reminder repeat days, 0 for none
+	comment  string
 }
 
 func randID(n int) string {
@@ -61,17 +74,20 @@ func randID(n int) string {
 
 func newFake(t *testing.T) *fake {
 	f := &fake{
-		t:            t,
-		clientID:     "cid-" + randID(4),
-		clientSecret: "cs-" + randID(16),
-		tokenTTL:     3600,
-		tokens:       map[string]time.Time{},
-		projects:     map[string]string{"proj": "6a1b2c3d-0000-4000-8000-" + randID(6)},
-		folders:      map[string]bool{},
-		secrets:      map[string]*fakeSecret{},
-		readOnlyEnv:  "prod",
-		identityID:   "7f3c1a2e-0000-4000-8000-" + randID(6),
-		jwts:         map[string]bool{},
+		t:              t,
+		clientID:       "cid-" + randID(4),
+		clientSecret:   "cs-" + randID(16),
+		tokenTTL:       3600,
+		tokens:         map[string]time.Time{},
+		projects:       map[string]string{"proj": "6a1b2c3d-0000-4000-8000-" + randID(6)},
+		folders:        map[string]bool{},
+		secrets:        map[string]*fakeSecret{},
+		readOnlyEnv:    "prod",
+		identityID:     "7f3c1a2e-0000-4000-8000-" + randID(6),
+		jwts:           map[string]bool{},
+		orgID:          "0rg00000-0000-4000-8000-" + randID(6),
+		imports:        map[string]string{},
+		hiddenProjects: map[string]bool{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, _ *http.Request) {
@@ -80,6 +96,7 @@ func newFake(t *testing.T) *fake {
 	mux.HandleFunc("POST /api/v1/auth/universal-auth/login", f.login)
 	mux.HandleFunc("POST /api/v1/auth/kubernetes-auth/login", f.kubernetesLogin)
 	mux.HandleFunc("GET /api/v1/projects/slug/{slug}", f.auth(f.project))
+	mux.HandleFunc("GET /api/v1/projects/{id}", f.auth(f.projectByID))
 	mux.HandleFunc("GET /api/v4/secrets", f.auth(f.list))
 	mux.HandleFunc("GET /api/v4/secrets/{name}", f.auth(f.get))
 	mux.HandleFunc("POST /api/v4/secrets/{name}", f.auth(f.create))
@@ -220,7 +237,37 @@ func (f *fake) project(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 404, "NotFound", "Project not found")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"id": id, "slug": r.PathValue("slug")})
+	writeJSON(w, 200, f.projectJSON(r.PathValue("slug"), id))
+}
+
+// projectJSON is a project as Infisical describes it, with fields labels do
+// not use (and one that holds values) to check they are ignored.
+func (f *fake) projectJSON(slug, id string) map[string]any {
+	return map[string]any{
+		"id": id, "slug": slug, "name": "Project " + strings.ToUpper(slug), "orgId": f.orgID,
+		"type": "secret-manager", "secretDetectionIgnoreValues": []string{"ignored-" + randID(4)},
+		"environments": []map[string]any{
+			{"id": "env-dev-id", "name": "Development", "slug": "dev"},
+			{"id": "env-prod-id", "name": "Production", "slug": "prod"},
+		},
+	}
+}
+
+func (f *fake) projectByID(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id := r.PathValue("id")
+	for slug, pid := range f.projects {
+		if pid == id {
+			if f.hiddenProjects[id] {
+				apiErr(w, 403, "PermissionDenied", "You are not allowed to read this project")
+				return
+			}
+			writeJSON(w, 200, map[string]any{"project": f.projectJSON(slug, id)})
+			return
+		}
+	}
+	apiErr(w, 404, "NotFound", "Project not found")
 }
 
 func skey(pid, env, path, name string) string { return pid + "|" + env + "|" + path + "|" + name }
@@ -238,11 +285,25 @@ func (s *fakeSecret) json(withValue bool, version int) map[string]any {
 	if md == nil {
 		md = []kv{}
 	}
-	return map[string]any{
-		"id": randID(8), "secretKey": s.key, "secretValue": v, "version": version,
-		"type": "shared", "secretPath": s.path, "createdAt": s.created, "updatedAt": s.updated,
-		"secretMetadata": md, "secretValueHidden": !withValue,
+	tags := []map[string]any{}
+	for _, t := range s.tags {
+		tags = append(tags, map[string]any{"id": randID(8), "slug": t.Slug, "name": t.Name, "color": "#aabbcc"})
 	}
+	var reminder any
+	if s.reminder > 0 {
+		reminder = s.reminder
+	}
+	out := map[string]any{
+		"id": randID(8), "secretKey": s.key, "secretValue": v, "version": version,
+		"type": "shared", "environment": s.env, "secretPath": s.path, "createdAt": s.created, "updatedAt": s.updated,
+		"secretMetadata": md, "secretValueHidden": !withValue, "tags": tags,
+		"secretComment": s.comment, "secretReminderRepeatDays": reminder, "secretReminderNote": s.comment,
+		"isRotatedSecret": s.rotation != "",
+	}
+	if s.rotation != "" {
+		out["rotationId"] = s.rotation
+	}
+	return out
 }
 
 func (f *fake) list(w http.ResponseWriter, r *http.Request) {
@@ -281,6 +342,10 @@ func (f *fake) get(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	pid, _ := f.projectID(q.Get("projectId"))
 	s, ok := f.secrets[skey(pid, q.Get("environment"), q.Get("secretPath"), r.PathValue("name"))]
+	if src, imp := f.imports[pid+"|"+q.Get("environment")+"|"+q.Get("secretPath")]; !ok && imp {
+		env, path, _ := strings.Cut(src, "|")
+		s, ok = f.secrets[skey(pid, env, path, r.PathValue("name"))]
+	}
 	if !ok {
 		apiErr(w, 404, "NotFound", "Secret with name '"+r.PathValue("name")+"' not found")
 		return
@@ -347,7 +412,7 @@ func (f *fake) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	s := &fakeSecret{key: name, path: in.SecretPath, versions: []string{in.SecretValue}, created: now, updated: now, metadata: in.SecretMetadata}
+	s := &fakeSecret{env: in.Environment, key: name, path: in.SecretPath, versions: []string{in.SecretValue}, created: now, updated: now, metadata: in.SecretMetadata}
 	f.secrets[k] = s
 	writeJSON(w, 200, map[string]any{"secret": s.json(false, 1)})
 }
