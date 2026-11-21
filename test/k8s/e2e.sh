@@ -55,7 +55,7 @@ tag="e2e-$(date +%s)"
 img_scrim="localhost/scrim-k8s-scrim:$tag"
 img_testbin="localhost/scrim-k8s-testbin:$tag"
 img_tools="localhost/scrim-k8s-tools:$tag"
-dp_image="${SCRIM_K8S_DATAPLANE_IMAGE:-ghcr.io/heliopsy/scrim-dataplane:0.2.0}" # x-release-please-version
+dp_image="${SCRIM_K8S_DATAPLANE_IMAGE:-ghcr.io/heliopsy/scrim-dataplane:0.3.0}" # x-release-please-version
 # renovate: datasource=github-releases depName=projectcalico/calico
 calico_version="v3.33.1"
 # sha256: https://raw.githubusercontent.com/projectcalico/calico/{version}/manifests/calico.yaml
@@ -366,7 +366,7 @@ probe_pod() {
   printf 'apiVersion: v1\nkind: Pod\nmetadata: {name: %s}\nspec: {containers: [{name: c, image: "%s"}]}\n' "$1" "$2" |
     kwait 120 -n scrim-e2e create --dry-run=server -o jsonpath='{.spec.containers[0].image}' -f - 2>&1
 }
-signed_image="ghcr.io/heliopsy/scrim:0.2.0" # x-release-please-version
+signed_image="ghcr.io/heliopsy/scrim:0.3.0" # x-release-please-version
 # An OCI referrers index of the same repository: matched by the policy, never signed.
 unsigned_image="ghcr.io/heliopsy/scrim:sha256-490a9ca52efeba6f9ed4c886f0dba55e33325603988c6570dd29477827cf683e"
 out="$(probe_pod signed-scrim "$signed_image")" || fail "the signed release image was refused: $out"
