@@ -166,3 +166,26 @@ func TestErrorsAndControl(t *testing.T) {
 		t.Errorf("reset: %d", s)
 	}
 }
+
+// A Responses tool call inside a namespace tool carries the namespace in the
+// output item and, when streamed, in output_item.added as well.
+func TestResponsesNamespacedToolCall(t *testing.T) {
+	fake := New(Options{Responder: func(Turn) Reply {
+		return Reply{ToolCalls: []ToolCall{{Namespace: "mcp__scrim", Name: "secrets_list", Input: map[string]any{}}}}
+	}})
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	for _, stream := range []bool{false, true} {
+		code, body := post(t, srv.URL+OpenAIResponses.Path(), requestFor(OpenAIResponses, stream))
+		if code != http.StatusOK {
+			t.Fatalf("stream=%v: status %d: %s", stream, code, body)
+		}
+		want := 1
+		if stream {
+			want = 3 // output_item.added, output_item.done, response.completed
+		}
+		if n := bytes.Count(body, []byte(`"namespace":"mcp__scrim"`)); n != want {
+			t.Errorf("stream=%v: namespace appears %d times, want %d: %s", stream, n, want, body)
+		}
+	}
+}

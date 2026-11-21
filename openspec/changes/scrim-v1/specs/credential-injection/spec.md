@@ -487,10 +487,11 @@ override variable when one exists (for example `AWS_SHARED_CREDENTIALS_FILE`, `K
 
 ### Requirement: Session filesystem view for fixed paths
 
-On Linux, `scrim run` SHALL be able to start the agent in an unprivileged mount namespace where
-configured credential paths (for example `~/.aws/credentials`, `~/.kube/config`, `~/.netrc`,
-`~/.ssh/id_*`, `~/.config/gh/hosts.yml`) show generated placeholder versions or are hidden, while the
-rest of the home directory stays as it is. The real files SHALL not be readable from the session.
+On Linux, `scrim run` SHALL be able to start the agent in an unprivileged user and mount namespace
+where configured credential paths (the applied tool profiles' fixed paths such as
+`~/.aws/credentials`, and `run.fs-view-hide` such as `~/.ssh/id_*`), in `$HOME` and in the
+password-database home, show placeholder versions or are hidden, and the rest of the home stays as
+it is. The real files SHALL not be readable from the session.
 
 #### Scenario: Tool that ignores environment overrides
 
@@ -501,7 +502,36 @@ rest of the home directory stays as it is. The real files SHALL not be readable 
 #### Scenario: Real file hidden
 
 - **WHEN** the agent runs `cat ~/.ssh/id_ed25519` inside the session
-- **THEN** the file is absent or empty and the agent is pointed at `SSH_AUTH_SOCK`
+- **THEN** the file is absent or unreadable and the agent is pointed at `SSH_AUTH_SOCK`
+
+### Requirement: Filesystem view integrity
+
+A hidden path SHALL be an empty, unreadable, read-only file or directory. The agent SHALL run with
+no capabilities, so it cannot unmount the view. If any part of the view cannot be set up, `scrim
+run` SHALL refuse to start the agent (exit 125) rather than start it with a partial view.
+
+#### Scenario: Agent tries to remove the view
+
+- **WHEN** the agent unmounts `~/.aws/credentials`, directly or from a user namespace of its own
+- **THEN** the unmount fails and the path still shows the placeholder version
+
+#### Scenario: View cannot be set up
+
+- **WHEN** a mount of the view fails, or the helper that sets it up does not run
+- **THEN** `scrim run` exits 125 and the agent is not started
+
+### Requirement: Filesystem view selection
+
+`run.fs-view` SHALL select `auto` (the default: the namespace where the host allows it, the fallback
+elsewhere), `namespace` (refuse to start the agent when the host has no unprivileged user
+namespaces), `home` (the fallback) or `off`. A session with no configured path present SHALL start
+without a namespace.
+
+#### Scenario: Namespace required on a host without one
+
+- **WHEN** `run.fs-view` is `namespace` and the host forbids unprivileged user namespaces
+- **THEN** `scrim run` refuses to start the agent, naming the reason, and `scrim doctor` fails the
+  `run-fs-view` check
 
 ### Requirement: Filesystem view fallback without namespaces
 
@@ -513,6 +543,20 @@ report in status which tools may still read the real files because they bypass `
 
 - **WHEN** `scrim run` starts an agent on macOS
 - **THEN** `HOME` points at the session directory and `scrim status` lists the fallback and its gaps
+
+### Requirement: Session home mirror
+
+The session home SHALL link every other entry to the real home, so the agent's writes there land in
+the real files, and SHALL move the XDG base directory variables that point into the real home along
+with `HOME`. `scrim run` SHALL print the fallback and its gaps before the agent starts, and `scrim
+doctor` SHALL warn about it with the fix.
+
+#### Scenario: Linux host without user namespaces
+
+- **WHEN** `scrim run` starts an agent on a Linux host whose AppArmor policy forbids unprivileged
+  user namespaces, with `run.fs-view` left at `auto`
+- **THEN** the agent gets the session home, `scrim status` names the reason, and `scrim doctor`
+  warns with the sysctl or profile that allows the namespace view
 
 ### Requirement: Credential helpers
 

@@ -96,6 +96,11 @@ type Addrs struct {
 	ForwardProxy string `json:"forward_proxy,omitempty"`
 	// ToolProxy is host:port of the tool proxy.
 	ToolProxy string `json:"tool_proxy,omitempty"`
+	// Transparent are host:port of the transparent listeners nftables
+	// redirects covered users to.
+	Transparent []string `json:"transparent,omitempty"`
+	// SNI is host:port of the SNI listener of DNS override mode.
+	SNI string `json:"sni,omitempty"`
 	// AgentAPI is the agent local API socket (SCRIM_API_SOCKET).
 	AgentAPI string `json:"agent_api,omitempty"`
 	// EntryPage is the human entry page base URL.
@@ -133,6 +138,9 @@ type Info struct {
 	// Stores is every store's freshness and the values each redact target
 	// holds.
 	Stores []status.Store `json:"stores"`
+	// AuditSinks is every external audit sink's queue and backpressure
+	// state (audit.sinks beyond db).
+	AuditSinks []status.AuditSink `json:"audit_sinks,omitempty"`
 }
 
 // DataPlaneInfo summarises the data plane's status. Counts and references,
@@ -629,6 +637,7 @@ func (d *Daemon) setDataPlaneAddrs(st *pb.StatusResponse) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.addrs.Transparent = nil
 	for _, l := range d.builder.Listeners {
 		addr := l.GetAddress()
 		if b, ok := bound[l.GetName()]; ok {
@@ -643,6 +652,10 @@ func (d *Daemon) setDataPlaneAddrs(st *pb.StatusResponse) {
 			d.addrs.ForwardProxy = addr
 		case pb.ListenerKind_LISTENER_KIND_TOOL_PROXY:
 			d.addrs.ToolProxy = addr
+		case pb.ListenerKind_LISTENER_KIND_TRANSPARENT:
+			d.addrs.Transparent = append(d.addrs.Transparent, addr)
+		case pb.ListenerKind_LISTENER_KIND_SNI:
+			d.addrs.SNI = addr
 		default:
 		}
 	}
@@ -794,6 +807,7 @@ func (d *Daemon) Info() Info {
 	d.mu.Unlock()
 	in.Runtime = d.runtimeInfo(ctx, in.Ready)
 	in.Stores = d.storeStatus()
+	in.AuditSinks = status.FromFanout(d.app.AuditSinks.Status())
 	for k, v := range rep.Checks {
 		if v != "ok" {
 			if in.Problems == nil {

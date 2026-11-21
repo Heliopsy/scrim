@@ -4,7 +4,7 @@
 mode: everything it sets applies to the agent's process and its children only, and nothing in your
 shell, your agent's configuration or the system changes.
 
-```sh
+```sh test
 scrim run -- claude
 scrim run -- codex exec "fix the failing test"
 scrim run --print-env -- claude      # show what would be set, start nothing
@@ -44,6 +44,7 @@ name could be read as a flag. `scrim run` flags go before it:
 | `--run-placeholder-env=false` | Do not export declared placeholders (setting `run.placeholder-env`). |
 | `--run-scan-project=false` | Do not scan the working directory for secret values (setting `run.scan-project`). |
 | `--run-scan-interval 30s` | How often project files are rescanned while the agent runs; `0` scans once (setting `run.scan-interval`, default 10s). |
+| `--run-fs-view auto\|namespace\|home\|off` | Session filesystem view (setting `run.fs-view`). See [Filesystem view](#filesystem-view). |
 | `--run-allow-unredacted-start` | Weakening: start the agent even when scrim cannot serve it. See [Failing closed](#failing-closed). |
 
 ## Environment contract
@@ -137,7 +138,7 @@ reach scrim as an unknown caller.
 Each declared catalog placeholder that resolves for the session (see [catalog.md](catalog.md)) is
 exported as a variable of the same name holding the placeholder itself:
 
-```sh
+```sh test env
 SCRIM_GITHUB_TOKEN=SCRIM_GITHUB_TOKEN
 ```
 
@@ -188,6 +189,100 @@ If the values cannot be registered, `scrim run` refuses to start the agent (exit
 `run.scan-project=false` skips the scan. A working directory that is the home directory or `/` is not
 scanned.
 
+## Filesystem view
+
+Profiles point tools at their generated files through override variables. Some tools have none
+(doctl's `config.yaml`), and some find the home directory through the password database instead of
+`HOME`. For those, `scrim run` gives the agent a view of the home directory in which the credential
+paths show the generated placeholder file or are hidden. Which paths: every `paths` entry of the
+applied tool profiles (`~/.aws/credentials`, `~/.kube/config`, `~/.docker/config.json`, `~/.netrc`,
+`~/.config/gh/hosts.yml`, ...; see [cli-tools.md](cli-tools.md)) and the patterns in
+`run.fs-view-hide` (default `.ssh/id_*` without `.ssh/id_*.pub`: ssh private keys, not their public
+halves). Only paths that exist are covered, and a session with none starts without any of this.
+
+Spec: `specs/credential-injection` ("Session filesystem view for fixed paths", "Filesystem view
+integrity", "Filesystem view selection", "Filesystem view fallback without namespaces", "Session home
+mirror"). Code: `internal/fsview`.
+
+| `run.fs-view` | What the agent gets |
+| --- | --- |
+| `auto` (default) | The namespace view where the host allows unprivileged user namespaces, the home mirror elsewhere. |
+| `namespace` | The namespace view, or no agent: `scrim run` exits 125 on a host without user namespaces. |
+| `home` | The home mirror. |
+| `off` | The home directory as it is. |
+
+### Namespace view (Linux)
+
+`scrim run` starts its own executable again as a small helper in a new user and mount namespace that
+maps only your uid and gid, so the agent keeps your identity and file ownership. The helper makes the
+mount tree private (nothing propagates to the host), then for each covered path that exists, in
+`$HOME` and in the password-database home:
+
+- bind-mounts the profile's generated file from the session directory over it, or
+- bind-mounts an empty file or directory with mode 0000, read-only, over it, so `cat` fails with
+  "Permission denied".
+
+It then drops every capability, sets `no_new_privs` and executes the agent in place (same process ID,
+so the session stays bound to it). The agent cannot unmount the view, and the kernel locks the mounts
+together against a user namespace the agent creates itself. Nothing on disk changes; the mounts go
+away with the agent's process tree, and the real files are untouched.
+
+If a mount fails, or the helper does not run, the agent is not started (exit 125): it never starts
+with half a view.
+
+Not covered by the namespace view:
+
+- setuid programs (`sudo`, `newuidmap` and so rootless `podman`) gain no privileges inside the user
+  namespace. Use `run.fs-view: home` for sessions that need them.
+- Services outside the session (`systemd --user`, D-Bus, ssh to localhost, a container engine's
+  daemon) run outside the view and can read the real files on the agent's behalf.
+- A covered path created after the session started is not covered.
+
+The session directory, with the generated profile files, the credential helper links in
+`<session-dir>/bin` and their target (the scrim executable), stays reachable in both views: it lives
+under `$XDG_RUNTIME_DIR`, outside the covered paths. `just e2e-profiles` (TestCredentialHelpers,
+TestProjectFileValues) runs git, skopeo, kubectl and aws through scrim's helpers, and the project
+scan, inside the namespace view.
+
+### Home mirror (fallback)
+
+On macOS, and on Linux hosts that forbid unprivileged user namespaces (Ubuntu 24.04's default
+AppArmor policy, `kernel.apparmor_restrict_unprivileged_userns=1`; `user.max_user_namespaces=0`;
+many containers), `HOME` points at `<session-dir>/fsview/home`: every entry of your home directory is
+a symbolic link to the real one, except along the way to a covered path, where the directory is
+recreated with links to its other entries, the covered path links to the generated file, and a hidden
+path is left out. `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` move with
+`HOME` when they pointed into it. `scrim run` prints the fallback, its reason and its gaps before the
+agent starts.
+
+Not covered by the home mirror:
+
+- Tools that find the home directory through the password database instead of `HOME` (ssh, scp,
+  sftp, git over ssh) read the real files.
+- The real files stay readable at their absolute paths: the mirror changes where `HOME` leads, it
+  does not hide anything from a process that opens `/home/you/.aws/credentials`.
+- New files at the top of the home directory or inside a mirrored credential directory stay in the
+  session home and are removed with it.
+- On macOS, credentials kept in the Keychain (git-credential-osxkeychain,
+  docker-credential-osxkeychain, gh's keyring) are not files and are not covered.
+
+### Checking the view
+
+`scrim run --print-env` lists the view and every covered path:
+
+```text
+filesystem view: namespace (user and mount namespace)
+  /home/you/.aws/credentials  shows <session-dir>/profiles/aws/credentials  (aws)
+  /home/you/.config/doctl/config.yaml  hidden  (doctl)
+  /home/you/.ssh/id_ed25519  hidden  (run.fs-view-hide)
+```
+
+`scrim status` shows the view sessions get on this host under "Filesystem view (scrim run)", with
+the fallback reason and its gaps, and `scrim doctor` checks it (`run-fs-view`): a warning for the
+fallback, `home` or `off`, a failure when `run.fs-view` is `namespace` and the host has none. To get
+the namespace view on Ubuntu, either `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`
+or give the scrim binary an AppArmor profile with `userns,`.
+
 ## Failing closed
 
 `scrim run` does not start the agent, and exits with status 125, when:
@@ -199,7 +294,9 @@ scanned.
 - the secret values found in project files cannot be registered for redaction;
 - `scrim run` is already inside a session (`SCRIM_SESSION_TOKEN` is set);
 - the preset refuses the environment (Claude Code with Bedrock, Vertex or Foundry);
-- the command is `caveman` (see below) or cannot be found.
+- the command is `caveman` (see below) or cannot be found;
+- the [filesystem view](#filesystem-view) cannot be set up, or `run.fs-view` is `namespace` and the
+  host has no unprivileged user namespaces.
 
 Status 125 is the wrapper's own failure, as with `env` and `timeout`; any other status is the
 agent's. An agent killed by a signal gives 128 plus the signal number.
@@ -234,7 +331,7 @@ at caveman, `scrim run` replaces it for the session and warns.
 
 Inside the agent (or a shell started with `scrim run -- bash`):
 
-```sh
+```sh test session
 scrim api whoami        # agent dev via session (uid 1000, pid ...), session ..., expires ...
 ```
 
@@ -268,6 +365,16 @@ set
   is not installed. `TestCodexThroughScrimRun` does the same with the Codex CLI, whose tools sit
   behind one code-mode `exec` tool, so it has its own small Responses model: the script runs
   `exec_command` on the file, then `tools.mcp__scrim__secrets_list`.
+- `internal/run/fsview_test.go` and `fsview_linux_test.go` plant decoys at `~/.aws/credentials`,
+  `~/.ssh/id_ed25519` and doctl's config in a temporary home and run an agent that reads them under
+  `scrim run`. With the namespace view it reads the placeholder file, `cat` of the key fails, the
+  public key and other files are unchanged, unmounting fails (also from a namespace of its own), and
+  the session still identifies it. `TestFSViewPasswdHome` starts the test again in a namespace with a
+  temporary directory mounted over the password-database home, so a tool that ignores `HOME` is
+  checked without reading the real home. The home mirror, the refusals (namespace required, helper
+  that does not run) and `run.fs-view: off` as a control are covered too. The namespace tests skip
+  without user namespaces unless `SCRIM_TEST_REQUIRE_USERNS=1`, which the `e2e-profiles` CI job sets.
+  `TestStatusRunFSViewOnThisHost` runs on macOS in CI and checks that status lists the fallback.
 - These tests stand a verbatim redactor in for scrim's data plane: they test the wrapper, not the
   redactor. `TestRunPrintEnvWithRealDaemon` (in `internal/cli`, with `SCRIM_TEST_DATAPLANE`) runs
   `scrim run --print-env` against a daemon started in process with the real data plane, and
@@ -291,11 +398,20 @@ set
     placeholders only, placeholders survive its compression and are restored in the response, and
     every request reached the fake provider through caveman. Skipped without `caveman-proxy`
     (`SCRIM_E2E_CAVEMAN` names it).
+  - `e2e-profiles` (see [cli-tools.md](cli-tools.md)) ends with the filesystem view: the real `aws`
+    CLI, with `AWS_SHARED_CREDENTIALS_FILE` removed, reads the placeholder at `~/.aws/credentials`
+    where a decoy sits, and `cat` of a decoy ssh key and doctl config fails.
   - `e2e-session`: Claude Code under `scrim run` with an empty `HOME` and a fake key reads a `.env`
     of seeded secrets, cats a config, runs `git diff` on a file with a key in it, calls a bound tool
     API through `HTTPS_PROXY` with `SCRIM_API_TOKEN`, and calls `secrets_list`. Every provider
     request and scrim's capture of it are checked with the leak suite's checker. Skipped without
-    `claude`.
+    `claude`. `TestCodexSession` runs the same session with `codex exec` over the Responses API:
+    the fake model calls whichever shell tool Codex offers (`exec_command`, `shell_command` or
+    `shell`), then `secrets_list` in the `mcp__scrim` namespace tool. `SCRIM_E2E_CODEX` names the
+    native `codex` binary (from the `@openai/codex` npm package, installed into a temporary
+    directory), otherwise it is looked up on `PATH` and skipped when missing. CI installs both
+    agents at pinned versions into the runner's temporary directory and runs it with
+    `SCRIM_E2E_REQUIRE_TOOLS=1`.
 
   Each needs unprivileged user namespaces; on Ubuntu 24.04 with AppArmor's restriction on, run
   `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` first.

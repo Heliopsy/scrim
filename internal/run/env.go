@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/heliopsy/scrim/internal/fsview"
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/profiles"
 	"github.com/heliopsy/scrim/internal/secret"
@@ -114,6 +115,8 @@ type Plan struct {
 	Project []string `json:"project,omitempty"`
 	// Warnings are shown before the agent starts.
 	Warnings []string `json:"warnings,omitempty"`
+	// FSView is the session filesystem view (package fsview).
+	FSView *fsview.Plan `json:"fs_view,omitempty"`
 }
 
 // Input is what a plan is built from.

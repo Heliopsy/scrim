@@ -97,7 +97,7 @@ Scalars are written as they are in the file: `true`, `42`, `1.5`, `90s`. Duratio
 Lists take a JSON array, or comma-separated items with `\,` for a literal comma and `\\` for a
 backslash:
 
-```sh
+```sh test env
 SCRIM_PROXY_NO_PROXY='["127.0.0.1","localhost"]'
 SCRIM_PROXY_NO_PROXY='127.0.0.1,localhost'
 ```
@@ -106,7 +106,7 @@ Maps take a JSON object or `key=value` pairs separated by commas. One entry of a
 adding its name to the variable, lower-cased words with `_` for `-`; it merges into the map from
 the lower layers, while the whole-map variable replaces it:
 
-```sh
+```sh test env
 SCRIM_PROXY_UPSTREAM='{"anthropic":"http://127.0.0.1:9000"}'
 SCRIM_PROXY_UPSTREAM_ANTHROPIC=http://127.0.0.1:9000
 ```
@@ -171,7 +171,7 @@ reference lists the values each profile sets. A profile never enables a weakenin
 
 ## Validating and inspecting
 
-```sh
+```sh test
 scrim config validate                 # every problem with key and source, non-zero exit if invalid
 scrim config validate -o json
 scrim config show                     # settings not at their default, with sources
@@ -222,6 +222,36 @@ is out of date.
 | [`approvals.public-url`](#approvalspublic-url) | string | `""` | hot |
 | [`approvals.signing-key`](#approvalssigning-key) | secret-ref | empty | hot |
 | [`approvals.timeout`](#approvalstimeout) | duration | `2m0s` | hot |
+| [`audit.kafka.batch-size`](#auditkafkabatch-size) | int | `500` | restart required |
+| [`audit.kafka.brokers`](#auditkafkabrokers) | list | `[]` | restart required |
+| [`audit.kafka.password`](#auditkafkapassword) | secret-ref | empty | restart required |
+| [`audit.kafka.policy`](#auditkafkapolicy) | string | `drop` | restart required |
+| [`audit.kafka.queue-size`](#auditkafkaqueue-size) | int | `10000` | restart required |
+| [`audit.kafka.sasl-mechanism`](#auditkafkasasl-mechanism) | string | `none` | restart required |
+| [`audit.kafka.timeout`](#auditkafkatimeout) | duration | `5s` | restart required |
+| [`audit.kafka.tls`](#auditkafkatls) | bool | `false` | restart required |
+| [`audit.kafka.tls-ca-file`](#auditkafkatls-ca-file) | string | `""` | restart required |
+| [`audit.kafka.topic`](#auditkafkatopic) | string | `scrim-audit` | restart required |
+| [`audit.kafka.username`](#auditkafkausername) | string | `""` | restart required |
+| [`audit.kafka.write-timeout`](#auditkafkawrite-timeout) | duration | `10s` | restart required |
+| [`audit.loki.batch-size`](#auditlokibatch-size) | int | `500` | restart required |
+| [`audit.loki.labels`](#auditlokilabels) | map | `{}` | restart required |
+| [`audit.loki.password`](#auditlokipassword) | secret-ref | empty | restart required |
+| [`audit.loki.policy`](#auditlokipolicy) | string | `drop` | restart required |
+| [`audit.loki.queue-size`](#auditlokiqueue-size) | int | `10000` | restart required |
+| [`audit.loki.tenant`](#auditlokitenant) | string | `""` | restart required |
+| [`audit.loki.timeout`](#auditlokitimeout) | duration | `5s` | restart required |
+| [`audit.loki.url`](#auditlokiurl) | string | `""` | restart required |
+| [`audit.loki.username`](#auditlokiusername) | string | `""` | restart required |
+| [`audit.loki.write-timeout`](#auditlokiwrite-timeout) | duration | `10s` | restart required |
+| [`audit.otlp.batch-size`](#auditotlpbatch-size) | int | `500` | restart required |
+| [`audit.otlp.endpoint`](#auditotlpendpoint) | string | `""` | restart required |
+| [`audit.otlp.policy`](#auditotlppolicy) | string | `drop` | restart required |
+| [`audit.otlp.queue-size`](#auditotlpqueue-size) | int | `10000` | restart required |
+| [`audit.otlp.timeout`](#auditotlptimeout) | duration | `5s` | restart required |
+| [`audit.otlp.token`](#auditotlptoken) | secret-ref | empty | restart required |
+| [`audit.otlp.write-timeout`](#auditotlpwrite-timeout) | duration | `10s` | restart required |
+| [`audit.sinks`](#auditsinks) | list | `["db"]` | restart required |
 | [`catalog.environment`](#catalogenvironment) | string | `""` | hot |
 | [`catalog.files`](#catalogfiles) | list | `[]` | hot |
 | [`catalog.metadata-from`](#catalogmetadata-from) | list | `[]` | hot |
@@ -239,7 +269,9 @@ is out of date.
 | [`deployment.replicas`](#deploymentreplicas) | int | `1` | restart required |
 | [`entry.listen`](#entrylisten) | string | `127.0.0.1:0` | restart required |
 | [`events.backend`](#eventsbackend) | string | `local` | restart required |
+| [`events.nats.subject`](#eventsnatssubject) | string | `scrim.events` | restart required |
 | [`events.poll-interval`](#eventspoll-interval) | duration | `1s` | restart required |
+| [`events.valkey.channel`](#eventsvalkeychannel) | string | `scrim:events` | restart required |
 | [`grants.default-ttl`](#grantsdefault-ttl) | duration | `30m0s` | hot |
 | [`grants.max-ttl`](#grantsmax-ttl) | duration | `8h0m0s` | hot |
 | [`identity.kubernetes.agents`](#identitykubernetesagents) | map | `{}` | restart required |
@@ -260,6 +292,13 @@ is out of date.
 | [`metrics.enabled`](#metricsenabled) | bool | `false` | restart required |
 | [`metrics.listen`](#metricslisten) | string | `127.0.0.1:9792` | restart required |
 | [`metrics.path`](#metricspath) | string | `/metrics` | restart required |
+| [`nats.credentials-file`](#natscredentials-file) | string | `""` | restart required |
+| [`nats.password`](#natspassword) | secret-ref | empty | restart required |
+| [`nats.servers`](#natsservers) | list | `[]` | restart required |
+| [`nats.timeout`](#natstimeout) | duration | `5s` | restart required |
+| [`nats.tls-ca-file`](#natstls-ca-file) | string | `""` | restart required |
+| [`nats.token`](#natstoken) | secret-ref | empty | restart required |
+| [`nats.username`](#natsusername) | string | `""` | restart required |
 | [`notify.ntfy.priority`](#notifyntfypriority) | int | `4` | hot |
 | [`notify.ntfy.token`](#notifyntfytoken) | secret-ref | empty | hot |
 | [`notify.ntfy.topic`](#notifyntfytopic) | string | `""` | hot |
@@ -281,11 +320,25 @@ is out of date.
 | [`proxy.chain.url`](#proxychainurl) | string | `""` | hot |
 | [`proxy.forward-listen`](#proxyforward-listen) | string | `127.0.0.1:9791` | restart required |
 | [`proxy.listen`](#proxylisten) | string | `127.0.0.1:9790` | restart required |
+| [`proxy.sni-listen`](#proxysni-listen) | string | `""` | restart required |
 | [`proxy.socket`](#proxysocket) | string | `""` | restart required |
+| [`proxy.transparent-listen`](#proxytransparent-listen) | list | `[]` | restart required |
+| [`proxy.transparent-unrouted`](#proxytransparent-unrouted) | string | `pass` | restart required |
 | [`proxy.upstream.anthropic`](#proxyupstreamanthropic) | string | `https://api.anthropic.com` | hot |
 | [`proxy.upstream.chatgpt`](#proxyupstreamchatgpt) | string | `https://chatgpt.com` | hot |
 | [`proxy.upstream.chatgpt-ab`](#proxyupstreamchatgpt-ab) | string | `https://ab.chatgpt.com` | hot |
 | [`proxy.upstream.openai`](#proxyupstreamopenai) | string | `https://api.openai.com` | hot |
+| [`ratelimit.agent-api.burst`](#ratelimitagent-apiburst) | int | `120` | hot |
+| [`ratelimit.agent-api.interval`](#ratelimitagent-apiinterval) | duration | `1m0s` | hot |
+| [`ratelimit.agent-api.rate`](#ratelimitagent-apirate) | int | `600` | hot |
+| [`ratelimit.approvals.burst`](#ratelimitapprovalsburst) | int | `10` | hot |
+| [`ratelimit.approvals.interval`](#ratelimitapprovalsinterval) | duration | `1h0m0s` | hot |
+| [`ratelimit.approvals.rate`](#ratelimitapprovalsrate) | int | `60` | hot |
+| [`ratelimit.asks.burst`](#ratelimitasksburst) | int | `5` | hot |
+| [`ratelimit.asks.interval`](#ratelimitasksinterval) | duration | `1h0m0s` | hot |
+| [`ratelimit.asks.rate`](#ratelimitasksrate) | int | `30` | hot |
+| [`ratelimit.backend`](#ratelimitbackend) | string | `local` | restart required |
+| [`ratelimit.valkey.prefix`](#ratelimitvalkeyprefix) | string | `scrim:rl:` | restart required |
 | [`redaction.allow-empty-targets`](#redactionallow-empty-targets) | bool | `false` | restart required |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
@@ -294,6 +347,8 @@ is out of date.
 | [`restore.builtin-tools`](#restorebuiltin-tools) | bool | `true` | hot |
 | [`restore.display-mode`](#restoredisplay-mode) | string | `values` | hot |
 | [`run.allow-unredacted-start`](#runallow-unredacted-start) | bool | `false` | hot |
+| [`run.fs-view`](#runfs-view) | string | `auto` | hot |
+| [`run.fs-view-hide`](#runfs-view-hide) | list | `[".ssh/id_*","!.ssh/id_*.pub"]` | hot |
 | [`run.mcp`](#runmcp) | bool | `true` | hot |
 | [`run.placeholder-env`](#runplaceholder-env) | bool | `true` | hot |
 | [`run.profiles`](#runprofiles) | list | `["auto"]` | hot |
@@ -319,6 +374,13 @@ is out of date.
 | [`tools.grant-max-ttl`](#toolsgrant-max-ttl) | duration | `8h0m0s` | restart required |
 | [`tracing.endpoint`](#tracingendpoint) | string | `""` | restart required |
 | [`tracing.sample-ratio`](#tracingsample-ratio) | float | `1` | restart required |
+| [`valkey.addresses`](#valkeyaddresses) | list | `[]` | restart required |
+| [`valkey.db`](#valkeydb) | int | `0` | restart required |
+| [`valkey.password`](#valkeypassword) | secret-ref | empty | restart required |
+| [`valkey.timeout`](#valkeytimeout) | duration | `5s` | restart required |
+| [`valkey.tls`](#valkeytls) | bool | `false` | restart required |
+| [`valkey.tls-ca-file`](#valkeytls-ca-file) | string | `""` | restart required |
+| [`valkey.username`](#valkeyusername) | string | `""` | restart required |
 | [`catalog.entries.<name>.*`](#catalogentriesname) | collection | empty | hot |
 | [`redaction.placeholder-keys.<name>.*`](#redactionplaceholder-keysname) | collection | empty | hot |
 | [`restore.tools.<name>.*`](#restoretoolsname) | collection | empty | hot |
@@ -518,6 +580,372 @@ How long an approval waits for a decision before it is denied. A rule's approval
 | Flag | `--approvals-timeout` |
 | Reload | hot |
 
+### audit
+
+#### `audit.kafka.batch-size`
+
+How many audit entries one write to the kafka sink carries at most.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `500` |
+| Environment | `SCRIM_AUDIT_KAFKA_BATCH_SIZE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.kafka.brokers`
+
+Seed brokers (host:port) of the Kafka (or Redpanda) cluster of the kafka audit sink.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_AUDIT_KAFKA_BROKERS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.kafka.password`
+
+Reference to the SASL password of the kafka audit sink.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; literals rejected) |
+| Default | empty |
+| Environment | `SCRIM_AUDIT_KAFKA_PASSWORD` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.kafka.policy`
+
+What happens when the kafka sink's queue is full because the sink is slow or down: block makes the audited operation wait up to audit.kafka.timeout and then refuses it; drop lets it through and counts the entry in scrim_audit_sink_dropped_total (it stays in the database audit log). Never silent either way.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `drop` |
+| Environment | `SCRIM_AUDIT_KAFKA_POLICY` |
+| Flag | none |
+| Reload | restart required |
+| Values | `block`, `drop` |
+
+#### `audit.kafka.queue-size`
+
+How many audit entries wait for the kafka sink at most.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `10000` |
+| Environment | `SCRIM_AUDIT_KAFKA_QUEUE_SIZE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.kafka.sasl-mechanism`
+
+SASL mechanism of the kafka audit sink; plain needs audit.kafka.tls.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `none` |
+| Environment | `SCRIM_AUDIT_KAFKA_SASL_MECHANISM` |
+| Flag | none |
+| Reload | restart required |
+| Values | `none`, `plain`, `scram-sha-256`, `scram-sha-512` |
+
+#### `audit.kafka.timeout`
+
+With audit.kafka.policy block, how long an audited operation waits for room in the kafka queue before it is refused.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `5s` |
+| Environment | `SCRIM_AUDIT_KAFKA_TIMEOUT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.kafka.tls`
+
+Connect to the Kafka brokers over TLS, verified against the system roots or audit.kafka.tls-ca-file.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_AUDIT_KAFKA_TLS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.kafka.tls-ca-file`
+
+PEM file of the certificate authorities that sign the Kafka broker certificates; empty uses the system roots.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_AUDIT_KAFKA_TLS_CA_FILE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.kafka.topic`
+
+Topic the kafka audit sink produces to. Records are keyed by agent, so one agent's entries stay in order on one partition.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `scrim-audit` |
+| Environment | `SCRIM_AUDIT_KAFKA_TOPIC` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.kafka.username`
+
+SASL user of the kafka audit sink.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_AUDIT_KAFKA_USERNAME` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.kafka.write-timeout`
+
+How long one write to the kafka sink may take before it counts as failed and is retried.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `10s` |
+| Environment | `SCRIM_AUDIT_KAFKA_WRITE_TIMEOUT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.loki.batch-size`
+
+How many audit entries one write to the loki sink carries at most.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `500` |
+| Environment | `SCRIM_AUDIT_LOKI_BATCH_SIZE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.loki.labels`
+
+Extra static stream labels for audit entries in Loki, added to service_name=scrim and source=audit. Keep them low-cardinality; per-entry fields are in the JSON line.
+
+| | |
+|---|---|
+| Type | map of strings (env: JSON object or `k=v,k2=v2`; one entry: variable plus `_ENTRY`) |
+| Default | `{}` |
+| Environment | `SCRIM_AUDIT_LOKI_LABELS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.loki.password`
+
+Reference to the basic auth password (or bearer token with an empty audit.loki.username) of the loki audit sink.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; literals rejected) |
+| Default | empty |
+| Environment | `SCRIM_AUDIT_LOKI_PASSWORD` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.loki.policy`
+
+What happens when the loki sink's queue is full because the sink is slow or down: block makes the audited operation wait up to audit.loki.timeout and then refuses it; drop lets it through and counts the entry in scrim_audit_sink_dropped_total (it stays in the database audit log). Never silent either way.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `drop` |
+| Environment | `SCRIM_AUDIT_LOKI_POLICY` |
+| Flag | none |
+| Reload | restart required |
+| Values | `block`, `drop` |
+
+#### `audit.loki.queue-size`
+
+How many audit entries wait for the loki sink at most.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `10000` |
+| Environment | `SCRIM_AUDIT_LOKI_QUEUE_SIZE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.loki.tenant`
+
+Loki tenant (X-Scope-OrgID) for the loki audit sink; empty for a single-tenant Loki.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_AUDIT_LOKI_TENANT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.loki.timeout`
+
+With audit.loki.policy block, how long an audited operation waits for room in the loki queue before it is refused.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `5s` |
+| Environment | `SCRIM_AUDIT_LOKI_TIMEOUT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.loki.url`
+
+Base URL of Loki (or a compatible push endpoint) for the loki audit sink; entries are pushed to <url>/loki/api/v1/push.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_AUDIT_LOKI_URL` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.loki.username`
+
+Basic auth user for the loki audit sink; empty for none.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_AUDIT_LOKI_USERNAME` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.loki.write-timeout`
+
+How long one write to the loki sink may take before it counts as failed and is retried.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `10s` |
+| Environment | `SCRIM_AUDIT_LOKI_WRITE_TIMEOUT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.otlp.batch-size`
+
+How many audit entries one write to the otlp sink carries at most.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `500` |
+| Environment | `SCRIM_AUDIT_OTLP_BATCH_SIZE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.otlp.endpoint`
+
+OTLP/HTTP logs endpoint of the otlp audit sink, a collector or a backend that takes OTLP logs: http(s)://host:4318 (the /v1/logs path is added unless the URL has a path).
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_AUDIT_OTLP_ENDPOINT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.otlp.policy`
+
+What happens when the otlp sink's queue is full because the sink is slow or down: block makes the audited operation wait up to audit.otlp.timeout and then refuses it; drop lets it through and counts the entry in scrim_audit_sink_dropped_total (it stays in the database audit log). Never silent either way.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `drop` |
+| Environment | `SCRIM_AUDIT_OTLP_POLICY` |
+| Flag | none |
+| Reload | restart required |
+| Values | `block`, `drop` |
+
+#### `audit.otlp.queue-size`
+
+How many audit entries wait for the otlp sink at most.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `10000` |
+| Environment | `SCRIM_AUDIT_OTLP_QUEUE_SIZE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.otlp.timeout`
+
+With audit.otlp.policy block, how long an audited operation waits for room in the otlp queue before it is refused.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `5s` |
+| Environment | `SCRIM_AUDIT_OTLP_TIMEOUT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.otlp.token`
+
+Reference to a bearer token sent to the otlp audit sink; empty for none.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; literals rejected) |
+| Default | empty |
+| Environment | `SCRIM_AUDIT_OTLP_TOKEN` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.otlp.write-timeout`
+
+How long one write to the otlp sink may take before it counts as failed and is retried.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `10s` |
+| Environment | `SCRIM_AUDIT_OTLP_WRITE_TIMEOUT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `audit.sinks`
+
+Where audit entries go: db (the state backend's audit log, always written, in the transaction of the change it records) plus any of otlp, loki and kafka, each fed from its own bounded queue with the backpressure policy audit.<sink>.policy.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `["db"]` |
+| Environment | `SCRIM_AUDIT_SINKS` |
+| Flag | none |
+| Reload | restart required |
+
 ### catalog
 
 #### `catalog.environment`
@@ -697,7 +1125,7 @@ PEM bundle of extra root certificates the data plane trusts for upstream TLS, in
 
 #### `deployment.replicas`
 
-How many control plane replicas share this configuration and state. More than 1 needs a shared state backend (state.backend postgres) and a shared events backend (events.backend postgres); start-up fails otherwise.
+How many control plane replicas share this configuration and state. More than 1 needs a shared state backend (state.backend postgres) and a shared events backend (events.backend postgres, valkey or nats); start-up fails otherwise.
 
 | | |
 |---|---|
@@ -725,7 +1153,7 @@ Loopback address of the page where a human enters a value for secret_ask_human. 
 
 #### `events.backend`
 
-How replicas learn about state changes made elsewhere (approval decisions, grant and session changes, break-glass, configuration reloads). local reads the outbox every events.poll-interval and serves one process; postgres adds LISTEN/NOTIFY on the state database (needs state.backend postgres) and is required when deployment.replicas is more than 1.
+How replicas learn about state changes made elsewhere (approval decisions, grant and session changes, break-glass, configuration reloads). local reads the outbox every events.poll-interval and serves one process; postgres adds LISTEN/NOTIFY on the state database (needs state.backend postgres); valkey and nats publish a wake-up on a Valkey channel (valkey.*) or a NATS subject (nats.*). Every backend delivers from the outbox, so a lost wake-up costs latency, never an event. One of postgres, valkey or nats is required when deployment.replicas is more than 1.
 
 | | |
 |---|---|
@@ -734,17 +1162,41 @@ How replicas learn about state changes made elsewhere (approval decisions, grant
 | Environment | `SCRIM_EVENTS_BACKEND` |
 | Flag | `--events-backend` |
 | Reload | restart required |
-| Values | `local`, `postgres` |
+| Values | `local`, `postgres`, `valkey`, `nats` |
+
+#### `events.nats.subject`
+
+NATS subject the nats events backend publishes and subscribes to. Replicas of one deployment share it; two deployments on one NATS account need different subjects.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `scrim.events` |
+| Environment | `SCRIM_EVENTS_NATS_SUBJECT` |
+| Flag | none |
+| Reload | restart required |
 
 #### `events.poll-interval`
 
-How often the outbox is read when nothing announces new events: always with events.backend local, and while the postgres listener is disconnected. It bounds how long a change made on another replica takes to arrive then.
+How often the outbox is read when nothing announces new events: always with events.backend local, and while the postgres listener or the valkey or nats subscription is disconnected. It bounds how long a change made on another replica takes to arrive then.
 
 | | |
 |---|---|
 | Type | duration (`90s`, `5m`, `1h30m`) |
 | Default | `1s` |
 | Environment | `SCRIM_EVENTS_POLL_INTERVAL` |
+| Flag | none |
+| Reload | restart required |
+
+#### `events.valkey.channel`
+
+Valkey channel the valkey events backend publishes and subscribes to. Replicas of one deployment share it; two deployments on one Valkey need different channels.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `scrim:events` |
+| Environment | `SCRIM_EVENTS_VALKEY_CHANNEL` |
 | Flag | none |
 | Reload | restart required |
 
@@ -998,6 +1450,92 @@ Path of the Prometheus endpoint on metrics.listen.
 | Type | string |
 | Default | `/metrics` |
 | Environment | `SCRIM_METRICS_PATH` |
+| Flag | none |
+| Reload | restart required |
+
+### nats
+
+#### `nats.credentials-file`
+
+Path to a NATS credentials file (JWT and NKey seed), for decentralised authentication; empty for none.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_NATS_CREDENTIALS_FILE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `nats.password`
+
+Reference to the password of nats.username.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; literals rejected) |
+| Default | empty |
+| Environment | `SCRIM_NATS_PASSWORD` |
+| Flag | none |
+| Reload | restart required |
+
+#### `nats.servers`
+
+NATS server URLs (nats://host:4222, tls://host:4222) used by events.backend nats.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_NATS_SERVERS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `nats.timeout`
+
+Dial timeout, and the bound on the round trip that confirms a subscription after each reconnect. The client also pings the server at this interval and treats two missed answers as a lost connection.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `5s` |
+| Environment | `SCRIM_NATS_TIMEOUT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `nats.tls-ca-file`
+
+PEM file of the certificate authorities that sign the NATS server certificate; empty uses the system roots.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_NATS_TLS_CA_FILE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `nats.token`
+
+Reference to a NATS authentication token; empty for none.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; literals rejected) |
+| Default | empty |
+| Environment | `SCRIM_NATS_TOKEN` |
+| Flag | none |
+| Reload | restart required |
+
+#### `nats.username`
+
+NATS user for user and password authentication; empty for none.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_NATS_USERNAME` |
 | Flag | none |
 | Reload | restart required |
 
@@ -1266,6 +1804,18 @@ TCP address of the LLM proxy base URL (agents use http://<address>/anthropic and
 | Flag | `--proxy-listen` |
 | Reload | restart required |
 
+#### `proxy.sni-listen`
+
+TCP address of the SNI listener for DNS override mode: provider names resolve to its address (scrim install --dns writes /etc/hosts entries and sets 127.0.83.1:443), it serves certificates for them from the scrim CA and routes by TLS server name. Connections made by address bypass it. Empty disables it.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_PROXY_SNI_LISTEN` |
+| Flag | `--proxy-sni-listen` |
+| Reload | restart required |
+
 #### `proxy.socket`
 
 Unix socket path for the LLM proxy base URL, for agents that can connect to one. Empty disables it.
@@ -1277,6 +1827,31 @@ Unix socket path for the LLM proxy base URL, for agents that can connect to one.
 | Environment | `SCRIM_PROXY_SOCKET` |
 | Flag | `--proxy-socket` |
 | Reload | restart required |
+
+#### `proxy.transparent-listen`
+
+TCP addresses of the transparent listener (Linux): connections redirected to it by nftables are routed by TLS server name or Host header, provider hosts to the LLM proxy, bound tool hosts to the tool proxy. scrim install --transparent sets 127.0.0.1:9792 and [::1]:9792. Empty disables it.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_PROXY_TRANSPARENT_LISTEN` |
+| Flag | `--proxy-transparent-listen` |
+| Reload | restart required |
+
+#### `proxy.transparent-unrouted`
+
+What the transparent and SNI listeners do with a host that is neither a provider host nor bound to a credential or capture rule: pass relays the connection untouched to that host name (never to the address the client dialled), block closes it. TLS without a server name is always closed.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `pass` |
+| Environment | `SCRIM_PROXY_TRANSPARENT_UNROUTED` |
+| Flag | none |
+| Reload | restart required |
+| Values | `pass`, `block` |
 
 #### `proxy.upstream.anthropic`
 
@@ -1325,6 +1900,141 @@ Base URL OpenAI Chat Completions and Responses requests are forwarded to after r
 | Environment | `SCRIM_PROXY_UPSTREAM_OPENAI` |
 | Flag | none |
 | Reload | hot |
+
+### ratelimit
+
+#### `ratelimit.agent-api.burst`
+
+How many agent API calls (local API and MCP tools) one agent may make at once before ratelimit.agent-api.rate applies.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `120` |
+| Environment | `SCRIM_RATELIMIT_AGENT_API_BURST` |
+| Flag | none |
+| Reload | hot |
+
+#### `ratelimit.agent-api.interval`
+
+The interval ratelimit.agent-api.rate counts over.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `1m0s` |
+| Environment | `SCRIM_RATELIMIT_AGENT_API_INTERVAL` |
+| Flag | none |
+| Reload | hot |
+
+#### `ratelimit.agent-api.rate`
+
+How many agent API calls (local API and MCP tools) one agent may make per ratelimit.agent-api.interval, after its burst; 0 turns the limit off.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `600` |
+| Environment | `SCRIM_RATELIMIT_AGENT_API_RATE` |
+| Flag | none |
+| Reload | hot |
+
+#### `ratelimit.approvals.burst`
+
+How many approval requests (tool calls and proxied requests held for a human) one agent may make at once before ratelimit.approvals.rate applies.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `10` |
+| Environment | `SCRIM_RATELIMIT_APPROVALS_BURST` |
+| Flag | none |
+| Reload | hot |
+
+#### `ratelimit.approvals.interval`
+
+The interval ratelimit.approvals.rate counts over.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `1h0m0s` |
+| Environment | `SCRIM_RATELIMIT_APPROVALS_INTERVAL` |
+| Flag | none |
+| Reload | hot |
+
+#### `ratelimit.approvals.rate`
+
+How many approval requests (tool calls and proxied requests held for a human) one agent may make per ratelimit.approvals.interval, after its burst; 0 turns the limit off.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `60` |
+| Environment | `SCRIM_RATELIMIT_APPROVALS_RATE` |
+| Flag | none |
+| Reload | hot |
+
+#### `ratelimit.asks.burst`
+
+How many secret_ask_human asks one agent may make at once before ratelimit.asks.rate applies.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `5` |
+| Environment | `SCRIM_RATELIMIT_ASKS_BURST` |
+| Flag | none |
+| Reload | hot |
+
+#### `ratelimit.asks.interval`
+
+The interval ratelimit.asks.rate counts over.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `1h0m0s` |
+| Environment | `SCRIM_RATELIMIT_ASKS_INTERVAL` |
+| Flag | none |
+| Reload | hot |
+
+#### `ratelimit.asks.rate`
+
+How many secret_ask_human asks one agent may make per ratelimit.asks.interval, after its burst; 0 turns the limit off.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `30` |
+| Environment | `SCRIM_RATELIMIT_ASKS_RATE` |
+| Flag | none |
+| Reload | hot |
+
+#### `ratelimit.backend`
+
+Where per-agent rate limits are counted. local counts in each replica's memory, so with several replicas an agent can get up to that many times each limit (approximate); valkey counts in Valkey (valkey.*), one exact limit shared by every replica. When the backend cannot answer, the request is refused.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `local` |
+| Environment | `SCRIM_RATELIMIT_BACKEND` |
+| Flag | `--ratelimit-backend` |
+| Reload | restart required |
+| Values | `local`, `valkey` |
+
+#### `ratelimit.valkey.prefix`
+
+Prefix of the Valkey keys ratelimit.backend valkey keeps its counters in. Replicas of one deployment share it; two deployments on one Valkey need different prefixes.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `scrim:rl:` |
+| Environment | `SCRIM_RATELIMIT_VALKEY_PREFIX` |
+| Flag | none |
+| Reload | restart required |
 
 ### redaction
 
@@ -1432,6 +2142,31 @@ Start the agent anyway when scrim cannot start, its data plane is not ready or n
 | Flag | `--run-allow-unredacted-start` |
 | Reload | hot |
 | Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `run.fs-view`
+
+Session filesystem view for credential files at fixed home paths: auto (a user and mount namespace where the host allows it, the home mirror elsewhere), namespace (refuse to start the agent without one), home (HOME points at a mirror of the home directory without the real credential files) or off. See docs/run.md.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `auto` |
+| Environment | `SCRIM_RUN_FS_VIEW` |
+| Flag | `--run-fs-view` |
+| Reload | hot |
+| Values | `auto`, `namespace`, `home`, `off` |
+
+#### `run.fs-view-hide`
+
+Home-relative paths or glob patterns hidden by the session filesystem view in addition to the fixed paths of the applied tool profiles; a leading ! takes matches out again.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[".ssh/id_*","!.ssh/id_*.pub"]` |
+| Environment | `SCRIM_RUN_FS_VIEW_HIDE` |
+| Flag | none |
+| Reload | hot |
 
 #### `run.mcp`
 
@@ -1743,6 +2478,92 @@ Fraction of new root traces sampled, 0 to 1. A sampled incoming parent is always
 | Type | float |
 | Default | `1` |
 | Environment | `SCRIM_TRACING_SAMPLE_RATIO` |
+| Flag | none |
+| Reload | restart required |
+
+### valkey
+
+#### `valkey.addresses`
+
+Valkey (or Redis-compatible) servers as host:port, used by events.backend valkey and ratelimit.backend valkey. Several addresses of one cluster are seeds; the client discovers the rest.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_VALKEY_ADDRESSES` |
+| Flag | none |
+| Reload | restart required |
+
+#### `valkey.db`
+
+Valkey logical database (standalone servers only).
+
+| | |
+|---|---|
+| Type | int |
+| Default | `0` |
+| Environment | `SCRIM_VALKEY_DB` |
+| Flag | none |
+| Reload | restart required |
+
+#### `valkey.password`
+
+Reference to the Valkey password (env:, file:, cred: or a store reference); empty for none.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; literals rejected) |
+| Default | empty |
+| Environment | `SCRIM_VALKEY_PASSWORD` |
+| Flag | none |
+| Reload | restart required |
+
+#### `valkey.timeout`
+
+Dial timeout and the bound on one Valkey round trip; a connection that does not answer a ping within it is considered dead and replaced.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `5s` |
+| Environment | `SCRIM_VALKEY_TIMEOUT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `valkey.tls`
+
+Connect to Valkey over TLS, verifying the server against the system roots or valkey.tls-ca-file.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_VALKEY_TLS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `valkey.tls-ca-file`
+
+PEM file of the certificate authorities that sign the Valkey server certificate; empty uses the system roots.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_VALKEY_TLS_CA_FILE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `valkey.username`
+
+Valkey ACL user; empty uses the default user.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_VALKEY_USERNAME` |
 | Flag | none |
 | Reload | restart required |
 

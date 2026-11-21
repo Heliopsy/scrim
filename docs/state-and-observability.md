@@ -51,7 +51,8 @@ through the admin API instead.
 
 ## Replicas and events
 
-Several control plane replicas can share one PostgreSQL database. Each replica follows the event
+Several control plane replicas can share one PostgreSQL database; Valkey or NATS can carry the
+wake-ups between them. Each replica follows the event
 outbox (rows written in the same transaction as the change they announce) by increasing ID, from
 the newest event when it starts, and acts on what other replicas did:
 
@@ -71,6 +72,17 @@ asks the control plane again, so it adds nothing to these bounds.
 | --- | --- | --- |
 | `local` (default) | reads the outbox every `events.poll-interval` (1 s), and at once after a commit made by this process | one |
 | `postgres` | every outbox write sends a `NOTIFY` on the channel `scrim_events`, delivered on commit to a dedicated `LISTEN` connection (`application_name` `scrim-events`, outside the pool) on every replica | any; needs `state.backend: postgres` |
+| `valkey` | after each of its commits that emitted an event, a replica publishes an empty hint on the Valkey channel `events.valkey.channel` (`scrim:events`); every replica holds a subscription to it on a dedicated connection | any; state still needs `postgres` |
+| `nats` | the same over the NATS subject `events.nats.subject` (`scrim.events`), core pub/sub | any; state still needs `postgres` |
+
+With `valkey` and `nats` the database does no `LISTEN`/`NOTIFY` work, which moves the wake-up
+traffic of many replicas off PostgreSQL. A hint published while the replica is cut off from Valkey
+or NATS is sent once the connection is back (NATS buffers it in the client, the Valkey publisher
+retries with backoff). A replica that dies between its commit and the publish leaves a hint unsent:
+the others then read the event at their next safety read, within a minute. The connection settings
+are `valkey.*` (addresses, user, password reference, database, TLS) and `nats.*` (servers, token,
+user and password, credentials file, TLS); [configuration](configuration.md#settings-reference)
+lists them.
 
 A notification carries nothing; the outbox is the record. A replica reads the outbox from the last
 event it delivered when it starts, after every listener (re)connection and on every notification,
@@ -86,9 +98,20 @@ Bounds on how long a change made on one replica takes to act on another:
 | Situation | Bound |
 | --- | --- |
 | `postgres`, listener connected | the commit plus one round trip; tens of milliseconds on a local network |
-| `postgres`, listener down | `events.poll-interval` while it reconnects (backoff 250 ms doubling to 30 s), then everything missed is read on reconnect |
+| `valkey` or `nats`, subscribed | the commit, one publish and one delivery; under 10 ms in the contract suite on one host |
+| `postgres`, `valkey` or `nats`, listener down | `events.poll-interval` while it reconnects (backoff 250 ms doubling to 30 s), then everything missed is read on reconnect |
+| `valkey` or `nats`, committing replica died before publishing | one minute, the safety read of every connected replica |
 | `local`, one replica | at once for changes the process made itself, otherwise `events.poll-interval` |
 | no event read at all | `approvals.poll-interval` for a held request and `policy.deny-all-refresh` for break-glass, which every replica still polls |
+
+Every events backend passes one contract suite (`internal/events/eventstest`), run against the
+in-memory reference, PostgreSQL, Valkey and NATS in containers: cross-replica delivery with only the
+backend to carry it, concurrent writers on three replicas delivered once and in the same order
+everywhere, catch-up after a replica's listener is cut and held down, a commit made while the
+committing replica is cut off, and polling while down. `TestReplicasLoad` (`internal/daemon`) runs
+three daemons on one PostgreSQL database with Valkey and then NATS events, decides approvals held on
+every replica from another replica, revokes the resulting grants on a third, and checks that every
+replica delivered exactly the outbox.
 
 When the listener's connection drops, the replica logs a warning, sets `scrim_events_listener_up` to
 0, polls the outbox every `events.poll-interval` and reconnects with jittered backoff; it also
@@ -101,6 +124,30 @@ after each reload. Its subject is `sha256:` and 16 hex digits over every setting
 value, with secret-ref settings in their reference form: it identifies a configuration without
 revealing any of it. A replica that sees a peer announce another digest logs `replicas run different
 configurations` once per digest; during a rolling update that is expected.
+
+### Rate limits
+
+Per-agent rate limits protect the agent API, the approval flow and the people behind asks. Each
+class has a rate per interval and a burst; a rate of 0 turns it off:
+
+| Class | Counts | Default |
+| --- | --- | --- |
+| `ratelimit.agent-api.*` | every agent tool call (local API and MCP) | 600 per minute, burst 120 |
+| `ratelimit.approvals.*` | every approval created for an agent, by `secret_request` or a proxied request policy holds | 60 per hour, burst 10 |
+| `ratelimit.asks.*` | every `secret_ask_human` | 30 per hour, burst 5 |
+
+A refused call answers `rate_limited` (HTTP 429 on the local API) with the time to retry and is
+audited with outcome `refused`; a refused approval denies the request with the same reason.
+
+| `ratelimit.backend` | Where the counters live | Across replicas |
+| --- | --- | --- |
+| `local` (default) | process memory | approximate: with N replicas an agent can get up to N times each limit |
+| `valkey` | Valkey (`valkey.*`), keys under `ratelimit.valkey.prefix` | exact: one Lua script reads Valkey's clock, decides and updates atomically |
+
+Both implement the generic cell rate algorithm: one timestamp per key, which expires once the limit
+has fully recovered. Keys are a hash of the class and the agent, so Valkey never sees an agent name.
+When the backend cannot answer, the request is refused (`scrim_ratelimit_decisions_total{result="error"}`
+counts it), never let through.
 
 ### Migrations
 
@@ -136,6 +183,42 @@ scrim audit log --limit 50 --before 1234    # next older page
 
 Results are newest first. `--since` and `--until` take an RFC 3339 time or a duration ago. The admin
 API mounts the same query as `auditlog.Handler` with the filters as query parameters.
+
+### External audit sinks
+
+`audit.sinks` adds copies of the audit log to `otlp`, `loki` and `kafka`; `db`, the state backend's
+audit log, is always written. Each external sink receives every entry as the JSON record
+`scrim audit log -o json` prints, after every string has passed the value scrubber:
+
+| Sink | Settings | What it sends |
+| --- | --- | --- |
+| `otlp` | `audit.otlp.endpoint` (OTLP/HTTP, `/v1/logs` added), `audit.otlp.token` | one log record per entry: body the JSON record, event name `scrim.audit`, attributes `scrim.audit.action`, `.id`, `.outcome`, `.decision`, `scrim.agent.id`, resource `service.name=scrim` |
+| `loki` | `audit.loki.url`, `.tenant`, `.username`, `.password`, `.labels` | one stream `{service_name="scrim", source="audit"}` plus the static labels, one line per entry |
+| `kafka` | `audit.kafka.brokers`, `.topic` (`scrim-audit`), `.tls`, `.sasl-mechanism`, `.username`, `.password` | one record per entry keyed by agent (one agent's entries stay in order), acknowledged by every in-sync replica, idempotent |
+
+Every write transaction that appends audit entries hands them to the sinks before it commits. Each
+sink has its own bounded queue (`audit.<sink>.queue-size`, 10000) and one writer that sends batches
+(`audit.<sink>.batch-size`, 500) and retries a failed one with backoff (100 ms doubling to 10 s)
+until the sink takes it, so a slow sink never slows another. `audit.<sink>.policy` decides what
+happens when the queue is full:
+
+| Policy | Queue full | Counted in |
+| --- | --- | --- |
+| `drop` (default) | the operation goes through; the entries that do not fit are dropped and stay in the database audit log only | `scrim_audit_sink_dropped_total{reason="queue_full"}` |
+| `block` | the transaction waits for room up to `audit.<sink>.timeout` (5 s), then is refused and rolls back: the change is not made | `scrim_audit_sink_refused_total` |
+
+Nothing leaves a queue without a count: a batch the sink rejects as invalid (Loki 400, 413 or 422, a
+Kafka record too large) is dropped with `reason="rejected"`, and entries still queued when scrim
+stops, after up to 10 s of draining, with `reason="shutdown"`. Each loss is also logged, at most
+every 10 s per sink. Delivery is at least once: a write that timed out may still land, and the retry
+sends it again. `scrim status` lists each sink with its policy, queue and drops, and marks it degraded
+while its writes fail, while its queue is over 80% full and once it has dropped or refused anything.
+
+The sinks are tested against Loki, an OpenTelemetry collector and Redpanda in containers, including
+a frozen sink (`podman pause`): under `drop` no write waits and delivered plus dropped equals what
+was written; under `block` the write past a full queue is refused after the timeout; once the sink
+answers again it receives every queued entry. The leak test searches the exact bytes each sink sends
+for planted values in every encoding.
 
 ## Logs
 

@@ -239,7 +239,7 @@ pub struct ProxyStatus {
 /// The HTTPS tool proxy. Cheap to clone.
 #[derive(Clone)]
 pub struct ToolProxy {
-    shared: Arc<Shared>,
+    pub(crate) shared: Arc<Shared>,
 }
 
 impl std::fmt::Debug for ToolProxy {
@@ -420,7 +420,7 @@ impl ToolProxy {
 
     /// Terminates TLS inside a CONNECT tunnel with a leaf for the CONNECT host and serves HTTP/1.1
     /// or HTTP/2 over it. Every request in the tunnel carries the CONNECT's [`ClientInfo`].
-    async fn tunnel<IO>(&self, dest: Destination, io: IO, client: ClientInfo)
+    pub(crate) async fn tunnel<IO>(&self, dest: Destination, io: IO, client: ClientInfo)
     where
         IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
@@ -484,7 +484,7 @@ impl ToolProxy {
         }
     }
 
-    fn interception_refused(
+    pub(crate) fn interception_refused(
         &self,
         dest: &Destination,
         reason: String,
@@ -503,7 +503,7 @@ impl ToolProxy {
         });
     }
 
-    async fn route<B>(
+    pub(crate) async fn route<B>(
         &self,
         dest: Destination,
         req: Request<B>,

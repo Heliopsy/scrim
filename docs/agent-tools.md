@@ -25,14 +25,14 @@ redaction core is wired in, its placeholder. Values move around the model instea
 
 The tools need the control plane's local API. Start it with:
 
-```sh
+```sh test daemon
 scrim api serve
 ```
 
 It listens on `$XDG_RUNTIME_DIR/scrim/api.sock` (setting `api.socket`) and serves the human entry
 page on a free loopback port (setting `entry.listen`). Check what identity a process gets:
 
-```sh
+```sh test proxied
 scrim api whoami
 ```
 
@@ -43,6 +43,8 @@ scrim api whoami
 machine: without a token the caller is identified by its Unix user alone.
 
 ### Claude Code
+
+<!-- docs-test: skip: changes Claude Code's own configuration -->
 
 ```sh
 claude mcp add scrim -- scrim mcp
@@ -97,7 +99,7 @@ and non-secret metadata. Filters: `store`, `prefix`, `binding`.
 {"name": "secrets_list", "arguments": {"prefix": "bao://kv/agents/"}}
 ```
 
-```sh
+```sh test session
 scrim secret ls --prefix bao://kv/agents/
 ```
 
@@ -119,12 +121,12 @@ A duration above the maximum is capped and `capped` is true.
   "reason": "deploy the web project"}}
 ```
 
-```sh
+```sh test session exit=4
 scrim secret request bao://kv/agents/hetzner --duration 30m --reason "deploy the web project"
 ```
 
 ```json
-{"status": "pending", "ref": "bao://kv/agents/hetzner", "approval_id": "apr_3f2a...", "duration": "30m0s"}
+{"status": "pending", "ref": "bao://kv/agents/hetzner", "approval_id": "3f2a9c0d...", "duration": "30m0s"}
 ```
 
 A grant lets scrim use the secret for the agent (for example inject it toward its bound host). It
@@ -142,7 +144,7 @@ formats; `charset` (`alnum`, `alnum-symbols`, `alpha`, `lower`, `digits`) to `ch
 {"name": "secret_gen", "arguments": {"ref": "bao://kv/agents/app-db#password", "length": 32}}
 ```
 
-```sh
+```sh test session
 scrim secret gen bao://kv/agents/app-db#password --length 32
 ```
 
@@ -167,6 +169,8 @@ discarded, and the output is never returned: a failure reports the exit status o
   "command": ["gh", "api", "-X", "POST", "/repos/acme/web/actions/runners/registration-token"],
   "json_path": ".token"}}
 ```
+
+<!-- docs-test: skip: calls the GitHub API with gh, and some-command stands for any command printing JSON -->
 
 ```sh
 scrim secret capture bao://kv/agents/ci-token --json-path .token -- \
@@ -193,6 +197,8 @@ answer. The agent gets `stored`, `declined`, `timed_out`, or `pending` with an `
 {"name": "secret_ask_human", "arguments": {"ref": "bao://kv/agents/hcloud",
   "prompt": "Hetzner Cloud API token for project web"}}
 ```
+
+<!-- docs-test: skip: waits for a person to answer on the entry page -->
 
 ```sh
 scrim secret ask bao://kv/agents/hcloud --prompt "Hetzner Cloud API token for project web"
@@ -231,15 +237,17 @@ Checks an approval from `secret_request` (`pending`, `approved`, `denied`, `expi
 from `secret_ask_human` (`pending`, `stored`, `declined`, `timed_out`).
 
 ```json
-{"name": "approval_status", "arguments": {"id": "apr_3f2a..."}}
+{"name": "approval_status", "arguments": {"id": "3f2a9c0d..."}}
 ```
 
+<!-- docs-test: skip: takes the id that secret request or secret ask returned -->
+
 ```sh
-scrim secret status apr_3f2a...
+scrim secret status 3f2a9c0d...
 ```
 
 ```json
-{"id": "apr_3f2a...", "kind": "approval", "status": "approved", "ref": "bao://kv/agents/hetzner",
+{"id": "3f2a9c0d...", "kind": "approval", "status": "approved", "ref": "bao://kv/agents/hetzner",
   "grant_id": "grt_77b0..."}
 ```
 
@@ -253,7 +261,7 @@ Lists the caller's active grants with reference, scope, expiry and remaining use
 {"name": "grants_list", "arguments": {}}
 ```
 
-```sh
+```sh test session
 scrim secret grants
 ```
 
@@ -265,6 +273,8 @@ scrim secret grants
 
 The CLI-only way to store a value that is already in a pipe. It has no MCP tool, because an MCP
 tool cannot take a value.
+
+<!-- docs-test: skip: api.example.com stands for the service that issues the token -->
 
 ```sh
 curl -s -X POST https://api.example.com/tokens | jq -r .token | scrim secret put bao://kv/agents/new-token --stdin

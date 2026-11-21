@@ -103,6 +103,13 @@
       "dependencyDashboardApproval": true
     }
   ],
+  "customDatasources": {
+    "rust-nightly": {
+      "description": "The date of the current Rust nightly, one line, YYYY-MM-DD. The fuzz workflow pins its nightly by date.",
+      "defaultRegistryUrlTemplate": "https://static.rust-lang.org/dist/channel-rust-nightly-date.txt",
+      "format": "plain"
+    }
+  },
   "customManagers": [
     {
       "description": "A pin annotated on the line above: '# renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [extractVersion=<re>] [registryUrl=<url>]' (// in Go). KEY=value, KEY: value, Go constants and ${VAR:-default} forms.",
@@ -138,6 +145,7 @@
         "/^test/k8s/identity/run\\.sh$/",
         "/^test/k8s/golden/out/.+\\.yaml$/",
         "/^internal/testing/pgtest/pgtest\\.go$/",
+        "/^internal/testing/podtest/services\\.go$/",
         "/^internal/stores/openbao/openbao_integration_test\\.go$/",
         "/^internal/stores/vaultwarden/vwtest/vwtest\\.go$/",
         "/^internal/stores/infisical/testdata/pod\\.yaml$/",

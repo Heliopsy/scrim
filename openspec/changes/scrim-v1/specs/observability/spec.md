@@ -128,6 +128,31 @@ builds and pushes by result, configuration reloads by result, state health and C
 - **WHEN** a configuration reload is rejected
 - **THEN** `scrim_config_reloads_total{result="rejected"}` increases by one
 
+### Requirement: Audit sink metrics
+
+The control plane SHALL expose, per external audit sink, entries delivered
+(`scrim_audit_sink_delivered_total`), dropped by reason (`scrim_audit_sink_dropped_total`), refused
+under the block policy (`scrim_audit_sink_refused_total`), failed writes, write duration, queue length
+and capacity, and whether the last write succeeded (`scrim_audit_sink_up`). The shipped alerts SHALL
+fire on any dropped or refused entry, on a queue near capacity and on a sink that keeps failing.
+
+#### Scenario: Drop alerts
+
+- **WHEN** an audit sink under the drop policy drops an entry
+- **THEN** `scrim_audit_sink_dropped_total` for that sink increases and the `ScrimAuditSinkDropping`
+  alert fires
+
+### Requirement: Rate-limit metrics
+
+The control plane SHALL count rate-limit decisions by backend, class and result (`allowed`,
+`limited`, `error`) in `scrim_ratelimit_decisions_total`, and the shipped alerts SHALL fire when the
+rate-limit backend fails.
+
+#### Scenario: Limiter errors alert
+
+- **WHEN** the valkey rate-limit backend keeps failing
+- **THEN** `scrim_ratelimit_decisions_total{result="error"}` increases and `ScrimRateLimitBackendErrors` fires
+
 ### Requirement: Monitoring assets
 
 scrim SHALL ship Prometheus alerting rules (as a plain rule file and a `PrometheusRule`), unit tests

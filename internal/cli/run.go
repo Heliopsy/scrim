@@ -17,6 +17,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/catalog"
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/fsview"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/profiles"
 	agentrun "github.com/heliopsy/scrim/internal/run"
@@ -64,6 +65,7 @@ func (Commands) Run(e *Env) *cobra.Command {
 				Reserved:        agentrun.ReservedBy(e.Registry),
 				ScanProject:     agentrun.ScanProject.Get(cfg),
 				ScanInterval:    agentrun.ScanInterval.Get(cfg),
+				FSView:          agentrun.FSViewOptions{Mode: fsview.Setting.Get(cfg), Hide: fsview.Hide.Get(cfg)},
 			}
 			if log, err := obs.LoggerFromConfig(e.Stderr, cfg, nil); err == nil {
 				o.Log = obs.WithComponent(log, "run")
@@ -188,10 +190,39 @@ func writePlan(w io.Writer, p *agentrun.Plan, format string) error {
 	if files := fileNames(p); len(files) > 0 {
 		_, _ = fmt.Fprintf(w, "\nsession files (in <session-dir>, removed when the agent exits)\n  %s\n", strings.Join(files, "\n  "))
 	}
+	writeView(w, p.FSView)
 	if len(p.Warnings) > 0 {
 		_, _ = fmt.Fprintf(w, "\nwarnings\n  %s\n", strings.Join(p.Warnings, "\n  "))
 	}
 	return nil
+}
+
+// writeView prints the session filesystem view.
+func writeView(w io.Writer, v *fsview.Plan) {
+	if v == nil {
+		return
+	}
+	head := v.Mode
+	switch {
+	case v.Fallback != "":
+		head += " (fallback: " + v.Fallback + ")"
+	case v.Mode == fsview.ModeNamespace:
+		head += " (user and mount namespace)"
+	}
+	_, _ = fmt.Fprintf(w, "\nfilesystem view: %s\n", head)
+	if v.Mode != fsview.ModeOff && len(v.Entries) == 0 {
+		_, _ = fmt.Fprintln(w, "  nothing to cover")
+	}
+	for _, e := range v.Entries {
+		what := "hidden"
+		if !e.Hidden() {
+			what = "shows " + e.Source
+		}
+		_, _ = fmt.Fprintf(w, "  %s  %s  (%s)\n", e.Target, what, e.Origin)
+	}
+	for _, g := range v.Gaps {
+		_, _ = fmt.Fprintf(w, "  not covered: %s\n", g)
+	}
 }
 
 func fileNames(p *agentrun.Plan) []string {

@@ -73,7 +73,8 @@
 // credential paths the tool reads when no override variable is set
 // (~/.aws/credentials, ~/.kube/config, ~/.docker/config.json, ...), with the
 // absolute path of the generated replacement or "" to hide the path. The
-// session filesystem view (10a.7, 10a.8) mounts or mirrors these.
+// session filesystem view (package fsview, 10a.7, 10a.8) mounts them over
+// the real paths or mirrors the home without them.
 //
 // The git, docker, aws and kubectl profiles point their tools at scrim's
 // credential helpers (internal/credhelper) when their `helper` param is

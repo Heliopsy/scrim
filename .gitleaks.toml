@@ -127,3 +127,13 @@ paths = ['''^deploy/examples/''']
 matchCondition = "AND"
 regexTarget = "line"
 regexes = ['''UkVQTEFDRS1NRQ==''', '''^\s+key: placeholder-k1$''']
+
+[[allowlists]]
+description = """
+Default container images of the test services: a registry/repository:tag
+reference names an image version, not a credential.
+"""
+paths = ['''^internal/testing/podtest/services\.go$''']
+matchCondition = "AND"
+regexTarget = "line"
+regexes = ['''^\s+\w+Image\s+= "docker\.io/[a-z0-9./-]+:[A-Za-z0-9._-]+"$''']
