@@ -18,6 +18,10 @@
         },
         {
           "type": "generic",
+          "path": "docs/helm-values.md"
+        },
+        {
+          "type": "generic",
           "path": "deploy/examples/ansible/roles/scrim/defaults/main.yml"
         },
         {
