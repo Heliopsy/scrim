@@ -354,15 +354,6 @@ jobs:
         env:
           SCRIM_E2E_REQUIRE_TOOLS: "1"
 
-  # GitHub-hosted for the same reason as e2e-tools. Real Claude Code and
-  # Codex CLIs, installed at pinned versions into the runner's temporary
-  # directory, complete a task under `scrim run` against a real `scrim proxy`
-  # and the fake model (tasks.md 9.3, 11.2): seeded secrets read with their
-  # shell tools, a bound tool API called, scrim's MCP tool called, and zero
-  # seeded values in any provider request or capture.
-  e2e-agents:
-    name: Agent CLIs end-to-end
-
   # GitHub-hosted for the same reason as e2e-tools. Real gh, git, kubectl,
   # helm, skopeo, npm, terraform, tofu, gcloud, az, pip, twine, cargo, hcloud,
   # doctl and aws under `scrim run` with their tool profiles, against fakes of
@@ -374,12 +365,55 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 26
+      - run: rustup toolchain install && cargo --version
+        working-directory: dataplane
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          workspaces: dataplane
+          save-if: false
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Install the CLIs
+        run: |
+          set -euo pipefail
+          scripts/cli-tools/install.sh "$RUNNER_TEMP/cli-tools" >> "$GITHUB_PATH"
+          command -v skopeo >/dev/null || sudo apt-get install -y --no-install-recommends skopeo
+      # SCRIM_E2E_REQUIRE_TOOLS turns a missing CLI into a failure.
+      - run: test/e2e/run.sh profiles
+        env:
+          SCRIM_E2E_REQUIRE_TOOLS: "1"
+      - name: Profile checks with the real CLIs
+        run: go test -count=1 -run TestCheckBuiltins ./internal/profiles/
+        env:
+          SCRIM_E2E_REQUIRE_TOOLS: "1"
+
+  # GitHub-hosted for the same reason as e2e-tools. Real Claude Code and
+  # Codex CLIs, installed at pinned versions into the runner's temporary
+  # directory, complete a task under `scrim run` against a real `scrim proxy`
+  # and the fake model (tasks.md 9.3, 11.2): seeded secrets read with their
+  # shell tools, a bound tool API called, scrim's MCP tool called, and zero
+  # seeded values in any provider request or capture.
+  e2e-agents:
+    name: Agent CLIs end-to-end
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
     env:
       # renovate: datasource=npm depName=@anthropic-ai/claude-code
       CLAUDE_CODE_VERSION: 2.1.330
       # renovate: datasource=npm depName=@openai/codex
       CODEX_VERSION: 0.171.0
-
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -444,22 +478,6 @@ jobs:
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: test/e2e/run.sh docs
-
-      - name: Allow unprivileged user namespaces
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Install the CLIs
-        run: |
-          set -euo pipefail
-          scripts/cli-tools/install.sh "$RUNNER_TEMP/cli-tools" >> "$GITHUB_PATH"
-          command -v skopeo >/dev/null || sudo apt-get install -y --no-install-recommends skopeo
-      # SCRIM_E2E_REQUIRE_TOOLS turns a missing CLI into a failure.
-      - run: test/e2e/run.sh profiles
-        env:
-          SCRIM_E2E_REQUIRE_TOOLS: "1"
-      - name: Profile checks with the real CLIs
-        run: go test -count=1 -run TestCheckBuiltins ./internal/profiles/
-        env:
-          SCRIM_E2E_REQUIRE_TOOLS: "1"
 
   proto:
     name: Generated code up to date

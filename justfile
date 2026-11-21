@@ -184,9 +184,6 @@ e2e-session *args:
 docs-test *args:
     test/e2e/run.sh docs {{args}}
 
-# Every end-to-end run above.
-e2e: e2e-tools e2e-chain e2e-session docs-test
-
 # Real CLIs (gh, git, kubectl, helm, podman, npm, terraform, tofu, gcloud, az, pip, twine,
 # cargo, hcloud, doctl, aws) with their tool profiles against fakes of their APIs. A CLI that is
 # not installed is skipped; SCRIM_E2E_REQUIRE_TOOLS=1 fails instead.
@@ -203,7 +200,7 @@ e2e-managed-settings:
     test/e2e/agentmodes/managed-settings.sh
 
 # Every end-to-end run above.
-e2e: e2e-tools e2e-chain e2e-session e2e-profiles e2e-agentmodes e2e-managed-settings
+e2e: e2e-tools e2e-chain e2e-session docs-test e2e-profiles e2e-agentmodes e2e-managed-settings
 
 ntfy_image := "docker.io/binwiederhier/ntfy:v2.38.1"
 
