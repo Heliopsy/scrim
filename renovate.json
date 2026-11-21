@@ -97,12 +97,6 @@
       "versioning": "ubuntu"
     },
     {
-      "description": "Kyverno 1.20 (chart 3.10) no longer runs kyverno.io/v1 ClusterPolicies, which the chart's injection policy and the image verification example are. Approve the update from the dependency dashboard once the chart moved to policies.kyverno.io (.deps-fresh-ignore has the matching dated entry).",
-      "matchDepNames": ["kyverno"],
-      "matchUpdateTypes": ["minor", "major"],
-      "dependencyDashboardApproval": true
-    },
-    {
       "description": "A new cosign major changes signing and verification defaults that the release relies on, and only a release run exercises them. Approve it from the dependency dashboard after reading the release notes.",
       "matchDepNames": ["sigstore/cosign"],
       "matchUpdateTypes": ["major"],

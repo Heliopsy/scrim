@@ -58,7 +58,13 @@ kubectl --context "$CONTEXT" -n argocd apply -f deploy/examples/argocd/appprojec
 kubectl --context "$CONTEXT" -n argocd apply -f deploy/examples/argocd/root.yaml
 ```
 
-The chart's injection ClusterPolicy (`kyverno.enabled`) needs the CRDs from wave -3 as well.
+The chart's injection MutatingPolicies and its ValidatingPolicy (`kyverno.enabled`) need the
+`policies.kyverno.io` CRDs from wave -3 as well, so Kyverno 1.17 or later
+([kubernetes.md](../kubernetes.md#kyverno-versions)). Argo CD 3.6 and later know the health of
+these policies (Healthy once Kyverno has registered the webhook), so wave -1 starts only after
+the image policy admits pods. Older Argo CD reports them Healthy as soon as they exist; add a
+`resource.customizations.health.policies.kyverno.io_ImageValidatingPolicy` check on
+`status.conditionStatus.ready` to keep the wait.
 
 ## Helm Application
 
@@ -78,8 +84,8 @@ the Secrets `scrim-ca` and `scrim-keys` that wave -1 creates, with the CA's publ
 With `metrics.enabled`, also name a metrics token Secret in `secrets.existing.metrics`.
 
 The Application turns on the server-side diff (`argocd.argoproj.io/compare-options:
-ServerSideDiff=true`). Kyverno fills in defaults on the chart's injection ClusterPolicy, and the
-default client-side diff then shows the policy OutOfSync after every sync.
+ServerSideDiff=true`). Kyverno fills in defaults on the chart's injection policies, and the
+default client-side diff then shows them OutOfSync after every sync.
 
 ```yaml
 sources:

@@ -18,5 +18,3 @@
 # Example:
 #
 #   cargo rcgen 2027-01-31 waits for x509-parser 0.18 support, https://github.com/<owner>/<repo>/issues/<n>
-
-pin kyverno 2027-01-31 Kyverno 1.20 (chart 3.10) refuses kyverno.io/v1 ClusterPolicies; the chart's injection policy and deploy/examples/kyverno must move to policies.kyverno.io first

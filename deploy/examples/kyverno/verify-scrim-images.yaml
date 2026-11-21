@@ -1,43 +1,64 @@
-# Admission check for every pod in the cluster: an image from
-# ghcr.io/heliopsy/scrim or ghcr.io/heliopsy/scrim-dataplane must carry a
-# keyless cosign signature from this repository's release workflow, recorded
-# in Rekor. Kyverno also rewrites the tag to the verified digest, so the pod
-# runs exactly the bytes that were checked. Needs Kyverno 1.13 to 1.19.
+# Admission check for every pod in the cluster, and for the pod templates of
+# Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs and CronJobs: an
+# image from ghcr.io/heliopsy/scrim or ghcr.io/heliopsy/scrim-dataplane must
+# carry a keyless cosign signature from this repository's release workflow,
+# recorded in Rekor. Kyverno also rewrites the tag to the verified digest, so
+# the pod runs exactly the bytes that were checked. Other images are not
+# checked. Needs Kyverno 1.17 or later (policies.kyverno.io/v1).
 #
 # Flux and Argo CD apply it before scrim (Argo CD sync wave -1, a Flux
 # Kustomization that scrim dependsOn), so the first scrim pod is checked too.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
 metadata:
   name: verify-scrim-images
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 spec:
-  webhookTimeoutSeconds: 30
-  background: false
-  rules:
-    - name: scrim-release-signature
-      match:
-        any:
-          - resources:
-              kinds: [Pod]
-      verifyImages:
-        # Releases are signed with cosign 3, which stores the signature as a
-        # Sigstore bundle in an OCI 1.1 referrer, not as a .sig tag.
-        - type: SigstoreBundle
-          imageReferences:
-            - "ghcr.io/heliopsy/scrim:*"
-            - "ghcr.io/heliopsy/scrim@*"
-            - "ghcr.io/heliopsy/scrim-dataplane:*"
-            - "ghcr.io/heliopsy/scrim-dataplane@*"
-          failureAction: Enforce
-          mutateDigest: true
-          verifyDigest: true
-          required: true
-          attestors:
-            - entries:
-                - keyless:
-                    issuer: https://token.actions.githubusercontent.com
-                    subjectRegExp: '^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(heads/main|tags/v.+)$'
-                    rekor:
-                      url: https://rekor.sigstore.dev
+  failurePolicy: Fail
+  validationActions: [Deny]
+  webhookConfiguration:
+    timeoutSeconds: 30
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  matchImageReferences:
+    - glob: "ghcr.io/heliopsy/scrim:*"
+    - glob: "ghcr.io/heliopsy/scrim@*"
+    - glob: "ghcr.io/heliopsy/scrim-dataplane:*"
+    - glob: "ghcr.io/heliopsy/scrim-dataplane@*"
+  validationConfigurations:
+    mutateDigest: true
+    verifyDigest: true
+    required: true
+  # Releases are signed with cosign 3, which stores the signature as a
+  # Sigstore bundle in an OCI 1.1 referrer, not as a .sig tag; Kyverno finds
+  # the bundle on its own.
+  attestors:
+    - name: release
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: '^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(heads/main|tags/v.+)$'
+        ctlog:
+          url: https://rekor.sigstore.dev
+  variables:
+    # verifyImageSignatures counts an image no matchImageReferences entry
+    # matches as 0 verified signatures, so only scrim's images are checked.
+    - name: scrimImages
+      expression: >-
+        (images.containers + images.initContainers + images.ephemeralContainers).filter(i,
+          i.matches('^ghcr\\.io/heliopsy/scrim(-dataplane)?[:@]'))
+  validations:
+    - expression: >-
+        variables.scrimImages.all(i, verifyImageSignatures(i, [attestors.release]) > 0)
+      message: >-
+        ghcr.io/heliopsy/scrim and scrim-dataplane images must carry a keyless signature of
+        the scrim release workflow (github.com/Heliopsy/scrim/.github/workflows/release.yaml).

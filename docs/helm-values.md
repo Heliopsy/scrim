@@ -27,7 +27,8 @@ helm test scrim -n scrim
 
 Kubernetes: `>=1.29.0-0`
 
-Optional, depending on values: Kyverno 1.13 to 1.19 (`kyverno`), prometheus-operator CRDs
+Optional, depending on values: Kyverno 1.17 or later (`kyverno`, the `policies.kyverno.io/v1`
+policy types), prometheus-operator CRDs
 (`serviceMonitor`, `podMonitor`, `prometheusRule`), external-secrets (`secrets.externalSecrets`), a
 CNI that enforces NetworkPolicies (`networkPolicy`), PostgreSQL (`postgres`), Reflector or
 kubernetes-replicator (`global.replication`).
@@ -237,8 +238,8 @@ kubernetes-replicator (`global.replication`).
 | agents.noProxy | list | `[]` | Extra NO_PROXY entries for agents (hosts reached without scrim; they also need a NetworkPolicy egress rule). |
 | agents.extraEnv | list | `[]` | Extra environment variables for agent containers. |
 | agents.trustPath | string | `"/etc/scrim/trust"` | Mount path of the CA files in agent containers. |
-| kyverno | object | See the keys below. | Kyverno admission policy that configures labelled pods. |
-| kyverno.enabled | bool | `false` | Install the ClusterPolicy (needs Kyverno 1.13 to 1.19). |
+| kyverno | object | See the keys below. | Kyverno admission policies that configure labelled pods. |
+| kyverno.enabled | bool | `false` | Install the injection MutatingPolicies and the namespace ValidatingPolicy (policies.kyverno.io/v1, needs Kyverno 1.17 or later). |
 | kyverno.failurePolicy | string | `"Fail"` | Refuse labelled pods when Kyverno cannot process them. |
 | networkPolicy | object | See the keys below. | NetworkPolicies of central scrim and of agent pods. |
 | networkPolicy.enabled | bool | `false` | Create NetworkPolicies (needs a CNI that enforces them). |

@@ -15,7 +15,7 @@ memory requests and a memory limit, and every pod states
 automountServiceAccountToken (false unless the component needs its token).
 
 Ported from toc-helm-chart-template. scrim also checks the containers its
-Kyverno ClusterPolicy injects (the sidecar and the egress guard; the pod
+Kyverno MutatingPolicy injects (the sidecar and the egress guard; the pod
 around them is the user's), with one documented exception: the egress guard
 init container runs as root with NET_ADMIN to install its nftables table and
 exits before the agent starts (docs/kubernetes.md, "Why the sidecar needs the
@@ -24,6 +24,7 @@ sidecar-mode namespaces need "privileged" or an exemption for it.
 
 Usage: check-pods.py RENDERED.yaml...
 """
+import json
 import sys
 
 import yaml
@@ -56,15 +57,24 @@ EXCEPTIONS = {
 }
 
 
+def unmarshal(expression):
+    """The JSON of a policy variable written as json.unmarshal(r'''...''')."""
+    e = expression.strip()
+    prefix, suffix = "json.unmarshal(r'''", "''')"
+    if not (e.startswith(prefix) and e.endswith(suffix)):
+        return None
+    return json.loads(e[len(prefix):-len(suffix)])
+
+
 def injected(doc):
-    """Pod specs made of the containers a Kyverno policy patches into pods."""
-    for rule in (doc.get("spec") or {}).get("rules") or []:
-        patch = ((rule.get("mutate") or {}).get("patchStrategicMerge") or {}).get("spec") or {}
-        inits = [c for c in patch.get("initContainers") or [] if "name" in c]
-        conts = [c for c in patch.get("containers") or [] if "name" in c]
-        if inits or conts:
-            yield rule.get("name"), {"initContainers": inits, "containers": conts,
-                                     "automountServiceAccountToken": "user's pod"}
+    """Pod specs made of the containers a Kyverno MutatingPolicy adds to pods."""
+    variables = {v.get("name"): v.get("expression", "") for v in (doc.get("spec") or {}).get("variables") or []}
+    inits = unmarshal(variables["initContainers"]) if "initContainers" in variables else []
+    if inits is None:
+        raise SystemExit(f"MutatingPolicy/{doc['metadata']['name']}: initContainers is not json.unmarshal of a literal")
+    if inits:
+        yield "initContainers", {"initContainers": inits, "containers": [],
+                                 "automountServiceAccountToken": "user's pod"}
 
 
 def check(spec, injected_only=False):
@@ -148,11 +158,11 @@ def main():
     for path in sys.argv[1:]:
         with open(path) as fh:
             for doc in yaml.safe_load_all(fh):
-                if doc and doc.get("kind") == "ClusterPolicy":
-                    for rule, spec in injected(doc):
+                if doc and doc.get("kind") == "MutatingPolicy":
+                    for var, spec in injected(doc):
                         checked += 1
                         for e in check(spec, injected_only=True):
-                            print(f"{path}: ClusterPolicy/{doc['metadata']['name']} rule {rule}: {e}", file=sys.stderr)
+                            print(f"{path}: MutatingPolicy/{doc['metadata']['name']} variable {var}: {e}", file=sys.stderr)
                             failed += 1
                     continue
                 if not doc or doc.get("kind") not in POD_KINDS:

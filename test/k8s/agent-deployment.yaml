@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# A labelled Deployment of test/k8s/e2e.sh, created with a server-side dry run
+# only: the injection policies mutate its pods, never the Deployment itself.
+# @TOOLS@ is the tools image.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-deployment
+spec:
+  replicas: 0
+  selector:
+    matchLabels: {app: agent-deployment}
+  template:
+    metadata:
+      labels:
+        app: agent-deployment
+        scrim.dev/inject: central
+    spec:
+      containers:
+        - name: agent
+          image: @TOOLS@
+          imagePullPolicy: Never
+          command: [sleep, "86400"]

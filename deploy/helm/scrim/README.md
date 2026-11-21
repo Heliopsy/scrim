@@ -20,7 +20,12 @@ with descriptions is [docs/helm-values.schema.json](../../../docs/helm-values.sc
 
 Kubernetes 1.29 or later (sidecar mode uses native sidecar containers). NetworkPolicy needs a CNI
 that enforces it (Calico, Cilium, Antrea, kube-network-policies; not kindnet before 0.24 or plain
-flannel). The Kyverno policy needs Kyverno 1.13 to 1.19.
+flannel). The Kyverno policies (`kyverno.enabled`) are `policies.kyverno.io/v1` MutatingPolicies
+and a ValidatingPolicy and need Kyverno 1.17 or later; Kyverno 1.20 neither creates nor runs the
+`kyverno.io/v1` ClusterPolicy that chart 0.2.0 and earlier render. On an older Kyverno, upgrade
+Kyverno first or stay on chart 0.2.0. Upgrading from chart 0.2.0: upgrade the chart while Kyverno is
+still on 1.17 to 1.19 (Helm replaces the ClusterPolicy with the new policies), then Kyverno to 1.20,
+whose chart refuses to upgrade while a ClusterPolicy remains.
 
 ## What it creates
 
@@ -34,7 +39,7 @@ flannel). The Kyverno policy needs Kyverno 1.13 to 1.19.
 | ConfigMap `scrim-ca` | release namespace and every `agents.namespaces` entry | the CA certificate for agents: `scrim-ca.pem`, `ca-bundle.pem`, and the `scrim-exec` launcher with `identity.kubernetes.enabled` |
 | ConfigMap `<release>-scrim-agent-env` | every agent namespace, central | the agent environment, for `envFrom` without Kyverno |
 | ConfigMaps and Secrets `*-sidecar-*`, `*-agent-env-sidecar` | every agent namespace, `sidecar.enabled` | the in-pod scrim's configuration, CA and keys |
-| ClusterPolicy | `kyverno.enabled` | injects labelled pods, refuses them outside the prepared namespaces |
+| MutatingPolicies `<release>-scrim-<namespace>-inject-central` and `-inject-sidecar`, ValidatingPolicy `<release>-scrim-<namespace>-require-prepared-namespace` | `kyverno.enabled` | inject labelled pods (pods only, never their controllers), refuse them outside the prepared namespaces |
 | NetworkPolicies | `networkPolicy.enabled` | scrim's ingress and egress, agent pods' egress |
 | ServiceMonitor, PodMonitor, PrometheusRule, dashboard ConfigMap | their `enabled` values, with `metrics.enabled` | Prometheus Operator and Grafana |
 | ClusterRole and ClusterRoleBinding `<release>-scrim-<namespace>-tokenreview` | `identity.kubernetes.enabled` (default) | create TokenReviews only, for scrim's service account and, in sidecar mode, the service accounts of the agent namespaces |

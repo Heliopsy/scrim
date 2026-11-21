@@ -52,6 +52,13 @@ materials and build provenance attestation, and the verification steps SHALL be 
 - **WHEN** a user follows the documented verification steps for a published image tag
 - **THEN** the image signature, the SBOM attestation for the user's architecture and the build provenance verify against the release workflow's identity
 
+#### Scenario: Image signature checked at admission
+
+- **WHEN** the documented Kyverno ImageValidatingPolicy (`deploy/examples/kyverno`) is installed and
+  a pod names a scrim image
+- **THEN** a release image signed by the release workflow is admitted with its tag pinned to the
+  verified digest, and an unsigned image of the same repository is refused
+
 #### Scenario: Pre-release does not move latest
 
 - **WHEN** a pre-release tag such as `v0.2.0-rc.1` is released
@@ -469,11 +476,26 @@ chart, and packaging.
 
 The chart SHALL optionally install an admission policy that configures pods carrying a documented
 label to use scrim (environment, CA, MCP config, identity token), without changing agent images.
+The policy SHALL use Kyverno's `policies.kyverno.io/v1` API (MutatingPolicy and ValidatingPolicy),
+SHALL mutate Pods only, never the controllers that create them, and the chart SHALL document the
+Kyverno versions it supports and the upgrade order from the `kyverno.io/v1` ClusterPolicy of earlier
+charts.
 
 #### Scenario: Labelled pod is configured
 
 - **WHEN** a pod with the scrim agent label is created
 - **THEN** it starts with scrim's base URLs, CA bundle and identity token in place
+
+#### Scenario: Labelled controller left as written
+
+- **WHEN** a Deployment whose pod template carries the scrim agent label is created
+- **THEN** the Deployment is stored as written and only the pods it creates are configured
+
+#### Scenario: Current Kyverno
+
+- **WHEN** the chart is installed with the policy on the latest Kyverno release, which no longer
+  creates or runs `kyverno.io/v1` ClusterPolicies
+- **THEN** labelled pods are configured and labelled pods in unprepared namespaces are refused
 
 #### Scenario: Labelled pod in an unprepared namespace
 

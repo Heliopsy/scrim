@@ -1403,11 +1403,11 @@
     },
     "kyverno": {
       "type": "object",
-      "description": "Kyverno admission policy that configures labelled pods.",
+      "description": "Kyverno admission policies that configure labelled pods.",
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Install the ClusterPolicy (needs Kyverno 1.13 to 1.19)."
+          "description": "Install the injection MutatingPolicies and the namespace ValidatingPolicy (policies.kyverno.io/v1, needs Kyverno 1.17 or later)."
         },
         "failurePolicy": {
           "type": "string",
