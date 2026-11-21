@@ -79,7 +79,7 @@
         "min_llm_requests_per_second": 50,
         "scrim_request_added_p99_ms": 5,
         "scrim_chunk_p99_us": 50,
-        "client_added_p99_ms": 100,
+        "client_added_p99_ms": 50,
         "approval_release_p99_ms": 1000,
         "max_replica_memory_fraction": 0.9,
         "max_memory_per_stream_kib": 512

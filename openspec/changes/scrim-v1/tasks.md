@@ -165,7 +165,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 - [x] 14.1 Valkey and NATS event backends, Valkey rate limits; verify: contract suites and a multi-replica load test
 - [x] 14.2 Audit sinks OTLP, Loki and Kafka with backpressure policy; verify: a slow sink never drops silently
-- [ ] 14.3 Proxy-level load test at 1,000 concurrent streams; verify: published numbers meet the performance spec
+- [x] 14.3 Proxy-level load test at 1,000 concurrent streams; verify: published numbers meet the performance spec
+  - done: `test/load` (`just load-test`, workflow `load.yaml`: smoke on pull requests, full weekly, on demand and with the `load-test:full` label). The full run on GitHub-hosted ubuntu-24.04 passed with Valkey and with NATS events: 1,000 streams through three replicas, zero leaks, restore, injection and cross-replica approval failures, scrim's p99 2.5 to 4.3 ms per request (budget 5 ms) and 22 to 24 µs per chunk (budget 50 µs); numbers and thresholds in docs/state-and-observability.md, Load test. Watched failing with `--sabotage leak` and `--sabotage events`
 
 ## 15. Remaining edge modes
 
