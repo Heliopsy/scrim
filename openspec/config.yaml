@@ -1,4 +1,7 @@
 schema: spec-driven
+# OpenSpec 2.1: the skills stay in this repository (.agents/skills, linked from
+# .claude/skills), so `openspec update` does not ask.
+skillsScope: project
 
 context: |
   scrim keeps secrets away from LLM providers while AI agents keep working. It is a redacting

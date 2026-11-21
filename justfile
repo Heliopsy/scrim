@@ -86,7 +86,7 @@ monitoring:
 
 # Validate every OpenSpec change and spec.
 spec:
-    npx --yes @fission-ai/openspec@1.15.0 validate --all --strict --no-interactive
+    npx --yes @fission-ai/openspec@2.1.1 validate --all --strict --no-interactive
 
 # govulncheck, and cargo-deny when it is installed (CI always runs it).
 vuln:

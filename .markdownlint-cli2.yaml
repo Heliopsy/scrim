@@ -10,7 +10,9 @@ ignores:
   - "dataplane/target/**"
   # Pinned tools `just deploy-examples-check` installs, with their own docs.
   - ".tools/**"
-  # OpenSpec's own agent prompts, written by `openspec init`/`update`.
+  # OpenSpec's own agent skills, written by `openspec init`/`update` into
+  # .agents/skills and linked from .claude/skills.
+  - ".agents/**"
   - ".claude/**"
   # Written by the benchmark harness.
   - "bench/*/results/**"
