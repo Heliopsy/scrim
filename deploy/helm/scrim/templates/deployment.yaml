@@ -36,6 +36,7 @@ http://<fullname>.<namespace>.svc); the ServiceAccount is "<fullname>-proxy".
 {{- if .Values.postgres.enabled }}{{ $slots = append $slots (list "postgres" "dsn") }}{{ end -}}
 {{- if .Values.admin.tcp.enabled }}{{ $slots = append $slots (list "admin" "token") }}{{ end -}}
 {{- if and $m.enabled (not $m.allowUnauthenticatedRemote) }}{{ $slots = append $slots (list "metrics" "token") }}{{ end -}}
+{{- range (include "scrim.scaleSlots" . | fromJsonArray) }}{{ $slots = append $slots . }}{{ end -}}
 {{- range $slots -}}
   {{- $slot := index . 0 -}}
   {{- $key := include "chart.secretKey" (list $ $slot (index . 1)) -}}

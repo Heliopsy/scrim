@@ -166,6 +166,26 @@ connection, and SHALL require `state.backend: postgres`.
 - **THEN** replica B denies, pushes a snapshot with break-glass set to its data plane and denies its
   pending approvals, without waiting for `policy.deny-all-refresh`
 
+### Requirement: Valkey and NATS events
+
+With `events.backend` `valkey` or `nats`, each replica SHALL publish a wake-up carrying no data on a
+Valkey channel (`events.valkey.channel`) or NATS subject (`events.nats.subject`) after each of its
+commits that emitted an event, SHALL subscribe to it, and SHALL publish a wake-up that could not be
+sent once its connection is back. Every events backend SHALL pass one shared contract suite.
+
+#### Scenario: Decision through Valkey
+
+- **WHEN** `events.backend` is `valkey`, three replicas share PostgreSQL state, and approvals held on
+  each replica are decided concurrently on another
+- **THEN** every held request is released with that decision within the event delivery bound
+- **AND** every replica delivers every outbox event exactly once, in the same order
+
+#### Scenario: Commit while cut off from NATS
+
+- **WHEN** `events.backend` is `nats` and replica A commits an event while its connection to NATS is
+  down
+- **THEN** replica B delivers the event once A's connection is back, without waiting for its poll
+
 ### Requirement: Replica count is declared
 
 The number of replicas SHALL be declared by `deployment.replicas`. With more than one, start-up SHALL
@@ -218,10 +238,31 @@ replica, documented as approximate across replicas) or `valkey` (shared, exact).
 - **WHEN** `ratelimit.backend` is `valkey` and an agent exceeds its limit through two replicas combined
 - **THEN** further requests from that agent are refused with a rate-limit error
 
+### Requirement: Rate-limited operations
+
+Three classes SHALL be limited per agent, each with a rate, an interval and a burst
+(`ratelimit.<class>.*`, a rate of 0 turning it off): `agent-api` (every agent tool call), `approvals`
+(every approval created) and `asks` (every `secret_ask_human`). A request the backend cannot decide
+SHALL be refused. Backend keys SHALL be a hash of class and agent. Both backends SHALL pass one
+contract suite.
+
+#### Scenario: Agent API limit
+
+- **WHEN** an agent calls agent tools faster than `ratelimit.agent-api.*` allows
+- **THEN** the call past the burst is refused with `rate_limited` (HTTP 429 on the local API) and audited
+- **AND** other agents are not affected
+
+#### Scenario: Limiter unreachable
+
+- **WHEN** `ratelimit.backend` is `valkey` and Valkey does not answer
+- **THEN** limited requests are refused, not let through
+
 ### Requirement: Multiple audit sinks
 
 scrim SHALL write audit events to one or more sinks configured together: `db`, `otlp`, `loki`,
-`kafka`. Each event SHALL be delivered to every configured sink.
+`kafka`. Each event SHALL be delivered to every configured sink. The `db` sink SHALL always be
+written; the others SHALL be additive copies, each fed from its own bounded queue, receiving the
+machine-readable audit record after every string has passed the value scrubber.
 
 #### Scenario: Two sinks
 
@@ -244,3 +285,24 @@ SHALL be exposed as a metric and in status; events SHALL never be dropped silent
 
 - **WHEN** the `db` sink is unreachable beyond its timeout and its policy is `block`
 - **THEN** requests that would emit audit events are refused, not forwarded unaudited
+
+### Requirement: Audit sink losses are counted
+
+A failed write to an external audit sink SHALL be retried with backoff until the sink takes it. Only
+a batch the sink rejects as invalid, a `drop` queue overflow and entries still queued at shutdown
+SHALL leave a queue undelivered, each counted in `scrim_audit_sink_dropped_total` by reason and
+logged.
+
+#### Scenario: Paused sink under drop
+
+- **WHEN** a `loki`, `otlp` or `kafka` sink with policy `drop` stops answering without closing its
+  connections
+- **THEN** no audited operation waits for it
+- **AND** delivered plus dropped entries equal the entries written, and once the sink answers again it
+  receives every queued entry
+
+#### Scenario: Paused sink under block
+
+- **WHEN** a sink with policy `block` stops answering and its queue is full
+- **THEN** the next audited operation waits up to `audit.<sink>.timeout`, is refused and leaves no
+  state change, and `scrim_audit_sink_refused_total` increases
