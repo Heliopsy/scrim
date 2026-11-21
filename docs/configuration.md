@@ -97,7 +97,7 @@ Scalars are written as they are in the file: `true`, `42`, `1.5`, `90s`. Duratio
 Lists take a JSON array, or comma-separated items with `\,` for a literal comma and `\\` for a
 backslash:
 
-```sh
+```sh test env
 SCRIM_PROXY_NO_PROXY='["127.0.0.1","localhost"]'
 SCRIM_PROXY_NO_PROXY='127.0.0.1,localhost'
 ```
@@ -106,7 +106,7 @@ Maps take a JSON object or `key=value` pairs separated by commas. One entry of a
 adding its name to the variable, lower-cased words with `_` for `-`; it merges into the map from
 the lower layers, while the whole-map variable replaces it:
 
-```sh
+```sh test env
 SCRIM_PROXY_UPSTREAM='{"anthropic":"http://127.0.0.1:9000"}'
 SCRIM_PROXY_UPSTREAM_ANTHROPIC=http://127.0.0.1:9000
 ```
@@ -171,7 +171,7 @@ reference lists the values each profile sets. A profile never enables a weakenin
 
 ## Validating and inspecting
 
-```sh
+```sh test
 scrim config validate                 # every problem with key and source, non-zero exit if invalid
 scrim config validate -o json
 scrim config show                     # settings not at their default, with sources

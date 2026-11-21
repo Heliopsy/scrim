@@ -76,7 +76,7 @@ usages keyCertSign, cRLSign and digitalSignature.
 
 ## Export
 
-```sh
+```sh test
 scrim ca export                 # PEM to stdout: current CA, then the previous one during an overlap
 scrim ca export --out ca.pem
 ```
@@ -86,7 +86,7 @@ system trust store.
 
 ## Install and uninstall
 
-```sh
+```sh test
 scrim ca install --user --dry-run   # show what would change
 scrim ca install --user
 scrim ca uninstall --user
@@ -106,7 +106,7 @@ in the manifest and is printed with the manual step, and the command exits 1.
 Runtimes with their own trust read environment variables. `install` prints them; set them in the
 agent's environment:
 
-```sh
+```sh test
 export NODE_EXTRA_CA_CERTS=~/.local/share/scrim/scrim-ca.pem   # adds to Node's roots
 export SSL_CERT_FILE=~/.local/share/scrim/ca-bundle.pem        # OpenSSL, Go, Ruby; replaces the roots
 export REQUESTS_CA_BUNDLE=~/.local/share/scrim/ca-bundle.pem   # Python requests
