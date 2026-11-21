@@ -20,7 +20,9 @@
 //!    value's reference, name, store and class keeps the placeholder
 //!    ([`crate::Table::restricts`]). The agent identity is taken from the [`Caller`]; when it
 //!    is not known, conditions on it are unknown and a rule that depends on it keeps the
-//!    placeholder. `secret.labels` is always unknown here, because the snapshot carries none.
+//!    placeholder. `secret.labels` are the value's labels from the snapshot
+//!    (`ValueEntry.labels`); a value without labels (an older control plane) leaves them
+//!    unknown, so a rule on them keeps the placeholder.
 //!
 //! [`RestoreEngine::decide`] answers for one placeholder without seeing its value (it uses
 //! [`crate::escape::ValueTraits`]), which is what the streaming proxy needs: it inserts the
@@ -310,12 +312,17 @@ impl RestoreEngine {
         req.secret.name = info.name.to_string();
         req.secret.store = info.store.to_string();
         info.class.as_str().clone_into(&mut req.secret.class);
-        let mut unknown = FieldSet::EMPTY.with(Field::SecretLabels);
-        match &caller.agent {
-            Some(a) => req.agent = a.clone(),
-            None => {
-                unknown = FieldSet::AGENT.with(Field::SecretLabels);
+        let mut unknown = match &caller.agent {
+            Some(a) => {
+                req.agent = a.clone();
+                FieldSet::EMPTY
             }
+            None => FieldSet::AGENT,
+        };
+        if info.labels.is_empty() {
+            unknown = unknown.with(Field::SecretLabels);
+        } else {
+            req.secret.labels.clone_from(&info.labels);
         }
         match &caller.provider {
             Some(p) => req.provider.clone_from(p),

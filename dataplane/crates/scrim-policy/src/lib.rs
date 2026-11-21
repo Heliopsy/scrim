@@ -29,6 +29,7 @@
 //!     name: "".into(),
 //!     store: "bao".into(),
 //!     traits: ValueTraits::of(b"hello world"),
+//!     labels: Default::default(),
 //! });
 //! let engine = RestoreEngine::new(Settings::standard(), None, values);
 //! let ph = "\u{27e6}scrim:greeting:010123456789abcdef\u{27e7}";

@@ -1156,8 +1156,15 @@ type ValueEntry struct {
 	InjectLocations []string `protobuf:"bytes,11,rep,name=inject_locations,json=injectLocations,proto3" json:"inject_locations,omitempty"`
 	// allow_plaintext_http also injects over plain `http://`. Weakening.
 	AllowPlaintextHttp bool `protobuf:"varint,12,opt,name=allow_plaintext_http,json=allowPlaintextHttp,proto3" json:"allow_plaintext_http,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// labels are what rules see as `secret.labels` for this value
+	// (docs/policy.md "Labels from stores"): the store's native labels, the
+	// generic `store.*` labels and the instance's derived labels. Metadata
+	// only, never a value. The control plane always sends at least
+	// `store.name`; an empty map means a control plane that sends no labels,
+	// and the data plane then treats `secret.labels` as unknown.
+	Labels        map[string]string `protobuf:"bytes,13,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ValueEntry) Reset() {
@@ -1272,6 +1279,13 @@ func (x *ValueEntry) GetAllowPlaintextHttp() bool {
 		return x.AllowPlaintextHttp
 	}
 	return false
+}
+
+func (x *ValueEntry) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
 }
 
 // CaptureRule stores a value an API returns (a newly created token) under
@@ -4028,7 +4042,7 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x05tools\x18\x02 \x03(\v2\x1d.scrim.dataplane.v1.ToolAliasR\x05tools\x124\n" +
 	"\x16builtin_tools_disabled\x18\x03 \x01(\bR\x14builtinToolsDisabled\x129\n" +
 	"\x19extra_shell_data_commands\x18\x04 \x03(\tR\x16extraShellDataCommands\x124\n" +
-	"\x16reveal_credential_refs\x18\x05 \x03(\tR\x14revealCredentialRefs\"\xa1\x03\n" +
+	"\x16reveal_credential_refs\x18\x05 \x03(\tR\x14revealCredentialRefs\"\xa0\x04\n" +
 	"\n" +
 	"ValueEntry\x12\x10\n" +
 	"\x03ref\x18\x01 \x01(\tR\x03ref\x12\x12\n" +
@@ -4045,7 +4059,11 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	" \x03(\tR\n" +
 	"boundPaths\x12)\n" +
 	"\x10inject_locations\x18\v \x03(\tR\x0finjectLocations\x120\n" +
-	"\x14allow_plaintext_http\x18\f \x01(\bR\x12allowPlaintextHttp\"\xd5\x01\n" +
+	"\x14allow_plaintext_http\x18\f \x01(\bR\x12allowPlaintextHttp\x12B\n" +
+	"\x06labels\x18\r \x03(\v2*.scrim.dataplane.v1.ValueEntry.LabelsEntryR\x06labels\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd5\x01\n" +
 	"\vCaptureRule\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05hosts\x18\x02 \x03(\tR\x05hosts\x12\x18\n" +
@@ -4367,7 +4385,7 @@ func file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP() []byte {
 }
 
 var file_scrim_dataplane_v1_dataplane_proto_enumTypes = make([]protoimpl.EnumInfo, 9)
-var file_scrim_dataplane_v1_dataplane_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
+var file_scrim_dataplane_v1_dataplane_proto_msgTypes = make([]protoimpl.MessageInfo, 44)
 var file_scrim_dataplane_v1_dataplane_proto_goTypes = []any{
 	(ProtocolVersion)(0),          // 0: scrim.dataplane.v1.ProtocolVersion
 	(DisplayMode)(0),              // 1: scrim.dataplane.v1.DisplayMode
@@ -4417,10 +4435,11 @@ var file_scrim_dataplane_v1_dataplane_proto_goTypes = []any{
 	(*MetricSample)(nil),          // 45: scrim.dataplane.v1.MetricSample
 	(*RedactRequest)(nil),         // 46: scrim.dataplane.v1.RedactRequest
 	(*RedactResponse)(nil),        // 47: scrim.dataplane.v1.RedactResponse
-	nil,                           // 48: scrim.dataplane.v1.Event.AttrsEntry
-	nil,                           // 49: scrim.dataplane.v1.PolicyRequest.AgentLabelsEntry
-	nil,                           // 50: scrim.dataplane.v1.PolicyRequest.SecretLabelsEntry
-	nil,                           // 51: scrim.dataplane.v1.ToolProxyStatus.UnsupportedDestinationsEntry
+	nil,                           // 48: scrim.dataplane.v1.ValueEntry.LabelsEntry
+	nil,                           // 49: scrim.dataplane.v1.Event.AttrsEntry
+	nil,                           // 50: scrim.dataplane.v1.PolicyRequest.AgentLabelsEntry
+	nil,                           // 51: scrim.dataplane.v1.PolicyRequest.SecretLabelsEntry
+	nil,                           // 52: scrim.dataplane.v1.ToolProxyStatus.UnsupportedDestinationsEntry
 }
 var file_scrim_dataplane_v1_dataplane_proto_depIdxs = []int32{
 	15, // 0: scrim.dataplane.v1.Snapshot.values:type_name -> scrim.dataplane.v1.ValueEntry
@@ -4437,54 +4456,55 @@ var file_scrim_dataplane_v1_dataplane_proto_depIdxs = []int32{
 	1,  // 11: scrim.dataplane.v1.RestoreSettings.display_mode:type_name -> scrim.dataplane.v1.DisplayMode
 	13, // 12: scrim.dataplane.v1.RestoreSettings.tools:type_name -> scrim.dataplane.v1.ToolAlias
 	3,  // 13: scrim.dataplane.v1.ValueEntry.class:type_name -> scrim.dataplane.v1.ValueClass
-	22, // 14: scrim.dataplane.v1.Policy.rules:type_name -> scrim.dataplane.v1.PolicyRule
-	4,  // 15: scrim.dataplane.v1.Policy.default_effect:type_name -> scrim.dataplane.v1.Effect
-	19, // 16: scrim.dataplane.v1.Policy.table:type_name -> scrim.dataplane.v1.TableRule
-	4,  // 17: scrim.dataplane.v1.TableRule.effect:type_name -> scrim.dataplane.v1.Effect
-	20, // 18: scrim.dataplane.v1.TableRule.clauses:type_name -> scrim.dataplane.v1.Clause
-	21, // 19: scrim.dataplane.v1.Clause.conditions:type_name -> scrim.dataplane.v1.Condition
-	5,  // 20: scrim.dataplane.v1.Condition.op:type_name -> scrim.dataplane.v1.ConditionOp
-	4,  // 21: scrim.dataplane.v1.PolicyRule.effect:type_name -> scrim.dataplane.v1.Effect
-	24, // 22: scrim.dataplane.v1.Route.chain:type_name -> scrim.dataplane.v1.RouteChain
-	6,  // 23: scrim.dataplane.v1.Listener.kind:type_name -> scrim.dataplane.v1.ListenerKind
-	30, // 24: scrim.dataplane.v1.EventBatch.events:type_name -> scrim.dataplane.v1.Event
-	7,  // 25: scrim.dataplane.v1.Event.kind:type_name -> scrim.dataplane.v1.EventKind
-	4,  // 26: scrim.dataplane.v1.Event.effect:type_name -> scrim.dataplane.v1.Effect
-	48, // 27: scrim.dataplane.v1.Event.attrs:type_name -> scrim.dataplane.v1.Event.AttrsEntry
-	49, // 28: scrim.dataplane.v1.PolicyRequest.agent_labels:type_name -> scrim.dataplane.v1.PolicyRequest.AgentLabelsEntry
-	50, // 29: scrim.dataplane.v1.PolicyRequest.secret_labels:type_name -> scrim.dataplane.v1.PolicyRequest.SecretLabelsEntry
-	31, // 30: scrim.dataplane.v1.AskRequest.request:type_name -> scrim.dataplane.v1.PolicyRequest
-	33, // 31: scrim.dataplane.v1.AskRequest.caller:type_name -> scrim.dataplane.v1.AskCaller
-	4,  // 32: scrim.dataplane.v1.AskAnswer.effect:type_name -> scrim.dataplane.v1.Effect
-	41, // 33: scrim.dataplane.v1.StatusResponse.listeners:type_name -> scrim.dataplane.v1.ListenerStatus
-	38, // 34: scrim.dataplane.v1.StatusResponse.tool_proxy:type_name -> scrim.dataplane.v1.ToolProxyStatus
-	37, // 35: scrim.dataplane.v1.StatusResponse.redaction:type_name -> scrim.dataplane.v1.RedactionStatus
-	51, // 36: scrim.dataplane.v1.ToolProxyStatus.unsupported_destinations:type_name -> scrim.dataplane.v1.ToolProxyStatus.UnsupportedDestinationsEntry
-	6,  // 37: scrim.dataplane.v1.ListenerStatus.kind:type_name -> scrim.dataplane.v1.ListenerKind
-	44, // 38: scrim.dataplane.v1.MetricsResponse.families:type_name -> scrim.dataplane.v1.MetricFamily
-	8,  // 39: scrim.dataplane.v1.MetricFamily.type:type_name -> scrim.dataplane.v1.MetricType
-	45, // 40: scrim.dataplane.v1.MetricFamily.samples:type_name -> scrim.dataplane.v1.MetricSample
-	9,  // 41: scrim.dataplane.v1.DataPlane.Hello:input_type -> scrim.dataplane.v1.HelloRequest
-	11, // 42: scrim.dataplane.v1.DataPlane.ApplySnapshot:input_type -> scrim.dataplane.v1.Snapshot
-	28, // 43: scrim.dataplane.v1.DataPlane.Events:input_type -> scrim.dataplane.v1.EventsRequest
-	34, // 44: scrim.dataplane.v1.DataPlane.Asks:input_type -> scrim.dataplane.v1.AskAnswer
-	35, // 45: scrim.dataplane.v1.DataPlane.Status:input_type -> scrim.dataplane.v1.StatusRequest
-	40, // 46: scrim.dataplane.v1.DataPlane.Captures:input_type -> scrim.dataplane.v1.CaptureResult
-	42, // 47: scrim.dataplane.v1.DataPlane.Metrics:input_type -> scrim.dataplane.v1.MetricsRequest
-	46, // 48: scrim.dataplane.v1.DataPlane.Redact:input_type -> scrim.dataplane.v1.RedactRequest
-	10, // 49: scrim.dataplane.v1.DataPlane.Hello:output_type -> scrim.dataplane.v1.HelloResponse
-	27, // 50: scrim.dataplane.v1.DataPlane.ApplySnapshot:output_type -> scrim.dataplane.v1.ApplySnapshotResponse
-	29, // 51: scrim.dataplane.v1.DataPlane.Events:output_type -> scrim.dataplane.v1.EventBatch
-	32, // 52: scrim.dataplane.v1.DataPlane.Asks:output_type -> scrim.dataplane.v1.AskRequest
-	36, // 53: scrim.dataplane.v1.DataPlane.Status:output_type -> scrim.dataplane.v1.StatusResponse
-	39, // 54: scrim.dataplane.v1.DataPlane.Captures:output_type -> scrim.dataplane.v1.CaptureRequest
-	43, // 55: scrim.dataplane.v1.DataPlane.Metrics:output_type -> scrim.dataplane.v1.MetricsResponse
-	47, // 56: scrim.dataplane.v1.DataPlane.Redact:output_type -> scrim.dataplane.v1.RedactResponse
-	49, // [49:57] is the sub-list for method output_type
-	41, // [41:49] is the sub-list for method input_type
-	41, // [41:41] is the sub-list for extension type_name
-	41, // [41:41] is the sub-list for extension extendee
-	0,  // [0:41] is the sub-list for field type_name
+	48, // 14: scrim.dataplane.v1.ValueEntry.labels:type_name -> scrim.dataplane.v1.ValueEntry.LabelsEntry
+	22, // 15: scrim.dataplane.v1.Policy.rules:type_name -> scrim.dataplane.v1.PolicyRule
+	4,  // 16: scrim.dataplane.v1.Policy.default_effect:type_name -> scrim.dataplane.v1.Effect
+	19, // 17: scrim.dataplane.v1.Policy.table:type_name -> scrim.dataplane.v1.TableRule
+	4,  // 18: scrim.dataplane.v1.TableRule.effect:type_name -> scrim.dataplane.v1.Effect
+	20, // 19: scrim.dataplane.v1.TableRule.clauses:type_name -> scrim.dataplane.v1.Clause
+	21, // 20: scrim.dataplane.v1.Clause.conditions:type_name -> scrim.dataplane.v1.Condition
+	5,  // 21: scrim.dataplane.v1.Condition.op:type_name -> scrim.dataplane.v1.ConditionOp
+	4,  // 22: scrim.dataplane.v1.PolicyRule.effect:type_name -> scrim.dataplane.v1.Effect
+	24, // 23: scrim.dataplane.v1.Route.chain:type_name -> scrim.dataplane.v1.RouteChain
+	6,  // 24: scrim.dataplane.v1.Listener.kind:type_name -> scrim.dataplane.v1.ListenerKind
+	30, // 25: scrim.dataplane.v1.EventBatch.events:type_name -> scrim.dataplane.v1.Event
+	7,  // 26: scrim.dataplane.v1.Event.kind:type_name -> scrim.dataplane.v1.EventKind
+	4,  // 27: scrim.dataplane.v1.Event.effect:type_name -> scrim.dataplane.v1.Effect
+	49, // 28: scrim.dataplane.v1.Event.attrs:type_name -> scrim.dataplane.v1.Event.AttrsEntry
+	50, // 29: scrim.dataplane.v1.PolicyRequest.agent_labels:type_name -> scrim.dataplane.v1.PolicyRequest.AgentLabelsEntry
+	51, // 30: scrim.dataplane.v1.PolicyRequest.secret_labels:type_name -> scrim.dataplane.v1.PolicyRequest.SecretLabelsEntry
+	31, // 31: scrim.dataplane.v1.AskRequest.request:type_name -> scrim.dataplane.v1.PolicyRequest
+	33, // 32: scrim.dataplane.v1.AskRequest.caller:type_name -> scrim.dataplane.v1.AskCaller
+	4,  // 33: scrim.dataplane.v1.AskAnswer.effect:type_name -> scrim.dataplane.v1.Effect
+	41, // 34: scrim.dataplane.v1.StatusResponse.listeners:type_name -> scrim.dataplane.v1.ListenerStatus
+	38, // 35: scrim.dataplane.v1.StatusResponse.tool_proxy:type_name -> scrim.dataplane.v1.ToolProxyStatus
+	37, // 36: scrim.dataplane.v1.StatusResponse.redaction:type_name -> scrim.dataplane.v1.RedactionStatus
+	52, // 37: scrim.dataplane.v1.ToolProxyStatus.unsupported_destinations:type_name -> scrim.dataplane.v1.ToolProxyStatus.UnsupportedDestinationsEntry
+	6,  // 38: scrim.dataplane.v1.ListenerStatus.kind:type_name -> scrim.dataplane.v1.ListenerKind
+	44, // 39: scrim.dataplane.v1.MetricsResponse.families:type_name -> scrim.dataplane.v1.MetricFamily
+	8,  // 40: scrim.dataplane.v1.MetricFamily.type:type_name -> scrim.dataplane.v1.MetricType
+	45, // 41: scrim.dataplane.v1.MetricFamily.samples:type_name -> scrim.dataplane.v1.MetricSample
+	9,  // 42: scrim.dataplane.v1.DataPlane.Hello:input_type -> scrim.dataplane.v1.HelloRequest
+	11, // 43: scrim.dataplane.v1.DataPlane.ApplySnapshot:input_type -> scrim.dataplane.v1.Snapshot
+	28, // 44: scrim.dataplane.v1.DataPlane.Events:input_type -> scrim.dataplane.v1.EventsRequest
+	34, // 45: scrim.dataplane.v1.DataPlane.Asks:input_type -> scrim.dataplane.v1.AskAnswer
+	35, // 46: scrim.dataplane.v1.DataPlane.Status:input_type -> scrim.dataplane.v1.StatusRequest
+	40, // 47: scrim.dataplane.v1.DataPlane.Captures:input_type -> scrim.dataplane.v1.CaptureResult
+	42, // 48: scrim.dataplane.v1.DataPlane.Metrics:input_type -> scrim.dataplane.v1.MetricsRequest
+	46, // 49: scrim.dataplane.v1.DataPlane.Redact:input_type -> scrim.dataplane.v1.RedactRequest
+	10, // 50: scrim.dataplane.v1.DataPlane.Hello:output_type -> scrim.dataplane.v1.HelloResponse
+	27, // 51: scrim.dataplane.v1.DataPlane.ApplySnapshot:output_type -> scrim.dataplane.v1.ApplySnapshotResponse
+	29, // 52: scrim.dataplane.v1.DataPlane.Events:output_type -> scrim.dataplane.v1.EventBatch
+	32, // 53: scrim.dataplane.v1.DataPlane.Asks:output_type -> scrim.dataplane.v1.AskRequest
+	36, // 54: scrim.dataplane.v1.DataPlane.Status:output_type -> scrim.dataplane.v1.StatusResponse
+	39, // 55: scrim.dataplane.v1.DataPlane.Captures:output_type -> scrim.dataplane.v1.CaptureRequest
+	43, // 56: scrim.dataplane.v1.DataPlane.Metrics:output_type -> scrim.dataplane.v1.MetricsResponse
+	47, // 57: scrim.dataplane.v1.DataPlane.Redact:output_type -> scrim.dataplane.v1.RedactResponse
+	50, // [50:58] is the sub-list for method output_type
+	42, // [42:50] is the sub-list for method input_type
+	42, // [42:42] is the sub-list for extension type_name
+	42, // [42:42] is the sub-list for extension extendee
+	0,  // [0:42] is the sub-list for field type_name
 }
 
 func init() { file_scrim_dataplane_v1_dataplane_proto_init() }
@@ -4498,7 +4518,7 @@ func file_scrim_dataplane_v1_dataplane_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_scrim_dataplane_v1_dataplane_proto_rawDesc), len(file_scrim_dataplane_v1_dataplane_proto_rawDesc)),
 			NumEnums:      9,
-			NumMessages:   43,
+			NumMessages:   44,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

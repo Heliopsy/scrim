@@ -114,7 +114,7 @@ func New(a *app.App, o Options) (*Runtime, error) {
 	gv.Engine = a.Policy
 	g := &gv
 	svc, err := agenttools.New(agenttools.Deps{
-		Policy:    Policy{Engine: a.Policy},
+		Policy:    Policy{Engine: a.Policy, Labels: a.SecretLabels},
 		Approvals: Approvals{Gate: g, DefaultTTL: GrantDefaultTTL.Get(cfg), MaxTTL: GrantMaxTTL.Get(cfg)},
 		Catalog:   Stores{Set: a.Stores, Placeholders: o.Placeholders},
 		Store:     Stores{Set: a.Stores, Placeholders: o.Placeholders, Refreshers: a.Refreshers},

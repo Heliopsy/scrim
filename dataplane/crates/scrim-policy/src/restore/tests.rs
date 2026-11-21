@@ -40,6 +40,7 @@ fn fixture(settings: Settings, table: Option<Table>, vals: &[(&str, ValueClass, 
             name: "".into(),
             store: "bao".into(),
             traits: ValueTraits::of(v.as_bytes()),
+            labels: Default::default(),
         });
         map.insert(ph(slug), (reference, *class, v.as_bytes().to_vec()));
     }
@@ -373,6 +374,95 @@ fn rules_only_take_restores_away() {
     assert_eq!(
         f.engine.decide(&known, read, &r("app"), D),
         Verdict::Resolve
+    );
+}
+
+#[test]
+fn restore_rules_see_value_labels() {
+    use pb::ConditionOp::{HasKey, In};
+    let t = table(
+        vec![
+            rule(
+                "prod-collection",
+                pb::Effect::Deny,
+                vec![
+                    ("op", "", In, "restore", false),
+                    (
+                        "secret.labels",
+                        "vaultwarden.collection.Prod",
+                        HasKey,
+                        "",
+                        false,
+                    ),
+                ],
+            ),
+            rule(
+                "acme-org",
+                pb::Effect::Ask,
+                vec![("secret.labels", "vaultwarden.org", In, "Acme", false)],
+            ),
+        ],
+        false,
+    );
+    let labelled = |slug: &str, labels: &[(&str, &str)]| ValueInfo {
+        reference: format!("vw://{slug}#v").as_str().into(),
+        slug: slug.into(),
+        class: D,
+        name: "".into(),
+        store: "vw".into(),
+        traits: ValueTraits::of(b"alpha"),
+        labels: Arc::new(
+            labels
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+        ),
+    };
+    let mut index = ValueIndex::new();
+    index.push(labelled(
+        "prod",
+        &[
+            ("store.name", "vw"),
+            ("vaultwarden.collection", "Prod"),
+            ("vaultwarden.collection.Prod", "true"),
+        ],
+    ));
+    index.push(labelled(
+        "acme",
+        &[("store.name", "vw"), ("vaultwarden.org", "Acme")],
+    ));
+    index.push(labelled(
+        "dev",
+        &[("store.name", "vw"), ("vaultwarden.org", "Other")],
+    ));
+    // No labels: an older control plane. Rules on them could match.
+    index.push(labelled("unlabelled", &[]));
+    let engine = RestoreEngine::new(Settings::standard(), Some(Arc::new(t)), index);
+    let known = Caller {
+        agent: Some(Agent {
+            id: "a".into(),
+            kind: "session".into(),
+            ..Agent::default()
+        }),
+        provider: Some("anthropic".into()),
+    };
+    let read = At::Tool {
+        name: "Read",
+        arguments: None,
+    };
+    let at = |slug: &str| engine.decide(&known, read, &format!("vw://{slug}#v"), D);
+    assert_eq!(
+        at("prod"),
+        Verdict::Keep(KeepReason::Rule("prod-collection".into()))
+    );
+    assert_eq!(
+        at("acme"),
+        Verdict::Keep(KeepReason::Rule("acme-org".into()))
+    );
+    assert_eq!(at("dev"), Verdict::Resolve);
+    assert_eq!(
+        at("unlabelled"),
+        Verdict::Keep(KeepReason::Rule("prod-collection".into()))
     );
 }
 

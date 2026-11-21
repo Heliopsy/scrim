@@ -60,7 +60,13 @@ func resolveRef(ref, store string) (stores.Ref, error) {
 }
 
 // Policy adapts a policy.Engine to the agent tools.
-type Policy struct{ Engine policy.Engine }
+type Policy struct {
+	Engine policy.Engine
+	// Labels, when set, gives the labels policy sees for the secret a tool
+	// names (secret.labels): its store's labels, or for a new item the
+	// labels it would get.
+	Labels func(stores.Ref) map[string]string
+}
 
 // Decide implements agenttools.Policy. A reference that does not parse is
 // denied: policy cannot be evaluated for something it cannot name.
@@ -75,6 +81,9 @@ func (p Policy) Decide(ctx context.Context, id identity.Identity, op agenttools.
 			return agenttools.Decision{Effect: agenttools.EffectDeny, Rule: "invalid-ref", Reason: "the reference is not valid"}, nil //nolint:nilerr // an invalid reference is a deny decision, not an error
 		}
 		req.Ref, req.Store = r, r.Scheme
+		if p.Labels != nil {
+			req.SecretLabels = p.Labels(r)
+		}
 	}
 	d, err := p.Engine.Decide(ctx, req)
 	if err != nil {
