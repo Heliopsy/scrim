@@ -240,6 +240,20 @@ every (re)connection and, while disconnected, every `events.poll-interval`. Gran
 no event: they are read on every use. The polling loops of D7 stay as the fallback bound.
 `deployment.replicas` makes the replica count explicit, so a multi-replica deployment on `local`
 events or unshared state fails at start-up instead of running with replicas that disagree.
+The `valkey` and `nats` backends carry the same wake-up outside the database: each replica publishes
+an empty hint after its own commits (the state backend's commit hook) and subscribes to the channel
+or subject; a hint published while cut off is sent once the connection is back.
+
+**Rate limits** are one GCRA timestamp per hashed class and agent: in process memory (`local`,
+per replica) or in Valkey through one atomic script on Valkey's clock (`valkey`, exact across
+replicas). An unanswered limiter refuses.
+
+**External audit sinks tap the state backend.** Every write transaction that appends audit entries
+reserves room for them on each `block` sink's bounded queue before it commits, waiting up to the
+sink's timeout and refusing the change if there is none; after the commit the entries, scrubbed, are
+queued on every sink. One writer per sink retries failed batches with backoff, so a slow sink never
+slows another, and under `drop` never an operation. What leaves a queue undelivered (overflow under
+`drop`, a batch rejected as invalid, shutdown) is counted per sink and reason.
 
 ### D10. One configuration contract
 

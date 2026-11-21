@@ -404,6 +404,17 @@ func ListenersFrom(cfg *config.Config) []*pb.Listener {
 	if a := ToolProxyListen.Get(cfg); a != "" {
 		out = append(out, &pb.Listener{Name: "tool-proxy", Kind: pb.ListenerKind_LISTENER_KIND_TOOL_PROXY, Address: a})
 	}
+	block := TransparentUnrouted.Get(cfg) == "block"
+	for i, a := range TransparentListen.Get(cfg) {
+		name := "transparent"
+		if i > 0 {
+			name = fmt.Sprintf("transparent-%d", i+1)
+		}
+		out = append(out, &pb.Listener{Name: name, Kind: pb.ListenerKind_LISTENER_KIND_TRANSPARENT, Address: a, BlockUnrouted: block})
+	}
+	if a := SNIListen.Get(cfg); a != "" {
+		out = append(out, &pb.Listener{Name: "sni", Kind: pb.ListenerKind_LISTENER_KIND_SNI, Address: a, BlockUnrouted: block})
+	}
 	return out
 }
 
@@ -440,4 +451,18 @@ func askTimeoutMillis(global time.Duration, cfg policy.Config) uint64 {
 		t = max(t, r.Approval.Timeout.D())
 	}
 	return uint64(max(t.Milliseconds(), 1)) // #nosec G115 -- positive
+}
+
+// ProviderHosts are the host names the provider routes claim: the names DNS
+// override mode (scrim install --dns) resolves to scrim.
+func ProviderHosts(cfg *config.Config) []string {
+	var out []string
+	for _, r := range routes(cfg) {
+		for _, h := range r.GetHosts() {
+			if !slices.Contains(out, h) {
+				out = append(out, h)
+			}
+		}
+	}
+	return out
 }

@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: events, Valkey, NATS, rate limits and audit sinks
+templates:
+  - config.yaml
+  - deployment.yaml
+  - secrets.yaml
+release:
+  name: rel
+  namespace: ns
+tests:
+  - it: defaults render no Valkey, NATS, rate-limit backend or external sink
+    template: config.yaml
+    asserts:
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: "valkey:|nats:|audit:|ratelimit:"}
+  - it: valkey events and rate limits with a password from the valkey slot
+    template: config.yaml
+    set:
+      postgres.enabled: true
+      secrets.existing: {postgres: pg, valkey: vk}
+      events.backend: valkey
+      rateLimit.backend: valkey
+      valkey: {addresses: ["valkey-0:6379", "valkey-1:6379"], auth: true, username: scrim, tls: true}
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "events:\n  backend: valkey"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "valkey:\n  addresses: \\[\"valkey-0:6379\",\"valkey-1:6379\"\\]\n  username: \"scrim\"\n  password: file:/run/secrets/scrim/valkey/password\n  db: 0\n  tls: true"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "ratelimit:\n  backend: valkey"}
+  - it: valkey for rate limits alone does not need postgres
+    template: config.yaml
+    set:
+      rateLimit.backend: valkey
+      valkey.addresses: ["valkey:6379"]
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "events:\n  backend: local"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "valkey:\n  addresses: \\[\"valkey:6379\"\\]"}
+  - it: nats events with a token from the nats slot
+    template: config.yaml
+    set:
+      postgres.enabled: true
+      secrets.existing: {postgres: pg, nats: nt}
+      events.backend: nats
+      nats: {servers: ["nats://nats:4222"], auth: token}
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "events:\n  backend: nats"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "nats:\n  servers: \\[\"nats://nats:4222\"\\]\n  token: file:/run/secrets/scrim/nats/token"}
+  - it: without postgres the events values are ignored
+    template: config.yaml
+    set:
+      events.backend: nats
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "events:\n  backend: local"}
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: "nats:"}
+  - it: audit sinks render with their policies and credentials
+    template: config.yaml
+    set:
+      secrets.existing: {otlp: ot, loki: lk, kafka: kf}
+      auditSinks:
+        otlp: {enabled: true, endpoint: "http://collector:4318", auth: true}
+        loki: {enabled: true, url: "http://loki:3100", tenant: team, username: scrim, auth: true, labels: {cluster: prod}, policy: block, timeout: 2s}
+        kafka: {enabled: true, brokers: ["k0:9093"], tls: true, saslMechanism: scram-sha-512, username: scrim, queueSize: 500}
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "audit:\n  sinks:\n    - db\n    - otlp\n    - loki\n    - kafka"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "otlp:\n    endpoint: \"http://collector:4318\"\n    token: file:/run/secrets/scrim/otlp/token\n    policy: drop"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "password: file:/run/secrets/scrim/loki/password\n    labels:\n      cluster: prod\n    policy: block\n    timeout: 2s"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "sasl-mechanism: scram-sha-512\n    username: \"scrim\"\n    password: file:/run/secrets/scrim/kafka/password\n    policy: drop\n    timeout: 5s\n    queue-size: 500"}
+  - it: mounts each credential slot the settings reference
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    set:
+      postgres.enabled: true
+      secrets.existing: {postgres: pg, valkey: vk, loki: lk}
+      events.backend: valkey
+      valkey: {addresses: ["valkey:6379"], auth: true}
+      auditSinks.loki: {enabled: true, url: "http://loki:3100", auth: true}
+    asserts:
+      - contains: {path: 'spec.template.spec.containers[0].volumeMounts', content: {name: valkey-secret, mountPath: /run/secrets/scrim/valkey, readOnly: true}}
+      - contains: {path: spec.template.spec.volumes, content: {name: valkey-secret, secret: {secretName: vk, defaultMode: 288, items: [{key: password, path: password}]}}}
+      - contains: {path: 'spec.template.spec.containers[0].volumeMounts', content: {name: loki-secret, mountPath: /run/secrets/scrim/loki, readOnly: true}}
+  - it: renders an ExternalSecret for a credential slot
+    template: secrets.yaml
+    set:
+      secrets.externalSecrets: {enabled: true, secretStoreRef: {name: vault}, data: {kafka: {password: kv/scrim/kafka}}}
+      auditSinks.kafka: {enabled: true, brokers: ["k:9093"], tls: true, saslMechanism: plain, username: scrim}
+    asserts:
+      - containsDocument: {kind: ExternalSecret, apiVersion: external-secrets.io/v1, name: rel-scrim-kafka}

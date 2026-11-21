@@ -239,6 +239,12 @@ func (in *Installer) describeRevert(e Entry) (string, *result) {
 			strings.TrimSpace(e.Tool+" "+strings.Join(removeArgs(e.Tool), " "))), nil
 	case KindUserTrust:
 		return "remove the scrim CA from this user's trust stores (scrim ca uninstall --user):", nil
+	case KindNFTable:
+		return "delete the nftables table " + e.Target + " (nft delete table " + e.Target + ")", nil
+	case KindHosts:
+		return "remove the scrim block from " + e.Target, nil
+	case KindJavaTrust:
+		return fmt.Sprintf("remove the scrim CA from the Java truststore %s (keytool -delete -alias %s)", e.Target, JavaAlias), nil
 	case KindState:
 		if !in.Purge {
 			return "keep the state directory " + e.Target + " (CA, keys, state and audit log)",
@@ -297,12 +303,27 @@ func (in *Installer) revert(ctx context.Context, e Entry) result {
 	case KindService:
 		return in.stopService(ctx, e)
 	case KindSystemTrust:
+		anchor, _ := os.ReadFile(e.Target) // #nosec G304 -- recorded trust anchor
 		r := in.removeFile(e)
 		if r.outcome != reverted {
 			return r
 		}
 		args := removeArgs(e.Tool)
-		return resultOf(in.run(ctx, e.Tool, args...), strings.TrimSpace(e.Tool+" "+strings.Join(args, " ")))
+		r = resultOf(in.run(ctx, e.Tool, args...), strings.TrimSpace(e.Tool+" "+strings.Join(args, " ")))
+		if r.outcome == reverted && len(anchor) > 0 {
+			in.checkManagedJava(ctx, string(anchor))
+		}
+		return r
+	case KindNFTable:
+		manual := "nft delete table " + e.Target
+		if in.run(ctx, "nft", "list", "table", "inet", "scrim") != nil {
+			return ok()
+		}
+		return resultOf(in.run(ctx, "nft", "delete", "table", "inet", "scrim"), manual)
+	case KindHosts:
+		return in.removeHostsBlock(e)
+	case KindJavaTrust:
+		return in.revertJava(ctx, e)
 	case KindUserTrust:
 		return resultOf(in.trust().Uninstall(ctx, false), "scrim ca uninstall --user")
 	case KindState:
