@@ -294,6 +294,8 @@ is out of date.
 | [`restore.builtin-tools`](#restorebuiltin-tools) | bool | `true` | hot |
 | [`restore.display-mode`](#restoredisplay-mode) | string | `values` | hot |
 | [`run.allow-unredacted-start`](#runallow-unredacted-start) | bool | `false` | hot |
+| [`run.fs-view`](#runfs-view) | string | `auto` | hot |
+| [`run.fs-view-hide`](#runfs-view-hide) | list | `[".ssh/id_*","!.ssh/id_*.pub"]` | hot |
 | [`run.mcp`](#runmcp) | bool | `true` | hot |
 | [`run.placeholder-env`](#runplaceholder-env) | bool | `true` | hot |
 | [`run.profiles`](#runprofiles) | list | `["auto"]` | hot |
@@ -1430,6 +1432,31 @@ Start the agent anyway when scrim cannot start, its data plane is not ready or n
 | Flag | `--run-allow-unredacted-start` |
 | Reload | hot |
 | Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `run.fs-view`
+
+Session filesystem view for credential files at fixed home paths: auto (a user and mount namespace where the host allows it, the home mirror elsewhere), namespace (refuse to start the agent without one), home (HOME points at a mirror of the home directory without the real credential files) or off. See docs/run.md.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `auto` |
+| Environment | `SCRIM_RUN_FS_VIEW` |
+| Flag | `--run-fs-view` |
+| Reload | hot |
+| Values | `auto`, `namespace`, `home`, `off` |
+
+#### `run.fs-view-hide`
+
+Home-relative paths or glob patterns hidden by the session filesystem view in addition to the fixed paths of the applied tool profiles; a leading ! takes matches out again.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[".ssh/id_*","!.ssh/id_*.pub"]` |
+| Environment | `SCRIM_RUN_FS_VIEW_HIDE` |
+| Flag | none |
+| Reload | hot |
 
 #### `run.mcp`
 

@@ -93,6 +93,23 @@ func WriteHuman(w io.Writer, r Report) error {
 		}
 	}
 
+	if v := r.RunView; v != nil {
+		p.section("Filesystem view (scrim run)")
+		switch {
+		case v.Mode == RunViewRefused:
+			p.line("  REFUSED: run.fs-view is namespace, but %s", v.Fallback)
+		case v.Fallback != "":
+			p.line("  %s (fallback: %s)", v.Mode, v.Fallback)
+		case v.Mode == "namespace":
+			p.line("  namespace (user and mount namespace)")
+		default:
+			p.line("  %s (run.fs-view %s)", v.Mode, v.Requested)
+		}
+		for _, g := range v.Gaps {
+			p.line("    not covered: %s", g)
+		}
+	}
+
 	p.section("Protections")
 	p.table(len(r.Protections), func(tw io.Writer) {
 		for _, pr := range r.Protections {

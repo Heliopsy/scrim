@@ -1059,6 +1059,35 @@
           "x-scrim-restart-required": false,
           "x-scrim-weakening": true
         },
+        "fs-view": {
+          "default": "auto",
+          "description": "Session filesystem view for credential files at fixed home paths: auto (a user and mount namespace where the host allows it, the home mirror elsewhere), namespace (refuse to start the agent without one), home (HOME points at a mirror of the home directory without the real credential files) or off. See docs/run.md.",
+          "enum": [
+            "auto",
+            "namespace",
+            "home",
+            "off"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_RUN_FS_VIEW",
+          "x-scrim-flag": "--run-fs-view",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "fs-view-hide": {
+          "default": [
+            ".ssh/id_*",
+            "!.ssh/id_*.pub"
+          ],
+          "description": "Home-relative paths or glob patterns hidden by the session filesystem view in addition to the fixed paths of the applied tool profiles; a leading ! takes matches out again.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_RUN_FS_VIEW_HIDE",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
         "mcp": {
           "default": true,
           "description": "Register scrim mcp with the agent for this session (Claude Code --mcp-config, Codex -c mcp_servers.scrim). Nothing is written to the agent's own configuration.",
