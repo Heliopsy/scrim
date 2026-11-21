@@ -404,6 +404,35 @@ jobs:
         env:
           SCRIM_E2E_REQUIRE_TOOLS: "1"
 
+  # The shell commands of the user documentation, run as written
+  # (test/e2e/docs, `just docs-test`): every ```sh test block in the README
+  # and docs/ with an empty HOME, the README quickstart configuration, stub
+  # agents and a fake model, inside test/e2e/sandbox.sh (so GitHub-hosted,
+  # like e2e-tools). A shell block that neither runs nor says why it cannot
+  # fails the job.
+  docs-commands:
+    name: Documented commands
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - run: rustup toolchain install && cargo --version
+        working-directory: dataplane
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          workspaces: dataplane
+          save-if: false
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: test/e2e/run.sh docs
+
   proto:
     name: Generated code up to date
     runs-on: ho-z10

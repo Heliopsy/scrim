@@ -4,7 +4,7 @@
 mode: everything it sets applies to the agent's process and its children only, and nothing in your
 shell, your agent's configuration or the system changes.
 
-```sh
+```sh test
 scrim run -- claude
 scrim run -- codex exec "fix the failing test"
 scrim run --print-env -- claude      # show what would be set, start nothing
@@ -131,7 +131,7 @@ reach scrim as an unknown caller.
 Each declared catalog placeholder that resolves for the session (see [catalog.md](catalog.md)) is
 exported as a variable of the same name holding the placeholder itself:
 
-```sh
+```sh test env
 SCRIM_GITHUB_TOKEN=SCRIM_GITHUB_TOKEN
 ```
 
@@ -189,7 +189,7 @@ at caveman, `scrim run` replaces it for the session and warns.
 
 Inside the agent (or a shell started with `scrim run -- bash`):
 
-```sh
+```sh test session
 scrim api whoami        # agent dev via session (uid 1000, pid ...), session ..., expires ...
 ```
 

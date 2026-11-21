@@ -179,8 +179,13 @@ e2e-chain *args:
 e2e-session *args:
     test/e2e/run.sh session {{args}}
 
+# Every shell block marked ```sh test in the user docs, run as written in the sandbox
+# (test/e2e/docs); shell blocks without the mark must say why with a docs-test: skip comment.
+docs-test *args:
+    test/e2e/run.sh docs {{args}}
+
 # Every end-to-end run above.
-e2e: e2e-tools e2e-chain e2e-session
+e2e: e2e-tools e2e-chain e2e-session docs-test
 
 ntfy_image := "docker.io/binwiederhier/ntfy:v2.38.1"
 

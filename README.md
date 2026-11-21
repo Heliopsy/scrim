@@ -121,6 +121,8 @@ next request, the provider receives that tool result as:
 
 The model answers with a command that uses the placeholder:
 
+<!-- docs-test: skip: an agent's request as scrim sees it, sent to api.github.com -->
+
 ```sh
 curl -H "Authorization: Bearer ⟦scrim:github:5f2a9c0d1e7b⟧" https://api.github.com/user
 ```
@@ -246,6 +248,8 @@ Download the archive for your platform and the checksum files from the
 [latest release](https://github.com/heliopsy/scrim/releases/latest), check the signature over
 `checksums.txt`, then check the archive against it:
 
+<!-- docs-test: skip: verifies the release files downloaded from GitHub; docs/install.md has the full steps -->
+
 ```sh
 cosign verify-blob \
   --bundle checksums.txt.sigstore.json \
@@ -263,7 +267,7 @@ and how to build a release-identical binary.
 This `~/.config/scrim/config.yaml` redacts every variable in scrim's environment whose name starts
 with `SCRIM_SECRET_`, and lets one of them, a GitHub token, be injected toward the GitHub API:
 
-```yaml
+```yaml config
 apiVersion: scrim.dev/v1
 kind: Config
 
@@ -283,7 +287,7 @@ catalog:
       inject: ["header:Authorization"]
 ```
 
-```sh
+```sh test
 scrim config validate
 scrim doctor
 ```
@@ -293,7 +297,7 @@ For real use, point a store at OpenBao, Infisical or Vaultwarden instead of the 
 
 ### 3. Run an agent through scrim
 
-```sh
+```sh test
 scrim run -- claude
 ```
 
@@ -307,7 +311,7 @@ the session, the agent is not started. `scrim run --print-env -- claude` shows w
 
 Start the proxy with capture mode on and run a session that reads a secret:
 
-```sh
+```sh test daemon
 scrim proxy --capture
 ```
 
@@ -344,7 +348,7 @@ versioned YAML (`apiVersion: scrim.dev/v1`) with includes and a published
 [JSON Schema](schema/config-v1.json). Secret-valued settings take references (`env:NAME`,
 `file:/path`, `cred:NAME` for a systemd credential, or a store reference) instead of literals.
 
-```sh
+```sh test
 scrim config validate           # check files, environment and flags without starting anything
 scrim config show --effective   # every setting, its value and where it came from
 ```
@@ -488,6 +492,8 @@ The behaviour contract is the OpenSpec change in
 
 You need Go (version in `go.mod`), Rust (version in `dataplane/rust-toolchain.toml`),
 [just](https://github.com/casey/just) and, to change the protocol, `protoc`.
+
+<!-- docs-test: skip: builds scrim from a clone; CI runs just check on every change -->
 
 ```sh
 just build        # bin/scrim with the data plane embedded

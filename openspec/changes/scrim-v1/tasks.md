@@ -90,7 +90,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 9.3 `scrim run -- <agent>` wrapper for Claude Code and Codex; verify: real agent CLIs complete a task through scrim against a fake model (`just e2e-session`: Claude Code and Codex against the real `scrim proxy`, CI job `e2e-agents`)
 - [x] 9.4 Bypass matrix as a regression gate; verify: every transform is blocked, withheld or redacted
 - [x] 9.5 `scrim audit` harness with leak checker stricter than the redactor and cache-hit reporting; verify: CI runs it with zero leaks
-- [ ] 9.6 User documentation for M1 (install, run, configure, verify with capture, limitations); verify: every documented command is exercised by a docs test
+- [x] 9.6 User documentation for M1 (install, run, configure, verify with capture, limitations); verify: every documented command is exercised by a docs test (`just docs-test`, CI job `docs-commands`: every shell block in the README, install, run, running, configuration, agent-tools and ca docs runs as written in the sandbox or names why it cannot)
 
 ## 10. Credential injection
 
