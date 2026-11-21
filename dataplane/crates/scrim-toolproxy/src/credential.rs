@@ -33,6 +33,38 @@ pub struct CredentialSpec {
     /// Request locations the placeholder may be substituted in. Defaults to `["header"]`.
     #[serde(default = "default_inject")]
     pub inject: Vec<String>,
+    /// Set on the credential holding an AWS secret access key: the request is re-signed with it
+    /// (`SigV4`) when its access key id placeholder signs a request toward a bound endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aws_sigv4: Option<AwsSigV4Spec>,
+    /// The value is a PEM client certificate chain and private key, presented in the upstream TLS
+    /// handshake toward the bound hosts when the agent presents the credential's placeholder
+    /// certificate to the proxy.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub client_certificate: bool,
+}
+
+/// AWS `SigV4` re-signing for a secret access key credential.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AwsSigV4Spec {
+    /// Store reference of the credential holding the access key id that goes with this secret.
+    pub access_key_id: String,
+    /// Regions the request's credential scope may name. Empty allows every region.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<String>,
+    /// Services the request's credential scope may name (`s3`, `sts`, ...). Empty allows every
+    /// service.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<String>,
+}
+
+impl AwsSigV4Spec {
+    /// Whether a credential scope's region and service are allowed.
+    pub fn allows(&self, region: &str, service: &str) -> bool {
+        (self.regions.is_empty() || self.regions.iter().any(|r| r == region))
+            && (self.services.is_empty() || self.services.iter().any(|s| s == service))
+    }
 }
 
 fn default_inject() -> Vec<String> {
@@ -127,6 +159,10 @@ pub enum Location {
     Path,
     /// The request body.
     Body,
+    /// The client certificate the agent presented to the proxy (a placeholder certificate).
+    ClientCertificate,
+    /// The request's signature (AWS `SigV4`): the credential signs, it is never sent.
+    Signature,
 }
 
 impl fmt::Display for Location {
@@ -137,6 +173,8 @@ impl fmt::Display for Location {
             Location::Query => f.write_str("query"),
             Location::Path => f.write_str("path"),
             Location::Body => f.write_str("body"),
+            Location::ClientCertificate => f.write_str("client certificate"),
+            Location::Signature => f.write_str("signature"),
         }
     }
 }
@@ -205,6 +243,7 @@ impl Locations {
             Location::Query => self.query,
             Location::Path => self.path,
             Location::Body => self.body,
+            Location::ClientCertificate | Location::Signature => false,
         }
     }
 }
@@ -244,6 +283,10 @@ pub struct Credential {
     pub value: Option<SecretValue>,
     /// Every placeholder that stands for this credential.
     pub placeholders: Vec<Placeholder>,
+    /// AWS `SigV4` re-signing, on a secret access key credential.
+    pub aws_sigv4: Option<AwsSigV4Spec>,
+    /// The value is a client certificate chain and key for upstream TLS.
+    pub client_certificate: bool,
 }
 
 /// Configuration errors. None of them carries a secret value.
@@ -297,6 +340,14 @@ pub enum ValidationError {
     /// The snapshot speaks another boundary protocol version.
     #[error("snapshot protocol version {0} is not supported")]
     ProtocolMismatch(u32),
+    /// An AWS `SigV4` credential is misconfigured.
+    #[error("credential `{credential}`: {reason}")]
+    InvalidSigV4 {
+        /// Owning credential.
+        credential: String,
+        /// What is wrong.
+        reason: &'static str,
+    },
     /// A capture rule is invalid.
     #[error("capture rule `{rule}`: {reason}")]
     InvalidCaptureRule {
@@ -320,6 +371,7 @@ pub struct CredentialSet {
 #[derive(Default)]
 pub struct CredentialSetBuilder {
     items: Vec<(CredentialSpec, Option<SecretValue>, Vec<String>)>,
+    lenient_links: bool,
 }
 
 impl CredentialSetBuilder {
@@ -333,6 +385,13 @@ impl CredentialSetBuilder {
         generated: Vec<String>,
     ) -> &mut Self {
         self.items.push((spec, value, generated));
+        self
+    }
+
+    /// Drops a `SigV4` link whose access key id credential is missing instead of failing the
+    /// whole set: for snapshots, where one entry must not take every credential down with it.
+    pub fn lenient_links(&mut self) -> &mut Self {
+        self.lenient_links = true;
         self
     }
 
@@ -399,7 +458,37 @@ impl CredentialSetBuilder {
                 locations,
                 value: value.filter(|v| !v.is_empty()),
                 placeholders,
+                aws_sigv4: spec.aws_sigv4,
+                client_certificate: spec.client_certificate,
             });
+        }
+        let refs: Vec<(String, String)> = credentials
+            .iter()
+            .map(|k| (k.reference.clone(), k.name.clone()))
+            .collect();
+        for c in &mut credentials {
+            if let Some(a) = &c.aws_sigv4 {
+                let ok = refs
+                    .iter()
+                    .any(|(r, n)| *r == a.access_key_id && *n != c.name);
+                if !ok && self.lenient_links {
+                    tracing::warn!(credential = %c.name, "SigV4 access key id credential is missing; re-signing is off for it");
+                    c.aws_sigv4 = None;
+                    continue;
+                }
+                if !ok {
+                    return Err(ValidationError::InvalidSigV4 {
+                        credential: c.name.clone(),
+                        reason: "its access key id names no other credential's reference",
+                    });
+                }
+                if c.client_certificate {
+                    return Err(ValidationError::InvalidSigV4 {
+                        credential: c.name.clone(),
+                        reason: "a credential cannot be both a SigV4 secret and a client certificate",
+                    });
+                }
+            }
         }
         Ok(CredentialSet { credentials })
     }
@@ -437,6 +526,32 @@ impl CredentialSet {
         &self.credentials
     }
 
+    /// The `SigV4` secret credential whose access key id credential has a placeholder that is
+    /// exactly `text`: `(secret index, access key id index)`.
+    pub fn sigv4_by_access_key(&self, text: &str) -> Option<(usize, usize)> {
+        let ak = self
+            .credentials
+            .iter()
+            .position(|c| c.placeholders.iter().any(|p| p.text == text))?;
+        let reference = &self.credentials[ak].reference;
+        let sk = self.credentials.iter().position(|c| {
+            c.aws_sigv4
+                .as_ref()
+                .is_some_and(|a| &a.access_key_id == reference)
+        })?;
+        Some((sk, ak))
+    }
+
+    /// Whether a client certificate credential is bound to the host of `dest`.
+    pub fn client_certificate_bound_to(&self, dest: &Destination) -> bool {
+        self.credentials.iter().any(|c| {
+            c.client_certificate
+                && c.binding
+                    .as_ref()
+                    .is_some_and(|b| b.covers_destination(dest))
+        })
+    }
+
     /// Whether any credential is bound to the host of `dest`.
     pub fn any_bound_to(&self, dest: &Destination) -> bool {
         self.credentials.iter().any(|c| {
@@ -467,6 +582,8 @@ mod tests {
                 ..Default::default()
             }),
             inject: default_inject(),
+            aws_sigv4: None,
+            client_certificate: false,
         }
     }
 

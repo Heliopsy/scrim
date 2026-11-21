@@ -194,6 +194,42 @@ pub struct ValueEntry {
     /// allow_plaintext_http also injects over plain `<http://`.> Weakening.
     #[prost(bool, tag = "12")]
     pub allow_plaintext_http: bool,
+    /// aws_sigv4 marks a credential holding an AWS secret access key: the tool
+    /// proxy re-signs requests whose SigV4 access key id is a placeholder of
+    /// the credential named by `access_key_id_ref`, after checking they were
+    /// signed with this credential's placeholder (credential-injection spec,
+    /// "Re-signing for signed request protocols"). Absent, no re-signing.
+    #[prost(message, optional, tag = "13")]
+    pub aws_sigv4: ::core::option::Option<AwsSigV4>,
+    /// placeholder_format selects the placeholder form: empty for the bracket
+    /// form, `shape` for a format-preserving placeholder that keeps the
+    /// value's known prefix, length and alphabet (redaction spec
+    /// "Format-preserving placeholders"). Credentials only; a value whose shape
+    /// cannot be derived keeps the bracket form.
+    #[prost(string, tag = "14")]
+    pub placeholder_format: ::prost::alloc::string::String,
+    /// client_certificate marks a credential whose value is a PEM client
+    /// certificate chain and private key. The tool proxy presents it in the
+    /// upstream TLS handshake toward the bound hosts when the agent presents
+    /// the credential's placeholder certificate (credential-injection spec,
+    /// "Client certificates toward upstreams").
+    #[prost(bool, tag = "15")]
+    pub client_certificate: bool,
+}
+/// AwsSigV4 binds an AWS secret access key to its access key id and to the
+/// regions and services a request's credential scope may name.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AwsSigV4 {
+    /// access_key_id_ref is the reference of the entry holding the access key
+    /// id that goes with this secret.
+    #[prost(string, tag = "1")]
+    pub access_key_id_ref: ::prost::alloc::string::String,
+    /// regions the credential scope may name. Empty allows every region.
+    #[prost(string, repeated, tag = "2")]
+    pub regions: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// services the credential scope may name (`s3`, `sts`). Empty allows all.
+    #[prost(string, repeated, tag = "3")]
+    pub services: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 /// CaptureRule stores a value an API returns (a newly created token) under
 /// `store_ref` and hands the agent its placeholder instead.

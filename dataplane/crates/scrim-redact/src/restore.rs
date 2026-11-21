@@ -87,6 +87,47 @@ impl std::fmt::Debug for Resolved<'_> {
 pub struct Resolver {
     map: HashMap<(u8, [u8; 8]), u32>,
     entries: Arc<[ResolverEntry]>,
+    shaped: Shaped,
+}
+
+/// Format-preserving placeholders: they have no delimiters, so they are found by exact match
+/// against every one this snapshot made (one per key per shaped entry).
+#[derive(Default)]
+pub(crate) struct Shaped {
+    map: HashMap<Box<[u8]>, u32>,
+    finder: Option<aho_corasick::AhoCorasick>,
+    max_len: usize,
+}
+
+impl Shaped {
+    pub(crate) fn new(items: Vec<(Vec<u8>, u32)>) -> Result<Self, crate::error::BuildError> {
+        if items.is_empty() {
+            return Ok(Self::default());
+        }
+        let max_len = items.iter().map(|(p, _)| p.len()).max().unwrap_or(0);
+        let finder = aho_corasick::AhoCorasick::builder()
+            .match_kind(aho_corasick::MatchKind::LeftmostLongest)
+            .start_kind(aho_corasick::StartKind::Both)
+            .build(items.iter().map(|(p, _)| p))
+            .map_err(|_| crate::error::BuildError::InvalidConfig("shaped placeholder matcher"))?;
+        Ok(Self {
+            map: items.into_iter().map(|(p, i)| (p.into(), i)).collect(),
+            finder: Some(finder),
+            max_len,
+        })
+    }
+
+    /// Non-overlapping spans of shaped placeholders in `hay`, left to right.
+    pub(crate) fn find(&self, hay: &[u8]) -> Vec<(usize, usize)> {
+        match &self.finder {
+            None => Vec::new(),
+            Some(f) => f.find_iter(hay).map(|m| (m.start(), m.end())).collect(),
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.finder.is_none()
+    }
 }
 
 impl std::fmt::Debug for Resolver {
@@ -98,8 +139,26 @@ impl std::fmt::Debug for Resolver {
 }
 
 impl Resolver {
-    pub(crate) fn new(map: HashMap<(u8, [u8; 8]), u32>, entries: Arc<[ResolverEntry]>) -> Self {
-        Self { map, entries }
+    pub(crate) fn new(
+        map: HashMap<(u8, [u8; 8]), u32>,
+        entries: Arc<[ResolverEntry]>,
+        shaped: Shaped,
+    ) -> Self {
+        Self {
+            map,
+            entries,
+            shaped,
+        }
+    }
+
+    /// Spans of format-preserving placeholders this snapshot made, in `hay`.
+    pub(crate) fn shaped_spans(&self, hay: &[u8]) -> Vec<(usize, usize)> {
+        self.shaped.find(hay)
+    }
+
+    /// Whether this snapshot made any format-preserving placeholder.
+    pub(crate) fn has_shaped(&self) -> bool {
+        !self.shaped.is_empty()
     }
 
     /// Metadata of the entry with `id`, if this snapshot holds it.
@@ -120,8 +179,21 @@ impl Resolver {
     pub fn resolve(&self, placeholder: &[u8]) -> Option<Resolved<'_>> {
         match parse(placeholder) {
             Parse::Complete(p) if p.len == placeholder.len() => self.resolve_parsed(&p),
-            _ => None,
+            _ => self.resolve_shaped(placeholder),
         }
+    }
+
+    /// Resolves a format-preserving placeholder (exactly its bytes).
+    fn resolve_shaped(&self, placeholder: &[u8]) -> Option<Resolved<'_>> {
+        let (k, &idx) = self.shaped.map.get_key_value(placeholder)?;
+        if !bool::from(k.as_ref().ct_eq(placeholder)) {
+            return None;
+        }
+        let e = &self.entries[idx as usize];
+        Some(Resolved {
+            meta: &e.meta,
+            value: &e.value,
+        })
     }
 
     fn resolve_parsed(&self, p: &ParsedPlaceholder<'_>) -> Option<Resolved<'_>> {
@@ -147,6 +219,9 @@ impl Resolver {
     /// redactor and the guard leave it alone. A placeholder-shaped string that does not resolve
     /// gives no protection to what it contains.
     pub fn covering(&self, bytes: &[u8], a: usize, b: usize) -> Option<(usize, usize)> {
+        if let Some(span) = self.covering_shaped(bytes, a, b) {
+            return Some(span);
+        }
         let lo = a.saturating_sub(MAX_PERCENT_PLACEHOLDER_LEN);
         let hi = (a + 1).min(bytes.len());
         for p in memchr::memrchr2_iter(LEAD, PCT_LEAD, &bytes[lo..hi]) {
@@ -156,6 +231,27 @@ impl Resolver {
                     return Some((p, p + ph.len));
                 }
                 return None;
+            }
+        }
+        None
+    }
+
+    fn covering_shaped(&self, bytes: &[u8], a: usize, b: usize) -> Option<(usize, usize)> {
+        if self.shaped.is_empty() {
+            return None;
+        }
+        let lo = a.saturating_sub(self.shaped.max_len);
+        let hi = (b + self.shaped.max_len).min(bytes.len());
+        // A placeholder covering [a, b) starts at or before a: try each start, anchored.
+        let f = self.shaped.finder.as_ref()?;
+        for start in (lo..=a.min(hi)).rev() {
+            let input = aho_corasick::Input::new(&bytes[..hi])
+                .span(start..hi)
+                .anchored(aho_corasick::Anchored::Yes);
+            if let Some(m) = f.find(input)
+                && m.end() >= b
+            {
+                return Some((m.start(), m.end()));
             }
         }
         None

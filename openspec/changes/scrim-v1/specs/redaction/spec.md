@@ -150,6 +150,67 @@ lowercase hexadecimal digits.
 - **WHEN** the value `correct horse battery staple` with slug `db-password` is placeholdered under key version 1 with key `0123456789abcdef0123456789abcdef`
 - **THEN** the placeholder is `⟦scrim:db-password:0120a7d732ee4c8da2⟧` in every process and on every replica
 
+### Requirement: Format-preserving placeholders
+
+A credential MAY opt in (`placeholder_format: shape`) to a placeholder keeping the value's known
+prefix, length and alphabet. The redactor SHALL write it, the resolver SHALL resolve it for every
+retained key, one already in the input SHALL be copied byte for byte and never taken for a token
+by a detector, and the guard SHALL check for the value as before. Display values and values
+without a shape keep the bracket form.
+
+#### Scenario: Client that checks the token prefix
+
+- **WHEN** a GitHub token credential uses `placeholder_format: shape` and a CLI accepts only tokens of the form `ghp_` and 36 characters
+- **THEN** the placeholder is `ghp_` and 36 characters, the CLI sends it, and the tool proxy injects the real token toward the bound host
+
+#### Scenario: Guard still catches the value
+
+- **WHEN** a request carries a shaped placeholder and, next to it, the raw value
+- **THEN** the value is replaced and the guard finds the value if it is left anywhere, while the placeholder stays byte for byte
+
+#### Scenario: Detector and shaped placeholder
+
+- **WHEN** the agent's text holds a shaped GitHub placeholder and an unknown `ghp_` token
+- **THEN** the placeholder is forwarded unchanged and the unknown token is replaced by the detector
+
+### Requirement: Shaped placeholder layout
+
+For a value of 16 to 1,024 visible ASCII bytes, a JWT SHALL become a fixed `alg: none` header,
+`{"scrim":"<slug>"}` and drawn base64url characters (its signature's length, at least 22).
+Otherwise the longest known token prefix and trailing `=` SHALL be kept (Slack and GitHub
+fine-grained separators too), and the rest drawn from `A-Z2-7` after `AKIA` or `ASIA`, else from
+the digit and letter classes and other characters the value holds.
+
+#### Scenario: AWS access key id
+
+- **WHEN** an `AKIA` access key id is placeholdered in shape
+- **THEN** the placeholder is `AKIA` and 16 characters of `A-Z2-7`
+
+### Requirement: Shaped placeholder draw
+
+Characters SHALL be drawn from the bytes of `HMAC-SHA256(key, "scrim-placeholder-shape-v1" ||
+0x00 || u32be(i) || slug || 0x00 || value)` for `i = 0, 1, ...`; a byte `b` SHALL be used when
+`b < 256 - 256 mod n` and give character `b mod n` of the `n`-character alphabet. A value whose
+drawn positions carry fewer than 64 bits (`count * floor(log2 n)`) has no shape. The control plane
+and the data plane SHALL derive the same placeholder, checked by shared vectors.
+
+#### Scenario: Pinned shaped derivation
+
+- **WHEN** the value `ghp_TeStV4lu3N0tR34l0123456789abcdefABCD` with slug `github` is placeholdered in shape under key version 1 with key `0123456789abcdef0123456789abcdef`
+- **THEN** the placeholder is `ghp_ViGGu17pAiIX4X4q0Jnc8ybu4sYAj9UXAfnb`, and its last six characters are not a CRC32 checksum of the first thirty
+
+### Requirement: Shaped placeholders are not valid tokens
+
+A shaped placeholder SHALL never carry a valid token checksum: after `ghp_`, `gho_`, `ghu_`,
+`ghs_` and `ghr_` with 36 characters, the last character SHALL be drawn again while the last six
+are a base62 CRC32 of the first thirty. A shaped placeholder equal to a known value or to another
+shaped placeholder SHALL make the snapshot fail.
+
+#### Scenario: Checksum
+
+- **WHEN** two thousand GitHub-style values are placeholdered in shape
+- **THEN** no placeholder's last six characters are a CRC32 checksum of its first thirty
+
 ### Requirement: Placeholder key rotation
 
 The placeholder key SHALL be versioned. After rotation, new placeholders SHALL use the new key and
