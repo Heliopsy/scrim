@@ -1,0 +1,52 @@
+# scrim from the OCI chart each release publishes (ghcr.io/heliopsy/charts/scrim,
+# 0.2.0 and later), values from your fleet repository. targetRevision is the
+# chart version; Renovate moves it. repository-scrim-charts.yaml registers the
+# OCI repository with Argo CD.
+#
+# From git instead: repoURL https://github.com/Heliopsy/scrim, targetRevision
+# v0.2.0, path deploy/helm/scrim in place of chart.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: scrim
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    # Kyverno fills in defaults on the chart's ClusterPolicy; the client-side
+    # diff then reports it OutOfSync after every sync. The server-side diff
+    # compares what the API server would store.
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: scrim
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: scrim
+  sources:
+    - repoURL: ghcr.io/heliopsy/charts
+      chart: scrim
+      targetRevision: 0.2.0
+      helm:
+        releaseName: scrim
+        valueFiles:
+          - $values/scrim/helm/values.yaml
+          # The CA and placeholder key from Secrets: Argo CD renders with
+          # helm template, which cannot read back the chart's generated ones.
+          - $values/scrim/helm/values-gitops.yaml
+    - repoURL: https://github.com/example-org/fleet
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

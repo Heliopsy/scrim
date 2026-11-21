@@ -1,6 +1,6 @@
 # scrim chart: values reference
 
-![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.1.0](https://img.shields.io/badge/AppVersion-0.1.0-informational?style=flat-square)
+![Version: 0.2.0](https://img.shields.io/badge/Version-0.2.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.2.0](https://img.shields.io/badge/AppVersion-0.2.0-informational?style=flat-square)
 
 Keeps secret values away from LLM providers while AI agents keep working
 
@@ -11,7 +11,7 @@ file: change values.yaml and run `deploy/helm/scrim/ci/verify.sh --generate`. Th
 ## Install
 
 ```sh
-helm install scrim oci://ghcr.io/heliopsy/charts/scrim --version 0.1.0 \
+helm install scrim oci://ghcr.io/heliopsy/charts/scrim --version 0.2.0 \
   -n scrim --create-namespace -f my-values.yaml
 helm test scrim -n scrim
 ```

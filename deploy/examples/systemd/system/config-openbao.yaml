@@ -1,0 +1,38 @@
+# /etc/scrim/config.yaml for scrim as a system service, secrets from OpenBao.
+#
+# Secrets come from OpenBao through an AppRole whose role ID and secret ID the
+# drop-in scrim.service.d/openbao.conf passes in as systemd credentials. Give
+# that AppRole a policy that reads the agents' tree only (docs/stores/openbao.md,
+# "Least privilege").
+apiVersion: scrim.dev/v1
+kind: Config
+
+stores:
+  bao:
+    kind: openbao
+    address: https://bao.example.com:8200
+    auth: {method: approle}
+    role-id: cred:bao-role-id
+    secret-id: cred:bao-secret-id
+    redact:
+      - bao://kv/agents/*
+
+catalog:
+  entries:
+    github:
+      ref: bao://kv/agents/github#token
+      hosts: [api.github.com]
+      placeholder: SCRIM_GITHUB_TOKEN
+      inject: ["header:Authorization"]
+
+api:
+  # Agents running as other users connect to /run/scrim/api.sock through
+  # the scrim group; identity.peers says which agent each of them is.
+  permissions: "0660"
+
+identity:
+  peers:
+    ci: "user:ci-runner"
+
+metrics:
+  listen: 127.0.0.1:9792

@@ -1,0 +1,21 @@
+# Agents use http://scrim.scrim.svc:9790/anthropic and /openai/v1 as base
+# URLs, and http://scrim.scrim.svc:9791 as HTTPS_PROXY. Keep it ClusterIP: the
+# listeners speak plain HTTP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: scrim
+  namespace: scrim
+  labels:
+    app.kubernetes.io/name: scrim
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: scrim
+  ports:
+    - name: llm
+      port: 9790
+      targetPort: llm
+    - name: forward
+      port: 9791
+      targetPort: forward

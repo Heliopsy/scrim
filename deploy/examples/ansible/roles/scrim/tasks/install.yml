@@ -1,0 +1,159 @@
+---
+# scrim refuses to start while a redact target loads nothing, so the default
+# files store needs at least one secret file.
+- name: Check that the files store has a secret to redact
+  ansible.builtin.assert:
+    that: >-
+      'files' not in (scrim_config.stores | default({}))
+      or (scrim_secret_files | length) > 0
+    fail_msg: >-
+      scrim_secret_files is empty: scrim would refuse to start with nothing
+      under files://agents/*. Add at least one secret (from Ansible Vault).
+    quiet: true
+
+- name: Map the machine architecture to a release architecture
+  ansible.builtin.set_fact:
+    scrim_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts['architecture']] }}"
+
+- name: Download cosign, checked against its pinned sha256
+  ansible.builtin.get_url:
+    url: "https://github.com/sigstore/cosign/releases/download/{{ scrim_cosign_version }}/cosign-linux-{{ scrim_arch }}"
+    dest: "{{ scrim_cosign_bin }}"
+    checksum: "sha256:{{ scrim_cosign_sha256[scrim_arch] }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create the download directory for this release
+  ansible.builtin.file:
+    path: "/var/cache/scrim-install/{{ scrim_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Download the release archive, checksums and signature bundle
+  ansible.builtin.get_url:
+    url: "{{ scrim_release_url }}/{{ item }}"
+    dest: "/var/cache/scrim-install/{{ scrim_version }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - "scrim_{{ scrim_version }}_linux_{{ scrim_arch }}.tar.gz"
+    - checksums.txt
+    - checksums.txt.sigstore.json
+
+- name: Check that the release workflow signed checksums.txt
+  ansible.builtin.command:
+    cmd: >-
+      {{ scrim_cosign_bin }} verify-blob
+      --bundle checksums.txt.sigstore.json
+      --certificate-identity-regexp '{{ scrim_signer_identity }}'
+      --certificate-oidc-issuer {{ scrim_signer_issuer }}
+      checksums.txt
+    chdir: "/var/cache/scrim-install/{{ scrim_version }}"
+  changed_when: false
+
+- name: Check the archive against the signed checksums
+  ansible.builtin.command:
+    cmd: sha256sum --check --ignore-missing checksums.txt
+    chdir: "/var/cache/scrim-install/{{ scrim_version }}"
+  changed_when: false
+
+- name: Unpack the binary
+  ansible.builtin.unarchive:
+    src: "/var/cache/scrim-install/{{ scrim_version }}/scrim_{{ scrim_version }}_linux_{{ scrim_arch }}.tar.gz"
+    dest: "/var/cache/scrim-install/{{ scrim_version }}"
+    remote_src: true
+    include: [./scrim]
+    creates: "/var/cache/scrim-install/{{ scrim_version }}/scrim"
+
+- name: Install the binary
+  ansible.builtin.copy:
+    src: "/var/cache/scrim-install/{{ scrim_version }}/scrim"
+    dest: "{{ scrim_bin }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart scrim
+
+- name: Create the scrim user
+  ansible.builtin.user:
+    name: scrim
+    system: true
+    home: /var/lib/scrim
+    create_home: false
+    shell: /usr/sbin/nologin
+    comment: scrim daemon
+
+- name: Create the config directory
+  ansible.builtin.file:
+    path: /etc/scrim
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create the secrets directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: scrim
+    group: scrim
+    mode: "0700"
+  loop:
+    - /etc/scrim/secrets
+    - /etc/scrim/secrets/agents
+
+- name: Write the secrets scrim redacts
+  ansible.builtin.copy:
+    content: "{{ item.value }}"
+    dest: "/etc/scrim/secrets/agents/{{ item.key }}"
+    owner: scrim
+    group: scrim
+    mode: "0600"
+  loop: "{{ scrim_secret_files | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
+
+- name: Write the config file, checked by scrim before it replaces the old one
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/scrim/config.yaml
+    owner: root
+    group: scrim
+    mode: "0640"
+    validate: "{{ scrim_bin }} config validate --config %s"
+  notify: Reload scrim
+
+- name: Install the systemd unit
+  ansible.builtin.copy:
+    src: scrim.service
+    dest: /etc/systemd/system/scrim.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart scrim
+
+- name: Enable and start scrim
+  ansible.builtin.systemd_service:
+    name: scrim.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Apply pending restarts before checking readiness
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait until scrim is ready to redact
+  ansible.builtin.uri:
+    url: "{{ scrim_ready_url }}"
+    status_code: 200
+  register: scrim_ready
+  until: scrim_ready.status == 200
+  retries: 30
+  delay: 2
+  when: scrim_ready_url | length > 0

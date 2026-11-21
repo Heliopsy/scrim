@@ -1,0 +1,16 @@
+# Alternative to scrim-chart.yaml: the chart from this repository's release
+# tags, read from git. Flux checks no signature on this path, so prefer the
+# OCI chart. Pair it with the commented chart.spec in helm/helmrelease.yaml.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: scrim
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://github.com/Heliopsy/scrim
+  ref:
+    semver: ">=0.2.0 <1.0.0"
+  ignore: |
+    /*
+    !/deploy/helm/scrim/

@@ -1,0 +1,8 @@
+---
+- name: Install scrim
+  ansible.builtin.import_tasks: install.yml
+  when: scrim_state == "present"
+
+- name: Remove scrim
+  ansible.builtin.import_tasks: uninstall.yml
+  when: scrim_state == "absent"

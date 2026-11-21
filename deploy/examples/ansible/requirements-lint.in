@@ -1,0 +1,3 @@
+ansible-lint==26.10.1
+ansible-core==2.21.6
+podman-compose==1.6.0

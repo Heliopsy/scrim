@@ -1,0 +1,36 @@
+# ~/.config/systemd/user/scrim.service
+#
+# scrim as a user service, for people who manage units themselves.
+# `scrim install --user` writes and records an equivalent unit; use one or the
+# other, not both.
+#
+# It reads ~/.config/scrim/config.yaml, keeps state in ~/.local/state/scrim and
+# puts its sockets in /run/user/<uid>/scrim, where `scrim run` finds it.
+# Secrets the env store reads go in ~/.config/scrim/secrets.env (mode 0600):
+#   SCRIM_SECRET_GITHUB_TOKEN=...
+#
+# No LimitMEMLOCK here: a user manager cannot raise the limit above its own
+# hard limit. Raise that for user managers (a drop-in for user@.service with
+# LimitMEMLOCK=infinity) if the data plane should lock its memory.
+
+[Unit]
+Description=scrim, keeps secret values away from LLM providers
+Documentation=https://github.com/Heliopsy/scrim/blob/main/docs/deploy/vm.md
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/scrim proxy
+ExecReload=/bin/kill -HUP $MAINPID
+EnvironmentFile=-%h/.config/scrim/secrets.env
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=30s
+UMask=0077
+LimitCORE=0
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=default.target
