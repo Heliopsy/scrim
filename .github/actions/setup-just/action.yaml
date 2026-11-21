@@ -10,21 +10,26 @@ runs:
     - shell: bash
       run: |
         set -euo pipefail
-        # Bump the version and all four checksums together, from the
-        # release's SHA256SUMS.
+        # Renovate bumps the version; `just pin-sums` then rewrites the four
+        # checksums from the assets the sha256: lines name.
+        # renovate: datasource=github-releases depName=casey/just
         version=1.59.0
         case "${RUNNER_OS}-${RUNNER_ARCH}" in
           Linux-X64)
             target=x86_64-unknown-linux-musl
+            # sha256: https://github.com/casey/just/releases/download/{version}/just-{version}-x86_64-unknown-linux-musl.tar.gz
             sum=409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e ;;
           Linux-ARM64)
             target=aarch64-unknown-linux-musl
+            # sha256: https://github.com/casey/just/releases/download/{version}/just-{version}-aarch64-unknown-linux-musl.tar.gz
             sum=23871b1702bfd550fb5f901778fd4290ecf2ee034a45a889fbe96d89b188086d ;;
           macOS-ARM64)
             target=aarch64-apple-darwin
+            # sha256: https://github.com/casey/just/releases/download/{version}/just-{version}-aarch64-apple-darwin.tar.gz
             sum=6574cea774ed4cae12e24b6aa11857de33e80dab4667cf628fd5840df96a2a9d ;;
           macOS-X64)
             target=x86_64-apple-darwin
+            # sha256: https://github.com/casey/just/releases/download/{version}/just-{version}-x86_64-apple-darwin.tar.gz
             sum=036ead9df9bc31dbae9934ae3b4236ed124d0bafcffd33439460ae084d5c9cb7 ;;
           *)
             echo "::error::no pinned just for ${RUNNER_OS}-${RUNNER_ARCH}"

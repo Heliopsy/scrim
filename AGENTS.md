@@ -112,6 +112,24 @@ an emulator in podman. State backends follow the same shape with `state.Register
   1.0, or when its module is deprecated. Minor and patch lag on a 1.x line is Dependabot's.
 - A new major that cannot be adopted yet gets an entry in `.deps-fresh-ignore` with an expiry date
   and a reason; expired entries fail the gate.
+- Every other pin (release binaries in scripts, env files and workflows, container images, the
+  Kubernetes target, npm and Python tools, the Go and Rust toolchains) carries a
+  `# renovate: datasource=<ds> depName=<name>` comment on the line above, or matches one of the
+  inline patterns in `renovate.json` (images, `npx`, `go run`, `pip install`). Look the latest
+  stable release up in its registry before bumping it, never from memory.
+- Updates are split by ecosystem, never two bots on one file: Dependabot keeps `go.mod`, the
+  Cargo manifests and the workflow actions (`.github/dependabot.yml`); Renovate keeps everything
+  else (`renovate.json`): the regex managers above, Containerfiles, `.tool-versions`, the Argo CD
+  examples and `deploy/examples/ansible/requirements-lint.txt`. release-please owns every scrim
+  version with an `x-release-please-version` marker.
+- A release asset pinned by sha256 has its URL on the line above the sum
+  (`# sha256: https://.../{version}/...`). Renovate moves only the version: run `just pin-sums` on
+  its branch to rewrite the sums, and review the diff. The `pin-sums` CI job fails on a sum that
+  does not match its asset, naming it.
+- `just pins-fresh` (weekly in `deps-fresh.yaml`) fails when a pin or action is behind a release
+  that has been out for more than 14 days, the time Renovate and Dependabot get to land it. A pin
+  that has to stay behind gets a `pin <depName>` (or `action <owner/repo>`) entry in
+  `.deps-fresh-ignore`, with an expiry date and a reason.
 
 ## Boundary protocol
 

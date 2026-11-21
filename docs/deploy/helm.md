@@ -13,7 +13,7 @@ own [`examples/`](../../deploy/helm/scrim/examples/).
 ## Prerequisites
 
 - Kubernetes 1.29 or later, Helm 3.8 or later (OCI charts), cosign to check the chart signature.
-- Kyverno 1.13 or later for injection by label, a CNI that enforces NetworkPolicy, PostgreSQL for
+- Kyverno 1.13 to 1.19 for injection by label, a CNI that enforces NetworkPolicy, PostgreSQL for
   more than one replica.
 - A store scrim can log in to with its service account: OpenBao or Vault with Kubernetes auth, or
   Infisical with Kubernetes auth. Static credentials work too ([chart
@@ -107,8 +107,8 @@ Delete `dsn` once the Secret exists, or create the Secret with SOPS or External 
 ## Sidecar mode
 
 ```sh
-podman build -t registry.example.com/platform/nft:3.22 "$EX/egress-guard"
-podman push registry.example.com/platform/nft:3.22
+podman build -t registry.example.com/platform/nft:3.24 "$EX/egress-guard"
+podman push registry.example.com/platform/nft:3.24
 helm --kube-context "$CONTEXT" upgrade --install scrim oci://ghcr.io/heliopsy/charts/scrim \
   --version "$VERSION" -n scrim --create-namespace -f "$EX/values-sidecar.yaml"
 ```

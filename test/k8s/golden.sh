@@ -30,7 +30,12 @@ export HELM_CONFIG_HOME="$tmp/config" HELM_CACHE_HOME="$tmp/cache" HELM_DATA_HOM
 mask() {
   # Base64 Secret data of generated keys, and the body of every PEM block.
   sed -E 's/^(  (tls\.crt|tls\.key|k1|token): ).*/\1<generated>/' |
-    awk '/-----BEGIN /{print; skip=1; next} /-----END /{skip=0} !skip{print}'
+    awk '/-----BEGIN /{print; skip=1; next} /-----END /{skip=0} !skip{print}' |
+    # Blank lines right before a document separator or at the end are dropped:
+    # Helm 4.2 and later end some documents with one Helm 3 does not print (a
+    # clipped "|" block scalar ignores it either way), and both majors share
+    # the goldens.
+    awk '/^$/ {blank++; next} /^---/ {blank = 0} {while (blank > 0) {print ""; blank--} print}'
 }
 
 status=0

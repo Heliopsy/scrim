@@ -140,7 +140,7 @@ SCRIM_TEST_PODMAN=1 go test -race ./internal/stores/...
 | `SCRIM_TEST_PODMAN=0` | Skip the container tests. |
 | `SCRIM_TEST_OPENBAO_ADDR`, `SCRIM_TEST_OPENBAO_TOKEN` | Use an existing OpenBao (root token) instead of a container. The outage cases are skipped. |
 | `SCRIM_TEST_OPENBAO_IMAGE` | OpenBao image (default `quay.io/openbao/openbao:2.7.3`). |
-| `SCRIM_TEST_INFISICAL_VERSION` | Infisical image tag (default `v0.167.13`). |
+| `SCRIM_TEST_INFISICAL_VERSION` | Infisical image tag (default: `defaultInfisicalVersion` in `internal/stores/infisical/infisical_integration_test.go`). |
 | `SCRIM_TEST_INFISICAL_ADDR`, `SCRIM_TEST_INFISICAL_TOKEN`, `SCRIM_TEST_INFISICAL_ORG` | Use an existing Infisical (an organisation admin identity token and the organisation ID) instead of a pod. The outage case is skipped. |
 
 Containers and pods are named `scrim-stores-*` and are removed with their volumes when the tests

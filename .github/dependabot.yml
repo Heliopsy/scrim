@@ -1,3 +1,6 @@
+# Dependabot keeps the Go modules, the Cargo manifests and the workflow
+# actions (SHA pins with a version comment). Everything else, container
+# images included, is Renovate's (renovate.json); no file is managed by both.
 version: 2
 updates:
   - package-ecosystem: gomod
@@ -24,19 +27,3 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
-  # The distroless base of Containerfile and Containerfile.dataplane, pinned
-  # by digest.
-  - package-ecosystem: docker
-    directory: /
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: build
-  # Third-party images of the Helm chart's defaults (the helm test image),
-  # listed as FROM lines; verify.sh keeps values.yaml in step.
-  - package-ecosystem: docker
-    directory: /deploy/helm/scrim/ci
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: build

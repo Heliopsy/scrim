@@ -78,7 +78,7 @@ lint:
 
 # Lint the Markdown .markdownlint-cli2.yaml selects, with the rules in .markdownlint.yaml.
 md:
-    npx --yes markdownlint-cli2@0.24.1
+    npx --yes markdownlint-cli2@0.24.2
 
 # Alert rules, their tests, the Prometheus configs and the dashboard (deploy/monitoring).
 monitoring:
@@ -86,7 +86,7 @@ monitoring:
 
 # Validate every OpenSpec change and spec.
 spec:
-    npx --yes @fission-ai/openspec@1.15.0 validate --all --strict --no-interactive
+    npx --yes @fission-ai/openspec@2.1.1 validate --all --strict --no-interactive
 
 # govulncheck, and cargo-deny when it is installed (CI always runs it).
 vuln:
@@ -98,6 +98,19 @@ vuln:
 # Fail when a direct Go or Rust dependency is behind its latest stable major (0.x minor before 1.0).
 deps-fresh *args:
     scripts/deps-fresh.sh {{args}}
+
+# Fail when a pinned tool, image or action is behind a release older than 14 days (renovate.json
+# pins, SHA-pinned actions). Uses GITHUB_TOKEN, or the gh login, for the GitHub API.
+pins-fresh *args:
+    GITHUB_TOKEN="${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}" scripts/deps-fresh.sh -pins -go-mod= -cargo-root= {{args}}
+
+# Rewrite every pinned sha256 that does not match its release asset (after Renovate moved a version).
+pin-sums:
+    scripts/deps-fresh.sh -sums -fix
+
+# Check every pinned sha256 against its release asset; downloads each asset.
+pin-sums-check:
+    scripts/deps-fresh.sh -sums
 
 # ---------------------------------------------------------------- protocol
 

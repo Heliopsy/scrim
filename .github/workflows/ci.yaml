@@ -48,6 +48,7 @@ jobs:
       - run: go vet ./...
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
         with:
+          # renovate: datasource=github-releases depName=golangci/golangci-lint
           version: v2.15.0
       # Container-backed store tests run in their own job below.
       - run: go test -race -count=1 ./...
@@ -120,7 +121,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
         with:
           go-version-file: go.mod
       - name: Rust toolchain
@@ -138,7 +139,9 @@ jobs:
     permissions:
       contents: read
     env:
+      # renovate: datasource=github-releases depName=binwiederhier/ntfy extractVersion=^v(?<version>.+)$
       NTFY_VERSION: 2.38.1
+      # sha256: https://github.com/binwiederhier/ntfy/releases/download/v{version}/ntfy_{version}_linux_amd64.tar.gz
       NTFY_LINUX_AMD64_SHA256: 9727d45e5da86c3f338f0f329044485bddde76f3fbbbc3f9e695c14776f09c32
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -239,7 +242,7 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
-          python-version: "3.13"
+          python-version: "3.15"
       - name: Install tools
         env:
           HELM_MAJOR: ${{ matrix.helm }}
@@ -251,7 +254,7 @@ jobs:
           { echo "HELM_PLUGINS=$HELM_PLUGINS"; echo "CT_ETC=$CT_ETC"; } >> "$GITHUB_ENV"
           # PyYAML for the generators and checks, yamale and yamllint for ct lint.
           python3 -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install --quiet pyyaml==6.0.3 yamale==6.1.0 yamllint==1.38.0
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet pyyaml==6.0.4 yamale==6.1.0 yamllint==1.38.0
           echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
       - name: verify.sh
         run: deploy/helm/scrim/ci/verify.sh
@@ -328,10 +331,10 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
         with:
           go-version-file: go.mod
-      # NODE_USE_ENV_PROXY needs Node.js 24.
+      # NODE_USE_ENV_PROXY needs Node.js 24 or later.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
-          node-version: 24
+          node-version: 26
       - run: rustup toolchain install && cargo --version
         working-directory: dataplane
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
@@ -356,7 +359,9 @@ jobs:
     env:
       # The committed Go code names this protoc in its header. Upstream
       # publishes no checksums; this is the sha256 of the release asset.
+      # renovate: datasource=github-releases depName=protocolbuffers/protobuf extractVersion=^v(?<version>.+)$
       PROTOC_VERSION: "36.2"
+      # sha256: https://github.com/protocolbuffers/protobuf/releases/download/v{version}/protoc-{version}-linux-x86_64.zip
       PROTOC_LINUX_X86_64_SHA256: 121f6c7afe1d4d0e3ea6aab9432038599250134cbf4474cb1167d2c7decd4278
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -402,7 +407,9 @@ jobs:
       # is a Docker container action and cannot run on the ho-z10 pods.
       - name: cargo-deny
         env:
+          # renovate: datasource=github-releases depName=EmbarkStudios/cargo-deny
           CARGO_DENY_VERSION: 0.22.0
+          # sha256: https://github.com/EmbarkStudios/cargo-deny/releases/download/{version}/cargo-deny-{version}-x86_64-unknown-linux-musl.tar.gz
           CARGO_DENY_SHA256: 98c56e6a408bfa5c3c60744b6015aaa6aa08f743fdeb88386d06fca035bb1786
         run: |
           set -euo pipefail
@@ -418,7 +425,9 @@ jobs:
       # gitleaks scans every fetched branch, including unmerged ones.
       - name: gitleaks
         env:
+          # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v(?<version>.+)$
           GITLEAKS_VERSION: 8.30.1
+          # sha256: https://github.com/gitleaks/gitleaks/releases/download/v{version}/gitleaks_{version}_linux_x64.tar.gz
           GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
         run: |
           set -euo pipefail
@@ -450,6 +459,29 @@ jobs:
           go-version-file: go.mod
       - run: scripts/deps-fresh.sh
 
+  # The sha256 pinned next to each release asset (the "# sha256: <url>" line
+  # above it), for the files this change touches: Renovate moves a version
+  # but not its sum, and this names every sum that no longer matches. Fix
+  # with `just pin-sums`. Downloads only the assets of changed files.
+  pin-sums:
+    name: Pinned checksums
+    runs-on: ho-z10
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Sums of the assets pinned in changed files
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: scripts/deps-fresh.sh -sums -sums-since "$BASE"
+
   # Alert rules (promtool check and unit tests), Prometheus configs, the
   # PrometheusRule and dashboard ConfigMap staying in sync with their sources.
   # promtool is the pinned release the script verifies by sha256. A
@@ -480,6 +512,6 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
-          node-version: 24
+          node-version: 26
       - uses: ./.github/actions/setup-just
       - run: just md

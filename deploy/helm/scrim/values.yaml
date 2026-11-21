@@ -549,7 +549,7 @@ agents:
 # -- Kyverno admission policy that configures labelled pods.
 # @default -- See the keys below.
 kyverno:
-  # -- Install the ClusterPolicy (needs Kyverno 1.13 or later).
+  # -- Install the ClusterPolicy (needs Kyverno 1.13 to 1.19).
   enabled: false
   # -- Refuse labelled pods when Kyverno cannot process them.
   failurePolicy: Fail

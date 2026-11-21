@@ -14,8 +14,9 @@ import (
 //
 //	<ecosystem> <name> <expires YYYY-MM-DD> <reason>
 //
-// ecosystem is go (name is the module path as go.mod requires it) or cargo
-// (name is the crates.io crate name). The entry stops applying after the
+// ecosystem is go (name is the module path as go.mod requires it), cargo
+// (name is the crates.io crate name), pin (name is the Renovate depName of a
+// pinned tool or image) or action (owner/repo of a GitHub Action). The entry stops applying after the
 // expiry date (UTC), and an expired entry fails the gate.
 type ignoreEntry struct {
 	eco, name string
@@ -55,10 +56,12 @@ func parseIgnore(name string, data []byte) (ignoreList, error) {
 		}
 		f := strings.Fields(line)
 		if len(f) < 4 {
-			return nil, fmt.Errorf("%s:%d: want <go|cargo> <name> <expires YYYY-MM-DD> <reason>", name, n)
+			return nil, fmt.Errorf("%s:%d: want <go|cargo|pin|action> <name> <expires YYYY-MM-DD> <reason>", name, n)
 		}
-		if f[0] != "go" && f[0] != "cargo" {
-			return nil, fmt.Errorf("%s:%d: ecosystem %q is not go or cargo", name, n, f[0])
+		switch f[0] {
+		case "go", "cargo", "pin", "action":
+		default:
+			return nil, fmt.Errorf("%s:%d: ecosystem %q is not go, cargo, pin or action", name, n, f[0])
 		}
 		exp, err := time.Parse(time.DateOnly, f[2])
 		if err != nil {

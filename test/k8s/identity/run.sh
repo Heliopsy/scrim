@@ -28,7 +28,7 @@
 #   KIND                 kind binary (default: kind)
 #   SCRIM_DATAPLANE_BIN  scrim-dataplane to put in the image (default: build a debug one)
 #   SCRIM_BASE_IMAGE     base of the scrim image (default: the Containerfile's distroless base)
-#   TOOLS_BASE_IMAGE     base of the helper image (default: docker.io/library/alpine:3.22)
+#   TOOLS_BASE_IMAGE     base of the helper image (default: docker.io/library/alpine:3.24)
 #   OPENBAO_IMAGE, POSTGRES_IMAGE  images loaded into the cluster
 set -euo pipefail
 
@@ -39,9 +39,9 @@ ctx=kind-$name
 KIND=${KIND:-kind}
 export KIND_EXPERIMENTAL_PROVIDER=podman
 SCRIM_BASE_IMAGE=${SCRIM_BASE_IMAGE:-gcr.io/distroless/static-debian13:nonroot}
-TOOLS_BASE_IMAGE=${TOOLS_BASE_IMAGE:-docker.io/library/alpine:3.22}
+TOOLS_BASE_IMAGE=${TOOLS_BASE_IMAGE:-docker.io/library/alpine:3.24}
 export OPENBAO_IMAGE=${OPENBAO_IMAGE:-quay.io/openbao/openbao:2.7.3}
-export POSTGRES_IMAGE=${POSTGRES_IMAGE:-docker.io/library/postgres:18.6-alpine3.24}
+export POSTGRES_IMAGE=${POSTGRES_IMAGE:-docker.io/library/postgres:19.0-alpine3.24}
 export SCRIM_IMAGE=localhost/scrim-k8sid-scrim:test
 export TOOLS_IMAGE=localhost/scrim-k8sid-tools:test
 

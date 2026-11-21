@@ -49,11 +49,14 @@ tag="e2e-$(date +%s)"
 img_scrim="localhost/scrim-k8s-scrim:$tag"
 img_testbin="localhost/scrim-k8s-testbin:$tag"
 img_tools="localhost/scrim-k8s-tools:$tag"
-dp_image="${SCRIM_K8S_DATAPLANE_IMAGE:-ghcr.io/heliopsy/scrim-dataplane:0.1.0}"
-calico_version="v3.30.3"
-calico_sha256="9382d2b27a76f40c170454b408653e6d71e2205ef0aef069e942bb690e7381d0"
-kyverno_chart_version="3.5.2"
-openbao_image="quay.io/openbao/openbao:2.4.1@sha256:597f62847dd382382056a1d6704d50465908c2040038c4611832a23269a67112"
+dp_image="${SCRIM_K8S_DATAPLANE_IMAGE:-ghcr.io/heliopsy/scrim-dataplane:0.2.0}" # x-release-please-version
+# renovate: datasource=github-releases depName=projectcalico/calico
+calico_version="v3.33.1"
+# sha256: https://raw.githubusercontent.com/projectcalico/calico/{version}/manifests/calico.yaml
+calico_sha256="3368e62807b949438842e31f46c9b6df741731b4c755d0a622dd062b2cb20495"
+# renovate: datasource=helm depName=kyverno registryUrl=https://kyverno.github.io/kyverno/
+kyverno_chart_version="3.9.2"
+openbao_image="quay.io/openbao/openbao:2.7.3@sha256:ba4b133eb9586630024e71a617e66f37f29cc3534cdd46a6233e098ceded8dc9"
 embed="$root/internal/dataplane/embedded/scrim-dataplane"
 
 export KIND_EXPERIMENTAL_PROVIDER=podman

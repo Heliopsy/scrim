@@ -16,11 +16,18 @@
 // Minor and patch lag on a post-1.0 line is left to Dependabot. Exceptions
 // live in .deps-fresh-ignore, each with an expiry date and a reason.
 //
-// The only network calls go to the Go module proxy and the crates.io sparse
-// index.
+// With -pins it also checks the pinned tools, images and actions (pins.go):
+// any release newer than the pin that has been out longer than -pins-grace
+// fails. -sums checks the sha256 pinned next to release assets instead
+// (sums.go), and -sums -fix rewrites the ones that differ.
+//
+// Without -pins and -sums the only network calls go to the Go module proxy
+// and the crates.io sparse index; -pins adds the GitHub API, npm, PyPI,
+// go.dev, Helm repositories and container registries, -sums the asset URLs.
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -47,6 +54,8 @@ const (
 	statusDeprecated status = "DEPRECATED"
 	statusIgnored    status = "ignored"
 	statusError      status = "ERROR"
+	statusPending    status = "pending"
+	statusSkipped    status = "skipped"
 )
 
 func (s status) fails() bool {
@@ -67,6 +76,16 @@ type options struct {
 	cratesIndex string
 	jobs        int
 	now         func() time.Time
+
+	// -pins and -sums.
+	pins, sums, fix    bool
+	root, renovate     string
+	grace              time.Duration
+	sumsSince          string
+	githubAPI, npm     string
+	pypi, goDev        string
+	githubToken        string
+	insecureRegistries []string
 }
 
 func main() {
@@ -78,8 +97,29 @@ func main() {
 	fs.StringVar(&opts.goProxy, "go-proxy", defaultGoProxy, "Go module proxy (tests only)")
 	fs.StringVar(&opts.cratesIndex, "crates-index", defaultCratesIndex, "crates.io sparse index (tests only)")
 	fs.IntVar(&opts.jobs, "jobs", 8, "parallel registry lookups")
+	fs.BoolVar(&opts.pins, "pins", false, "also check the pinned tools, images and actions (renovate.json, .github)")
+	grace := fs.String("pins-grace", "14d", "how long a newer release may wait before a pin fails")
+	fs.BoolVar(&opts.sums, "sums", false, "check the sha256 pinned next to each release asset instead of versions")
+	fs.BoolVar(&opts.fix, "fix", false, "with -sums: rewrite the sums that differ")
+	fs.StringVar(&opts.sumsSince, "sums-since", "", "with -sums: only files changed since this git ref")
+	fs.StringVar(&opts.root, "root", ".", "repository root (-pins, -sums)")
+	fs.StringVar(&opts.renovate, "renovate", "renovate.json", "Renovate configuration, relative to -root")
+	fs.StringVar(&opts.githubAPI, "github-api", defaultGitHubAPI, "GitHub API (tests only)")
+	fs.StringVar(&opts.npm, "npm-registry", defaultNPM, "npm registry (tests only)")
+	fs.StringVar(&opts.pypi, "pypi", defaultPyPI, "PyPI (tests only)")
+	fs.StringVar(&opts.goDev, "go-dev", defaultGoDev, "go.dev (tests only)")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
+	}
+	var err error
+	if opts.grace, err = parseGrace(*grace); err != nil {
+		fmt.Fprintln(os.Stderr, "deps-fresh:", err)
+		os.Exit(2)
+	}
+	opts.githubToken = cmp.Or(os.Getenv("GITHUB_TOKEN"), os.Getenv("GH_TOKEN"))
+	run := run
+	if opts.sums {
+		run = runSums
 	}
 	code, err := run(context.Background(), opts, os.Stdout)
 	if err != nil {
@@ -120,6 +160,14 @@ func run(ctx context.Context, opts options, w io.Writer) (int, error) {
 		}
 	}
 
+	if opts.pins {
+		pt, err := pinTasks(ctx, opts, opts.now())
+		if err != nil {
+			return 0, err
+		}
+		tasks = append(tasks, pt...)
+	}
+
 	results := make([]result, len(tasks))
 	sem := make(chan struct{}, max(1, opts.jobs))
 	var wg sync.WaitGroup
@@ -142,6 +190,10 @@ func run(ctx context.Context, opts options, w io.Writer) (int, error) {
 		if e == nil {
 			continue
 		}
+		if r.status == statusPending {
+			e.used = true // a newer release in its grace period: the entry is about to apply
+			continue
+		}
 		if !r.status.fails() || r.status == statusError {
 			continue
 		}
@@ -162,7 +214,7 @@ func run(ctx context.Context, opts options, w io.Writer) (int, error) {
 
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].eco != results[j].eco {
-			return results[i].eco > results[j].eco // go before cargo
+			return ecoOrder[results[i].eco] < ecoOrder[results[j].eco]
 		}
 		if results[i].name != results[j].name {
 			return results[i].name < results[j].name
@@ -184,8 +236,9 @@ func run(ctx context.Context, opts options, w io.Writer) (int, error) {
 	for _, s := range skipped {
 		_, _ = fmt.Fprintln(w, "note:", s)
 	}
+	checked := map[string]bool{"go": opts.goMod != "", "cargo": opts.cargoRoot != "", "pin": opts.pins, "action": opts.pins}
 	for _, e := range ignores {
-		if !e.used {
+		if !e.used && checked[e.eco] {
 			_, _ = fmt.Fprintf(w, "warning: %s:%d: %s %s matches no dependency that is behind; remove the entry\n", opts.ignore, e.line, e.eco, e.name)
 		}
 	}
@@ -193,13 +246,19 @@ func run(ctx context.Context, opts options, w io.Writer) (int, error) {
 		_, _ = fmt.Fprintln(w, "error:", p)
 	}
 	if failed > 0 || len(problems) > 0 {
-		_, _ = fmt.Fprintf(w, "deps-fresh: %d of %d direct dependencies fail the gate, %d expired ignore entries.\n", failed, len(results), len(problems))
-		_, _ = fmt.Fprintln(w, "Look the latest stable release up in the registry and move to it; .deps-fresh-ignore takes a dated, explained exception.")
+		_, _ = fmt.Fprintf(w, "deps-fresh: %d of %d checked dependencies fail the gate, %d expired ignore entries.\n", failed, len(results), len(problems))
+		_, _ = fmt.Fprintln(w, "Look the latest stable release up in the registry and move to it (a pin: merge Renovate's pull request, or bump it and run `just pin-sums`); .deps-fresh-ignore takes a dated, explained exception.")
 		return 1, nil
 	}
-	_, _ = fmt.Fprintf(w, "deps-fresh: all %d direct dependencies are on their latest major.\n", len(results))
+	what := "direct dependencies are on their latest major"
+	if opts.pins {
+		what = "dependencies, pins and actions are current"
+	}
+	_, _ = fmt.Fprintf(w, "deps-fresh: all %d %s.\n", len(results), what)
 	return 0, nil
 }
+
+var ecoOrder = map[string]int{"go": 0, "cargo": 1, "pin": 2, "action": 3}
 
 // ---------------------------------------------------------------- Go
 

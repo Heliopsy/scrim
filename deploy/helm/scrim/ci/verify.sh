@@ -36,7 +36,8 @@ set -euo pipefail
 CHART="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(cd "$CHART/../../.." && pwd)"
 NAME="$(sed -n 's/^name: *//p' "$CHART/Chart.yaml")"
-K8S_VERSION="${K8S_VERSION:-1.34.0}"
+# renovate: datasource=github-releases depName=kubernetes/kubernetes extractVersion=^v(?<version>.+)$
+K8S_VERSION="${K8S_VERSION:-1.37.2}"
 OUT="${OUT:-$(mktemp -d "${TMPDIR:-/tmp}/scrim-verify.XXXXXX")}"
 mkdir -p "$OUT"
 CRD_CATALOG='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'

@@ -70,7 +70,7 @@ sha256 in [`scripts/deploy-examples/tools.env`](../../scripts/deploy-examples/to
 | Check | Covers |
 | --- | --- |
 | `scrim config validate` in the image built from the same commit (`scripts/deploy-examples/image.sh`), with the mounts each example gives it | every config file: workstation, systemd, OpenBao drop-in, podman, compose, the raw ConfigMap, each kustomize overlay's ConfigMap, the config each Helm values file and the chart's `examples/production.yaml` render |
-| kubeconform `-strict`, Kubernetes 1.34 schemas and the CRD catalog, both pinned by commit | raw manifests, kube play YAML, kustomize overlays, rendered Helm values, Flux, Argo CD, Kyverno and External Secrets objects |
+| kubeconform `-strict`, Kubernetes 1.37 schemas and the CRD catalog, both pinned by commit | raw manifests, kube play YAML, kustomize overlays, rendered Helm values, Flux, Argo CD, Kyverno and External Secrets objects |
 | `helm lint --strict` and `helm template` | each values file and the chart's `examples/production.yaml` |
 | `kustomize build` | the overlays and every kustomization in the Flux and secrets examples |
 | `systemd-analyze verify` in a scratch root, any warning fails | the system unit, with and without the OpenBao drop-in, the user unit, the unit Quadlet generates |
