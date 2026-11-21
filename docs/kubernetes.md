@@ -567,9 +567,9 @@ model provider, a TLS tool host and the chart, then starts one agent pod per mod
 - the image signature example admits the signed release image, pinned to its digest, and refuses
   an unsigned artifact of the same repository (this step needs ghcr.io and Rekor).
 
-`SCRIM_K8S_KYVERNO_CHART` installs another Kyverno chart version (`3.7.2` for Kyverno 1.17, the
-oldest the chart supports). It uses its own kubeconfig in a temporary directory and removes the cluster, its images and the
-`kind` network it created. It needs about 10 GB of free disk while it runs. `SCRIM_K8S_KEEP=1` keeps the cluster for
+`SCRIM_K8S_KYVERNO_CHART` installs another Kyverno chart version (`3.7.2` for Kyverno 1.17, the oldest the chart
+supports). It uses its own kubeconfig in a temporary directory and removes the cluster, its images and the `kind`
+network it created. It needs about 10 GB of free disk while it runs. `SCRIM_K8S_KEEP=1` keeps the cluster for
 debugging and `SCRIM_K8S_REUSE=1` reuses it.
 
 Rootless kind needs cgroup v2 with the cpu, memory and pids controllers delegated to the user
