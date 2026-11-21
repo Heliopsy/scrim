@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -151,6 +152,12 @@ func (r *registry) goLatestQuery(ctx context.Context, path string) (string, bool
 	body, found, err := r.get(ctx, r.goProxy+"/"+escapeModulePath(path)+"/@latest")
 	if err != nil || !found {
 		return "", found, err
+	}
+	// Some proxy edges answer a module path with no versions with an empty
+	// 200 instead of a 404 (an empty @v/list means the same); it names no
+	// version, so treat it as not found rather than as broken JSON.
+	if len(bytes.TrimSpace(body)) == 0 {
+		return "", false, nil
 	}
 	var info struct{ Version string }
 	if err := json.Unmarshal(body, &info); err != nil {
