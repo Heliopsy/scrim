@@ -13,6 +13,7 @@ publish.workspace = true
 [dependencies]
 aho-corasick = "1.1.5"
 arc-swap = "1.9.5"
+crc32fast = "1.5.5"
 hmac = "0.13.0"
 memchr = "2.8.3"
 regex = { version = "1.13.2", default-features = false, features = ["std", "perf", "unicode-perl"] }

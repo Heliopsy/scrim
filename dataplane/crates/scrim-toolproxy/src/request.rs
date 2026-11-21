@@ -34,6 +34,7 @@ use crate::multipart;
 use crate::proxy::Shared;
 use crate::redactor::{Redactor, ValueRedactor};
 use crate::secret::SecretValue;
+use crate::sigv4;
 use http_body_util::BodyExt;
 
 /// Headers that apply to one connection only, never forwarded, and scrim's own session header
@@ -83,6 +84,8 @@ pub(crate) struct RequestMeta {
 pub(crate) struct Prepared {
     pub req: Request<ProxyBody>,
     pub meta: RequestMeta,
+    /// The client certificate credential's value (PEM chain and key) to present upstream.
+    pub client_identity: Option<SecretValue>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -271,6 +274,46 @@ enum Out {
     Stream(ProxyBody),
 }
 
+/// A request signed with a credential's placeholder access key id, verified against its
+/// placeholder secret, to be signed again after substitution.
+struct SigPlan {
+    auth: sigv4::Auth,
+    verified: sigv4::Verified,
+    /// The secret access key credential.
+    secret: usize,
+    /// The access key id credential.
+    access_key: usize,
+}
+
+/// The request's content codings, with `aws-chunked` (AWS chunked uploads, framing rather than
+/// compression) taken out and reported.
+fn request_codings(h: &http::HeaderMap) -> (Result<Codings, String>, bool) {
+    let mut chunked = false;
+    let mut rest = http::HeaderMap::new();
+    for v in h.get_all(header::CONTENT_ENCODING) {
+        let Ok(s) = v.to_str() else {
+            return (Err("(non-ASCII)".to_owned()), false);
+        };
+        let kept: Vec<&str> = s
+            .split(',')
+            .filter(|t| {
+                let aws = t.trim().eq_ignore_ascii_case("aws-chunked");
+                chunked |= aws;
+                !aws
+            })
+            .collect();
+        if let Ok(v) = HeaderValue::from_str(&kept.join(",")) {
+            rest.append(header::CONTENT_ENCODING, v);
+        }
+    }
+    let codings = parse_codings(&rest);
+    match codings {
+        // aws-chunked framing around a compressed body is not something scrim can rewrite.
+        Ok(c) if chunked && !c.0.is_empty() => (Err("aws-chunked".to_owned()), true),
+        other => (other, chunked),
+    }
+}
+
 enum BodyPlan {
     /// Forward these bytes unchanged.
     Unchanged(Bytes),
@@ -324,6 +367,9 @@ impl Engine {
         B::Error: Into<BoxError>,
     {
         let (mut parts, body) = req.into_parts();
+        // A SigV4 signature is checked against the request exactly as the agent sent it.
+        let sig_original = sigv4::claims_sigv4(&parts.uri, &parts.headers)
+            .then(|| (parts.uri.clone(), parts.headers.clone()));
         let method = parts.method.clone();
         let raw_path = parts.uri.path().to_owned();
         let audit_path = normalise_path(&raw_path);
@@ -426,8 +472,13 @@ impl Engine {
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
         let kind = body_kind(ct.as_deref());
-        let codings = parse_codings(&parts.headers);
-        let plan = match collect_limited(body, shared.settings.max_buffered_body).await {
+        let (codings, aws_chunked) = request_codings(&parts.headers);
+        let collected = collect_limited(body, shared.settings.max_buffered_body).await;
+        let original_body = match &collected {
+            Ok(Collected::Complete(b, _)) => Some(b.clone()),
+            _ => None,
+        };
+        let plan = match collected {
             Err(e) => {
                 return Err(refuse(
                     &used,
@@ -584,6 +635,119 @@ impl Engine {
             },
         };
 
+        if aws_chunked && matches!(plan, BodyPlan::Rewrite { .. }) {
+            return Err(refuse(
+                &used,
+                Refusal::new(
+                    ErrorCode::UnsupportedEncoding,
+                    "a placeholder in an aws-chunked body cannot be substituted",
+                ),
+            ));
+        }
+
+        // A placeholder client certificate presented to the proxy names its credential.
+        let mut client_cert: Option<usize> = None;
+        if let Some(p) = parts
+            .extensions
+            .get::<crate::clientcert::PresentedCertificate>()
+            && let Some(ci) = self.client_certificate_by_key(&p.0)
+        {
+            occurrences.items.push((ci, Location::ClientCertificate));
+            client_cert = Some(ci);
+        }
+
+        // AWS SigV4 signed with a placeholder access key id: check the signature was made with
+        // the placeholder secret, and count the secret as used toward this destination.
+        let mut sig_plan: Option<SigPlan> = None;
+        if let Some((ouri, oheaders)) = &sig_original {
+            match sigv4::parse(ouri, oheaders) {
+                Err(e) => {
+                    if !occurrences.items.is_empty() {
+                        return Err(refuse(
+                            &used,
+                            Refusal::new(ErrorCode::ResigningUnsupported, e.0),
+                        ));
+                    }
+                }
+                Ok(None) => {}
+                Ok(Some(auth)) => {
+                    if let Some((sk, ak)) = self.credentials.sigv4_by_access_key(&auth.access_key) {
+                        let creds = self.credentials.credentials();
+                        let (s, a) = (&creds[sk], &creds[ak]);
+                        used.insert(s.name.clone());
+                        used.insert(a.name.clone());
+                        let allowed = s
+                            .aws_sigv4
+                            .as_ref()
+                            .is_some_and(|spec| spec.allows(&auth.region, &auth.service));
+                        if !allowed {
+                            return Err(refuse(
+                                &used,
+                                Refusal::new(
+                                    ErrorCode::UnboundDestination,
+                                    format!(
+                                        "credential `{}` is not bound to AWS region `{}` and service `{}`",
+                                        s.name, auth.region, auth.service
+                                    ),
+                                ),
+                            ));
+                        }
+                        let view = sigv4::View {
+                            method: &method,
+                            path: ouri.path(),
+                            query: ouri.query(),
+                            headers: oheaders,
+                            authority: ouri.authority().map(http::uri::Authority::as_str),
+                        };
+                        let secrets = s.placeholders.iter().map(|p| p.text.as_bytes());
+                        let verified =
+                            sigv4::verify(&auth, &view, original_body.as_deref(), secrets)
+                                .map_err(|e| {
+                                    refuse(
+                                        &used,
+                                        Refusal::new(ErrorCode::ResigningUnsupported, e.0),
+                                    )
+                                })?;
+                        let Some(verified) = verified else {
+                            return Err(refuse(
+                                &used,
+                                Refusal::new(
+                                    ErrorCode::SignatureInvalid,
+                                    format!(
+                                        "the request names the access key id placeholder of `{}` but is not signed with the placeholder of `{}`",
+                                        a.name, s.name
+                                    ),
+                                ),
+                            ));
+                        };
+                        if verified.payload.chunk_signed().is_some()
+                            && matches!(plan, BodyPlan::Rewrite { .. })
+                        {
+                            return Err(refuse(
+                                &used,
+                                Refusal::new(
+                                    ErrorCode::UnsupportedEncoding,
+                                    "a placeholder in a chunk-signed body cannot be substituted",
+                                ),
+                            ));
+                        }
+                        let loc = match auth.form {
+                            sigv4::Form::Header => Location::Header(header::AUTHORIZATION),
+                            sigv4::Form::Query => Location::Query,
+                        };
+                        occurrences.items.push((ak, loc));
+                        occurrences.items.push((sk, Location::Signature));
+                        sig_plan = Some(SigPlan {
+                            auth,
+                            verified,
+                            secret: sk,
+                            access_key: ak,
+                        });
+                    }
+                }
+            }
+        }
+
         // Checks, for every occurrence, before anything is substituted.
         for (ci, _) in &occurrences.items {
             used.insert(self.credential_name(*ci).to_owned());
@@ -615,12 +779,26 @@ impl Engine {
                     ),
                 ));
             }
-            if !c.locations.allows(loc) {
+            // A signing secret and a client certificate are used, never sent as text.
+            let loc_ok = match loc {
+                Location::ClientCertificate => c.client_certificate,
+                Location::Signature => c.aws_sigv4.is_some(),
+                _ => !c.client_certificate && c.aws_sigv4.is_none() && c.locations.allows(loc),
+            };
+            if !loc_ok {
+                let why = if c.client_certificate || c.aws_sigv4.is_some() {
+                    " (it is used by scrim, never sent as text)"
+                } else {
+                    ""
+                };
                 return Err(refuse(
                     &used,
                     Refusal::new(
                         ErrorCode::UndeclaredLocation,
-                        format!("credential `{}` may not be injected into the {loc}", c.name),
+                        format!(
+                            "credential `{}` may not be injected into the {loc}{why}",
+                            c.name
+                        ),
                     ),
                 ));
             }
@@ -757,7 +935,7 @@ impl Engine {
         }
 
         // Substitute: body.
-        let out = match plan {
+        let mut out = match plan {
             BodyPlan::Unchanged(b) => {
                 if !b.is_empty() || parts.headers.contains_key(header::CONTENT_LENGTH) {
                     parts
@@ -822,7 +1000,97 @@ impl Engine {
             }
         };
 
-        if !occurrences.items.is_empty()
+        filter_accept_encoding(&mut parts.headers);
+        if let Some(sp) = sig_plan {
+            let unrepresentable = |e: sigv4::SigError| {
+                refuse(&used, Refusal::new(ErrorCode::ResigningUnsupported, e.0))
+            };
+            let (Some(secret), Some(akid)) = (&creds[sp.secret].value, &creds[sp.access_key].value)
+            else {
+                return Err(refuse(
+                    &used,
+                    Refusal::new(
+                        ErrorCode::CredentialUnavailable,
+                        "an AWS credential value is not available",
+                    ),
+                ));
+            };
+            let akid = std::str::from_utf8(akid.expose()).map_err(|_| {
+                refuse(
+                    &used,
+                    Refusal::new(
+                        ErrorCode::UnrepresentableValue,
+                        "the access key id is not valid in a SigV4 credential",
+                    ),
+                )
+            })?;
+            let authority = sig_original
+                .as_ref()
+                .and_then(|(u, _)| u.authority().map(|a| a.as_str().to_owned()));
+            let body_now: Option<&[u8]> = match &out {
+                Out::Bytes(b) => Some(b),
+                Out::Stream(_) => None,
+            };
+            let seed = sigv4::resign(
+                &sp.auth,
+                &sp.verified,
+                &parts.method,
+                &mut parts.uri,
+                &mut parts.headers,
+                authority.as_deref(),
+                body_now,
+                akid,
+                secret.expose(),
+            )
+            .map_err(unrepresentable)?;
+            if let Some(trailer) = sp.verified.payload.chunk_signed() {
+                let agent_secret = creds[sp.secret].placeholders[sp.verified.secret]
+                    .text
+                    .as_bytes();
+                let mut chunks = sigv4::ChunkResigner::new(
+                    &sp.auth,
+                    agent_secret,
+                    secret.expose(),
+                    seed,
+                    trailer,
+                );
+                out = match out {
+                    Out::Bytes(b) => {
+                        let mut o = Vec::with_capacity(b.len());
+                        chunks.push(&b, &mut o).map_err(unrepresentable)?;
+                        chunks.finish().map_err(unrepresentable)?;
+                        Out::Bytes(Bytes::from(o))
+                    }
+                    Out::Stream(b) => {
+                        let audit = shared.audit.clone();
+                        let (d, m, p) = (dest.to_string(), method.to_string(), audit_path.clone());
+                        let flag = aborted.clone();
+                        let on_end = Box::new(move |r: Result<u64, String>| {
+                            if let Err(message) = r {
+                                flag.store(true, Ordering::SeqCst);
+                                audit.record(AuditEvent::RequestRefused {
+                                    code: ErrorCode::SignatureInvalid,
+                                    credentials: Vec::new(),
+                                    destination: d,
+                                    method: m,
+                                    path: p,
+                                    message,
+                                });
+                            }
+                        });
+                        Out::Stream(
+                            TransformBody::new(
+                                b,
+                                Pipeline::new(vec![Stage::Chunks(chunks)]),
+                                None,
+                                on_end,
+                            )
+                            .boxed_unsync(),
+                        )
+                    }
+                };
+            }
+        } else if !occurrences.items.is_empty()
             && let Some(scheme) = signature_scheme(&parts)
         {
             let body_bytes: &[u8] = match &out {
@@ -851,7 +1119,6 @@ impl Engine {
             Out::Stream(b) => b,
         };
 
-        filter_accept_encoding(&mut parts.headers);
         let authority = dest.authority();
         let pq = parts
             .uri
@@ -917,7 +1184,9 @@ impl Engine {
             .filter(|r| r.matches_request(dest, &method, &path_for_binding))
             .cloned()
             .collect();
+        let client_identity = client_cert.and_then(|i| creds[i].value.clone());
         Ok(Prepared {
+            client_identity,
             req: Request::from_parts(parts, body),
             meta: RequestMeta {
                 dest: dest.clone(),
