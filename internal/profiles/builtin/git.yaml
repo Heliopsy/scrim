@@ -1,0 +1,37 @@
+description: git over HTTPS
+tools: [git]
+credentials:
+  - name: password
+    description: The token or password git sends over HTTPS, one credential line per bound host (for GitHub, the same token as gh).
+    hosts: [github.com]
+    inject: ["header:Authorization"]
+    required: true
+params:
+  username: x-access-token
+env:
+  # An empty credential.helper resets the helpers from every git config
+  # file, so a keychain or store holding the real password is never asked.
+  GIT_CONFIG_COUNT: "2"
+  GIT_CONFIG_KEY_0: credential.helper
+  GIT_CONFIG_VALUE_0: ""
+  GIT_CONFIG_KEY_1: credential.helper
+  GIT_CONFIG_VALUE_1: 'store --file={{ path "git-credentials" }}'
+  GIT_TERMINAL_PROMPT: "0"
+files:
+  - path: git-credentials
+    content: |
+      {{- range $c := creds "password" }}{{ range $c.Hosts }}
+      https://{{ param "username" }}:{{ $c.Placeholder }}@{{ . }}
+      {{- end }}{{ end }}
+paths:
+  - home: .git-credentials
+    generated: git-credentials
+  - home: .config/git/credentials
+    generated: git-credentials
+test:
+  command: [git, credential, fill]
+  stdin: "protocol=https\nhost={{ host \"password\" }}\n\n"
+  expect: 'password={{ placeholder "password" }}'
+notes:
+  - The session sets GIT_CONFIG_COUNT; an inherited GIT_CONFIG_COUNT is replaced.
+  - git over SSH goes through the ssh agent, not this profile.

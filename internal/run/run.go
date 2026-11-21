@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/heliopsy/scrim/internal/localapi"
+	"github.com/heliopsy/scrim/internal/profiles"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -55,6 +56,8 @@ type Options struct {
 	// Placeholders returns the declared placeholders to export for the
 	// session's agent. Optional.
 	Placeholders func(ctx context.Context, agent string) ([]string, error)
+	// Profiles renders the session's tool profiles. Optional.
+	Profiles func(ctx context.Context, agent string, sess profiles.Session) (*profiles.Rendered, error)
 	// Reserved reports names that must not be exported as placeholders.
 	Reserved func(name string) bool
 	// SessionName names the session; empty is the agent's base name.
@@ -215,10 +218,23 @@ func (p *Prepared) build(ctx context.Context, ep Endpoints) error {
 			return refused("loading declared placeholders failed: %v", err)
 		}
 	}
+	var rendered *profiles.Rendered
+	if o.Profiles != nil {
+		if ep.ForwardProxy == "" {
+			o.say("tool profiles are not applied: scrim has no forward proxy, so their placeholders would never be injected")
+		} else {
+			sess := profiles.Session{Dir: filepath.Join(dir, ProfilesDir), CABundle: filepath.Join(dir, FileBundle),
+				Home: envMap(o.environ())["HOME"]}
+			var err error
+			if rendered, err = o.Profiles(ctx, p.Session.Agent, sess); err != nil {
+				return refused("tool profiles: %v", err)
+			}
+		}
+	}
 	in := Input{
 		Command: o.Command, Preset: o.Preset, Environ: o.environ(), Endpoints: ep,
 		SessionDir: dir, SessionID: p.Session.ID, Token: !p.token.IsZero() || o.dry(),
-		MCP: o.MCP, ScrimPath: scrimPath, Placeholders: phs, Reserved: o.Reserved,
+		MCP: o.MCP, ScrimPath: scrimPath, Placeholders: phs, Reserved: o.Reserved, Profiles: rendered,
 	}
 	if ep.ForwardProxy != "" {
 		in.SystemRoots, in.NodeExtra = trustInputs(envMap(o.environ()))
@@ -231,8 +247,17 @@ func (p *Prepared) build(ctx context.Context, ep Endpoints) error {
 	if o.dry() {
 		return nil
 	}
+	for _, d := range plan.Dirs {
+		if err := os.MkdirAll(filepath.Join(p.Dir, filepath.FromSlash(d)), 0o700); err != nil {
+			return refused("creating %s failed: %v", d, err)
+		}
+	}
 	for name, data := range plan.Files {
-		if err := os.WriteFile(filepath.Join(p.Dir, name), data, 0o600); err != nil {
+		f := filepath.Join(p.Dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(f), 0o700); err != nil {
+			return refused("creating the directory of %s failed: %v", name, err)
+		}
+		if err := os.WriteFile(f, data, 0o600); err != nil {
 			return refused("writing %s failed: %v", name, err)
 		}
 	}

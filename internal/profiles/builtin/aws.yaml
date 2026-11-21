@@ -1,0 +1,57 @@
+description: AWS CLI and SDKs (shared credentials and config files)
+tools: [aws, sam, cdk]
+credentials:
+  - name: access-key-id
+    description: The access key ID. Requests are re-signed with the real keys by the tool proxy (tasks 10a.2).
+    hosts: ["*.amazonaws.com"]
+    required: true
+  - name: secret-access-key
+    description: The secret access key (catalog tools entry aws.secret-access-key).
+    hosts: ["*.amazonaws.com"]
+    required: true
+  - name: session-token
+    description: A session token for temporary credentials (catalog tools entry aws.session-token).
+    hosts: ["*.amazonaws.com"]
+params:
+  region: ""
+env:
+  AWS_SHARED_CREDENTIALS_FILE: '{{ path "credentials" }}'
+  AWS_CONFIG_FILE: '{{ path "config" }}'
+  AWS_EC2_METADATA_DISABLED: "true"
+  AWS_REGION: '{{ param "region" }}'
+unset:
+  - AWS_ACCESS_KEY_ID
+  - AWS_SECRET_ACCESS_KEY
+  - AWS_SESSION_TOKEN
+  - AWS_SECURITY_TOKEN
+  - AWS_PROFILE
+  - AWS_DEFAULT_PROFILE
+  - AWS_WEB_IDENTITY_TOKEN_FILE
+  - AWS_ROLE_ARN
+  - AWS_CONTAINER_CREDENTIALS_FULL_URI
+  - AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
+  - AWS_CONTAINER_AUTHORIZATION_TOKEN
+  - AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE
+files:
+  - path: credentials
+    content: |
+      [default]
+      aws_access_key_id = {{ placeholder "access-key-id" }}
+      aws_secret_access_key = {{ placeholder "secret-access-key" }}
+      {{- with placeholder "session-token" }}
+      aws_session_token = {{ . }}
+      {{- end }}
+  - path: config
+    content: |
+      [default]
+      {{- with param "region" }}
+      region = {{ . }}
+      {{- end }}
+paths:
+  - home: .aws/credentials
+    generated: credentials
+  - home: .aws/config
+    generated: config
+test:
+  command: [aws, configure, get, aws_secret_access_key]
+  expect: '{{ placeholder "secret-access-key" }}'
