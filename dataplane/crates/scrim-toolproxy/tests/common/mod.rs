@@ -131,6 +131,49 @@ impl UpstreamCa {
         cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         cfg
     }
+
+    /// Like [`UpstreamCa::server_config`], requiring a client certificate issued by `client_ca`.
+    pub fn server_config_mtls(
+        &self,
+        hosts: &[&str],
+        client_ca: &UpstreamCa,
+    ) -> rustls::ServerConfig {
+        let key = KeyPair::generate().unwrap();
+        let mut p = CertificateParams::new(hosts.iter().map(|h| h.to_string()).collect::<Vec<_>>())
+            .unwrap();
+        p.subject_alt_names
+            .push(SanType::IpAddress("127.0.0.1".parse().unwrap()));
+        let cert = p.signed_by(&key, &self.issuer).unwrap();
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(client_ca.der()).unwrap();
+        let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+            Arc::new(roots),
+            provider.clone(),
+        )
+        .build()
+        .unwrap();
+        let mut cfg = rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(
+                vec![cert.der().clone()],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
+            )
+            .unwrap();
+        cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        cfg
+    }
+
+    /// A client certificate and key issued by this CA, PEM, chain first.
+    pub fn client_identity_pem(&self, name: &str) -> String {
+        let key = KeyPair::generate().unwrap();
+        let mut p = CertificateParams::new(Vec::<String>::new()).unwrap();
+        p.distinguished_name.push(DnType::CommonName, name);
+        let cert = p.signed_by(&key, &self.issuer).unwrap();
+        format!("{}{}", cert.pem(), key.serialize_pem())
+    }
 }
 
 /// A fake upstream on 127.0.0.1 recording every request.
@@ -229,9 +272,14 @@ impl<S: futures_util::Stream + Send> futures_util::Stream for DelayedStream<S> {
 
 /// Starts a TLS upstream serving `hosts`.
 pub async fn tls_upstream(ca: &UpstreamCa, hosts: &[&str], handler: Handler) -> Upstream {
+    tls_upstream_with(ca.server_config(hosts), handler).await
+}
+
+/// Starts a TLS upstream with `cfg`.
+pub async fn tls_upstream_with(cfg: rustls::ServerConfig, handler: Handler) -> Upstream {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(ca.server_config(hosts)));
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(cfg));
     let seen = Arc::new(Mutex::new(Vec::new()));
     let seen2 = seen.clone();
     tokio::spawn(async move {
@@ -379,6 +427,8 @@ pub struct Client {
     pub h2: bool,
     /// Speak TLS straight away, as to a transparent or SNI listener, instead of sending CONNECT.
     pub direct: bool,
+    /// A client certificate and key (PEM) to present to the proxy.
+    pub identity: Option<String>,
 }
 
 #[derive(Debug)]
@@ -418,6 +468,7 @@ impl Client {
             trust,
             h2: false,
             direct: false,
+            identity: None,
         }
     }
 
@@ -457,13 +508,23 @@ impl Client {
         for c in &self.trust {
             roots.add(c.clone()).unwrap();
         }
-        let mut cfg = rustls::ClientConfig::builder_with_provider(Arc::new(
+        let cfg = rustls::ClientConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
         .with_safe_default_protocol_versions()
         .unwrap()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+        .with_root_certificates(roots);
+        let mut cfg = match &self.identity {
+            None => cfg.with_no_client_auth(),
+            Some(pem) => {
+                use rustls::pki_types::pem::PemObject as _;
+                let chain = CertificateDer::pem_slice_iter(pem.as_bytes())
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
+                let key = PrivateKeyDer::from_pem_slice(pem.as_bytes()).unwrap();
+                cfg.with_client_auth_cert(chain, key).unwrap()
+            }
+        };
         cfg.alpn_protocols = if self.h2 {
             vec![b"h2".to_vec()]
         } else {

@@ -7,7 +7,7 @@ use scrim_proto::v1;
 
 use crate::capture::{CaptureRule, CaptureRuleSpec};
 use crate::credential::{
-    BindingSpec, CredentialSet, CredentialSetBuilder, CredentialSpec, ValidationError,
+    AwsSigV4Spec, BindingSpec, CredentialSet, CredentialSetBuilder, CredentialSpec, ValidationError,
 };
 use crate::engine::Snapshot;
 use crate::redactor::{Redactor, ValueRedactor};
@@ -33,6 +33,7 @@ impl Snapshot {
             return Err(ValidationError::ProtocolMismatch(snapshot.protocol));
         }
         let mut builder = CredentialSet::builder();
+        builder.lenient_links();
         let mut redact: Vec<(SecretValue, Vec<u8>)> = Vec::new();
         // Names and references of the bound entries. A value with no binding that shares one
         // (a rotated value retained beside its current one, a second session token, a store's
@@ -89,6 +90,8 @@ impl Snapshot {
                 placeholders: entry.declared_placeholders.clone(),
                 binding,
                 inject,
+                aws_sigv4: aws_sigv4(entry),
+                client_certificate: entry.client_certificate,
             };
             builder.add(spec, Some(value), generated);
         }
@@ -126,6 +129,14 @@ impl Snapshot {
             injection: None,
         })
     }
+}
+
+fn aws_sigv4(e: &v1::ValueEntry) -> Option<AwsSigV4Spec> {
+    e.aws_sigv4.as_ref().map(|a| AwsSigV4Spec {
+        access_key_id: a.access_key_id_ref.clone(),
+        regions: a.regions.clone(),
+        services: a.services.clone(),
+    })
 }
 
 /// Adds the snapshot's `unavailable` entries as credentials without a value, so their declared
@@ -173,6 +184,8 @@ fn add_unavailable(builder: &mut CredentialSetBuilder, snapshot: &v1::Snapshot) 
             } else {
                 e.inject_locations.clone()
             },
+            aws_sigv4: aws_sigv4(e),
+            client_certificate: e.client_certificate,
         };
         builder.add(spec, None, Vec::new());
     }

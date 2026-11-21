@@ -1,0 +1,28 @@
+{
+  "version": "0.1.0",
+  "interception_modes": [],
+  "protections": [],
+  "providers": [],
+  "stores": [],
+  "state": {
+    "backend": "memory",
+    "schema_version": 0,
+    "healthy": true
+  },
+  "audit_sinks": [],
+  "data_plane": {
+    "running": true,
+    "pid": 7,
+    "healthy": true
+  },
+  "degraded": [],
+  "weakened_protections": [],
+  "run_fs_view": {
+    "requested": "auto",
+    "mode": "home",
+    "fallback": "darwin has no user or mount namespaces",
+    "gaps": [
+      "tools that find the home directory through the password database instead of HOME (ssh) read the real files"
+    ]
+  }
+}

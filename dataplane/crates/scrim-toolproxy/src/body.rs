@@ -41,6 +41,8 @@ pub(crate) enum Stage {
     Redact(StreamRedactor),
     /// Refuses the stream when a placeholder shows up (oversized request bodies).
     Scan(ScanStage),
+    /// Re-signs an AWS chunk-signed body.
+    Chunks(crate::sigv4::ChunkResigner),
 }
 
 pub(crate) struct ScanStage {
@@ -110,6 +112,12 @@ impl Pipeline {
                     }
                 }
                 Stage::Scan(s) => s.push(&cur, &mut out, finish)?,
+                Stage::Chunks(c) => {
+                    c.push(&cur, &mut out).map_err(|e| io::Error::other(e.0))?;
+                    if finish {
+                        c.finish().map_err(|e| io::Error::other(e.0))?;
+                    }
+                }
             }
             cur = out;
         }

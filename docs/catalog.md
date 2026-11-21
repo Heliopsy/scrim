@@ -69,9 +69,40 @@ entries:
 | `class` | `credential` (default): injected at the network edge toward bound hosts only. `display`: data the agent may see, restored by the tool policy. |
 | `inject` | Injection locations, for example `header:Authorization`, `query:key`, `env`. |
 | `tools` | Tool profiles that use this secret (`gh`, or `aws.secret-access-key` for a profile's other credentials). An entry naming one takes the profile's hosts and injection locations when it sets none, and the placeholder `SCRIM_<NAME>` when it declares none; see [cli-tools.md](cli-tools.md). |
+| `placeholder_format` | `shape`: a format-preserving placeholder that keeps the value's known prefix (`ghp_`, `AKIA`, `xoxb-`, ...), length and alphabet, for clients that check a token's shape. Credentials only; a value without a shape keeps the bracket form. |
+| `aws_sigv4` | On the entry holding an AWS secret access key: `access_key_id` (the entry holding the access key id), `regions` and `services` the request may be signed for. The tool proxy re-signs requests made with the placeholder keys. |
+| `client_certificate` | The value is a PEM client certificate and key; the tool proxy presents it upstream when the agent presents its placeholder certificate. |
 
 Entry names are lower-case words joined by dashes. Entries from a bulk prefix are named
 `<entry>/<NAME>`, for example `acme/API_KEY`.
+
+AWS keys and a cluster certificate, for example:
+
+```yaml
+entries:
+  aws-akid:
+    ref: bao://kv/agents/aws#access_key_id
+    hosts: [sts.amazonaws.com, "*.s3.us-east-1.amazonaws.com", s3.us-east-1.amazonaws.com]
+    placeholder_format: shape
+    inject: ["header:Authorization", query]
+  aws-secret:
+    ref: bao://kv/agents/aws#secret_access_key
+    hosts: [sts.amazonaws.com, "*.s3.us-east-1.amazonaws.com", s3.us-east-1.amazonaws.com]
+    placeholder_format: shape
+    aws_sigv4: {access_key_id: aws-akid, regions: [us-east-1], services: [s3, sts]}
+  aws-session:
+    ref: bao://kv/agents/aws#session_token
+    hosts: [sts.amazonaws.com, "*.s3.us-east-1.amazonaws.com", s3.us-east-1.amazonaws.com]
+    placeholder_format: shape
+    inject: ["header:X-Amz-Security-Token", query]
+  cluster-admin:
+    ref: bao://kv/agents/cluster#client
+    hosts: ["api.cluster.internal:6443"]
+    client_certificate: true
+```
+
+The agent's AWS configuration holds the placeholders of `aws-akid` and `aws-secret`, which have
+the shape of an access key id and a secret, and its kubeconfig a placeholder certificate.
 
 ## Profiles and environments
 

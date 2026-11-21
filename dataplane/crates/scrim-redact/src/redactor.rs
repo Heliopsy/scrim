@@ -10,8 +10,9 @@ use crate::error::{BuildError, Error};
 use crate::guard::{Guard, GuardFinding, GuardInput, GuardScratch, Verdict};
 use crate::matcher::{Cursor, Engine, EngineChoice, EngineKind, Match, PatternSet, build_engine};
 use crate::placeholder::{Keyring, MAX_PLACEHOLDER_LEN, write_placeholder};
-use crate::restore::{Resolver, ResolverEntry};
+use crate::restore::{Resolver, ResolverEntry, Shaped};
 use crate::secret::{Entry, EntryId, EntryMeta, RefSlug, ValueClass};
+use crate::shape::shaped_placeholder_for;
 use crate::variants::{DEFAULT_JSON_DEPTH, MAX_JSON_DEPTH, Variant, variants};
 
 /// Redaction settings. Canonical configuration keys are given per field.
@@ -88,6 +89,9 @@ pub struct BuildReport {
     pub patterns: usize,
     /// Engine in use.
     pub engine: EngineKind,
+    /// Entries that asked for a format-preserving placeholder but have no shape (or are display
+    /// values): they use the bracket form.
+    pub shape_fallback: Vec<EntryId>,
 }
 
 /// Hit counts of one redaction. No values, no positions.
@@ -258,20 +262,31 @@ impl Redactor {
         input: &[u8],
         f: &mut dyn FnMut(usize, usize, &[u8]),
     ) -> Result<(), Error> {
-        let mut spans: Vec<(usize, usize)> = Vec::new();
+        let mut spans: Vec<(usize, usize, Option<usize>)> = Vec::new();
         let mut out = Vec::new();
         self.redact_with(input, &mut out, &mut |h| match h {
-            Hit::Known { start, end, .. } | Hit::Detected { start, end, .. } => {
-                spans.push((start, end));
+            Hit::Known {
+                meta, start, end, ..
+            } => {
+                let len = self
+                    .entries
+                    .binary_search_by_key(&meta.id, |e| e.meta.id)
+                    .ok()
+                    .map(|i| self.entries[i].placeholder.len());
+                spans.push((start, end, len));
             }
+            Hit::Detected { start, end, .. } => spans.push((start, end, None)),
         })?;
         // The output is the input with each span replaced by one placeholder: walk both.
         let (mut in_pos, mut out_pos) = (0, 0);
-        for (start, end) in spans {
+        for (start, end, known) in spans {
             out_pos += start - in_pos;
-            let len = match crate::placeholder::parse(&out[out_pos..]) {
-                crate::placeholder::Parse::Complete(p) => p.len,
-                _ => unreachable!("redactor output holds a placeholder at every replacement"),
+            let len = match known {
+                Some(len) => len,
+                None => match crate::placeholder::parse(&out[out_pos..]) {
+                    crate::placeholder::Parse::Complete(p) => p.len,
+                    _ => unreachable!("redactor output holds a placeholder at every replacement"),
+                },
             };
             f(start, end, &out[out_pos..out_pos + len]);
             out_pos += len;
@@ -310,6 +325,38 @@ impl Redactor {
             out.extend_from_slice(gap);
             return;
         }
+        if self.resolver.has_shaped() {
+            // A format-preserving placeholder looks like the token it stands for, so a detector
+            // would take it for one: it is copied as it is and only the text around it is scanned.
+            let spans = self.resolver.shaped_spans(gap);
+            if !spans.is_empty() {
+                let mut at = from;
+                for (s, e) in spans {
+                    self.detect(input, at, from + s, out, st, on_hit);
+                    out.extend_from_slice(&input[from + s..from + e]);
+                    at = from + e;
+                }
+                self.detect(input, at, to, out, st, on_hit);
+                return;
+            }
+        }
+        self.detect(input, from, to, out, st, on_hit);
+    }
+
+    /// Copies `input[from..to]` with fallback detector matches replaced.
+    fn detect(
+        &self,
+        input: &[u8],
+        from: usize,
+        to: usize,
+        out: &mut Vec<u8>,
+        st: &mut Stats,
+        on_hit: &mut dyn FnMut(Hit<'_>),
+    ) {
+        if from >= to {
+            return;
+        }
+        let gap = &input[from..to];
         let mut pos = 0;
         let key = self.keyring.current();
         self.detectors.scan(gap, |d| {
@@ -619,9 +666,31 @@ impl Snapshot {
         let mut set = PatternSet::new();
         let mut pat_seen: HashSet<Vec<u8>> = HashSet::new();
         let mut short = 0;
+        let mut shaped_items: Vec<(Vec<u8>, u32)> = Vec::new();
+        let mut shape_fallback = Vec::new();
         for (i, e) in kept.iter().enumerate() {
             let mut ph = Vec::with_capacity(MAX_PLACEHOLDER_LEN);
-            write_placeholder(&mut ph, key, &e.meta.slug, e.value.expose());
+            let shaped = (e.shape && e.meta.class == ValueClass::Credential)
+                .then(|| {
+                    let mut all = Vec::new();
+                    for k in keyring.keys() {
+                        all.push(shaped_placeholder_for(k, &e.meta.slug, e.value.expose())?);
+                    }
+                    Some(all)
+                })
+                .flatten();
+            if e.shape && shaped.is_none() {
+                shape_fallback.push(e.meta.id);
+            }
+            match shaped {
+                Some(all) => {
+                    ph.extend_from_slice(all[0].as_bytes());
+                    for p in all {
+                        shaped_items.push((p.into_bytes(), i as u32));
+                    }
+                }
+                None => write_placeholder(&mut ph, key, &e.meta.slug, e.value.expose()),
+            }
             compiled.push(CompiledEntry {
                 meta: e.meta.clone(),
                 placeholder: ph.into(),
@@ -662,7 +731,23 @@ impl Snapshot {
                 value: e.value,
             })
             .collect();
-        let resolver = Arc::new(Resolver::new(map, res_entries));
+        // A shaped placeholder that equals another entry's value or another shaped placeholder
+        // would be ambiguous: refuse the build rather than guess.
+        {
+            // Two keys with the same bytes give one entry the same shaped placeholder twice;
+            // that is harmless. The same placeholder for two entries is not.
+            shaped_items.sort();
+            shaped_items.dedup();
+            let mut seen: HashSet<&[u8]> = HashSet::new();
+            for (p, _) in &shaped_items {
+                if !seen.insert(p) || res_entries.iter().any(|e| e.value.expose() == p.as_slice()) {
+                    return Err(BuildError::InvalidConfig(
+                        "a format-preserving placeholder collides with a value or another placeholder",
+                    ));
+                }
+            }
+        }
+        let resolver = Arc::new(Resolver::new(map, res_entries, Shaped::new(shaped_items)?));
 
         let guard_inputs: Vec<GuardInput<'_>> = resolver
             .entries()
@@ -691,6 +776,7 @@ impl Snapshot {
             rejected,
             patterns: set.len(),
             engine: kind,
+            shape_fallback,
         };
         let det_slugs = crate::detect::builtin_rule_names()
             .into_iter()

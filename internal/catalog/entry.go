@@ -126,9 +126,32 @@ type Entry struct {
 	Inject []string `yaml:"inject,omitempty" json:"inject,omitempty"`
 	// Tools names tool profiles that use this secret, for example "gh".
 	Tools []string `yaml:"tools,omitempty" json:"tools,omitempty"`
+	// PlaceholderFormat "shape" asks for a format-preserving placeholder
+	// (specs/redaction "Format-preserving placeholders"), for clients that
+	// check a token's prefix or length. Credentials only.
+	PlaceholderFormat string `yaml:"placeholder_format,omitempty" json:"placeholder_format,omitempty"`
+	// AWSSigV4 marks an AWS secret access key: requests signed with its
+	// access key id's placeholder are re-signed toward the bound hosts.
+	AWSSigV4 *AWSSigV4 `yaml:"aws_sigv4,omitempty" json:"aws_sigv4,omitempty"`
+	// ClientCertificate marks a value holding a PEM client certificate and
+	// key, presented upstream when the agent presents its placeholder
+	// certificate.
+	ClientCertificate bool `yaml:"client_certificate,omitempty" json:"client_certificate,omitempty"`
 
 	// Source says where the entry came from. Not part of the file format.
 	Source Source `yaml:"-" json:"-"`
+}
+
+// AWSSigV4 binds an AWS secret access key entry to its access key id entry
+// and to the regions and services requests may be signed for.
+type AWSSigV4 struct {
+	// AccessKeyID names the catalog entry holding the access key id.
+	AccessKeyID string `yaml:"access_key_id" json:"access_key_id"`
+	// Regions the credential scope may name. Empty allows every region.
+	Regions []string `yaml:"regions,omitempty" json:"regions,omitempty"`
+	// Services the credential scope may name, for example s3 and sts. Empty
+	// allows every service.
+	Services []string `yaml:"services,omitempty" json:"services,omitempty"`
 }
 
 // SourceKind orders catalog sources by precedence, lowest first.
@@ -306,6 +329,27 @@ func validateEntry(e *Entry) error {
 		}
 		if !placeholderPattern.MatchString(e.Placeholder) {
 			return fmt.Errorf("%w: entry %q: placeholder %q must be SCRIM_ followed by upper-case words joined by _", ErrInvalid, n, e.Placeholder)
+		}
+	}
+	switch e.PlaceholderFormat {
+	case "", "shape":
+	default:
+		return fmt.Errorf("%w: entry %q: placeholder_format must be shape or empty", ErrInvalid, n)
+	}
+	if e.PlaceholderFormat != "" && e.Class == ClassDisplay {
+		return fmt.Errorf("%w: entry %q: a display value keeps the bracket placeholder; placeholder_format is for credentials", ErrInvalid, n)
+	}
+	if a := e.AWSSigV4; a != nil {
+		if !namePattern.MatchString(a.AccessKeyID) || a.AccessKeyID == n {
+			return fmt.Errorf("%w: entry %q: aws_sigv4.access_key_id must name another catalog entry", ErrInvalid, n)
+		}
+		if e.ClientCertificate {
+			return fmt.Errorf("%w: entry %q: an entry cannot be both an AWS secret and a client certificate", ErrInvalid, n)
+		}
+		for _, w := range slices.Concat(a.Regions, a.Services) {
+			if !wordPattern.MatchString(w) {
+				return fmt.Errorf("%w: entry %q: aws_sigv4 region or service %q is malformed", ErrInvalid, n, w)
+			}
 		}
 	}
 	if e.Prefix != "" {

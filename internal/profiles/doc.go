@@ -70,7 +70,8 @@
 // credential paths the tool reads when no override variable is set
 // (~/.aws/credentials, ~/.kube/config, ~/.docker/config.json, ...), with the
 // absolute path of the generated replacement or "" to hide the path. The
-// session filesystem view (10a.7, 10a.8) mounts or mirrors these; the
+// session filesystem view (package fsview, 10a.7, 10a.8) mounts them over
+// the real paths or mirrors the home without them; the
 // credential helpers (10a.9) can add their configuration through profile
 // env or files (GIT_CONFIG_*, credsStore in authsjson output, a kubeconfig
 // exec user) by overriding or extending a profile.

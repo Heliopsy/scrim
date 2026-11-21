@@ -1,0 +1,6 @@
+[pass] data-plane: ok
+[fail] run-fs-view: run.fs-view is namespace, but this host has no unprivileged user namespaces: creating a user namespace is not allowed: operation not permitted
+       fix: allow unprivileged user namespaces (on Ubuntu: sysctl kernel.apparmor_restrict_unprivileged_userns=0, or an AppArmor profile for scrim that allows userns), or accept the gaps listed in `scrim status`; or set run.fs-view: auto to fall back to the home mirror
+[pass] state: ok
+
+1 check(s) failed, 0 warning(s)
