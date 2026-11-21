@@ -161,6 +161,7 @@ func testDelivery(t *testing.T, h Harness) {
 	WaitUntil(t, "A delivers its own event", h.Bound, func() bool { return a.rec.Len() == 1 })
 	Emit(t, b.State, "grant.revoked")
 	WaitUntil(t, "A delivers B's event", h.Bound, func() bool { return a.rec.Len() == 2 })
+	WaitUntil(t, "B delivers its own event", h.Bound, func() bool { return b.rec.Len() == 2 })
 	for i, nd := range ns {
 		if got := kinds(nd.rec.Events()); fmt.Sprint(got) != "[approval.decided grant.revoked]" {
 			t.Fatalf("replica %d delivered %v", i, got)
