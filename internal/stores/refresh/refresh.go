@@ -36,6 +36,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"sort"
 	"strings"
@@ -745,6 +746,9 @@ type Source struct {
 	Retained bool
 	// Pending marks the value of a write in flight.
 	Pending bool
+	// Labels are the labels the store reported for the secret, when it is
+	// in memory. Read-only: shared with the Refresher.
+	Labels map[string]string
 }
 
 // EachValue calls fn for every value in this store's redaction set: current
@@ -767,18 +771,45 @@ func (r *Refresher) EachValue(fn func(src Source, v secret.Value)) {
 		}
 		sort.Strings(names)
 		for _, f := range names {
-			fn(Source{Ref: e.meta.Ref.WithField(f)}, e.fields[f])
+			fn(Source{Ref: e.meta.Ref.WithField(f), Labels: e.meta.Labels}, e.fields[f])
 		}
 	}
 	for _, x := range r.retired {
-		fn(Source{Ref: x.ref.WithField(x.field), Retained: true}, x.v)
+		fn(Source{Ref: x.ref.WithField(x.field), Retained: true, Labels: r.labelsLocked(x.ref)}, x.v)
 	}
 	for v, ref := range r.pending {
-		fn(Source{Ref: ref, Pending: true}, *v)
+		fn(Source{Ref: ref, Pending: true, Labels: r.labelsLocked(ref)}, *v)
 	}
 	for _, v := range r.creds {
 		fn(Source{}, v)
 	}
+}
+
+// Labels returns a copy of the labels the store reported for the secret ref
+// names, if the secret is in memory.
+func (r *Refresher) Labels(ref stores.Ref) (map[string]string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	e := r.entryLocked(ref)
+	if e == nil {
+		return nil, false
+	}
+	return maps.Clone(e.meta.Labels), true
+}
+
+func (r *Refresher) entryLocked(ref stores.Ref) *entry {
+	if e := r.entries[key(ref)]; e != nil {
+		return e
+	}
+	ref.Scheme = r.a.Name()
+	return r.entries[key(ref)]
+}
+
+func (r *Refresher) labelsLocked(ref stores.Ref) map[string]string {
+	if e := r.entryLocked(ref); e != nil {
+		return e.meta.Labels
+	}
+	return nil
 }
 
 // Resolve returns a copy of the value ref names, for injection toward a
@@ -944,4 +975,23 @@ func copyValue(v secret.Value) secret.Value {
 		return nil
 	})
 	return out
+}
+
+// SecretLabels is the label set policy sees for the secret ref names
+// (specs/policy "Store labels in rules"): the labels its store reported when
+// the secret is in a refresher's memory, else the labels a new item there
+// would get ([stores.Set.WriteLabels]), composed by set with the generic
+// store.* labels and the instance's derived labels.
+func SecretLabels(set *stores.Set, rs []*Refresher, ref stores.Ref) map[string]string {
+	if a, err := set.Lookup(ref); err == nil {
+		for _, r := range rs {
+			if r.Store() != a.Name() {
+				continue
+			}
+			if l, ok := r.Labels(ref); ok {
+				return set.Labels(ref, l)
+			}
+		}
+	}
+	return set.WriteLabels(ref)
 }

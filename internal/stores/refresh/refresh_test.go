@@ -654,3 +654,45 @@ func TestEmptyTargetAllowedIsDegraded(t *testing.T) {
 		t.Fatalf("targets %+v", st.Targets)
 	}
 }
+
+// TestSecretLabels: a secret in memory is labelled from what its store
+// reported, a new item from what it would get; a writer cannot forge the
+// store's native label through write labels.
+func TestSecretLabels(t *testing.T) {
+	s := memstore.New("mem")
+	ref := stores.MustParseRef("mem://team/a")
+	if _, err := s.Write(t.Context(), ref, map[string]secret.Value{"token": secret.FromString(gen(t))},
+		stores.WriteOptions{Labels: map[string]string{"scrim.hosts": "api.example.test", "memory.top": "forged", "store.kind": "forged"}}); err != nil {
+		t.Fatal(err)
+	}
+	r := newRefresher(t, s, nil, "mem://team/*")
+	if err := r.RefreshNow(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	set := stores.NewSet()
+	if err := set.Add(s); err != nil {
+		t.Fatal(err)
+	}
+	set.SetLabeling("mem", memstore.Kind, nil)
+	got := refresh.SecretLabels(set, []*refresh.Refresher{r}, ref.WithField("token"))
+	for k, want := range map[string]string{
+		"scrim.hosts": "api.example.test", "memory.top": "team", "store.kind": "memory", "store.field": "token",
+	} {
+		if got[k] != want {
+			t.Errorf("%s = %q, want %q (%v)", k, got[k], want, got)
+		}
+	}
+	var seen map[string]string
+	r.EachValue(func(src refresh.Source, _ secret.Value) {
+		if src.Ref.Path == "team/a" {
+			seen = src.Labels
+		}
+	})
+	if seen["scrim.hosts"] != "api.example.test" {
+		t.Errorf("EachValue labels = %v", seen)
+	}
+	got = refresh.SecretLabels(set, []*refresh.Refresher{r}, stores.MustParseRef("mem://ops/new"))
+	if got["memory.top"] != "ops" || got["scrim.hosts"] != "" || got["store.name"] != "mem" {
+		t.Errorf("new item labels = %v", got)
+	}
+}
