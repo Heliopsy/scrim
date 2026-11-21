@@ -98,7 +98,9 @@ jobs:
           SECONDS_PER_TARGET: ${{ github.event_name == 'schedule' && '900' || inputs.seconds || '60' }}
         run: |
           set -euo pipefail
-          cargo "+nightly-${RUST_NIGHTLY_DATE}" fuzz run "$TARGET" -- \
+          # cargo-fuzz's release binary is built for musl and defaults to
+          # its own triple; the toolchain has the gnu standard library.
+          cargo "+nightly-${RUST_NIGHTLY_DATE}" fuzz run --target x86_64-unknown-linux-gnu "$TARGET" -- \
             -max_total_time="$SECONDS_PER_TARGET" -timeout=30 -rss_limit_mb=2048
       - name: Upload the reproducer
         if: failure()
