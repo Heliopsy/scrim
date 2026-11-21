@@ -162,8 +162,11 @@ hosts inside the end-to-end sandbox; CI installs the versions pinned in `scripts
 ## What profiles do not cover
 
 - A tool that reads a fixed path and has no override variable (doctl's config file, a hand-written
-  `~/.netrc`) still sees the real file unless the session filesystem view hides it (tasks 10a.7,
-  10a.8). Profiles list those paths for it.
+  `~/.netrc`), or finds the home directory through the password database, is covered by the session
+  filesystem view, not by the profile: the view shows the profile's generated file at each of its
+  `paths` or hides the path ([run.md](run.md#filesystem-view)). Where the host allows no user
+  namespaces the view falls back to a mirrored `HOME`, which such tools bypass; `scrim status` lists
+  the gaps.
 - OAuth flows that return a new token (az, gcloud login) put a live token in the session until a
   capture rule turns it into a placeholder.
 - Profiles replace the tool's user configuration for the session (`~/.npmrc`, `~/.terraformrc`,
