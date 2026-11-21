@@ -135,6 +135,10 @@ jobs:
         run: cargo check --locked --workspace --all-targets
       - name: Control plane build and vet
         run: go build ./... && go vet ./...
+      # tasks.md 10a.8: macOS has no mount namespaces, so status lists the
+      # home mirror fallback and its gaps, and scrim run uses the mirror.
+      - name: Filesystem view fallback
+        run: go test -count=1 -run 'TestStatusRunFSView|TestFSViewHomeMirror|TestFSViewNamespaceRequiredRefuses|TestGapsAndProbe|TestHomeMirror' ./internal/cli/ ./internal/run/ ./internal/fsview/
 
   ntfy-e2e:
     name: ntfy end-to-end
@@ -358,7 +362,8 @@ jobs:
   # helm, skopeo, npm, terraform, tofu, gcloud, az, pip, twine, cargo, hcloud,
   # doctl and aws under `scrim run` with their tool profiles, against fakes of
   # their APIs on their default hosts inside the sandbox (tasks 10a.1, 10a.5,
-  # 10a.6, 10a.10). The CLIs are pinned in scripts/cli-tools/tools.env.
+  # 10a.6, 10a.10), and the session filesystem view (10a.7). The CLIs are
+  # pinned in scripts/cli-tools/tools.env.
   e2e-profiles:
     name: Tool profiles end-to-end
     runs-on: ubuntu-24.04
@@ -396,6 +401,12 @@ jobs:
         run: go test -count=1 -run TestCheckBuiltins ./internal/profiles/
         env:
           SCRIM_E2E_REQUIRE_TOOLS: "1"
+      # tasks.md 10a.7: the namespace view, which the ho-z10 pods of the Go
+      # job cannot create; a missing user namespace fails here.
+      - name: Session filesystem view in a user namespace
+        run: go test -count=1 -run 'TestFSView|TestGapsAndProbe' -v ./internal/run/ ./internal/fsview/
+        env:
+          SCRIM_TEST_REQUIRE_USERNS: "1"
 
   proto:
     name: Generated code up to date

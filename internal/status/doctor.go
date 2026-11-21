@@ -151,6 +151,27 @@ func ReportChecks(r Report) []Check {
 				Fix: "check state.backend and its location or DSN with `scrim config show --effective`"}}
 		}},
 	}
+	if v := r.RunView; v != nil {
+		checks = append(checks, Check{Name: "run-fs-view", Run: func(context.Context) []Finding {
+			fix := "allow unprivileged user namespaces (on Ubuntu: sysctl kernel.apparmor_restrict_unprivileged_userns=0, " +
+				"or an AppArmor profile for scrim that allows userns), or accept the gaps listed in `scrim status`"
+			switch {
+			case v.Mode == RunViewRefused:
+				return []Finding{{Outcome: Fail, Message: "run.fs-view is namespace, but this host has no unprivileged user namespaces: " + v.Fallback,
+					Fix: fix + "; or set run.fs-view: auto to fall back to the home mirror"}}
+			case v.Fallback != "":
+				return []Finding{{Outcome: Warn, Message: "scrim run falls back to the home mirror: " + v.Fallback +
+					"; tools that bypass HOME still read the real credential files", Fix: fix}}
+			case v.Mode == "home":
+				return []Finding{{Outcome: Warn, Message: "run.fs-view is home: tools that bypass HOME still read the real credential files",
+					Fix: "set run.fs-view: auto where the host allows user namespaces"}}
+			case v.Mode == "off":
+				return []Finding{{Outcome: Warn, Message: "run.fs-view is off: real credential files in the home directory are readable from scrim run sessions",
+					Fix: "set run.fs-view: auto"}}
+			}
+			return nil
+		}})
+	}
 	for _, s := range r.Stores {
 		checks = append(checks, Check{Name: "store:" + s.Name, Run: func(context.Context) []Finding {
 			if !s.Reachable {
