@@ -214,3 +214,23 @@ func TestRegistered(t *testing.T) {
 		t.Errorf("registered adapter: %s %s", a.Name(), a.Capabilities())
 	}
 }
+
+func TestNativeLabels(t *testing.T) {
+	fe := newFakeEnv()
+	fe.set("SCRIM_T_ONE", gen(t))
+	a := New("env", Config{Prefix: "SCRIM_T"}, WithEnvironment(fe))
+	s, err := a.Read(t.Context(), stores.Ref{Scheme: "env", Path: "SCRIM_T_ONE"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Wipe()
+	ms, err := a.List(t.Context(), stores.Ref{Scheme: "env", Path: "SCRIM_T*"})
+	if err != nil || len(ms) != 1 {
+		t.Fatalf("List: %v %v", ms, err)
+	}
+	for _, l := range []map[string]string{s.Meta.Labels, ms[0].Labels} {
+		if l["env.variable"] != "SCRIM_T_ONE" || l["env.prefix"] != "SCRIM_T" || len(l) != 2 {
+			t.Errorf("labels = %v", l)
+		}
+	}
+}

@@ -177,3 +177,67 @@ func UserMeta(labels map[string]string, kind, key, value string) {
 type WriteLabeler interface {
 	WriteLabels(ref Ref) map[string]string
 }
+
+// GenericLabels are the store.* labels scrim derives for every secret from
+// its store instance and reference, whatever the backend:
+//
+//   - store.name: the instance name (not an alias);
+//   - store.kind: the adapter kind, when known;
+//   - store.path: the reference path, without selectors or field;
+//   - store.container: the path before its last segment, "" at the top;
+//   - store.field: the field, when the reference names one.
+func GenericLabels(name, kind string, ref Ref) map[string]string {
+	out := map[string]string{LabelStoreName: name, LabelStorePath: ref.Path, LabelStoreContainer: ""}
+	if kind != "" {
+		out[LabelStoreKind] = kind
+	}
+	if i := strings.LastIndexByte(ref.Path, '/'); i >= 0 {
+		out[LabelStoreContainer] = ref.Path[:i]
+	}
+	if ref.Field != "" {
+		out[LabelStoreField] = ref.Field
+	}
+	return out
+}
+
+// ComposeLabels is the label set policy sees for a secret of the instance
+// name (of adapter kind) at ref, given the labels its adapter reported:
+//
+//  1. the adapter's labels, except store.* keys and keys under another
+//     registered adapter kind's prefix (an adapter speaks only for its own
+//     kind);
+//  2. the generic store.* labels ([GenericLabels]), replacing anything
+//     there;
+//  3. the operator's derived labels ([LabelMapping]), computed from 1 and
+//     2, never replacing a key either already holds.
+//
+// The result is a new map; native is not modified.
+func ComposeLabels(name, kind string, ref Ref, native map[string]string, m LabelMapping) map[string]string {
+	out := make(map[string]string, len(native)+5)
+	foreign := foreignKinds(kind)
+	for k, v := range native {
+		if strings.HasPrefix(k, StoreLabelPrefix) {
+			continue
+		}
+		if head, _, ok := strings.Cut(k, "."); ok && foreign[head] {
+			continue
+		}
+		out[k] = v
+	}
+	for k, v := range GenericLabels(name, kind, ref) {
+		out[k] = v
+	}
+	m.apply(out)
+	return out
+}
+
+// foreignKinds is every registered adapter kind except kind.
+func foreignKinds(kind string) map[string]bool {
+	out := map[string]bool{}
+	for _, k := range DefaultRegistry.Kinds() {
+		if k != kind {
+			out[k] = true
+		}
+	}
+	return out
+}

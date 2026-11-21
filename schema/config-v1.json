@@ -1794,6 +1794,37 @@
             "type": "string",
             "x-scrim-secret-ref": true
           },
+          "labels": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "from": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "regex": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              ]
+            },
+            "description": "Derived policy labels by name: a source label name to copy, or {from, regex, value}.",
+            "propertyNames": {
+              "pattern": "^[a-z0-9_-]+(\\.[a-z0-9_-]+)*$"
+            },
+            "type": "object"
+          },
           "password": {
             "type": "string",
             "x-scrim-secret-ref": true
@@ -1820,7 +1851,7 @@
         ],
         "type": "object"
       },
-      "description": "Secret store instances by name. The name is the instance's reference scheme (`bao://...` for an instance named bao); `kind` picks the adapter, `aliases` adds schemes, `redact` lists references and prefixes loaded into the redaction set, `refresh.*` tunes refresh and outage handling, and every other field is the adapter's own. See docs/stores.",
+      "description": "Secret store instances by name. The name is the instance's reference scheme (`bao://...` for an instance named bao); `kind` picks the adapter, `aliases` adds schemes, `redact` lists references and prefixes loaded into the redaction set, `refresh.*` tunes refresh and outage handling, `labels` derives policy labels from the store's own labels (docs/policy.md, \"Labels from stores\"), and every other field is the adapter's own. See docs/stores.",
       "propertyNames": {
         "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
       },
