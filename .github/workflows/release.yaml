@@ -641,6 +641,7 @@ jobs:
         run: |
           set -euo pipefail
           issuer=https://token.actions.githubusercontent.com
+          mkdir -p "$RUNNER_TEMP/pulled"
           helm pull "oci://$REPO" --version "$SCRIM_VERSION" -d "$RUNNER_TEMP/pulled"
           cmp "$TGZ" "$RUNNER_TEMP/pulled/scrim-$SCRIM_VERSION.tgz"
           cosign verify --certificate-identity "$RELEASE_IDENTITY" --certificate-oidc-issuer "$issuer" "$REPO@$DIGEST" >/dev/null
