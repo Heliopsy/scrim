@@ -400,9 +400,15 @@ spec:
         apiVersions: [v1]
         operations: [CREATE]
         resources: [pods]
+    # Selector Exists and the mode as a match condition: with matchLabels on the mode, Kyverno
+    # 1.17.2 left central pods unmutated in the e2e test (1.20 did not).
     objectSelector:
-      matchLabels:
-        scrim.dev/inject: sidecar
+      matchExpressions:
+        - key: scrim.dev/inject
+          operator: Exists
+  matchConditions:
+    - name: sidecar
+      expression: object.metadata.?labels["scrim.dev/inject"].orValue("") == "sidecar"
   variables:
     - name: env
       expression: |

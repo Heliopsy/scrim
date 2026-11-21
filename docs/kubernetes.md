@@ -283,7 +283,10 @@ order:
    is no longer enforced: labelled pods would start unconfigured).
 
 The image signature example ([deploy/examples/kyverno](../deploy/examples/kyverno/verify-scrim-images.yaml))
-is an ImageValidatingPolicy with the same range.
+is an ImageValidatingPolicy. Use it on Kyverno 1.20 or later: there it refuses an unsigned scrim
+image and rewrites a verified tag to its digest. Kyverno 1.17.2 checks the signature and refuses
+an unsigned image too, but admits the tag unchanged (no digest pinning, `verifyDigest` not
+enforced); 1.18 and 1.19 are not tested.
 
 ### Without Kyverno
 

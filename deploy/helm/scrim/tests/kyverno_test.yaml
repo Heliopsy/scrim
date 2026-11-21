@@ -39,7 +39,12 @@ tests:
       - equal: {path: spec.failurePolicy, value: Fail}
       - equal: {path: 'spec.matchConstraints.resourceRules[0].operations', value: [CREATE]}
       # An object selector keeps Kyverno from generating Deployment, Job, ... variants.
-      - equal: {path: spec.matchConstraints.objectSelector, value: {matchLabels: {scrim.dev/inject: central}}}
+      - equal:
+          path: spec.matchConstraints.objectSelector
+          value: {matchExpressions: [{key: scrim.dev/inject, operator: Exists}]}
+      - equal:
+          path: spec.matchConditions
+          value: [{name: central, expression: 'object.metadata.?labels["scrim.dev/inject"].orValue("") == "central"'}]
       - notExists: {path: spec.autogen}
       - equal: {path: 'spec.mutations[0].patchType', value: JSONPatch}
       - matchRegex: {path: 'spec.variables[0].expression', pattern: '"name": "ANTHROPIC_BASE_URL",\s+"value": "http://rel-scrim\.ns\.svc\.cluster\.local:9790/anthropic"'}
@@ -61,7 +66,9 @@ tests:
       sidecar: {enabled: true, egressGuard: {image: nft:1}}
       storeAuth.serviceAccountToken.enabled: true
     asserts:
-      - equal: {path: spec.matchConstraints.objectSelector, value: {matchLabels: {scrim.dev/inject: sidecar}}}
+      - equal:
+          path: spec.matchConditions
+          value: [{name: sidecar, expression: 'object.metadata.?labels["scrim.dev/inject"].orValue("") == "sidecar"'}]
       - equal: {path: 'spec.variables[6].name', value: initContainers}
       - matchRegex:
           path: 'spec.variables[6].expression'

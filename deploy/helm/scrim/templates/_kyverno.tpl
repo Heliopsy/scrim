@@ -205,9 +205,15 @@ matchConstraints:
       apiVersions: [v1]
       operations: [CREATE]
       resources: [pods]
+  # Selector Exists and the mode as a match condition: with matchLabels on the mode, Kyverno
+  # 1.17.2 left central pods unmutated in the e2e test (1.20 did not).
   objectSelector:
-    matchLabels:
-      {{ $root.Values.agents.label }}: {{ .mode }}
+    matchExpressions:
+      - key: {{ $root.Values.agents.label }}
+        operator: Exists
+matchConditions:
+  - name: {{ .mode }}
+    expression: object.metadata.?labels[{{ toJson $root.Values.agents.label }}].orValue("") == {{ toJson .mode }}
 variables:
   - name: env
     expression: |

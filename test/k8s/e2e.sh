@@ -62,6 +62,7 @@ calico_version="v3.33.1"
 calico_sha256="3368e62807b949438842e31f46c9b6df741731b4c755d0a622dd062b2cb20495"
 # renovate: datasource=helm depName=kyverno registryUrl=https://kyverno.github.io/kyverno/
 kyverno_chart_version="3.10.0"
+kyverno_pinned_chart="$kyverno_chart_version"
 kyverno_chart_version="${SCRIM_K8S_KYVERNO_CHART:-$kyverno_chart_version}"
 openbao_image="quay.io/openbao/openbao:2.7.3@sha256:ba4b133eb9586630024e71a617e66f37f29cc3534cdd46a6233e098ceded8dc9"
 embed="$root/internal/dataplane/embedded/scrim-dataplane"
@@ -369,8 +370,15 @@ signed_image="ghcr.io/heliopsy/scrim:0.2.0" # x-release-please-version
 # An OCI referrers index of the same repository: matched by the policy, never signed.
 unsigned_image="ghcr.io/heliopsy/scrim:sha256-490a9ca52efeba6f9ed4c886f0dba55e33325603988c6570dd29477827cf683e"
 out="$(probe_pod signed-scrim "$signed_image")" || fail "the signed release image was refused: $out"
-case "$out" in "$signed_image@sha256:"*) ;; *) fail "the signed image was not pinned to its digest: $out" ;; esac
-pass "signed release image admitted and pinned to its digest"
+case "$out" in
+  "$signed_image@sha256:"*) pass "signed release image admitted and pinned to its digest" ;;
+  # Kyverno before 1.20 checks the signature but does not rewrite the tag
+  # (docs/kubernetes.md, Kyverno versions).
+  "$signed_image") [ "$kyverno_chart_version" != "$kyverno_pinned_chart" ] ||
+    fail "the signed image was not pinned to its digest: $out"
+    pass "signed release image admitted (tag not pinned on Kyverno chart $kyverno_chart_version)" ;;
+  *) fail "unexpected image after admission: $out" ;;
+esac
 if out="$(probe_pod unsigned-scrim "$unsigned_image")"; then
   fail "an unsigned scrim image was admitted: $out"
 fi

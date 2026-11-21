@@ -4,7 +4,8 @@
 # carry a keyless cosign signature from this repository's release workflow,
 # recorded in Rekor. Kyverno also rewrites the tag to the verified digest, so
 # the pod runs exactly the bytes that were checked. Other images are not
-# checked. Needs Kyverno 1.17 or later (policies.kyverno.io/v1).
+# checked. Needs Kyverno 1.20 or later: 1.17 checks the signature but leaves
+# the tag as it is (docs/kubernetes.md, Kyverno versions).
 #
 # Flux and Argo CD apply it before scrim (Argo CD sync wave -1, a Flux
 # Kustomization that scrim dependsOn), so the first scrim pod is checked too.
