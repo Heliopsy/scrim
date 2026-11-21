@@ -1,0 +1,36 @@
+scrim 0.1.0
+overall: DEGRADED (3 degraded, 0 weakened)
+
+Interception
+  none active
+
+eBPF transparent mode
+  agents.slice  NOT-ATTACHED  not attached: run `sudo scrim ebpf attach`; attaching needs root, or CAP_BPF and CAP_NET_ADMIN, and this process lacks CAP_BPF and CAP_NET_ADMIN
+  ci.slice      UNVERIFIED    attached according to the loader's record (/run/scrim-ebpf/attachments.json); confirming it with the kernel needs CAP_NET_ADMIN: run `sudo scrim status`
+  listener: nothing accepts connections on 127.0.0.1:9792: redirected connections fail (they never go direct)
+
+Protections
+  none
+
+Providers
+  none
+
+Stores
+  none
+
+State
+  memory, schema 0, healthy
+
+Audit sinks
+  none
+
+Data plane
+  running, pid 7, version unknown, up 0s, healthy
+
+Degraded
+  ebpf:agents.slice: not attached: run `sudo scrim ebpf attach`; attaching needs root, or CAP_BPF and CAP_NET_ADMIN, and this process lacks CAP_BPF and CAP_NET_ADMIN
+  ebpf:ci.slice: attached according to the loader's record (/run/scrim-ebpf/attachments.json); confirming it with the kernel needs CAP_NET_ADMIN: run `sudo scrim status`
+  ebpf-listener: nothing accepts connections on 127.0.0.1:9792: redirected connections fail (they never go direct)
+
+Weakened protections
+  none

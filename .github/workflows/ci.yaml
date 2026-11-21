@@ -390,6 +390,41 @@ jobs:
         working-directory: dataplane
       - run: just proto-check
 
+  # GitHub-hosted: regenerating the objects runs clang in podman, and the
+  # kernel test boots the runner's own kernel in qemu with KVM, which the
+  # ho-z10 pods have neither of. The test binary is root only inside that
+  # throwaway VM (tasks.md 15.1).
+  ebpf:
+    name: eBPF objects and kernel test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/setup-just
+      - run: just ebpf-check
+      - name: Install qemu and give the runner user KVM and a readable kernel
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 cpio
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo install -m 0644 "/boot/vmlinuz-$(uname -r)" "$RUNNER_TEMP/vmlinuz"
+      - run: just ebpf-vm-test
+        env:
+          SCRIM_VM_KERNEL: ${{ runner.temp }}/vmlinuz
+      - name: Remove the toolchain image
+        if: always()
+        run: podman images -q --filter reference=localhost/scrim-bpf-toolchain | xargs -r podman rmi -f
+
   security:
     name: Vulnerabilities, licences and secrets
     runs-on: ho-z10

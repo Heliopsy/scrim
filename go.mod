@@ -4,6 +4,7 @@ go 1.27.4
 
 require (
 	cel.dev/cel-go v0.33.4
+	github.com/cilium/ebpf v0.22.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
@@ -71,6 +72,7 @@ require (
 )
 
 tool (
+	github.com/cilium/ebpf/cmd/bpf2go
 	google.golang.org/grpc/cmd/protoc-gen-go-grpc
 	google.golang.org/protobuf/cmd/protoc-gen-go
 )
