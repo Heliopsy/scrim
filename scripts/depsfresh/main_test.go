@@ -307,7 +307,7 @@ func TestRun(t *testing.T) {
 			t.Errorf("report lacks row %v:\n%s", want, report)
 		}
 	}
-	if !strings.Contains(report, "3 of 6 direct dependencies fail") {
+	if !strings.Contains(report, "3 of 6 checked dependencies fail") {
 		t.Errorf("summary missing:\n%s", report)
 	}
 	for _, unwanted := range []string{"example.com/ind", "ignored", "v3.0.0", "0.15.0"} {

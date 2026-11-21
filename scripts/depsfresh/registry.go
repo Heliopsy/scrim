@@ -40,50 +40,74 @@ func newRegistry(goProxy, cratesIndex string) *registry {
 // 429 and 5xx are retried; anything else fails the lookup, and a failed
 // lookup fails the gate.
 func (r *registry) get(ctx context.Context, url string) ([]byte, bool, error) {
+	body, _, found, err := r.getWith(ctx, url, nil, 32<<20)
+	return body, found, err
+}
+
+// getWith is get with request headers, a body size limit and the response
+// headers (for registry authentication and pagination).
+func (r *registry) getWith(ctx context.Context, url string, hdr map[string]string, limit int64) ([]byte, http.Header, bool, error) {
 	var lastErr error
 	for attempt := range 4 {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
-				return nil, false, ctx.Err()
+				return nil, nil, false, ctx.Err()
 			case <-time.After(time.Duration(attempt*attempt) * retryBase):
 			}
 		}
-		body, status, err := r.fetch(ctx, url)
+		body, h, status, err := r.fetch(ctx, url, hdr, limit)
 		switch {
 		case err != nil:
 			lastErr = err
 			continue
 		case status == http.StatusOK:
-			return body, true, nil
+			return body, h, true, nil
 		case status == http.StatusNotFound || status == http.StatusGone:
-			return nil, false, nil
+			return nil, h, false, nil
+		case status == http.StatusUnauthorized:
+			return nil, h, false, &authError{url: url, header: h}
 		case status == http.StatusTooManyRequests || status >= 500:
 			lastErr = fmt.Errorf("GET %s: HTTP %d", url, status)
 			continue
 		default:
-			return nil, false, fmt.Errorf("GET %s: HTTP %d", url, status)
+			return nil, h, false, fmt.Errorf("GET %s: HTTP %d", url, status)
 		}
 	}
-	return nil, false, lastErr
+	return nil, nil, false, lastErr
 }
 
-func (r *registry) fetch(ctx context.Context, url string) ([]byte, int, error) {
+// authError is a 401; a container registry answers it with the token
+// endpoint in WWW-Authenticate.
+type authError struct {
+	url    string
+	header http.Header
+}
+
+func (e *authError) Error() string { return "GET " + e.url + ": HTTP 401" }
+
+func (r *registry) fetch(ctx context.Context, url string, hdr map[string]string, limit int64) ([]byte, http.Header, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	req.Header.Set("User-Agent", "scrim-deps-fresh")
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
-	return body, resp.StatusCode, nil
+	if int64(len(body)) > limit {
+		return nil, nil, 0, fmt.Errorf("GET %s: response larger than %d bytes", url, limit)
+	}
+	return body, resp.Header, resp.StatusCode, nil
 }
 
 // escapeModulePath applies the module proxy's case encoding: every upper-case

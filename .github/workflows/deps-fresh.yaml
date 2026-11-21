@@ -2,8 +2,11 @@ name: Dependency freshness
 
 # The deps-fresh job of ci.yaml on a schedule: a new major release of a
 # dependency appears without any change here, so a quiet week would otherwise
-# never notice it. A failed run is the signal; fix it with an upgrade, or a
-# dated, explained entry in .deps-fresh-ignore.
+# never notice it. The weekly run also checks every pinned tool, image and
+# action (-pins): one behind a release older than 14 days fails, which means
+# a Renovate or Dependabot pull request is waiting, or a bot is not running.
+# A failed run is the signal; fix it with an upgrade, or a dated, explained
+# entry in .deps-fresh-ignore.
 on:
   schedule:
     - cron: '41 5 * * 1'
@@ -25,4 +28,7 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
         with:
           go-version-file: go.mod
-      - run: scripts/deps-fresh.sh
+      # The read-only job token, for the GitHub API's rate limit.
+      - run: scripts/deps-fresh.sh -pins
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

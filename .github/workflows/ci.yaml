@@ -459,6 +459,29 @@ jobs:
           go-version-file: go.mod
       - run: scripts/deps-fresh.sh
 
+  # The sha256 pinned next to each release asset (the "# sha256: <url>" line
+  # above it), for the files this change touches: Renovate moves a version
+  # but not its sum, and this names every sum that no longer matches. Fix
+  # with `just pin-sums`. Downloads only the assets of changed files.
+  pin-sums:
+    name: Pinned checksums
+    runs-on: ho-z10
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Sums of the assets pinned in changed files
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: scripts/deps-fresh.sh -sums -sums-since "$BASE"
+
   # Alert rules (promtool check and unit tests), Prometheus configs, the
   # PrometheusRule and dashboard ConfigMap staying in sync with their sources.
   # promtool is the pinned release the script verifies by sha256. A

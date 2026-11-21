@@ -102,13 +102,60 @@ names it and gives a reason and an expiry date; an expired entry SHALL fail the 
 
 ### Requirement: Freshness check fails closed
 
-The freshness check SHALL query no host but the Go module proxy and the crates.io index, and a
-lookup that fails SHALL fail the check, never pass it.
+The dependency freshness check SHALL query no host but the Go module proxy and the crates.io index,
+and a lookup that fails SHALL fail the check, never pass it. The pin check SHALL fail the same way
+on a lookup that fails.
 
 #### Scenario: Registry unreachable
 
 - **WHEN** the crates.io index or the module proxy cannot be reached after retries
 - **THEN** the check fails with an error for each dependency it could not look up
+
+### Requirement: Every pin is visible to an update bot
+
+Every tool, container image, toolchain and Kubernetes version the repository pins outside `go.mod`
+and the Cargo manifests SHALL be described to Renovate (an annotation above the pin or a pattern in
+`renovate.json`), and every workflow action SHALL be pinned by commit SHA with its version in a
+comment. No file SHALL be managed by both Renovate and Dependabot.
+
+#### Scenario: Annotation Renovate cannot see
+
+- **WHEN** a pin carries a `renovate:` annotation that no custom manager in `renovate.json` matches
+- **THEN** the depsfresh tests fail and name the file and line
+
+### Requirement: Pinned tools and actions on their latest release
+
+A weekly check SHALL fail when a pin or action is behind a stable release that has been published
+for longer than the grace period (14 days), or when an action's SHA is not the commit of the
+version its comment names. A pin MAY stay behind only through a dated, explained entry in
+`.deps-fresh-ignore`.
+
+#### Scenario: Tool behind an old release
+
+- **WHEN** a script pins a tool at `v1.1.0` and its `v1.2.0` release is 30 days old
+- **THEN** `just pins-fresh` and the weekly run fail and name the tool, the pin and the latest release
+
+#### Scenario: Release inside the grace period
+
+- **WHEN** the only newer release of a pinned tool is 3 days old
+- **THEN** the check reports the pin as pending and passes
+
+#### Scenario: Action SHA that is not its tag
+
+- **WHEN** a workflow uses an action at a SHA whose comment names `v1.0.0` and that tag points at another commit
+- **THEN** the check fails and names the action, the pinned SHA and the tag's commit
+
+### Requirement: Pinned checksums follow their versions
+
+A release asset that is downloaded by version SHALL be verified against a pinned SHA-256, and the
+asset's URL SHALL be written next to that checksum, so the checksum can be recomputed when the
+version moves. CI SHALL fail on a changed file whose pinned checksum does not match the asset its
+version names, and name the checksum and the asset.
+
+#### Scenario: Version bumped without its checksum
+
+- **WHEN** a pull request moves `HELM_VERSION` and leaves its checksum unchanged
+- **THEN** the pinned checksums job fails, names the file and line, and `just pin-sums` rewrites the checksum
 
 ### Requirement: Standalone data plane artifacts
 

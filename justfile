@@ -99,6 +99,19 @@ vuln:
 deps-fresh *args:
     scripts/deps-fresh.sh {{args}}
 
+# Fail when a pinned tool, image or action is behind a release older than 14 days (renovate.json
+# pins, SHA-pinned actions). Uses GITHUB_TOKEN, or the gh login, for the GitHub API.
+pins-fresh *args:
+    GITHUB_TOKEN="${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}" scripts/deps-fresh.sh -pins -go-mod= -cargo-root= {{args}}
+
+# Rewrite every pinned sha256 that does not match its release asset (after Renovate moved a version).
+pin-sums:
+    scripts/deps-fresh.sh -sums -fix
+
+# Check every pinned sha256 against its release asset; downloads each asset.
+pin-sums-check:
+    scripts/deps-fresh.sh -sums
+
 # ---------------------------------------------------------------- protocol
 
 # Regenerate the Go and Rust boundary code from proto/.

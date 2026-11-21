@@ -17,6 +17,14 @@
 # an expired entry fails the gate. The checker (scripts/depsfresh) is
 # standard-library Go built with the toolchain go.mod names, so the gate
 # downloads no tool, and it calls no host but those two registries.
+#
+#   scripts/deps-fresh.sh -pins     also the pins renovate.json describes and the
+#                                   SHA-pinned actions, against GitHub, npm, PyPI,
+#                                   go.dev, Helm repositories and container
+#                                   registries (GITHUB_TOKEN for the API limit)
+#   scripts/deps-fresh.sh -sums     the sha256 next to each pinned release asset
+#                                   (-fix rewrites them, -sums-since REF limits
+#                                   the check to files changed since REF)
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

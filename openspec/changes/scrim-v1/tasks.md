@@ -13,6 +13,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 1.2 Add the build toolchain, `justfile` (`build`, `test`, `check`, `bench`, `fuzz`, `spec`) and language-specific sections of AGENTS.md; verify: `just check` passes on an empty skeleton
 - [x] 1.3 Add CI: lint, unit tests, `openspec validate --all --strict`, gitleaks, CodeQL, dependency review, Scorecard, release-please, every action pinned by SHA; verify: CI green on a no-op PR
 - [x] 1.3a Dependency freshness gate (`just deps-fresh`, CI job `deps-fresh` and a weekly run): direct Go and Rust dependencies on their latest stable major, dated exceptions in `.deps-fresh-ignore`; verify: the gate fails on the 0.x crates main required before the cargo major bump and passes after it
+- [x] 1.3b Pinned tools, images, toolchains and actions kept current: Renovate for every pin outside `go.mod` and the Cargo manifests (Dependabot keeps those and the actions), `just pins-fresh` weekly with a 14-day grace period, sha256 URLs next to each pinned checksum, `just pin-sums` and the `pin-sums` CI job; verify: the pin check fails on a release older than the grace period, the annotation test fails on an annotation renovate.json cannot see, and the sums check fails on a stale checksum and passes after `-fix`
 - [x] 1.4 Add the release pipeline (static binaries, container image, SBOM, signatures, provenance); verify: a pre-release tag produces signed artifacts that `cosign verify` accepts
 
 ## 2. Redaction core
