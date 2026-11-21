@@ -236,8 +236,9 @@ func run(ctx context.Context, opts options, w io.Writer) (int, error) {
 	for _, s := range skipped {
 		_, _ = fmt.Fprintln(w, "note:", s)
 	}
+	checked := map[string]bool{"go": opts.goMod != "", "cargo": opts.cargoRoot != "", "pin": opts.pins, "action": opts.pins}
 	for _, e := range ignores {
-		if !e.used {
+		if !e.used && checked[e.eco] {
 			_, _ = fmt.Fprintf(w, "warning: %s:%d: %s %s matches no dependency that is behind; remove the entry\n", opts.ignore, e.line, e.eco, e.name)
 		}
 	}
