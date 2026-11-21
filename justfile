@@ -178,6 +178,12 @@ e2e-chain *args:
 e2e-session *args:
     test/e2e/run.sh session {{args}}
 
+# Real CLIs (gh, git, kubectl, helm, podman, npm, terraform, tofu, gcloud, az, pip, twine,
+# cargo, hcloud, doctl, aws) with their tool profiles against fakes of their APIs. A CLI that is
+# not installed is skipped; SCRIM_E2E_REQUIRE_TOOLS=1 fails instead.
+e2e-profiles *args:
+    test/e2e/run.sh profiles {{args}}
+
 # Claude Code with scrim's agent hooks only, no scrim run (tasks.md 15.3); skipped without claude.
 e2e-agentmodes *args:
     test/e2e/run.sh agentmodes {{args}}
@@ -188,7 +194,7 @@ e2e-managed-settings:
     test/e2e/agentmodes/managed-settings.sh
 
 # Every end-to-end run above.
-e2e: e2e-tools e2e-chain e2e-session e2e-agentmodes e2e-managed-settings
+e2e: e2e-tools e2e-chain e2e-session e2e-profiles e2e-agentmodes e2e-managed-settings
 
 ntfy_image := "docker.io/binwiederhier/ntfy:v2.38.1"
 

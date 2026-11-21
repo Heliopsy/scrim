@@ -1,0 +1,19 @@
+description: twine uploads to PyPI or a private repository
+tools: [twine]
+credentials:
+  - name: password
+    description: A PyPI API token, or the password of the repository at the repository-url param.
+    hosts: [upload.pypi.org]
+    inject: ["header:Authorization"]
+    required: true
+params:
+  username: __token__
+  repository-url: ""
+env:
+  TWINE_USERNAME: '{{ param "username" }}'
+  TWINE_PASSWORD: '{{ placeholder "password" }}'
+  TWINE_REPOSITORY_URL: '{{ param "repository-url" }}'
+  TWINE_NON_INTERACTIVE: "1"
+unset: [TWINE_REPOSITORY]
+paths:
+  - home: .pypirc

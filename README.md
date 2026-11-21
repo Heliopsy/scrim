@@ -472,6 +472,7 @@ veil's per-tool policy.
 | [docs/stores/vaultwarden.md](docs/stores/vaultwarden.md) | Vaultwarden and Bitwarden-compatible servers |
 | [docs/stores/local.md](docs/stores/local.md) | Environment and file sources |
 | [docs/catalog.md](docs/catalog.md) | Logical names, host bindings, placeholders and profiles |
+| [docs/cli-tools.md](docs/cli-tools.md) | Tool profiles for gh, git, kubectl, aws, terraform and other CLIs |
 | [docs/agent-tools.md](docs/agent-tools.md) | The MCP server and `scrim secret` commands |
 | [docs/identity.md](docs/identity.md) | How scrim knows which agent is calling |
 | [docs/policy.md](docs/policy.md) | CEL rules and what they can see |

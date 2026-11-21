@@ -105,17 +105,18 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 10a. Command-line tools
 
-- [ ] 10a.1 Tool profiles with generated placeholder env and config files, removed at session end; verify: gh, git over HTTPS, kubectl, helm, npm and docker login work through `scrim run` with no real value in the session
+- [x] 10a.1 Tool profiles with generated placeholder env and config files, removed at session end; verify: gh, git over HTTPS, kubectl, helm, npm and docker login work through `scrim run` with no real value in the session
 - [ ] 10a.2 AWS SigV4 re-signing toward bound endpoints; verify: `aws s3 ls` and `aws sts get-caller-identity` succeed against LocalStack with placeholder keys, unbound region refused
 - [ ] 10a.3 Format-preserving placeholders; verify: a client that checks the token prefix sends the placeholder and the guard still catches it
 - [ ] 10a.4 Upstream client certificates; verify: kubectl with certificate auth in kind
-- [ ] 10a.6 Environment override mapping per profile; verify: each built-in profile's tool reads only the generated placeholder config in a session test
+- [x] 10a.6 Environment override mapping per profile; verify: each built-in profile's tool reads only the generated placeholder config in a session test
 - [ ] 10a.7 Linux session filesystem view (mount namespace, placeholder or hidden credential paths); verify: a tool reading `~/.aws/credentials` via the password-database home sees the placeholder and `cat` of a real key file fails
 - [ ] 10a.8 macOS and no-namespace fallback with gaps reported; verify: status lists the fallback on macOS CI
 - [ ] 10a.9 Credential helpers for git, docker, AWS `credential_process` and kubectl exec; verify: each tool authenticates through its helper and only placeholders are returned
-- [ ] 10a.10 Credential-printing commands show placeholders; verify: `gh auth token`, `aws configure get`, `kubectl config view --raw` print no real value in a session
+- [x] 10a.10 Credential-printing commands show placeholders; verify: `gh auth token`, `aws configure get`, `kubectl config view --raw` print no real value in a session
 - [ ] 10a.11 Project file scan, registration, watch and move-to-store offer; verify: a fixture `.env` key is redacted from the first request and moved only after confirmation
-- [ ] 10a.5 Profiles for terraform and OpenTofu, gcloud, az, pip and twine, cargo, hcloud, doctl; verify: one end-to-end command per profile against a fake or test endpoint
+- [x] 10a.5 Profiles for terraform and OpenTofu, gcloud, az, pip and twine, cargo, hcloud, doctl; verify: one end-to-end command per profile against a fake or test endpoint
+  - progress: `just e2e-profiles` (CI job e2e-profiles, CLIs pinned in scripts/cli-tools/tools.env) runs gh, git, kubectl, helm, skopeo on REGISTRY_AUTH_FILE and DOCKER_CONFIG, npm, terraform, tofu, gcloud, az, pip, twine, cargo, hcloud, doctl and aws against fakes on their default hosts; `docker login` itself runs in dockerd outside the session, so the docker profile is verified through containers/image reading DOCKER_CONFIG; psql, mysql and ssh go through the database proxy and ssh agent, not profiles
 
 ## 11. Vaultwarden and more providers
 
