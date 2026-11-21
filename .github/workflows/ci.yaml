@@ -428,6 +428,28 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git --redact --no-banner --verbose --config .gitleaks.toml --log-opts=HEAD .
 
+  # Fails when a direct Go or Rust dependency is behind its latest stable
+  # major (0.x minor before 1.0): agents and people pick versions from memory,
+  # and Dependabot only moves within the line a manifest names. The same check
+  # runs weekly from deps-fresh.yaml, because a new major appears without a
+  # code change. The checker, scripts/depsfresh, is standard-library Go built
+  # with the toolchain go.mod pins (no other tool is downloaded) and talks to
+  # proxy.golang.org and index.crates.io only. Exceptions: .deps-fresh-ignore.
+  deps-fresh:
+    name: Dependencies on their latest major
+    runs-on: ho-z10
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - run: scripts/deps-fresh.sh
+
   # Alert rules (promtool check and unit tests), Prometheus configs, the
   # PrometheusRule and dashboard ConfigMap staying in sync with their sources.
   # promtool is the pinned release the script verifies by sha256. A

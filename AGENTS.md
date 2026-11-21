@@ -101,6 +101,18 @@ an emulator in podman. State backends follow the same shape with `state.Register
 - New listeners go in `listeners`, request handling in `engine`; both read the snapshot through
   `engine::Engine` and never wait on the control plane except `Engine::ask`.
 
+## Dependencies
+
+- Before adding or bumping a Go module or Rust crate, check the registry (module proxy or
+  pkg.go.dev, probing `/v2`, `/v3`, ... for Go; crates.io for Rust) for the latest stable release
+  and use it. Never pick a version from memory, and never copy an older requirement from another
+  crate in the tree.
+- `just deps-fresh` (`scripts/deps-fresh.sh`, CI job `deps-fresh`, weekly as well) enforces it: it
+  fails when a direct dependency is behind its latest stable major, or its latest 0.x minor before
+  1.0, or when its module is deprecated. Minor and patch lag on a 1.x line is Dependabot's.
+- A new major that cannot be adopted yet gets an entry in `.deps-fresh-ignore` with an expiry date
+  and a reason; expired entries fail the gate.
+
 ## Boundary protocol
 
 - `proto/scrim/dataplane/v1` is the contract. `just proto` regenerates the committed Go and Rust

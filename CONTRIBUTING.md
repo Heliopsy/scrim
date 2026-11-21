@@ -13,6 +13,16 @@ merged.
 openspec validate --all --strict
 ```
 
+## Dependencies
+
+Before you add or bump a dependency, Go module or Rust crate, look up its latest stable release in
+the registry ([pkg.go.dev](https://pkg.go.dev) or the module proxy for Go, including newer major
+paths such as `/v2`; [crates.io](https://crates.io) for Rust) and use that version. Never write a
+version from memory or copy one from an older crate in the tree. CI enforces it: `just deps-fresh`
+fails when a direct dependency is behind its latest major (its latest 0.x minor before 1.0), and
+runs weekly as well. When a new major cannot be adopted yet, add a line to `.deps-fresh-ignore`
+with an expiry date and the reason.
+
 ## Commit messages
 
 [Conventional Commits](https://www.conventionalcommits.org/):
