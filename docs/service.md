@@ -237,6 +237,35 @@ not reverted: /etc/scrim/config.yaml
 
 A file install wrote and you changed since is such a change: scrim does not delete your edits.
 
+## Host-level interception
+
+With `--system`, two more flags install interception that needs no agent configuration
+([interception.md](interception.md), methods 3 and 4):
+
+```sh
+sudo scrim install --system --transparent --cover-user agent1 --cover-cgroup agents.slice
+sudo scrim install --system --dns
+```
+
+Both can be added to an existing system install; run the command again with the flag. What they
+add, each change printed first and recorded in the manifest:
+
+| Change | `--transparent` | `--dns` |
+| --- | --- | --- |
+| `/etc/systemd/system/scrim.service.d/interception.conf` | turns on the transparent listener (`127.0.0.1:9792`, `[::1]:9792`) | turns on the SNI listener (`127.0.83.1:443`) and grants `CAP_NET_BIND_SERVICE` |
+| `/etc/scrim/transparent.nft`, `scrim-transparent.service`, the nftables table `inet scrim` | the redirect and deny rules for the covered users and cgroups | |
+| `/etc/hosts` | | one marked block resolving the provider hosts to scrim |
+| Java truststores | the CA, checked in the stores the system trust tool rebuilds and imported into other JDKs' `cacerts` (`--java-home` for one outside `/usr/lib/jvm`) | the same |
+
+The rules unit is separate from `scrim.service` and keeps the rules loaded while scrim is stopped,
+so covered agents fail closed. `--block-unrouted` closes connections to hosts scrim has no route
+for instead of relaying them untouched. Uninstall deletes the table, removes the hosts block (or
+leaves an edited one with the manual step), removes the CA from every truststore it was added to,
+including a Java store the system trust tool kept it in, and removes the files.
+
+`scrim status` lists the active modes under Interception, and `direct egress blocked` as active
+while the transparent listener runs.
+
 ## Verified in a VM test
 
 `test/service/vm-test.sh` (`just service-vm-test`) runs a Debian systemd host in rootless podman
@@ -249,11 +278,17 @@ the file system with the snapshot. Left out of the comparison: `/proc`, `/sys`, 
 the shadow tools rewrite on every account change (`/etc/passwd-` and friends). `/run/scrim` is
 checked separately.
 
+`test/service/transparent-test.sh` (`just service-transparent-test`) does the same for
+`--transparent` and `--dns` in a host with nftables, a JDK and a stand-in provider address in its
+own network namespace, and also compares `nft list ruleset` and the certificates in the Java
+truststores. The Java keystores are compared by the certificates they hold, not their bytes, since
+the trust tool rewrites them; dpkg's backup `/var/lib/dpkg/status-old` is left out, since Debian's
+ca-certificates-java hook rewrites it when it runs dpkg triggers (the status file is compared).
+
 ## Not covered yet
 
-- Java truststores (`keytool`) and Firefox profiles; task 13.5. Java clients need
-  `-Djavax.net.ssl.trustStore` with a store built from `scrim ca export`.
-- Transparent mode, managed agent settings and their rules (tasks 13.3, 13.4); install will record
-  those the same way.
+- Firefox profiles; Firefox uses its own store unless `security.enterprise_roots.enabled` is set.
+- Managed agent settings (task 13.4); install will record those the same way.
+- Transparent mode and the DNS override on a Quadlet install: they need the system unit.
 - A launch agent on macOS.
 - Quadlet runs in the unit tests only; the VM test covers the system and user units.

@@ -140,3 +140,56 @@ tests:
   - it: renders nothing for valid defaults
     asserts:
       - hasDocuments: {count: 0}
+  - it: refuses an unknown events backend
+    set:
+      postgres.enabled: true
+      secrets.existing.postgres: pg
+      events.backend: kafka
+    asserts:
+      - failedTemplate: {}
+  - it: refuses valkey events without addresses
+    set:
+      postgres.enabled: true
+      secrets.existing.postgres: pg
+      events.backend: valkey
+    asserts:
+      - failedTemplate: {errorPattern: "needs valkey.addresses"}
+  - it: refuses nats events without servers
+    set:
+      postgres.enabled: true
+      secrets.existing.postgres: pg
+      events.backend: nats
+    asserts:
+      - failedTemplate: {errorPattern: "events.backend nats needs nats.servers"}
+  - it: refuses a credential without its slot
+    set:
+      rateLimit.backend: valkey
+      valkey: {addresses: ["v:6379"], auth: true}
+    asserts:
+      - failedTemplate: {errorPattern: "Secret slot valkey"}
+  - it: refuses an audit sink without its endpoint
+    set:
+      auditSinks.loki.enabled: true
+    asserts:
+      - failedTemplate: {errorPattern: "auditSinks.loki.enabled needs auditSinks.loki.url"}
+  - it: refuses kafka plain without TLS
+    set:
+      secrets.existing.kafka: kf
+      auditSinks.kafka: {enabled: true, brokers: ["k:9092"], saslMechanism: plain, username: u}
+    asserts:
+      - failedTemplate: {errorPattern: "plain sends the password in the clear"}
+  - it: refuses settings the chart owns for rate limits, audit sinks, valkey and nats
+    set:
+      config.ratelimit.backend: valkey
+    asserts:
+      - failedTemplate: {errorPattern: "config.ratelimit.backend is set by the chart"}
+  - it: refuses config.audit.sinks
+    set:
+      config.audit.sinks: [db, loki]
+    asserts:
+      - failedTemplate: {errorPattern: "config.audit.sinks is set by the chart"}
+  - it: refuses config.valkey
+    set:
+      config.valkey.addresses: ["v:6379"]
+    asserts:
+      - failedTemplate: {errorPattern: "config.valkey is set by the chart"}

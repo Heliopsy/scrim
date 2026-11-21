@@ -51,6 +51,34 @@ var (
 		RestartRequired: true,
 		Validate:        optionalHostPort,
 	})
+	// TransparentListen are the transparent listeners nftables redirects
+	// covered users' connections to (scrim install --transparent).
+	TransparentListen = config.Register(config.Spec[[]string]{
+		Key:             "proxy.transparent-listen",
+		Default:         []string{},
+		Description:     "TCP addresses of the transparent listener (Linux): connections redirected to it by nftables are routed by TLS server name or Host header, provider hosts to the LLM proxy, bound tool hosts to the tool proxy. scrim install --transparent sets 127.0.0.1:9792 and [::1]:9792. Empty disables it.",
+		Flag:            true,
+		RestartRequired: true,
+		Validate:        hostPorts,
+	})
+	// SNIListen is the TLS listener provider names resolve to in DNS
+	// override mode (scrim install --dns).
+	SNIListen = config.Register(config.Spec[string]{
+		Key:             "proxy.sni-listen",
+		Description:     "TCP address of the SNI listener for DNS override mode: provider names resolve to its address (scrim install --dns writes /etc/hosts entries and sets 127.0.83.1:443), it serves certificates for them from the scrim CA and routes by TLS server name. Connections made by address bypass it. Empty disables it.",
+		Flag:            true,
+		RestartRequired: true,
+		Validate:        optionalHostPort,
+	})
+	// TransparentUnrouted decides what the transparent and SNI listeners do
+	// with hosts scrim has no route for.
+	TransparentUnrouted = config.Register(config.Spec[string]{
+		Key:             "proxy.transparent-unrouted",
+		Default:         "pass",
+		Enum:            []string{"pass", "block"},
+		Description:     "What the transparent and SNI listeners do with a host that is neither a provider host nor bound to a credential or capture rule: pass relays the connection untouched to that host name (never to the address the client dialled), block closes it. TLS without a server name is always closed.",
+		RestartRequired: true,
+	})
 	// UpstreamAnthropic is where Anthropic requests are forwarded.
 	UpstreamAnthropic = config.Register(config.Spec[string]{
 		Key:         "proxy.upstream.anthropic",
@@ -169,6 +197,18 @@ var (
 )
 
 const captureRulesKey = "tool-proxy.capture-rules"
+
+func hostPorts(list []string) error {
+	for _, s := range list {
+		if s == "" {
+			return errors.New("empty address")
+		}
+		if err := optionalHostPort(s); err != nil {
+			return fmt.Errorf("%s: %w", s, err)
+		}
+	}
+	return nil
+}
 
 func optionalHostPort(s string) error {
 	if s == "" {

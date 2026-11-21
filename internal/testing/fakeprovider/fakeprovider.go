@@ -81,6 +81,9 @@ type Exchange struct {
 type ToolCall struct {
 	Name  string
 	Input map[string]any
+	// Namespace, in the Responses API only, names the namespace tool that
+	// holds Name (Codex groups each MCP server's tools in one).
+	Namespace string
 }
 
 // Reply is what the fake answers.

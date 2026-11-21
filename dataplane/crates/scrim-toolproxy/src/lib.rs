@@ -69,6 +69,7 @@ mod redactor;
 mod request;
 mod response;
 mod secret;
+mod transparent;
 mod unresolved;
 mod upstream;
 
@@ -101,4 +102,5 @@ pub use redactor::{
     redact_all,
 };
 pub use secret::SecretValue;
+pub use transparent::TransparentConn;
 pub use upstream::{UpstreamSettings, UpstreamSetupError};

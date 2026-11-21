@@ -4,7 +4,7 @@
 mode: everything it sets applies to the agent's process and its children only, and nothing in your
 shell, your agent's configuration or the system changes.
 
-```sh
+```sh test
 scrim run -- claude
 scrim run -- codex exec "fix the failing test"
 scrim run --print-env -- claude      # show what would be set, start nothing
@@ -132,7 +132,7 @@ reach scrim as an unknown caller.
 Each declared catalog placeholder that resolves for the session (see [catalog.md](catalog.md)) is
 exported as a variable of the same name holding the placeholder itself:
 
-```sh
+```sh test env
 SCRIM_GITHUB_TOKEN=SCRIM_GITHUB_TOKEN
 ```
 
@@ -289,7 +289,7 @@ at caveman, `scrim run` replaces it for the session and warns.
 
 Inside the agent (or a shell started with `scrim run -- bash`):
 
-```sh
+```sh test session
 scrim api whoami        # agent dev via session (uid 1000, pid ...), session ..., expires ...
 ```
 
@@ -363,7 +363,13 @@ set
     of seeded secrets, cats a config, runs `git diff` on a file with a key in it, calls a bound tool
     API through `HTTPS_PROXY` with `SCRIM_API_TOKEN`, and calls `secrets_list`. Every provider
     request and scrim's capture of it are checked with the leak suite's checker. Skipped without
-    `claude`.
+    `claude`. `TestCodexSession` runs the same session with `codex exec` over the Responses API:
+    the fake model calls whichever shell tool Codex offers (`exec_command`, `shell_command` or
+    `shell`), then `secrets_list` in the `mcp__scrim` namespace tool. `SCRIM_E2E_CODEX` names the
+    native `codex` binary (from the `@openai/codex` npm package, installed into a temporary
+    directory), otherwise it is looked up on `PATH` and skipped when missing. CI installs both
+    agents at pinned versions into the runner's temporary directory and runs it with
+    `SCRIM_E2E_REQUIRE_TOOLS=1`.
 
   Each needs unprivileged user namespaces; on Ubuntu 24.04 with AppArmor's restriction on, run
   `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` first.

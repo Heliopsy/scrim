@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/daemon"
 	"github.com/heliopsy/scrim/internal/install"
 	"github.com/heliopsy/scrim/internal/status"
 )
@@ -217,5 +219,36 @@ func TestCertsFromPEM(t *testing.T) {
 	cs := certsFromPEM(pem)
 	if len(cs) != 2 || !cs[0].Current || cs[1].Current || cs[0].ID == cs[1].ID {
 		t.Fatalf("certs = %+v", cs)
+	}
+}
+
+func TestInterceptionDryRunUsesTheProviderHosts(t *testing.T) {
+	f := newInstallFixture(t, 1000)
+	before := treeOf(t, f.root)
+	code, out, errb := f.run(t, "install", "--system", "--dns", "--dry-run")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errb)
+	}
+	for _, w := range []string{"would write " + filepath.Join(f.root, install.DropInPath),
+		"would resolve api.anthropic.com, api.openai.com, chatgpt.com, ab.chatgpt.com to scrim (127.0.83.1)",
+		"connecting by address bypasses it"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("dry run lacks %q:\n%s", w, out)
+		}
+	}
+	if !sameTree(before, treeOf(t, f.root)) || len(f.runner.calls) > 0 {
+		t.Errorf("dry run changed something: calls %q", f.runner.calls)
+	}
+}
+
+func TestInterceptionDropInNamesTheDaemonSettings(t *testing.T) {
+	for env, s := range map[string]string{
+		install.EnvTransparentListen:   daemon.TransparentListen.Name(),
+		install.EnvTransparentUnrouted: daemon.TransparentUnrouted.Name(),
+		install.EnvSNIListen:           daemon.SNIListen.Name(),
+	} {
+		if got := config.EnvVar(s); got != env {
+			t.Errorf("%s: variable %s, the drop-in sets %s", s, got, env)
+		}
 	}
 }

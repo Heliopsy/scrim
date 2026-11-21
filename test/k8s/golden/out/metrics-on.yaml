@@ -586,7 +586,7 @@ data:
           version: 1
           key: file:/etc/scrim/placeholder/k1
     deployment:
-      # Replicas sharing this state; more than one needs postgres for state and events.
+      # Replicas sharing this state; more than one needs postgres for state (and postgres, valkey or nats for events).
       replicas: 1
     state:
       backend: memory
@@ -724,7 +724,7 @@ spec:
         app.kubernetes.io/name: scrim-proxy
         app.kubernetes.io/component: proxy
       annotations:
-        checksum/config: e5d767ad8f0c32bad5bc231a2b1d99fecb431522654619cf33c0a339ec631b4a
+        checksum/config: ac523e216e85c9ead7e5e25336d74d64b33e0cc3866704949e587b56f7340b1c
     spec:
       serviceAccountName: scrim-proxy
       automountServiceAccountToken: true
@@ -1068,6 +1068,61 @@ spec:
           runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditdropping
           summary: scrim is dropping audit entries
         expr: sum by (job, instance) (increase(scrim_audit_dropped_total[15m])) > 0
+        labels:
+          severity: warning
+      - alert: ScrimAuditSinkDropping
+        annotations:
+          description: The {{ $labels.sink }} audit sink on {{ $labels.instance }} did
+            not receive entries in the last 15 minutes (reason {{ $labels.reason }}).
+            They are in the database audit log only.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditsinkdropping
+          summary: an external audit sink lost entries
+        expr: sum by (job, instance, sink, reason) (increase(scrim_audit_sink_dropped_total[15m]))
+          > 0
+        labels:
+          severity: critical
+      - alert: ScrimAuditSinkRefusing
+        annotations:
+          description: The {{ $labels.sink }} audit sink on {{ $labels.instance }} had
+            no queue room within its timeout, so audited operations were refused in the
+            last 15 minutes.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditsinkrefusing
+          summary: a blocking audit sink is refusing operations
+        expr: sum by (job, instance, sink) (increase(scrim_audit_sink_refused_total[15m]))
+          > 0
+        labels:
+          severity: critical
+      - alert: ScrimAuditSinkBacklog
+        annotations:
+          description: The {{ $labels.sink }} audit sink queue on {{ $labels.instance
+            }} has been over 80% full for 5 minutes. Next it drops entries (drop policy)
+            or refuses operations (block policy).
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditsinkbacklog
+          summary: an audit sink queue is nearly full
+        expr: max by (job, instance, sink) (scrim_audit_sink_queue_entries) / max by (job,
+          instance, sink) (scrim_audit_sink_queue_capacity) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+      - alert: ScrimAuditSinkDown
+        annotations:
+          description: Writes to the {{ $labels.sink }} audit sink on {{ $labels.instance
+            }} have failed for 10 minutes; entries wait in its queue and are retried.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditsinkdown
+          summary: an audit sink keeps failing
+        expr: max by (job, instance, sink) (scrim_audit_sink_up) == 0
+        for: 10m
+        labels:
+          severity: warning
+      - alert: ScrimRateLimitBackendErrors
+        annotations:
+          description: The {{ $labels.backend }} rate-limit backend on {{ $labels.instance
+            }} could not decide requests for 5 minutes; those requests are refused.
+          runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimratelimitbackenderrors
+          summary: the rate-limit backend is failing
+        expr: sum by (job, instance, backend) (increase(scrim_ratelimit_decisions_total{result="error"}[10m]))
+          > 0
+        for: 5m
         labels:
           severity: warning
       - alert: ScrimWeakenedSetting

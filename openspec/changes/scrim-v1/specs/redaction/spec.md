@@ -193,6 +193,12 @@ not share matching logic with the redactor.
 - **WHEN** a known value of at least the minimum length reaches the guard upper-cased, JSON-escaped up to `redaction.json_depth` times, percent-encoded, base64-encoded at any alignment (wrapped or not), hex-encoded in any case, or in one of the tool transforms the guard decodes
 - **THEN** the guard finds it in the decoded view, replaces the covering bytes with the value's placeholder, and checks the repaired bytes again
 
+#### Scenario: Value bytes inside a genuine placeholder
+
+- **WHEN** the slug or tag of a genuine placeholder (one that resolves with the current keyring) contains the bytes of a known value by coincidence, for example a short value of hex digits inside a tag
+- **THEN** the redactor and the guard keep the placeholder byte for byte, and the occurrence is not a surviving value, because every byte of a genuine placeholder is fixed by the keyring, the slug and its own value
+- **AND** the same bytes outside a genuine placeholder are replaced or refused like any other occurrence
+
 #### Scenario: Repair cannot complete
 
 - **WHEN** a known value is still present after repair, or more values reach the guard than `redaction.guard.max_repairs` allows

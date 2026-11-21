@@ -170,9 +170,9 @@ refuses them so a values file never carries a secret.
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- range $section := list "state" "events" "deployment" -}}
+{{- range $section := list "state" "events" "deployment" "valkey" "nats" -}}
 {{- if hasKey $cfg $section -}}
-{{- fail (printf "config.%s is set by the chart; use the postgres values (state.backend and events.backend postgres) and central.replicaCount" $section) -}}
+{{- fail (printf "config.%s is set by the chart; use the postgres, events, valkey and nats values and central.replicaCount" $section) -}}
 {{- end -}}
 {{- end -}}
 {{- if hasKey $cfg "metrics" -}}

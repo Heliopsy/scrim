@@ -98,7 +98,7 @@ func (a *App) initPolicy(ctx context.Context, cfg *config.Config) error {
 			r, _ := live.Rule(rule)
 			return limits(r.Grant), r.Grant
 		},
-		Log: a.Log, Metrics: metrics,
+		Log: a.Log, Metrics: metrics, Limits: a.RateLimits,
 	})
 	if err != nil {
 		return err

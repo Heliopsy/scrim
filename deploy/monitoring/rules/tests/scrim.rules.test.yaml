@@ -580,3 +580,143 @@ tests:
         summary: scrim CA certificate expires within 2 days or has expired
         description: The current CA certificate on 127.0.0.1:9792 expires in less than 2 days, or already has. Rotate it now.
         runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimcaexpiringcritical
+- name: ScrimAuditSinkDropping fires on any loss
+  interval: 1m
+  input_series:
+  - series: scrim_audit_sink_dropped_total{job="scrim", instance="127.0.0.1:9792", sink="kafka", reason="queue_full"}
+    values: 0 0 30x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: ScrimAuditSinkDropping
+    exp_alerts:
+    - exp_labels:
+        job: scrim
+        instance: 127.0.0.1:9792
+        sink: kafka
+        reason: queue_full
+        severity: critical
+      exp_annotations:
+        summary: an external audit sink lost entries
+        description: The kafka audit sink on 127.0.0.1:9792 did not receive entries in the last 15 minutes (reason queue_full). They are in the database audit log only.
+        runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditsinkdropping
+- name: ScrimAuditSinkDropping ignores a steady counter
+  interval: 1m
+  input_series:
+  - series: scrim_audit_sink_dropped_total{job="scrim", instance="127.0.0.1:9792", sink="kafka", reason="queue_full"}
+    values: 30x40
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: ScrimAuditSinkDropping
+    exp_alerts: []
+- name: ScrimAuditSinkRefusing fires on a refusal
+  interval: 1m
+  input_series:
+  - series: scrim_audit_sink_refused_total{job="scrim", instance="127.0.0.1:9792", sink="loki"}
+    values: 0 0 1x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: ScrimAuditSinkRefusing
+    exp_alerts:
+    - exp_labels:
+        job: scrim
+        instance: 127.0.0.1:9792
+        sink: loki
+        severity: critical
+      exp_annotations:
+        summary: a blocking audit sink is refusing operations
+        description: The loki audit sink on 127.0.0.1:9792 had no queue room within its timeout, so audited operations were refused in the last 15 minutes.
+        runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditsinkrefusing
+- name: ScrimAuditSinkRefusing quiet without refusals
+  interval: 1m
+  input_series:
+  - series: scrim_audit_sink_refused_total{job="scrim", instance="127.0.0.1:9792", sink="loki"}
+    values: '0x20'
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: ScrimAuditSinkRefusing
+    exp_alerts: []
+- name: ScrimAuditSinkBacklog fires on a nearly full queue
+  interval: 1m
+  input_series:
+  - series: scrim_audit_sink_queue_entries{job="scrim", instance="127.0.0.1:9792", sink="otlp"}
+    values: 9000x20
+  - series: scrim_audit_sink_queue_capacity{job="scrim", instance="127.0.0.1:9792", sink="otlp"}
+    values: 10000x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: ScrimAuditSinkBacklog
+    exp_alerts:
+    - exp_labels:
+        job: scrim
+        instance: 127.0.0.1:9792
+        sink: otlp
+        severity: warning
+      exp_annotations:
+        summary: an audit sink queue is nearly full
+        description: The otlp audit sink queue on 127.0.0.1:9792 has been over 80% full for 5 minutes. Next it drops entries (drop policy) or refuses operations (block policy).
+        runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditsinkbacklog
+- name: ScrimAuditSinkBacklog quiet with room
+  interval: 1m
+  input_series:
+  - series: scrim_audit_sink_queue_entries{job="scrim", instance="127.0.0.1:9792", sink="otlp"}
+    values: 100x20
+  - series: scrim_audit_sink_queue_capacity{job="scrim", instance="127.0.0.1:9792", sink="otlp"}
+    values: 10000x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: ScrimAuditSinkBacklog
+    exp_alerts: []
+- name: ScrimAuditSinkDown fires after ten minutes of failures
+  interval: 1m
+  input_series:
+  - series: scrim_audit_sink_up{job="scrim", instance="127.0.0.1:9792", sink="loki"}
+    values: 1 0x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: ScrimAuditSinkDown
+    exp_alerts:
+    - exp_labels:
+        job: scrim
+        instance: 127.0.0.1:9792
+        sink: loki
+        severity: warning
+      exp_annotations:
+        summary: an audit sink keeps failing
+        description: Writes to the loki audit sink on 127.0.0.1:9792 have failed for 10 minutes; entries wait in its queue and are retried.
+        runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditsinkdown
+- name: ScrimAuditSinkDown quiet while writes succeed
+  interval: 1m
+  input_series:
+  - series: scrim_audit_sink_up{job="scrim", instance="127.0.0.1:9792", sink="loki"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: ScrimAuditSinkDown
+    exp_alerts: []
+- name: ScrimRateLimitBackendErrors fires on sustained errors
+  interval: 1m
+  input_series:
+  - series: scrim_ratelimit_decisions_total{job="scrim", instance="127.0.0.1:9792", backend="valkey", class="agent-api", result="error"}
+    values: 0+5x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: ScrimRateLimitBackendErrors
+    exp_alerts:
+    - exp_labels:
+        job: scrim
+        instance: 127.0.0.1:9792
+        backend: valkey
+        severity: warning
+      exp_annotations:
+        summary: the rate-limit backend is failing
+        description: The valkey rate-limit backend on 127.0.0.1:9792 could not decide requests for 5 minutes; those requests are refused.
+        runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimratelimitbackenderrors
+- name: ScrimRateLimitBackendErrors ignores limited requests
+  interval: 1m
+  input_series:
+  - series: scrim_ratelimit_decisions_total{job="scrim", instance="127.0.0.1:9792", backend="valkey", class="agent-api", result="limited"}
+    values: 0+5x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: ScrimRateLimitBackendErrors
+    exp_alerts: []

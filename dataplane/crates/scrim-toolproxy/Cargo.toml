@@ -27,6 +27,7 @@ memchr = "2"
 percent-encoding = "2"
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "x509-parser"] }
 rustls-native-certs = "0.8"
+scrim-dns = { path = "../scrim-dns" }
 scrim-proto = { path = "../scrim-proto" }
 scrim-redact = { path = "../scrim-redact" }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
