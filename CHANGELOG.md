@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.0](https://github.com/Heliopsy/scrim/compare/v0.3.0...v0.4.0) (2026-11-21)
+
+
+### Features
+
+* **install:** managed agent settings and agent hooks interception modes ([#68](https://github.com/Heliopsy/scrim/issues/68)) ([e07ddc8](https://github.com/Heliopsy/scrim/commit/e07ddc82fa0da66979f6e1dcfb50c2a3cb3eca70))
+* **interception:** transparent mode, DNS override and Java trust ([#70](https://github.com/Heliopsy/scrim/issues/70)) ([3dafad6](https://github.com/Heliopsy/scrim/commit/3dafad68c19c8b557ded34c08f2809f0378eaac6))
+* **profiles:** tool profiles for command-line tools with placeholder credentials ([#69](https://github.com/Heliopsy/scrim/issues/69)) ([7e91236](https://github.com/Heliopsy/scrim/commit/7e912364e5df25b21dd71324df318a386c5a7f0e))
+
 ## [0.3.0](https://github.com/Heliopsy/scrim/compare/v0.2.0...v0.3.0) (2026-11-21)
 
 

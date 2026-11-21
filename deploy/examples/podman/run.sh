@@ -12,7 +12,7 @@
 #   podman rm -f -v scrim && podman volume rm scrim-state && podman secret rm scrim-github-token
 set -euo pipefail
 
-IMAGE=${IMAGE:-ghcr.io/heliopsy/scrim:0.3.0} # x-release-please-version
+IMAGE=${IMAGE:-ghcr.io/heliopsy/scrim:0.4.0} # x-release-please-version
 NAME=${NAME:-scrim}
 VOLUME=${VOLUME:-scrim-state}
 SECRET=${SECRET:-scrim-github-token}

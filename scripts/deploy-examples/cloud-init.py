@@ -56,7 +56,7 @@ runcmd:
       curl -fsSL -o /usr/local/bin/cosign "https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-$arch"
       echo "$sum  /usr/local/bin/cosign" | sha256sum -c -
       chmod 0755 /usr/local/bin/cosign
-  - [env, VERSION=0.3.0, PREFIX=/usr/local, /usr/local/sbin/scrim-install] # x-release-please-version
+  - [env, VERSION=0.4.0, PREFIX=/usr/local, /usr/local/sbin/scrim-install] # x-release-please-version
   - [systemctl, daemon-reload]
   # Enabled, not started: see the comment at the top.
   - [systemctl, enable, scrim.service]
