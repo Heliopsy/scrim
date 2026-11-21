@@ -93,6 +93,19 @@ pub fn routes_to(url: &str) -> Vec<RouteConfig> {
     ]
 }
 
+/// A loopback address that refuses connections for as long as the returned socket lives.
+///
+/// The socket is bound but never listens, so a connect gets a reset (connection refused) and the
+/// port stays taken: no listener started by a test running in parallel can be given it. Binding
+/// a listener, reading its address and dropping it frees the port, and the kernel can hand it to
+/// the next `bind(":0")` before the request is sent.
+pub fn refusing_addr() -> (tokio::net::TcpSocket, SocketAddr) {
+    let sock = tokio::net::TcpSocket::new_v4().unwrap();
+    sock.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = sock.local_addr().unwrap();
+    (sock, addr)
+}
+
 pub struct Harness {
     pub addr: SocketAddr,
     pub upstream: FakeUpstream,

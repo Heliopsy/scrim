@@ -1,0 +1,4 @@
+# {{ ansible_managed }}
+apiVersion: scrim.dev/v1
+kind: Config
+{{ scrim_config | to_nice_yaml(indent=2, sort_keys=false) }}

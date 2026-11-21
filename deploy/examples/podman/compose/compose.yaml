@@ -1,0 +1,39 @@
+# scrim with compose. Every command in the docs uses podman:
+#
+#   export SCRIM_SECRET_GITHUB_TOKEN=...   # from your password manager, not a file
+#   podman compose up -d
+#   podman exec scrim scrim status
+#   podman compose down                    # keeps the state volume; add -v to drop it
+#
+# The file follows the Compose Specification, so docker compose reads it too.
+name: scrim
+
+services:
+  scrim:
+    image: ghcr.io/heliopsy/scrim:0.2.0 # x-release-please-version
+    container_name: scrim
+    command: ["proxy"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      # Sockets go to /tmp/scrim on the tmpfs below.
+      XDG_RUNTIME_DIR: /tmp
+      SCRIM_SECRET_GITHUB_TOKEN: ${SCRIM_SECRET_GITHUB_TOKEN:?export SCRIM_SECRET_GITHUB_TOKEN first}
+    tmpfs:
+      - /tmp
+    volumes:
+      - state:/var/lib/scrim
+      - ./config.yaml:/etc/scrim/config.yaml:ro,Z
+    ports:
+      - "127.0.0.1:9790:9790"
+      - "127.0.0.1:9791:9791"
+      - "127.0.0.1:9792:9792"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/scrim", "doctor", "--timeout", "5s"]
+      interval: 30s
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  state:

@@ -1,0 +1,57 @@
+# One scrim Application per registered cluster that carries the label
+# scrim.dev/env (dev, staging or prod), each from its own overlay. A cluster
+# Secret in argocd labelled scrim.dev/env: prod gets scrim/overlays/prod.
+#
+# The rolling sync deploys dev first, then staging, then prod, and stops when
+# an environment does not become healthy. It needs the ApplicationSet
+# controller's progressive syncs (--enable-progressive-syncs).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: scrim
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchExpressions:
+            - key: scrim.dev/env
+              operator: In
+              values: [dev, staging, prod]
+  strategy:
+    type: RollingSync
+    rollingSync:
+      steps:
+        - matchExpressions:
+            - key: env
+              operator: In
+              values: [dev]
+        - matchExpressions:
+            - key: env
+              operator: In
+              values: [staging]
+        - matchExpressions:
+            - key: env
+              operator: In
+              values: [prod]
+          maxUpdate: 1
+  template:
+    metadata:
+      name: 'scrim-{{ index .metadata.labels "scrim.dev/env" }}'
+      labels:
+        env: '{{ index .metadata.labels "scrim.dev/env" }}'
+    spec:
+      project: scrim
+      destination:
+        server: '{{ .server }}'
+        namespace: scrim
+      source:
+        repoURL: https://github.com/example-org/fleet
+        targetRevision: main
+        path: 'scrim/overlays/{{ index .metadata.labels "scrim.dev/env" }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true

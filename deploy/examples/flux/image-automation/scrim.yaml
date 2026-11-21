@@ -1,0 +1,62 @@
+# Image automation for the dev cluster only: Flux watches ghcr.io/heliopsy/scrim,
+# picks the newest release below 1.0 and commits the tag into
+# scrim/overlays/dev/kustomization.yaml (the line with the
+# {"$imagepolicy": "flux-system:scrim:tag"} marker). staging and prod move by
+# reviewed pull requests that copy the tag, or by Renovate.
+#
+# Flux picks tags; it does not check signatures here. The OCIRepository in
+# sources/scrim-image.yaml verifies the same range with cosign, and the Kyverno
+# policy refuses any scrim pod whose image the release workflow did not sign.
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: scrim
+  namespace: flux-system
+spec:
+  image: ghcr.io/heliopsy/scrim
+  interval: 1h
+  exclusionList:
+    - "^sha256-"
+    - ".*\\.sig$"
+    - ".*\\.att$"
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImagePolicy
+metadata:
+  name: scrim
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: scrim
+  filterTags:
+    # Release tags only (0.1.0, 0.2.0-rc.1); not the moving 0.1 and latest.
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+  policy:
+    semver:
+      range: ">=0.1.0 <1.0.0"
+  digestReflectionPolicy: Always
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageUpdateAutomation
+metadata:
+  name: scrim-dev
+  namespace: flux-system
+spec:
+  interval: 30m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  git:
+    checkout:
+      ref:
+        branch: main
+    commit:
+      author:
+        name: fluxcd
+        email: fluxcd@users.noreply.github.com
+      messageTemplate: "chore(dev): scrim {{range .Changed.Changes}}{{.NewValue}} {{end}}"
+    push:
+      branch: main
+  update:
+    path: ./scrim/overlays/dev
+    strategy: Setters

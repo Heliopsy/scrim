@@ -1,0 +1,10 @@
+apiVersion: scrim.dev/v1
+kind: Config
+state:
+  backend: postgres
+  postgres:
+    dsn: file:/run/secrets/scrim-postgres/dsn
+# Approval decisions, grants and reloads reach every replica through
+# LISTEN/NOTIFY on the same database. More than one replica needs both.
+events:
+  backend: postgres

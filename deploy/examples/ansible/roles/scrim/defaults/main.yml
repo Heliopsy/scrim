@@ -1,0 +1,56 @@
+---
+# present installs or upgrades scrim; absent removes it (and its state when
+# scrim_purge is true).
+scrim_state: present
+scrim_purge: false
+
+# The release to install. Rolling back is setting this to the previous
+# version and running the play again.
+scrim_version: 0.2.0 # x-release-please-version
+scrim_release_url: "https://github.com/Heliopsy/scrim/releases/download/v{{ scrim_version }}"
+scrim_bin: /usr/local/bin/scrim
+
+# cosign checks the release signature before anything is installed. Pinned by
+# version and sha256 per architecture.
+scrim_cosign_version: v3.1.4
+scrim_cosign_sha256:
+  amd64: 424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+  arm64: ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2
+scrim_cosign_bin: /usr/local/bin/cosign
+scrim_signer_identity: '^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$'
+scrim_signer_issuer: https://token.actions.githubusercontent.com
+
+# Secrets scrim redacts, one file each under /etc/scrim/secrets/agents/.
+# Keep the values in Ansible Vault, never in plain inventory:
+#   scrim_secret_files:
+#     github-token: "{{ vault_scrim_github_token }}"
+scrim_secret_files: {}
+
+# The config file, written as YAML under apiVersion and kind. The default is
+# deploy/examples/systemd/system/config.yaml.
+scrim_config:
+  stores:
+    files:
+      kind: file
+      root: /etc/scrim/secrets
+      redact:
+        - files://agents/*
+      refresh:
+        interval: 1m
+  catalog:
+    entries:
+      github:
+        ref: files://agents/github-token
+        hosts: [api.github.com]
+        placeholder: SCRIM_GITHUB_TOKEN
+        inject: ["header:Authorization"]
+  api:
+    permissions: "0660"
+  identity:
+    peers:
+      ci: "user:ci-runner"
+  metrics:
+    listen: 127.0.0.1:9792
+
+# Where the play checks readiness after a change. Empty skips the check.
+scrim_ready_url: http://127.0.0.1:9792/readyz

@@ -1,0 +1,22 @@
+# The scrim base: one replica, in-memory state, the config file from config.yaml.
+# Overlays set the environment, the image and the state backend.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: scrim
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: scrim
+    includeSelectors: false
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - deployment.yaml
+  - service.yaml
+  - pdb.yaml
+configMapGenerator:
+  - name: scrim-config
+    files:
+      - config.yaml
+images:
+  - name: ghcr.io/heliopsy/scrim
+    newTag: 0.2.0 # x-release-please-version

@@ -1,0 +1,51 @@
+# prod: three replicas spread over nodes, PostgreSQL, NetworkPolicy, and the
+# image pinned by digest. Put the digest `cosign verify` printed for the
+# release in `digest:` (it wins over the tag); Renovate keeps tag and digest
+# current in your fleet repository.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+components:
+  - ../../components/postgres
+  - ../../components/networkpolicy
+configMapGenerator:
+  - name: scrim-config
+    behavior: merge
+    files:
+      - overlay-env.yaml
+replicas:
+  - name: scrim
+    count: 3
+images:
+  - name: ghcr.io/heliopsy/scrim
+    newTag: 0.2.0 # x-release-please-version
+    # digest: sha256:<the digest cosign verify printed>
+patches:
+  - target:
+      kind: PodDisruptionBudget
+      name: scrim
+    patch: |-
+      - op: remove
+        path: /spec/maxUnavailable
+      - op: add
+        path: /spec/minAvailable
+        value: 2
+  - target:
+      kind: Deployment
+      name: scrim
+    patch: |-
+      - op: add
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: scrim
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: {cpu: 500m, memory: 256Mi}
+          limits: {memory: 1Gi}

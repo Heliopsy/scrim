@@ -1,0 +1,50 @@
+# Sidecar mode: a full scrim proxy inside each agent pod labelled
+# scrim.dev/inject: sidecar, on loopback, with an nftables egress guard that
+# lets only the scrim container out. Values and the CA key then live in every
+# agent pod, so prefer central mode unless agents must keep working without a
+# shared service.
+#
+# Each in-pod scrim logs in to OpenBao as its pod's service account, so the
+# OpenBao role `scrim` must bind the agent pods' service accounts (namespace
+# agents) with audience openbao. The agent namespace needs Pod Security
+# `privileged`, or an exemption, for the guard's NET_ADMIN.
+#
+# The guard's image needs sh and nft; build it from egress-guard/Containerfile
+# and push it to your registry.
+central:
+  enabled: false
+storeAuth:
+  serviceAccountToken:
+    enabled: true
+    audience: openbao
+config:
+  stores:
+    bao:
+      kind: openbao
+      address: https://bao.example.com:8200
+      auth:
+        method: kubernetes
+        kubernetes: {role: scrim, token-file: /var/run/secrets/scrim/store-token}
+      redact: ["bao://kv/agents/*"]
+  catalog:
+    entries:
+      github:
+        ref: bao://kv/agents/github#token
+        hosts: [api.github.com]
+        placeholder: SCRIM_GITHUB_TOKEN
+        inject: ["header:Authorization"]
+agents:
+  namespaces: [agents]
+kyverno:
+  enabled: true
+sidecar:
+  enabled: true
+  egressGuard:
+    enabled: true
+    image: registry.example.com/platform/nft:3.22
+networkPolicy:
+  enabled: true
+  sidecarEgress:
+    - ports:
+        - {port: 443, protocol: TCP}
+        - {port: 8200, protocol: TCP}

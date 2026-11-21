@@ -1,0 +1,111 @@
+# scrim as a pod for `podman kube play`. Create the secret first (the value
+# comes from your shell, never from a file in git):
+#
+#   podman kube play secret.example.yaml   # after filling it in, or:
+#   cat <<EOF | podman kube play -
+#   apiVersion: v1
+#   kind: Secret
+#   metadata:
+#     name: scrim-agent-secrets
+#   data:
+#     github-token: $(printf '%s' "$GITHUB_TOKEN" | base64 -w0)
+#   EOF
+#
+#   podman kube play scrim.yaml
+#   podman kube down scrim.yaml            # stops the pod, keeps the volume
+#
+# The ConfigMap carries the same config as deploy/examples/podman/config.yaml.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scrim-config
+data:
+  config.yaml: |
+    # /etc/scrim/config.yaml inside the container.
+    #
+    # Secrets arrive as podman secrets mounted under /run/scrim-secrets/agents/,
+    # one file per secret. The listeners bind every address inside the container;
+    # publish them on the host's loopback only (-p 127.0.0.1:...).
+    apiVersion: scrim.dev/v1
+    kind: Config
+
+    stores:
+      files:
+        kind: file
+        root: /run/scrim-secrets
+        redact:
+          - files://agents/*
+
+    catalog:
+      entries:
+        github:
+          ref: files://agents/github-token
+          hosts: [api.github.com]
+          placeholder: SCRIM_GITHUB_TOKEN
+          inject: ["header:Authorization"]
+
+    proxy:
+      listen: 0.0.0.0:9790
+      forward-listen: 0.0.0.0:9791
+
+    metrics:
+      listen: 0.0.0.0:9792
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scrim
+  labels:
+    app.kubernetes.io/name: scrim
+spec:
+  restartPolicy: Always
+  containers:
+    - name: scrim
+      image: ghcr.io/heliopsy/scrim:0.2.0 # x-release-please-version
+      args: ["proxy"]
+      env:
+        - name: XDG_RUNTIME_DIR
+          value: /run/scrim
+      ports:
+        - containerPort: 9790
+          hostPort: 9790
+          hostIP: 127.0.0.1
+        - containerPort: 9791
+          hostPort: 9791
+          hostIP: 127.0.0.1
+        - containerPort: 9792
+          hostPort: 9792
+          hostIP: 127.0.0.1
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: config
+          mountPath: /etc/scrim
+          readOnly: true
+        - name: secrets
+          mountPath: /run/scrim-secrets/agents
+          readOnly: true
+        - name: state
+          mountPath: /var/lib/scrim
+        - name: runtime
+          mountPath: /run/scrim
+  volumes:
+    - name: config
+      configMap:
+        name: scrim-config
+    - name: secrets
+      secret:
+        secretName: scrim-agent-secrets
+    - name: state
+      persistentVolumeClaim:
+        claimName: scrim-state
+    - name: runtime
+      emptyDir:
+        medium: Memory
