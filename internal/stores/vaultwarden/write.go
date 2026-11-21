@@ -79,6 +79,11 @@ func (a *Adapter) Write(ctx context.Context, ref stores.Ref, fields map[string]s
 	if derr != nil {
 		return stores.Metadata{Ref: ref, Version: resp.RevisionDate}, nil
 	}
+	if v.metaLabels {
+		// Only the new item is guarded here: the vault's items are shared
+		// with readers, and the next sync rebuilds them.
+		guardMeta([]*item{written}, append(v.inScopeItems(), written), a.keys)
+	}
 	m := a.metadata(ref, ref.Path, written)
 	m.Ref = ref
 	return m, nil
@@ -271,4 +276,110 @@ func (a *Adapter) create(ctx context.Context, ref stores.Ref, v *vault, fields m
 		return nil, a.classify(stores.OpWrite, ref, "create item", err)
 	}
 	return resp, nil
+}
+
+// WriteLabels returns the native labels the item at ref carries after a
+// write, so store.write rules can match where a write lands before it
+// happens. For an existing item these are its current labels; for a new one
+// they are derived from the reference the way create places the item: the
+// organisation from ?org=, then the collection (with ?org=) or the folder
+// (without) from the path prefix. It uses the last sync and never contacts
+// the server; before the first sync it falls back to the reference alone.
+func (a *Adapter) WriteLabels(ref stores.Ref) map[string]string {
+	ref = ref.Secret()
+	a.mu.Lock()
+	v := a.v
+	a.mu.Unlock()
+	org := ref.Selector("org")
+	if v != nil {
+		if it, _, err := v.lookup(ref.Path, org); err == nil && it != nil {
+			return maps.Clone(it.all)
+		}
+	}
+	container, name := "", ref.Path
+	if i := strings.LastIndexByte(ref.Path, '/'); i >= 0 {
+		container, name = ref.Path[:i], ref.Path[i+1:]
+	}
+	n := nativeLabels{}
+	n.set("name", name)
+	n.set("type", typeName(cipherLogin))
+	if org == "" {
+		n.set("owner", "personal")
+		if container != "" {
+			n.set("folder", container)
+			for _, f := range ancestors(container) {
+				n[nativePrefix+"folder."+f] = "true"
+			}
+			if v != nil {
+				for id, fn := range v.folders {
+					if fn == container {
+						n.set("folder-id", id)
+					}
+				}
+			}
+		}
+		return mergeNative(nil, n)
+	}
+	n.set("owner", "org")
+	orgID := ""
+	if v != nil {
+		for id, on := range v.orgNames {
+			if id == org || on == org {
+				orgID = id
+			}
+		}
+	}
+	if orgID == "" {
+		// No sync yet or an unknown organisation: report what the
+		// reference says. create refuses an unknown organisation.
+		if isUUID(org) {
+			n.set("org.id", strings.ToLower(org))
+		} else {
+			n.set("org", org)
+		}
+	} else {
+		n.set("org.id", orgID)
+		if on := v.orgNames[orgID]; on != "" {
+			n.set("org", on)
+		}
+		if r, ok := v.orgRoles[orgID]; ok {
+			n.set("org.role", orgRole(r))
+		}
+	}
+	if container != "" {
+		var ids []string
+		if orgID != "" {
+			for id, cn := range v.collNames {
+				if cn == container && v.collections[id].OrganizationID == orgID {
+					ids = append(ids, id)
+				}
+			}
+		}
+		if len(ids) > 0 {
+			v.addCollections(n, ids)
+		} else {
+			n.setMulti("collection", true, container)
+		}
+	}
+	return mergeNative(nil, n)
+}
+
+// isUUID reports whether s has the 8-4-4-4-12 hex form of a Bitwarden id.
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, r := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if r != '-' {
+				return false
+			}
+		default:
+			if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+				return false
+			}
+		}
+	}
+	return true
 }

@@ -33,6 +33,7 @@ const (
 	OptDeviceID          = "device-id"
 	OptCAFile            = "ca-file"
 	OptAllowInsecureHTTP = "allow-insecure-http"
+	OptMetaLabels        = "meta-labels"
 )
 
 // Options is the decoded configuration of one instance.
@@ -64,6 +65,11 @@ type Options struct {
 	// AllowInsecureHTTP permits plain http:// to a non-loopback host. It
 	// weakens transport security: tokens would travel in clear text.
 	AllowInsecureHTTP bool
+	// MetaLabels reports text custom fields as vaultwarden.meta.<key>
+	// labels (option meta-labels, off by default). It weakens value
+	// confidentiality where a vault keeps secrets in text fields: labels are
+	// visible in policy views and audit.
+	MetaLabels bool
 }
 
 var refPrefix = regexp.MustCompile(`^[a-z][a-z0-9+.-]*:\S`)
@@ -78,7 +84,7 @@ func decodeOptions(instance string, m map[string]any) (Options, error) {
 	o := Options{PollInterval: 30 * time.Second, Timeout: 30 * time.Second}
 	known := map[string]bool{}
 	for _, k := range []string{OptURL, OptClientID, OptClientSecret, OptEmail, OptUnlock, OptScope,
-		OptPollInterval, OptTimeout, OptDeviceID, OptCAFile, OptAllowInsecureHTTP} {
+		OptPollInterval, OptTimeout, OptDeviceID, OptCAFile, OptAllowInsecureHTTP, OptMetaLabels} {
 		known[k] = true
 	}
 	for k := range m {
@@ -159,12 +165,19 @@ func decodeOptions(instance string, m map[string]any) (Options, error) {
 			return o, fmt.Errorf("vaultwarden %s: option %s must be positive", instance, d.k)
 		}
 	}
-	if v, ok := m[OptAllowInsecureHTTP]; ok && v != nil {
+	for _, d := range []struct {
+		k   string
+		dst *bool
+	}{{OptAllowInsecureHTTP, &o.AllowInsecureHTTP}, {OptMetaLabels, &o.MetaLabels}} {
+		v, ok := m[d.k]
+		if !ok || v == nil {
+			continue
+		}
 		b, ok := v.(bool)
 		if !ok {
-			return o, fmt.Errorf("vaultwarden %s: option %s must be a boolean", instance, OptAllowInsecureHTTP)
+			return o, fmt.Errorf("vaultwarden %s: option %s must be a boolean", instance, d.k)
 		}
-		o.AllowInsecureHTTP = b
+		*d.dst = b
 	}
 	if v, ok := m[OptScope]; ok && v != nil {
 		switch t := v.(type) {
