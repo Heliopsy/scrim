@@ -59,6 +59,10 @@
         {
           "type": "generic",
           "path": "scripts/deploy-examples/cloud-init.py"
+        },
+        {
+          "type": "generic",
+          "path": "test/k8s/e2e.sh"
         }
       ]
     }
