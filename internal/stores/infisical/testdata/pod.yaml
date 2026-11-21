@@ -17,7 +17,7 @@ spec:
   restartPolicy: Never
   containers:
     - name: postgres
-      image: docker.io/library/postgres:16-alpine
+      image: docker.io/library/postgres:19.0-alpine3.24
       env:
         - name: POSTGRES_USER
           value: infisical
@@ -26,7 +26,7 @@ spec:
         - name: POSTGRES_DB
           value: infisical
     - name: redis
-      image: docker.io/library/redis:7-alpine
+      image: docker.io/library/redis:8.10.3-alpine
       args: ["redis-server", "--save", "", "--appendonly", "no"]
     - name: backend
       image: docker.io/infisical/infisical:${INFISICAL_VERSION}

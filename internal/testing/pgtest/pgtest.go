@@ -25,7 +25,7 @@ import (
 )
 
 // DefaultImage is the image started when SCRIM_TEST_POSTGRES_IMAGE is unset.
-const DefaultImage = "docker.io/library/postgres:18.6-alpine3.24"
+const DefaultImage = "docker.io/library/postgres:19.0-alpine3.24"
 
 var (
 	once       sync.Once
