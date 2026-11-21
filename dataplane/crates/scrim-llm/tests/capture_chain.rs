@@ -213,9 +213,10 @@ async fn chained_compressor_sees_only_placeholders_and_they_survive() {
 #[tokio::test(flavor = "multi_thread")]
 async fn chain_unavailable_fail_and_direct() {
     let fx = fixture();
-    let dead = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let dead_url = format!("http://{}", dead.local_addr().unwrap());
-    drop(dead);
+    // Held until the end of the test so the port cannot be reused by a parallel test's listener,
+    // or by this test's own upstream and proxy.
+    let (_dead, dead_addr) = refusing_addr();
+    let dead_url = format!("http://{dead_addr}");
     let b = format!(
         r#"{{"model":"m","messages":[{{"role":"user","content":"{}"}}]}}"#,
         fx.value("s0")
@@ -231,7 +232,7 @@ async fn chain_unavailable_fail_and_direct() {
     })
     .await;
     let r = send(&h, "/anthropic/v1/messages", AUTH, b.clone(), false).await;
-    assert_eq!(r.status, 502);
+    assert_eq!(r.status, 502, "{}", r.text());
     assert_eq!(r.headers[scrim_llm::ERROR_HEADER], "chain_unavailable");
     assert!(
         h.upstream.received().is_empty(),

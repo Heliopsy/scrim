@@ -195,5 +195,16 @@ an emulator in podman. State backends follow the same shape with `state.Register
 - release-please creates the tag with `GITHUB_TOKEN`, which starts no workflow, so its workflow
   must dispatch the release: `gh workflow run release.yaml -f tag=vX.Y.Z`. A hand-pushed `v*` tag
   builds on its own.
+- The release pull request needs no hand commit. release-please bumps every
+  `x-release-please-version` marker, `docs/helm-values.md` included (its helm-docs template keeps
+  one version per line inside `x-release-please-start-version` blocks, followed by a character that
+  cannot continue a semver), and `test/k8s/golden.sh` renders a copy of the chart pinned to version
+  1.2.3, so no golden moves with a release. A new generated file that depends on the version gets a
+  marker or a pin the same way. After it opens or updates the pull request, the workflow runs
+  `verify.sh --generate-only` on the release branch and pushes anything that changed.
+- That pull request and that push come from `GITHUB_TOKEN` and start no workflow, so the
+  release-please workflow dispatches `ci.yaml`, `leak.yaml`, `openspec.yaml` and
+  `deploy-examples.yaml` (each has `workflow_dispatch`) on the release branch; their checks show on
+  the pull request. It uses the `actions: write` the job already has, no App key or PAT.
 - The layout the scripts depend on (embed path, Go main package, version package, crate name) is
   the top block of `release.env`. Move a path there in the same change that moves it in the tree.
