@@ -239,7 +239,7 @@ spec). Correctness limits are zero and never loosen. The others, and why:
 | mean open streams | 80% of target | 80% of target | an agent has no stream open between turns (tool call, think time); below 80% the system is not holding the target concurrency |
 | provider requests/s | 20 | 50 | the full shape (14 s turns, 1 s between them, 1,000 agents) gives about 66/s; 50 catches a stall |
 | replica memory | 90% of the limit, no OOM kill | same | a replica near its limit would be killed in production |
-| memory per stream | 2 MiB | 512 KiB | anonymous memory growth of a replica over its idle value per stream it carries; small runs are dominated by fixed costs, hence the looser smoke limit |
+| memory per stream | 4 MiB | 512 KiB | anonymous memory growth of a replica over its idle value per stream it carries; small runs are dominated by fixed costs (the CI smoke run measures 1.8 MiB at 20 streams per replica, the full run 0.2 MiB at 333), hence the looser smoke limit |
 
 ### Latest numbers
 

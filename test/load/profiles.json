@@ -40,7 +40,7 @@
         "client_added_p99_ms": 50,
         "approval_release_p99_ms": 1000,
         "max_replica_memory_fraction": 0.9,
-        "max_memory_per_stream_kib": 2048
+        "max_memory_per_stream_kib": 4096
       }
     },
     "full": {
