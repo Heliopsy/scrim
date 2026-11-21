@@ -78,7 +78,7 @@ lint:
 
 # Lint the Markdown .markdownlint-cli2.yaml selects, with the rules in .markdownlint.yaml.
 md:
-    npx --yes markdownlint-cli2@0.24.1
+    npx --yes markdownlint-cli2@0.24.2
 
 # Alert rules, their tests, the Prometheus configs and the dashboard (deploy/monitoring).
 monitoring:
