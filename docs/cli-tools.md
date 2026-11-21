@@ -10,7 +10,7 @@ Nothing is written outside the session directory, and it is removed when the age
 Spec: `openspec/changes/scrim-v1/specs/credential-injection` ("Placeholder credentials for
 command-line tools", "Built-in tool profiles", "Tool profile selection", "Catalog entries take their
 tool profile's binding", "Environment overrides before file tricks", "Tools that print their own
-credentials", "Testing tool profiles").
+credentials", "Testing tool profiles", "Credential helpers").
 
 ## Quick start
 
@@ -48,11 +48,11 @@ APIs, registries and private package indexes name their hosts themselves.
 | Profile | Catalog `tools` | Default hosts | What the session gets |
 | --- | --- | --- | --- |
 | `gh` | `gh` | api.github.com, github.com, uploads.github.com | `GH_TOKEN`, an empty `GH_CONFIG_DIR`; `GITHUB_TOKEN` removed |
-| `git` | `git` | github.com | a credential store file per bound host via `GIT_CONFIG_COUNT`; other credential helpers reset |
+| `git` | `git` | github.com | scrim's git credential helper over a generated credential file, via `GIT_CONFIG_COUNT`; other credential helpers reset |
 | `glab` | `glab` | gitlab.com | `GITLAB_TOKEN`, an empty `GLAB_CONFIG_DIR` |
 | `kubectl` | `kubectl` | none (the entry's first host is the API server) | `KUBECONFIG`, one context per entry, trusting the session CA bundle |
 | `helm` | `helm` | none | `HELM_REGISTRY_CONFIG` for OCI registries; cluster access from the kubectl profile |
-| `docker` | `docker` | none | `DOCKER_CONFIG` with one auth entry per bound host |
+| `docker` | `docker` | none | `DOCKER_CONFIG` with one auth entry per bound host and `credHelpers` naming `docker-credential-scrim` |
 | `podman` | `podman` | none | `REGISTRY_AUTH_FILE` (podman, buildah, skopeo) |
 | `npm` | `npm` | registry.npmjs.org | `NPM_CONFIG_USERCONFIG`, `NPM_TOKEN`, `NODE_AUTH_TOKEN` (npm and pnpm) |
 | `aws` | `aws`, `aws.secret-access-key`, `aws.session-token` | *.amazonaws.com | `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`; inherited `AWS_*` credentials removed, IMDS off |
@@ -76,6 +76,40 @@ APIs, registries and private package indexes name their hosts themselves.
 - **az**: the access token Entra ID returns is a live credential and lands in the session's
   `AZURE_CONFIG_DIR` until the session ends. A capture rule keeps it a placeholder.
 - **psql, mysql, ssh** use the database proxy and the ssh agent, not profiles.
+
+## Credential helpers
+
+`scrim credential-helper` answers the tools that ask a helper for credentials, with the session's
+placeholders only. It reads no store, no credential file in the home directory and no network, and
+never stores what a tool hands it.
+
+| Tool | Helper | Profile | Default |
+| --- | --- | --- | --- |
+| git | `scrim credential-helper git --file <generated git-credentials> get` (git credential protocol) | `git`, `GIT_CONFIG_VALUE_1` | on |
+| docker, skopeo, podman with `DOCKER_CONFIG` | `docker-credential-scrim get\|list\|store\|erase` (docker credential helper protocol over `$DOCKER_CONFIG/config.json`) | `docker`, `credHelpers` per bound registry | on |
+| aws CLI and SDKs | `credential_process = scrim credential-helper aws --access-key-id ... --secret-access-key ...` | `aws`, generated config | off |
+| kubectl and client-go tools | kubeconfig `user.exec` running `scrim credential-helper kubectl --token ...` (ExecCredential) | `kubectl` | off |
+
+Each profile has a `helper` param: `scrim` uses the helper, `""` writes the placeholder into the
+generated file instead. Turn the aws and kubectl helpers on with
+
+```yaml
+tool-profiles:
+  aws: {params: {helper: scrim}}
+  kubectl: {params: {helper: scrim}}
+```
+
+With the helper on, the credentials file and kubeconfig hold no credential at all, and
+`aws configure export-credentials` or the exec plugin print the placeholders. `aws configure get` then
+prints nothing, since no key is in a file.
+
+The docker profile links `docker-credential-scrim` to scrim in `<session-dir>/bin`, which `scrim run`
+puts first on `PATH`; a profile may only link scrim's own helper names there. `store` succeeds only
+for the placeholder the helper already returns, so `docker login` or `skopeo login` with a typed
+password fails with an error telling you to put the credential in a store instead of keeping it in
+the session. `erase` changes nothing. git's `store` and `erase` calls change nothing either.
+
+Short-lived scoped credentials from a helper (instead of placeholders) are not implemented.
 
 ## Selecting profiles
 
@@ -134,13 +168,15 @@ tool-profiles:
 Fields: `description`, `tools` (executables), `requires` (profiles applied with this one),
 `credentials` (`name`, `hosts`, `inject`, `required`; the first is filled by `tools: [<profile>]`,
 others by `tools: [<profile>.<name>]`), `params`, `env`, `unset` (a trailing `*` removes a prefix),
-`dirs` (created empty), `files` (`path`, `content`), `paths` (fixed home paths and the generated file
+`dirs` (created empty), `files` (`path`, `content`), `bin` (credential helper names linked to scrim
+in the session's `PATH`: `docker-credential-scrim`), `paths` (fixed home paths and the generated file
 shown there, for the session filesystem view), `test` (`command`, `stdin`, `expect`), `notes`.
 
 Templates are Go `text/template` and only ever see placeholders: `placeholder SLOT`, `creds SLOT`
 (each filling entry with `.Name`, `.Placeholder`, `.Hosts`, `.Host`), `host SLOT`, `param NAME`,
-`path REL`, `dir`, `cabundle`, `home`, `authsjson SLOT USER` (a registry auth file), `b64`,
-`basic USER PASS`, `json`, `envname`, `stripport`. A variable whose template renders empty is not set.
+`path REL`, `dir`, `cabundle`, `home`, `scrim` (the scrim executable), `authsjson SLOT USER [HELPER]`
+(a registry auth file, with `credHelpers` naming HELPER), `b64`, `basic USER PASS`, `json`, `shquote`,
+`envname`, `stripport`. A variable whose template renders empty is not set.
 
 ## Testing profiles
 
@@ -158,6 +194,14 @@ not the generated placeholder. No real credential is read or sent.
 
 `just e2e-profiles` runs the real CLIs under `scrim run` against fakes of their APIs on their default
 hosts inside the end-to-end sandbox; CI installs the versions pinned in `scripts/cli-tools/tools.env`.
+
+## Secrets in project files
+
+Secrets that live in the project rather than a store (`.env`, `*.tfvars`, `config/*.yaml`) are
+redacted from the session's first request: `scrim run` scans the working directory and registers
+them. `scrim project scan` lists them and `scrim project move` moves each into a store after
+confirmation, leaving a `{{scrim:<ref>}}` reference in the file. See
+[run.md](run.md#secrets-in-project-files).
 
 ## What profiles do not cover
 
