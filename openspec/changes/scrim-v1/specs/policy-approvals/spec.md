@@ -138,14 +138,59 @@ keep the placeholder rather than hold the response.
 
 ### Requirement: Restore request attributes
 
-A restore request SHALL carry the tool name, the value's reference, catalog name, store and class,
-and the agent identity where the listener knows it. A rule condition on a field the data plane does
-not have SHALL keep the placeholder.
+A restore request SHALL carry the tool name, the value's reference, catalog name, store, class and
+labels, and the agent identity where the listener knows it. A rule condition on a field the data
+plane does not have, including the labels of a value the snapshot carries none for, SHALL keep the
+placeholder.
 
 #### Scenario: Rule on an unknown agent
 
 - **WHEN** a rule denies unknown callers and the listener cannot establish the agent's identity for a restore
 - **THEN** the placeholder stays
+
+#### Scenario: Rule on a store label
+
+- **WHEN** a rule denies `op == "restore"` for values whose `secret.labels` hold `vaultwarden.collection.Prod`,
+  and a model reply carries placeholders of two display values, one in that collection and one not
+- **THEN** the data plane restores the value outside the collection and keeps the other's placeholder
+
+#### Scenario: Value without labels
+
+- **WHEN** a rule on `secret.labels` exists and the snapshot carries no labels for a value (an older control plane)
+- **THEN** the data plane treats the labels as unknown and keeps the placeholder
+
+### Requirement: Store labels in rules
+
+Every request that names a secret (`store.write`, `secret.gen`, `store.read`, grants, `inject` and
+`restore`) SHALL carry the secret's labels as `secret.labels` (secret-stores "Store-native metadata
+labels"). A write or generate to an item that does not exist yet SHALL see the labels it would get.
+`scrim policy eval` SHALL accept secret labels (`--label key=value`).
+
+#### Scenario: Writes into a collection need approval
+
+- **WHEN** a rule asks for `op in ["store.write", "secret.gen"]` when `"vaultwarden.collection.Prod" in secret.labels`
+- **THEN** an agent's write to a Vaultwarden item in collection Prod waits for approval and a write elsewhere does not
+
+#### Scenario: New item in a governed place
+
+- **WHEN** a rule asks for writes whose `secret.labels["store.container"]` is `prod`, and an agent creates `bao://prod/new-token`, which does not exist yet
+- **THEN** the write waits for approval
+
+### Requirement: Data plane decides on the same labels
+
+The control plane SHALL send each value's labels to the data plane in the snapshot, so `inject` and
+`restore` are decided on the labels the control plane would use, and SHALL evaluate a data plane ask
+on its own labels for the secret, not on labels the ask carries.
+
+#### Scenario: Injection governed by an organisation
+
+- **WHEN** a rule denies `inject` of credentials whose `secret.labels["vaultwarden.org"]` is `Acme` toward hosts outside `*.acme.example`
+- **THEN** the data plane refuses such an injection without asking the control plane
+
+#### Scenario: Ask carries forged labels
+
+- **WHEN** the data plane asks about an injection and the ask's request carries labels that differ from the control plane's for that secret
+- **THEN** the control plane decides on its own labels
 
 ### Requirement: Invalid rules fail closed
 

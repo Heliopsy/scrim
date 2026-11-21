@@ -75,6 +75,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 7.3 ntfy notifier with action buttons and terminal `scrim approve`; verify: end-to-end approve and deny against a local ntfy in podman
 - [x] 7.4 JIT grants (ttl, max ttl, scope, use count, revoke); verify: expiry and revocation take effect on the next request
 - [x] 7.5 Break-glass deny-all switch; verify: every path refuses while it is set
+- [x] 7.6 Store-native metadata as policy labels: `<kind>.` native labels with presence keys and `<kind>.meta.` user metadata (`stores.SetNative`, `stores.UserMeta`), generic `store.*` labels, per-store derived labels (`stores.<name>.labels`), labels of new items (`stores.WriteLabeler`), `secret.labels` on every operation including `inject` and `restore` in the data plane (`ValueEntry.labels`), `scrim catalog labels`, `scrim policy eval --label`; verify: forging a native label through user metadata or a derived label fails, a restore rule on a label is enforced by the real data plane end to end, an inject rule on a label is decided in the data plane, and a write to a new item sees its labels
 
 ## 8. Identity and agent tools
 

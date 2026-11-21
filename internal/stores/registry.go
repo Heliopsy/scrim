@@ -101,6 +101,13 @@ type Set struct {
 	mu       sync.RWMutex
 	byScheme map[string]Adapter
 	order    []Adapter
+	labeling map[string]labeling
+}
+
+// labeling is how one instance's labels are composed.
+type labeling struct {
+	kind    string
+	mapping LabelMapping
 }
 
 // NewSet returns an empty set.
@@ -124,6 +131,44 @@ func (s *Set) Add(a Adapter, aliases ...string) error {
 	}
 	s.order = append(s.order, a)
 	return nil
+}
+
+// SetLabeling records the adapter kind and the operator's derived labels of
+// the instance name, for [Set.Labels].
+func (s *Set) SetLabeling(name, kind string, m LabelMapping) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.labeling == nil {
+		s.labeling = map[string]labeling{}
+	}
+	s.labeling[name] = labeling{kind: kind, mapping: m}
+}
+
+// Labels is the label set policy sees for the secret at ref, given the
+// labels its adapter reported for it ([ComposeLabels]). The instance is
+// found by the reference's scheme, so an alias yields the instance name.
+func (s *Set) Labels(ref Ref, native map[string]string) map[string]string {
+	name := ref.Scheme
+	s.mu.RLock()
+	if a, ok := s.byScheme[ref.Scheme]; ok {
+		name = a.Name()
+	}
+	l := s.labeling[name]
+	s.mu.RUnlock()
+	return ComposeLabels(name, l.kind, ref, native, l.mapping)
+}
+
+// WriteLabels is the label set a store.write or secret.gen at ref sees
+// before the secret exists: the adapter's [WriteLabeler] labels, if it has
+// any, composed like [Set.Labels].
+func (s *Set) WriteLabels(ref Ref) map[string]string {
+	var native map[string]string
+	if a, err := s.Lookup(ref); err == nil {
+		if wl, ok := a.(WriteLabeler); ok {
+			native = wl.WriteLabels(ref)
+		}
+	}
+	return s.Labels(ref, native)
 }
 
 // Adapters returns every adapter in the order added.

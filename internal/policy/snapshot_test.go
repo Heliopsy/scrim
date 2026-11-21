@@ -218,6 +218,10 @@ func TestSnapshotLowering(t *testing.T) {
 		{`agent.labels["team"] == "x"`, []Clause{{Conditions: []Condition{{Field: "agent.labels", Key: "team", Op: OpIn, Values: []string{"x"}}}}}},
 		{`"team" in secret.labels`, []Clause{{Conditions: []Condition{{Field: "secret.labels", Key: "team", Op: OpHasKey, Values: []string{}}}}}},
 		{`has(agent.labels.team)`, []Clause{{Conditions: []Condition{{Field: "agent.labels", Key: "team", Op: OpHasKey, Values: []string{}}}}}},
+		// Store labels have dotted keys: presence keys and index syntax.
+		{`"vaultwarden.collection.Prod" in secret.labels`, []Clause{{Conditions: []Condition{{Field: "secret.labels", Key: "vaultwarden.collection.Prod", Op: OpHasKey, Values: []string{}}}}}},
+		{`secret.labels["store.kind"] == "openbao"`, []Clause{{Conditions: []Condition{{Field: "secret.labels", Key: "store.kind", Op: OpIn, Values: []string{"openbao"}}}}}},
+		{`secret.labels["store.path"].startsWith("prod/")`, []Clause{{Conditions: []Condition{{Field: "secret.labels", Key: "store.path", Op: OpPrefix, Values: []string{"prod/"}}}}}},
 		{`now.getHours() > 1`, []Clause{{Residual: true}}},
 		{`!(now.getHours() > 1)`, []Clause{{Residual: true}}},
 		{`op == "a" && now.getHours() > 1`, []Clause{{Conditions: []Condition{{Field: "op", Op: OpIn, Values: []string{"a"}}}, Residual: true}}},

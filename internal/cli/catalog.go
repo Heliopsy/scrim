@@ -24,7 +24,7 @@ func (Commands) Catalog(e *Env) *cobra.Command {
 		Long: "The secret catalog maps logical names and declared placeholders to store references and the " +
 			"hosts they may be injected toward. It never holds values.",
 	}
-	cmd.AddCommand(catalogShow(e), catalogSuggest(e))
+	cmd.AddCommand(catalogShow(e), catalogSuggest(e), catalogLabels(e))
 	return cmd
 }
 
@@ -45,10 +45,12 @@ func catalogShow(e *Env) *cobra.Command {
 		agent, ns, prof string
 	)
 	cmd := &cobra.Command{
-		Use:   "show",
+		Use:   "show [name]",
 		Short: "Show the effective catalog and which reference each entry selects",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Long: "Show the effective catalog. With a name, show that entry and the labels its secret has " +
+			"(secret.labels in policy rules), read from its store.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := e.Config()
 			if err != nil {
 				return err
@@ -61,6 +63,9 @@ func catalogShow(e *Env) *cobra.Command {
 			cat, err := catalog.Load(cmd.Context(), cfg, lister(cmd, e), sel)
 			if err != nil {
 				return err
+			}
+			if len(args) == 1 {
+				return showEntry(cmd, e, cat, args[0], asJSON)
 			}
 			if asJSON {
 				return writeCatalogJSON(e.Stdout, cat)

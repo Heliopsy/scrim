@@ -277,6 +277,13 @@ message ValueEntry {
   repeated string inject_locations = 11;
   // allow_plaintext_http also injects over plain `http://`. Weakening.
   bool allow_plaintext_http = 12;
+  // labels are what rules see as `secret.labels` for this value
+  // (docs/policy.md "Labels from stores"): the store's native labels, the
+  // generic `store.*` labels and the instance's derived labels. Metadata
+  // only, never a value. The control plane always sends at least
+  // `store.name`; an empty map means a control plane that sends no labels,
+  // and the data plane then treats `secret.labels` as unknown.
+  map<string, string> labels = 13;
 }
 
 // CaptureRule stores a value an API returns (a newly created token) under
