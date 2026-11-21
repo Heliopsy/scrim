@@ -61,6 +61,12 @@ func (r *registry) getWith(ctx context.Context, url string, hdr map[string]strin
 		case err != nil:
 			lastErr = err
 			continue
+		case status == http.StatusOK && len(body) == 0:
+			// The module proxy has been seen answering 200 with an empty
+			// body for a lookup it normally answers 404; treat it like a
+			// 5xx and retry, so one glitch does not fail the gate.
+			lastErr = fmt.Errorf("GET %s: HTTP 200 with an empty body", url)
+			continue
 		case status == http.StatusOK:
 			return body, h, true, nil
 		case status == http.StatusNotFound || status == http.StatusGone:
