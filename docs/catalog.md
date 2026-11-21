@@ -108,6 +108,31 @@ the catalog still loads.
 
 Kubernetes cluster resources as a catalog source are not implemented yet.
 
+## Labels
+
+Policy rules see a secret's labels as `secret.labels`: the store's native labels
+(`vaultwarden.collection`, `openbao.mount`), the generic `store.*` labels, the `scrim.*` keys above
+and labels derived by the store's `labels` option ([stores](stores/README.md#labels),
+[policy](policy.md#labels-from-stores)). They come from the store, not the catalog: a catalog name
+and a reference to the same secret have the same labels. `scrim catalog labels` lists them:
+
+```text
+$ scrim catalog labels github
+ref: bao://kv/agents/github#token
+LABEL            VALUE               FROM
+openbao.mount    kv                  native
+scrim.hosts      api.github.com      scrim
+store.container  kv/agents           store
+store.field      token               store
+store.kind       openbao             store
+store.name       bao                 store
+store.path       kv/agents/github    store
+team             platform            derived
+```
+
+It reads metadata, never the value. For a reference the store does not hold yet it prints the labels
+a new item there would get. `--json` prints them as an object.
+
 ## Reload
 
 The catalog reloads without a restart when the configuration changes (any `catalog.*` setting or
@@ -119,7 +144,8 @@ effect.
 
 `scrim catalog show` prints every entry with the reference selected for the current selection and
 where the entry came from. `--for-profile`, `--agent` and `--namespace` show another selection;
-`--json` prints machine-readable output with every variant.
+`--json` prints machine-readable output with every variant. `scrim catalog show <name>` prints one
+entry with the labels of the secret it selects.
 
 ```text
 selection: profile=dev

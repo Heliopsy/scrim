@@ -65,6 +65,7 @@ its guide.
 | `stores.<name>.refresh.retention` | `24h` | How long a rotated, deleted or overwritten value stays in the redaction set. |
 | `stores.<name>.refresh.staleness` | `15m` | How long a value confirmed by the store may still be injected without a newer confirmation, and how long the store may be unreachable before it is reported unhealthy. |
 | `stores.<name>.refresh.max-backoff` | `5m` | Longest wait between retries after a failed load. |
+| `stores.<name>.labels` | none | Labels of your own derived from the store's labels, for policy rules. See [labels](#labels). |
 
 Every key can also be set from the environment: `SCRIM_` followed by the key upper-cased, with dots
 and dashes turned into `_` (`stores.bao.secret-id` becomes `SCRIM_STORES_BAO_SECRET_ID`). The
@@ -119,6 +120,78 @@ memory and the error gives the store's reason without the value.
 The readiness endpoint (`/readyz`) has one check per store, named `store <name>`, and it stays
 failing until that store's first load completes. The `scrim status` command reports the states
 above.
+
+## Labels
+
+Every secret carries labels that describe where it lives, which policy rules match as
+`secret.labels` (see [policy.md](../policy.md#labels-from-stores) for rules and examples). Each
+backend's page lists the attributes it reports. List a secret's labels with
+`scrim catalog labels <name|reference>`.
+
+| Key | Set by | Meaning |
+| --- | --- | --- |
+| `store.name` | scrim | Instance name (not an alias). |
+| `store.kind` | scrim | Adapter kind. |
+| `store.path` | scrim | Reference path, without selectors or field. |
+| `store.container` | scrim | Path before its last segment; empty at the top level. |
+| `store.field` | scrim | Field, when the reference names one. |
+| `<kind>.<attribute>` | adapter | A native attribute of the store (`vaultwarden.org`, `openbao.mount`, `infisical.environment`). |
+| `<kind>.<attribute>.<value>` = `true` | adapter | One per value of a multi-valued attribute, next to the comma-joined `<kind>.<attribute>`. |
+| `<kind>.meta.<key>` | adapter | Metadata store users can edit (custom fields, tags, custom metadata). |
+| `scrim.*` | store metadata | Catalog bindings kept with the secret ([catalog](../catalog.md#sources-and-precedence)). |
+| other names | `stores.<name>.labels` | Derived labels (below). |
+
+Keys are lower-case ASCII letters, digits, `-` and `_` separated by dots; the value part of a
+presence key keeps the value's spelling (`vaultwarden.collection.Prod`). Values are metadata, never
+secret values. A native attribute always wins over user-editable metadata, which stays under
+`<kind>.meta.`, so nobody who can edit an item can forge a native label. scrim replaces any
+`store.*` key an adapter reports and drops keys under another kind's prefix.
+
+The local stores report:
+
+| Kind | Labels |
+| --- | --- |
+| `env` | `env.variable` (variable name), `env.prefix` (the `prefix` option, when set) |
+| `file` | `file.root` (the `root` option), `file.path` (absolute path of the file), `file.format` (`raw`, `dotenv` or `json`) |
+| `memory` | `memory.top` (first path segment, when the path has more than one) |
+
+`labels` derives names of your own from the labels above. Each entry is a label name and a source:
+a label to copy, `{value}` for a constant, `{from, value}` for a constant set when a label exists, or
+`{from, regex, value}` for a match (`$1` expands to a submatch):
+
+```yaml
+stores:
+  ci-env:
+    kind: env
+    prefix: CI_
+    labels:
+      env: {value: ci}
+      tier: {from: env.variable, regex: "^CI_PROD_", value: prod}
+```
+
+A derived label never replaces a native or `store.*` label, and a name under `store.`, `scrim.` or
+any kind's prefix fails validation.
+
+### Writing an adapter
+
+Adapters put their attributes into `Metadata.Labels` with the helpers in `internal/stores`
+(`labels.go`), never by writing keys by hand:
+
+- `stores.SetNative(labels, kind, attr, values...)` sets `<kind>.<attr>`, replacing anything there.
+  With several values, or any number for an attribute declared multi-valued, it sets the
+  comma-joined key and a `<kind>.<attr>.<value>` = `true` presence key per value. Empty values are
+  skipped; an attribute under `meta` is ignored.
+- `stores.DeclareMulti(kind, attrs...)`, called from the adapter's `init`, declares multi-valued
+  attributes, so one collection still gets its presence key.
+- `stores.UserMeta(labels, kind, key, value)` records user-editable metadata as
+  `<kind>.meta.<key>` and never overwrites a key already set.
+- `stores.WriteLabeler` (`WriteLabels(ref) map[string]string`) is optional: an adapter that can
+  tell from a reference alone, without a store call, which labels a new item would get implements
+  it, and `store.write` and `secret.gen` rules see them before the item exists.
+
+Do not let a store user's input reach a native key: copy custom fields and tags with `UserMeta`. Do
+not put a nested attribute under a multi-valued one (`vaultwarden.collection.id` would read as a
+collection named `id`).
 
 ## Conformance
 

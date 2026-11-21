@@ -84,7 +84,9 @@ The root picks it up by reflection; there is no list to edit. Use `e.Config()` a
 
 Create `internal/stores/<kind>`, implement `stores.Adapter`, declare capabilities honestly, wrap
 every error with `stores.NewError` and one of the error kinds, and register the factory in
-`init` with `stores.Register(kind, factory)`. Link it in with a one-line
+`init` with `stores.Register(kind, factory)`. Report where a secret lives in the store as labels
+with `stores.SetNative` and user-editable metadata with `stores.UserMeta`, never by hand
+(docs/stores/README.md, "Writing an adapter"). Link it in with a one-line
 `internal/app/store_<kind>.go` blank import. Its tests call `storetest.Run` against the store or
 an emulator in podman. State backends follow the same shape with `state.RegisterBackend`,
 `statetest.Run` and `internal/app/backend_<name>.go`.
