@@ -168,6 +168,12 @@ func New(a *app.App, o Options) (*Runtime, error) {
 // user can find the daemon's listeners. Call it before Serve.
 func (r *Runtime) SetEndpoints(fn func() localapi.Endpoints) { r.api.Endpoints = fn }
 
+// SetRedactor serves POST /v1/redact with fn, the data plane's redactor and
+// guard, for agent hooks (hooks-only interception). Call it before Serve.
+func (r *Runtime) SetRedactor(fn func(ctx context.Context, text []byte) (localapi.Redacted, error)) {
+	r.api.Redactor = fn
+}
+
 // lookupGroup resolves api.group to a group ID; empty is 0 (unchanged).
 func lookupGroup(name string) (int, error) {
 	if name == "" {

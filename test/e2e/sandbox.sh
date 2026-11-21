@@ -45,6 +45,13 @@ cat > "$dir/hosts" <<HOSTS
 127.0.0.2 api.scrim.test
 127.0.0.3 git.scrim.test
 127.0.0.4 other.scrim.test
+# Tool profile tests: the hosts real CLIs talk to by default, all served by
+# one fake on 127.0.0.10 (test/e2e/profiles). Nothing here is reachable
+# outside the namespace.
+127.0.0.10 api.github.com github.com uploads.github.com registry.npmjs.org app.terraform.io
+127.0.0.10 cloudresourcemanager.googleapis.com login.microsoftonline.com management.azure.com
+127.0.0.10 upload.pypi.org crates.io index.crates.io static.crates.io api.hetzner.cloud
+127.0.0.10 api.digitalocean.com k8s.scrim.test registry.scrim.test pypi.scrim.test
 HOSTS
 chmod 0644 "$dir/hosts"
 self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"

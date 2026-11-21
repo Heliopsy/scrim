@@ -1,0 +1,50 @@
+description: kubectl, and other client-go tools reading KUBECONFIG (k9s, kustomize, flux, argocd login)
+tools: [kubectl, k9s, flux]
+credentials:
+  - name: token
+    description: A bearer token (service account or OIDC token) for one cluster. The entry's first bound host is the API server (host:port); each entry becomes one context, the first is current.
+    inject: ["header:Authorization"]
+    required: true
+params:
+  namespace: default
+env:
+  KUBECONFIG: '{{ path "kubeconfig" }}'
+files:
+  - path: kubeconfig
+    content: |
+      {{- $cs := creds "token" -}}
+      apiVersion: v1
+      kind: Config
+      clusters:
+      {{- range $cs }}{{ if .Host }}
+      - name: {{ .Name }}
+        cluster:
+          server: https://{{ .Host }}
+          certificate-authority: {{ cabundle }}
+      {{- end }}{{ end }}
+      users:
+      {{- range $cs }}{{ if .Host }}
+      - name: {{ .Name }}
+        user:
+          token: {{ .Placeholder }}
+      {{- end }}{{ end }}
+      contexts:
+      {{- range $cs }}{{ if .Host }}
+      - name: {{ .Name }}
+        context:
+          cluster: {{ .Name }}
+          user: {{ .Name }}
+          namespace: {{ param "namespace" }}
+      {{- end }}{{ end }}
+      {{- range $i, $c := $cs }}{{ if eq $i 0 }}
+      current-context: {{ $c.Name }}
+      {{- end }}{{ end }}
+paths:
+  - home: .kube/config
+    generated: kubeconfig
+test:
+  command: [kubectl, config, view, --raw, -o, 'jsonpath={.users[0].user.token}']
+  expect: '{{ placeholder "token" }}'
+notes:
+  - The kubeconfig trusts the session's CA bundle, because the API server is reached through scrim's forward proxy.
+  - Client certificate authentication needs upstream client certificates (tasks 10a.4).

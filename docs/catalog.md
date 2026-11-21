@@ -68,7 +68,7 @@ entries:
 | `placeholder` | Declared placeholder: `SCRIM_` followed by upper-case words joined by `_`. Unique across the catalog. |
 | `class` | `credential` (default): injected at the network edge toward bound hosts only. `display`: data the agent may see, restored by the tool policy. |
 | `inject` | Injection locations, for example `header:Authorization`, `query:key`, `env`. |
-| `tools` | Tool profiles that use this secret. |
+| `tools` | Tool profiles that use this secret (`gh`, or `aws.secret-access-key` for a profile's other credentials). An entry naming one takes the profile's hosts and injection locations when it sets none, and the placeholder `SCRIM_<NAME>` when it declares none; see [cli-tools.md](cli-tools.md). |
 
 Entry names are lower-case words joined by dashes. Entries from a bulk prefix are named
 `<entry>/<NAME>`, for example `acme/API_KEY`.

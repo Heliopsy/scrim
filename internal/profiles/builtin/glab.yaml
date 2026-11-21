@@ -1,0 +1,15 @@
+description: GitLab CLI (glab)
+tools: [glab]
+credentials:
+  - name: token
+    description: A GitLab personal, project or group access token.
+    hosts: [gitlab.com]
+    inject: ["header:Authorization", "header:PRIVATE-TOKEN"]
+    required: true
+env:
+  GITLAB_TOKEN: '{{ placeholder "token" }}'
+  GLAB_CONFIG_DIR: '{{ path "config" }}'
+unset: [GITLAB_ACCESS_TOKEN, OAUTH_TOKEN, GL_TOKEN]
+dirs: [config]
+paths:
+  - home: .config/glab-cli/config.yml

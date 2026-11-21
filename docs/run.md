@@ -144,6 +144,15 @@ Placeholders whose name is one of scrim's own settings or variables (`SCRIM_LOG_
 `SCRIM_API_SOCKET`, `SCRIM_STORES_...`) are not exported, with a warning. Turn the export off with
 `run.placeholder-env: false`.
 
+## Tool profiles
+
+CLIs such as `gh`, `git`, `kubectl`, `aws` and `terraform` get their configuration generated with
+placeholders under `<session-dir>/profiles` and are pointed at it with their own override variables
+(`GH_TOKEN`, `KUBECONFIG`, `AWS_SHARED_CREDENTIALS_FILE`, ...). Inherited variables that could hold a
+real credential (`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, ...) are removed. Which profiles apply is
+`run.profiles` (`auto`: every profile a catalog entry names in its tools list). See
+[cli-tools.md](cli-tools.md).
+
 ## Failing closed
 
 `scrim run` does not start the agent, and exits with status 125, when:

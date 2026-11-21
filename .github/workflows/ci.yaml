@@ -15,17 +15,20 @@ name: CI
 # runs (repository setting). No job here has a secret or an OIDC token, and the
 # token is read-only.
 on:
+  # The release-please workflow dispatches this on the release pull request,
+  # which GITHUB_TOKEN opened and so started no pull_request run.
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
 
 permissions: read-all
 
-# A new push to a pull request cancels the run for the previous one; pushes to
-# main always finish.
+# A new push to a pull request, or a new dispatch on a branch, cancels the run
+# for the previous one; runs on main always finish.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -359,6 +362,14 @@ jobs:
   # seeded values in any provider request or capture.
   e2e-agents:
     name: Agent CLIs end-to-end
+
+  # GitHub-hosted for the same reason as e2e-tools. Real gh, git, kubectl,
+  # helm, skopeo, npm, terraform, tofu, gcloud, az, pip, twine, cargo, hcloud,
+  # doctl and aws under `scrim run` with their tool profiles, against fakes of
+  # their APIs on their default hosts inside the sandbox (tasks 10a.1, 10a.5,
+  # 10a.6, 10a.10). The CLIs are pinned in scripts/cli-tools/tools.env.
+  e2e-profiles:
+    name: Tool profiles end-to-end
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -368,6 +379,7 @@ jobs:
       CLAUDE_CODE_VERSION: 2.1.330
       # renovate: datasource=npm depName=@openai/codex
       CODEX_VERSION: 0.171.0
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -432,6 +444,22 @@ jobs:
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: test/e2e/run.sh docs
+
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Install the CLIs
+        run: |
+          set -euo pipefail
+          scripts/cli-tools/install.sh "$RUNNER_TEMP/cli-tools" >> "$GITHUB_PATH"
+          command -v skopeo >/dev/null || sudo apt-get install -y --no-install-recommends skopeo
+      # SCRIM_E2E_REQUIRE_TOOLS turns a missing CLI into a failure.
+      - run: test/e2e/run.sh profiles
+        env:
+          SCRIM_E2E_REQUIRE_TOOLS: "1"
+      - name: Profile checks with the real CLIs
+        run: go test -count=1 -run TestCheckBuiltins ./internal/profiles/
+        env:
+          SCRIM_E2E_REQUIRE_TOOLS: "1"
 
   proto:
     name: Generated code up to date
@@ -561,7 +589,7 @@ jobs:
           go-version-file: go.mod
       - name: Sums of the assets pinned in changed files
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
         run: scripts/deps-fresh.sh -sums -sums-since "$BASE"
 
   # Alert rules (promtool check and unit tests), Prometheus configs, the

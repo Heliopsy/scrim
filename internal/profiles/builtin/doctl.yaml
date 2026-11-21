@@ -1,0 +1,15 @@
+description: DigitalOcean CLI (doctl)
+tools: [doctl]
+credentials:
+  - name: token
+    description: A DigitalOcean API token.
+    hosts: [api.digitalocean.com]
+    inject: ["header:Authorization"]
+    required: true
+env:
+  DIGITALOCEAN_ACCESS_TOKEN: '{{ placeholder "token" }}'
+unset: [DIGITALOCEAN_TOKEN]
+paths:
+  - home: .config/doctl/config.yaml
+notes:
+  - doctl reads its config file from the user config directory with no override variable; the session filesystem view hides it.

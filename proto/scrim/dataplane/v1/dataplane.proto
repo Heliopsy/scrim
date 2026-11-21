@@ -74,6 +74,15 @@ service DataPlane {
   // metrics answers with enabled false and no families; one older than this
   // call answers UNIMPLEMENTED, which the control plane treats the same way.
   rpc Metrics(MetricsRequest) returns (MetricsResponse);
+
+  // Redact runs text through the same redactor and guard as a provider
+  // request and returns the result: every known value replaced by its
+  // placeholder. The control plane calls it for agent hooks that hand it a
+  // tool result (hooks-only interception). No applied snapshot, a redactor
+  // error or a guard that withholds the result is an error, never the input
+  // back. A data plane older than this call answers UNIMPLEMENTED, which the
+  // control plane reports as redaction unavailable.
+  rpc Redact(RedactRequest) returns (RedactResponse);
 }
 
 message HelloRequest {
@@ -746,4 +755,25 @@ message MetricSample {
   // count and sum are the histogram's observation count and sum.
   uint64 count = 4;
   double sum = 5;
+}
+
+message RedactRequest {
+  uint32 protocol = 1;
+  // text is the bytes to redact, for example a tool result. It may hold
+  // secret values: a secret field.
+  bytes text = 2;
+}
+
+// RedactResponse holds no secret: text passed the guard.
+message RedactResponse {
+  uint32 protocol = 1;
+  // text is the redacted bytes.
+  bytes text = 2;
+  // replacements counts the values replaced, by the redactor and by the
+  // guard's repair.
+  uint32 replacements = 3;
+  // refs are the store references of the values found, for the audit log.
+  repeated string refs = 4;
+  // snapshot_version is the snapshot whose values were matched.
+  uint64 snapshot_version = 5;
 }

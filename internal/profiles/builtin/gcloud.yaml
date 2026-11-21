@@ -1,0 +1,29 @@
+description: Google Cloud CLI (gcloud) and Google client libraries, with an access token
+tools: [gcloud, gsutil, bq]
+credentials:
+  - name: access-token
+    description: An OAuth 2.0 access token. Access tokens live an hour; keep the store value fresh (a refresher or capture rule).
+    hosts: ["*.googleapis.com"]
+    inject: ["header:Authorization"]
+    required: true
+params:
+  project: ""
+env:
+  CLOUDSDK_CONFIG: '{{ path "config" }}'
+  CLOUDSDK_AUTH_ACCESS_TOKEN_FILE: '{{ path "access-token" }}'
+  CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE: '{{ cabundle }}'
+  CLOUDSDK_CORE_PROJECT: '{{ param "project" }}'
+  CLOUDSDK_CORE_DISABLE_USAGE_REPORTING: "true"
+  CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK: "true"
+  # Terraform's google provider and other tools read this.
+  GOOGLE_OAUTH_ACCESS_TOKEN: '{{ placeholder "access-token" }}'
+unset: [GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_CREDENTIALS, CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, CLOUDSDK_AUTH_ACCESS_TOKEN]
+dirs: [config]
+files:
+  - path: access-token
+    content: '{{ placeholder "access-token" }}'
+paths:
+  - home: .config/gcloud
+test:
+  command: [gcloud, auth, print-access-token]
+  expect: '{{ placeholder "access-token" }}'

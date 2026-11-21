@@ -321,13 +321,23 @@ HTTP/1.1 with JSON on the Unix socket, every route under `/v1`, every response c
 | `POST /v1/asks` | `secret_ask_human` |
 | `GET /v1/status/{id}` | `approval_status` |
 | `GET /v1/grants` | `grants_list` |
+| `POST /v1/redact` | redact text for an agent hook: raw body in, `{"text", "replacements"}` out |
 
 The caller is identified from the socket's peer credentials and, when present, the
 `Authorization: Bearer` session token. Unmapped users are refused. JSON bodies with unknown fields
 are refused, so a `value` field cannot be smuggled into a tool call. `PUT /v1/secrets/value` is the
-only route that accepts a value and no route returns one; the session token from
+only route that stores a value and no route returns one; the session token from
 `POST /v1/sessions` is the one credential the API returns, once, to the process that will start the
 agent.
+
+`POST /v1/redact` is what `scrim hooks run` calls (hooks-only interception,
+[interception.md](interception.md#6-hooks-only)). Its body is raw bytes, up to 3 MiB, such as a tool
+result; the data plane runs them through the same redactor and guard as a provider request and only
+the redacted copy comes back. With no snapshot applied, a redactor error or a guard that withholds,
+the call fails with `unavailable` and nothing of the text is returned. A call that replaced values
+or failed is audited as `tool.redact` with the references found, never the text. Like sending text
+through the LLM proxy, the route tells the caller whether a string is a known value; it is no
+oracle beyond that.
 
 ## Audit
 

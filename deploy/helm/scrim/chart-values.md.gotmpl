@@ -1,6 +1,13 @@
 # {{ template "chart.name" . }} chart: values reference
 
-{{ template "chart.versionBadge" . }}{{ template "chart.typeBadge" . }}{{ template "chart.appVersionBadge" . }}
+<!-- release-please bumps the first version on each line of the x-release-please blocks in the
+same commit as Chart.yaml, so the release pull request needs no helm-docs run. Keep one version per
+line, followed by a character that cannot continue a semver (not "-"). -->
+<!-- x-release-please-start-version -->
+![Version](https://img.shields.io/static/v1?label=Version&message={{ template "chart.version" . }}&color=informational&style=flat-square)
+{{ template "chart.typeBadge" . }}
+![AppVersion](https://img.shields.io/static/v1?label=AppVersion&message={{ template "chart.appVersion" . }}&color=informational&style=flat-square)
+<!-- x-release-please-end -->
 
 {{ template "chart.description" . }}
 
@@ -10,11 +17,13 @@ file: change values.yaml and run `deploy/helm/scrim/ci/verify.sh --generate`. Th
 
 ## Install
 
+<!-- x-release-please-start-version -->
 ```sh
 helm install scrim oci://ghcr.io/heliopsy/charts/scrim --version {{ template "chart.version" . }} \
   -n scrim --create-namespace -f my-values.yaml
 helm test scrim -n scrim
 ```
+<!-- x-release-please-end -->
 
 ## Examples
 

@@ -191,7 +191,9 @@ a subordinate UID that cannot write a directory owned by your user.
 
 `scrim` starts its data plane from memory (`memfd_create`). Where the kernel forbids executing
 memfds (`vm.memfd_noexec=2`), it falls back to a hash-checked file under `$XDG_RUNTIME_DIR`; give it
-a tmpfs then, for example `--tmpfs /run/scrim:rw,exec,mode=0700,uid=65532 -e XDG_RUNTIME_DIR=/run/scrim`.
+a tmpfs owned by the container user then, for example
+`--tmpfs /run/scrim:rw,exec,mode=0700,U -e XDG_RUNTIME_DIR=/run/scrim` (`U` chowns it to the
+container user; podman 4.9 rejects `uid=`).
 
 To run the image as a service, `scrim install --quadlet` writes a Quadlet unit for it
 ([service.md](service.md)).

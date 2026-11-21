@@ -105,17 +105,18 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 10a. Command-line tools
 
-- [ ] 10a.1 Tool profiles with generated placeholder env and config files, removed at session end; verify: gh, git over HTTPS, kubectl, helm, npm and docker login work through `scrim run` with no real value in the session
+- [x] 10a.1 Tool profiles with generated placeholder env and config files, removed at session end; verify: gh, git over HTTPS, kubectl, helm, npm and docker login work through `scrim run` with no real value in the session
 - [ ] 10a.2 AWS SigV4 re-signing toward bound endpoints; verify: `aws s3 ls` and `aws sts get-caller-identity` succeed against LocalStack with placeholder keys, unbound region refused
 - [ ] 10a.3 Format-preserving placeholders; verify: a client that checks the token prefix sends the placeholder and the guard still catches it
 - [ ] 10a.4 Upstream client certificates; verify: kubectl with certificate auth in kind
-- [ ] 10a.6 Environment override mapping per profile; verify: each built-in profile's tool reads only the generated placeholder config in a session test
+- [x] 10a.6 Environment override mapping per profile; verify: each built-in profile's tool reads only the generated placeholder config in a session test
 - [ ] 10a.7 Linux session filesystem view (mount namespace, placeholder or hidden credential paths); verify: a tool reading `~/.aws/credentials` via the password-database home sees the placeholder and `cat` of a real key file fails
 - [ ] 10a.8 macOS and no-namespace fallback with gaps reported; verify: status lists the fallback on macOS CI
 - [ ] 10a.9 Credential helpers for git, docker, AWS `credential_process` and kubectl exec; verify: each tool authenticates through its helper and only placeholders are returned
-- [ ] 10a.10 Credential-printing commands show placeholders; verify: `gh auth token`, `aws configure get`, `kubectl config view --raw` print no real value in a session
+- [x] 10a.10 Credential-printing commands show placeholders; verify: `gh auth token`, `aws configure get`, `kubectl config view --raw` print no real value in a session
 - [ ] 10a.11 Project file scan, registration, watch and move-to-store offer; verify: a fixture `.env` key is redacted from the first request and moved only after confirmation
-- [ ] 10a.5 Profiles for terraform and OpenTofu, gcloud, az, pip and twine, cargo, hcloud, doctl; verify: one end-to-end command per profile against a fake or test endpoint
+- [x] 10a.5 Profiles for terraform and OpenTofu, gcloud, az, pip and twine, cargo, hcloud, doctl; verify: one end-to-end command per profile against a fake or test endpoint
+  - progress: `just e2e-profiles` (CI job e2e-profiles, CLIs pinned in scripts/cli-tools/tools.env) runs gh, git, kubectl, helm, skopeo on REGISTRY_AUTH_FILE and DOCKER_CONFIG, npm, terraform, tofu, gcloud, az, pip, twine, cargo, hcloud, doctl and aws against fakes on their default hosts; `docker login` itself runs in dockerd outside the session, so the docker profile is verified through containers/image reading DOCKER_CONFIG; psql, mysql and ssh go through the database proxy and ssh agent, not profiles
 
 ## 11. Vaultwarden and more providers
 
@@ -154,7 +155,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 13.2 Forward proxy listener; verify: an agent with HTTPS_PROXY set is redacted
 - [x] 13.2a `chatgpt.com` and `ab.chatgpt.com` routed to the LLM proxy (Responses codec for `/responses`, generic JSON elsewhere); verify: CONNECT to either through the forward proxy reaches the fake provider with placeholders only
 - [ ] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
-- [ ] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
+- [x] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
+  - done: `scrim install --managed-settings` (Claude Code drop-in `managed-settings.d/90-scrim.json`, Codex `requirements.toml`), manifest and uninstall, status and doctor; `just e2e-managed-settings` runs Claude Code 2.1.330 in a podman container: shell, user settings and `--settings` overrides all go to scrim, Bedrock refused. Codex unit-tested only
 - [ ] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
   - progress: the system trust store (`update-ca-certificates`, `update-ca-trust`) is installed and reverted by `scrim install --system`, and a system-store client trusts scrim through the forward proxy in the VM test; Java truststore and transparent mode open
 - [x] 13.6 Deployment guides with tested examples for every target and GitOps tool (docs/deploy, deploy/examples); verify: `just deploy-examples-check` and `just deploy-examples-smoke` pass in CI
@@ -169,7 +171,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 - [ ] 15.1 eBPF cgroup interception with a privileged loader; verify: per-cgroup redirect and direct-egress denial on a test kernel
 - [ ] 15.2 DNS override mode; verify: an agent resolving the provider host reaches scrim
-- [ ] 15.3 Agent hooks mode reported as partial; verify: status shows partial protection
+- [x] 15.3 Agent hooks mode reported as partial; verify: status shows partial protection
+  - done: `scrim install --hooks`, `scrim hooks run`, local API `POST /v1/redact` over the data plane's new `Redact` call; `just e2e-agentmodes` runs Claude Code 2.1.330 against the fake provider with hooks only: `Bash` and `Read` results of a seeded `.env` reach it with placeholders, a prompt with the value is blocked, status reports partial. Codex hook unit-tested only
 - [ ] 15.4 ssh-agent with keys from stores and per-signature approval; verify: git over SSH works and a denied signature fails
 - [ ] 15.5 Database auth proxies and the read-only database tool with bound parameters; verify: Postgres and MySQL queries by placeholder, writes refused
 - [ ] 15.6 Store and notifier plugins with a documented contract; verify: an example plugin passes the contract suites

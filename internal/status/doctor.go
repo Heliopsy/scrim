@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -184,6 +185,24 @@ func ReportChecks(r Report) []Check {
 			}
 			return []Finding{{Outcome: o, Message: orDefault(a.Detail, "audit sink is degraded") +
 				fmt.Sprintf(" (%d dropped)", a.Dropped), Fix: "check the sink's endpoint in audit.sinks"}}
+		}})
+	}
+	for _, m := range r.AgentModes {
+		checks = append(checks, Check{Name: "agent-mode:" + m.Mode, Run: func(context.Context) []Finding {
+			var fs []Finding
+			for _, c := range m.Changed {
+				fs = append(fs, Finding{Outcome: Fail, Message: c + " was changed or removed since scrim installed it",
+					Fix: "scrim install --" + m.Mode + " to write it again, or scrim uninstall --" + m.Mode})
+			}
+			if len(fs) > 0 {
+				return fs
+			}
+			if m.Mode == AgentModeHooks && r.Coverage == CoveragePartial {
+				return []Finding{{Outcome: Warn,
+					Message: "agent hooks are the only interception: partial protection; not covered: " + strings.Join(m.NotCovered, "; "),
+					Fix:     "run the agent with scrim run, or point it at the forward proxy, for full coverage"}}
+			}
+			return []Finding{{Outcome: Pass, Message: m.Mode + " in force for " + strings.Join(m.Agents, ", ")}}
 		}})
 	}
 	if len(r.Weakened) > 0 {

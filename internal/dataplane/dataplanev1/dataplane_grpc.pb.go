@@ -52,6 +52,7 @@ const (
 	DataPlane_Status_FullMethodName        = "/scrim.dataplane.v1.DataPlane/Status"
 	DataPlane_Captures_FullMethodName      = "/scrim.dataplane.v1.DataPlane/Captures"
 	DataPlane_Metrics_FullMethodName       = "/scrim.dataplane.v1.DataPlane/Metrics"
+	DataPlane_Redact_FullMethodName        = "/scrim.dataplane.v1.DataPlane/Redact"
 )
 
 // DataPlaneClient is the client API for DataPlane service.
@@ -89,6 +90,14 @@ type DataPlaneClient interface {
 	// metrics answers with enabled false and no families; one older than this
 	// call answers UNIMPLEMENTED, which the control plane treats the same way.
 	Metrics(ctx context.Context, in *MetricsRequest, opts ...grpc.CallOption) (*MetricsResponse, error)
+	// Redact runs text through the same redactor and guard as a provider
+	// request and returns the result: every known value replaced by its
+	// placeholder. The control plane calls it for agent hooks that hand it a
+	// tool result (hooks-only interception). No applied snapshot, a redactor
+	// error or a guard that withholds the result is an error, never the input
+	// back. A data plane older than this call answers UNIMPLEMENTED, which the
+	// control plane reports as redaction unavailable.
+	Redact(ctx context.Context, in *RedactRequest, opts ...grpc.CallOption) (*RedactResponse, error)
 }
 
 type dataPlaneClient struct {
@@ -184,6 +193,16 @@ func (c *dataPlaneClient) Metrics(ctx context.Context, in *MetricsRequest, opts 
 	return out, nil
 }
 
+func (c *dataPlaneClient) Redact(ctx context.Context, in *RedactRequest, opts ...grpc.CallOption) (*RedactResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RedactResponse)
+	err := c.cc.Invoke(ctx, DataPlane_Redact_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DataPlaneServer is the server API for DataPlane service.
 // All implementations must embed UnimplementedDataPlaneServer
 // for forward compatibility.
@@ -219,6 +238,14 @@ type DataPlaneServer interface {
 	// metrics answers with enabled false and no families; one older than this
 	// call answers UNIMPLEMENTED, which the control plane treats the same way.
 	Metrics(context.Context, *MetricsRequest) (*MetricsResponse, error)
+	// Redact runs text through the same redactor and guard as a provider
+	// request and returns the result: every known value replaced by its
+	// placeholder. The control plane calls it for agent hooks that hand it a
+	// tool result (hooks-only interception). No applied snapshot, a redactor
+	// error or a guard that withholds the result is an error, never the input
+	// back. A data plane older than this call answers UNIMPLEMENTED, which the
+	// control plane reports as redaction unavailable.
+	Redact(context.Context, *RedactRequest) (*RedactResponse, error)
 	mustEmbedUnimplementedDataPlaneServer()
 }
 
@@ -249,6 +276,9 @@ func (UnimplementedDataPlaneServer) Captures(grpc.BidiStreamingServer[CaptureRes
 }
 func (UnimplementedDataPlaneServer) Metrics(context.Context, *MetricsRequest) (*MetricsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Metrics not implemented")
+}
+func (UnimplementedDataPlaneServer) Redact(context.Context, *RedactRequest) (*RedactResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Redact not implemented")
 }
 func (UnimplementedDataPlaneServer) mustEmbedUnimplementedDataPlaneServer() {}
 func (UnimplementedDataPlaneServer) testEmbeddedByValue()                   {}
@@ -368,6 +398,24 @@ func _DataPlane_Metrics_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DataPlane_Redact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RedactRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DataPlaneServer).Redact(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DataPlane_Redact_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DataPlaneServer).Redact(ctx, req.(*RedactRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DataPlane_ServiceDesc is the grpc.ServiceDesc for DataPlane service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -390,6 +438,10 @@ var DataPlane_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Metrics",
 			Handler:    _DataPlane_Metrics_Handler,
+		},
+		{
+			MethodName: "Redact",
+			Handler:    _DataPlane_Redact_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

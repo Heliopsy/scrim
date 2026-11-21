@@ -355,6 +355,70 @@ configuration.
   `api.acme.internal`
 - **THEN** that CLI works through scrim like a built-in profile
 
+#### Scenario: Override a built-in profile
+
+- **WHEN** configuration sets `tool-profiles.docker.params.username: robot`
+- **THEN** the docker profile keeps its built-in variables and files and writes `robot` as the
+  registry user name
+
+### Requirement: Tool profile selection
+
+`scrim run` SHALL apply the tool profiles `run.profiles` names, where `auto` (the default) stands for
+every profile a resolved catalog credential fills by naming it in its tools list (`gh`, or
+`aws.secret-access-key` for a slot other than the first) and `none` applies none, plus the profiles
+they require. A profile whose required credential is not filled SHALL NOT be applied, and
+`scrim run` SHALL name the missing catalog tools entry.
+
+#### Scenario: Automatic selection
+
+- **WHEN** the catalog maps `github` with `tools: [gh, git]` and nothing else names a profile
+- **THEN** `scrim run` applies the gh and git profiles and no other
+
+#### Scenario: Required credential missing
+
+- **WHEN** an entry names `aws` and no entry names `aws.secret-access-key`
+- **THEN** the aws profile is not applied and `scrim run` warns that no entry names
+  `aws.secret-access-key`
+
+### Requirement: Tool profiles stay within their tool
+
+A tool profile SHALL NOT set or remove a variable `scrim run` owns (proxy, trust, session and
+`SCRIM_` variables, `HOME`, `PATH`, `XDG_RUNTIME_DIR`). Two profiles setting one variable to
+different values SHALL refuse the session. Profiles SHALL only be applied when the forward proxy
+runs, because their placeholders are injected there.
+
+#### Scenario: Profile sets a proxy variable
+
+- **WHEN** a configured profile sets `HTTPS_PROXY`
+- **THEN** the configuration is rejected naming the profile and the variable
+
+### Requirement: Catalog entries take their tool profile's binding
+
+A catalog credential that names a tool profile slot and declares no hosts SHALL be bound to the
+hosts that slot declares, and its injection locations SHALL default to the slot's. One that declares
+no placeholder SHALL get the declared placeholder `SCRIM_<NAME>` (its name upper-cased, other
+characters as underscores), unique like any declared placeholder. `scrim catalog show` SHALL mark
+the fields derived this way.
+
+#### Scenario: Entry without hosts
+
+- **WHEN** the catalog maps `github: {ref: bao://kv/agents/github#token, tools: [gh]}`
+- **THEN** the credential is bound to `api.github.com`, `github.com` and `uploads.github.com`
+- **AND** `GH_TOKEN` in the session holds `SCRIM_GITHUB`, which the tool proxy swaps for the token
+  toward those hosts only
+
+### Requirement: Testing tool profiles
+
+`scrim profiles test` SHALL run each installed profile's test command with an empty home directory,
+the profile applied with sample placeholders, and decoys placed at the tool's fixed credential paths
+and in the variables the profile removes. It SHALL fail when the tool prints a decoy or not the
+generated placeholder, and SHALL never read or send a real credential.
+
+#### Scenario: Tool ignores its override variable
+
+- **WHEN** a kubectl profile no longer sets `KUBECONFIG` and `~/.kube/config` holds a decoy
+- **THEN** `scrim profiles test kubectl` fails, naming the decoy read
+
 ### Requirement: Re-signing for signed request protocols
 
 For protocols where the client signs requests with the secret (AWS SigV4 first), the tool proxy
@@ -413,6 +477,13 @@ override variable when one exists (for example `AWS_SHARED_CREDENTIALS_FILE`, `K
 
 - **WHEN** the docker profile is enabled
 - **THEN** `DOCKER_CONFIG` points at a generated directory whose auth entries are placeholders
+
+#### Scenario: Inherited credential variable
+
+- **WHEN** the caller's environment holds `GITHUB_TOKEN` or `AWS_SECRET_ACCESS_KEY` with a real
+  value and the gh or aws profile is applied
+- **THEN** the variable is removed from the agent's environment, and the tool reads the placeholder
+  from the profile's variable or generated file
 
 ### Requirement: Session filesystem view for fixed paths
 

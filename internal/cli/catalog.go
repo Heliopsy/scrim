@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -141,9 +142,15 @@ func writeCatalogTable(w io.Writer, cat *catalog.Catalog) error {
 			ref, selected = r.Binding.Ref.String(), r.Binding.Selected
 			if len(r.Binding.Hosts) > 0 {
 				hosts = strings.Join(r.Binding.Hosts, ",")
+				if slices.Contains(r.Binding.Derived, "hosts") {
+					hosts += " (tool profile)"
+				}
 			}
 		}
 		ph := r.Entry.Placeholder
+		if r.OK && slices.Contains(r.Binding.Derived, "placeholder") {
+			ph += " (derived)"
+		}
 		if r.Entry.Prefix != "" {
 			ref, ph = r.Entry.Prefix, r.Entry.Template
 		}

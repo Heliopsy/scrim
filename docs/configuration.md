@@ -296,6 +296,7 @@ is out of date.
 | [`run.allow-unredacted-start`](#runallow-unredacted-start) | bool | `false` | hot |
 | [`run.mcp`](#runmcp) | bool | `true` | hot |
 | [`run.placeholder-env`](#runplaceholder-env) | bool | `true` | hot |
+| [`run.profiles`](#runprofiles) | list | `["auto"]` | hot |
 | [`session.max-ttl`](#sessionmax-ttl) | duration | `168h0m0s` | restart required |
 | [`session.ttl`](#sessionttl) | duration | `12h0m0s` | restart required |
 | [`state.backend`](#statebackend) | string | `memory` | restart required |
@@ -320,6 +321,7 @@ is out of date.
 | [`redaction.placeholder-keys.<name>.*`](#redactionplaceholder-keysname) | collection | empty | hot |
 | [`restore.tools.<name>.*`](#restoretoolsname) | collection | empty | hot |
 | [`stores.<name>.*`](#storesname) | collection | empty | restart required |
+| [`tool-profiles.<name>.*`](#tool-profilesname) | collection | empty | hot |
 | [`tool-proxy.capture-rules.<name>.*`](#tool-proxycapture-rulesname) | collection | empty | hot |
 
 ### `catalog.entries.<name>`
@@ -366,6 +368,16 @@ Secret store instances by name. The name is the instance's reference scheme (`ba
 | Required fields | `kind` |
 | Secret fields | `token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password`, `unlock` (references; a literal is warned about) |
 | Reload | restart required |
+
+### `tool-profiles.<name>`
+
+Tool profiles by name: description, tools, requires, credentials (name, hosts, inject, required), params, env, unset, dirs, files (path, content), paths (home, generated), test (command, expect), notes. A name that matches a built-in profile overrides the fields it sets (params are merged key by key). Templates hold placeholders only, never values. See docs/cli-tools.md.
+
+| | |
+|---|---|
+| Type | collection of named instances (names: lower-case words with dashes) |
+| Environment | `SCRIM_TOOL_PROFILES` (JSON object of instances, replaces the collection); `SCRIM_TOOL_PROFILES_<NAME>_<FIELD>` for one field |
+| Reload | hot |
 
 ### `tool-proxy.capture-rules.<name>`
 
@@ -1441,6 +1453,18 @@ Export each declared catalog placeholder that resolves for the session as an env
 | Default | `true` |
 | Environment | `SCRIM_RUN_PLACEHOLDER_ENV` |
 | Flag | `--run-placeholder-env` |
+| Reload | hot |
+
+#### `run.profiles`
+
+Tool profiles scrim run applies: profile names, `auto` for every profile at least one catalog entry fills (an entry naming the profile in its tools list), or `none`. Profiles a selected one requires are added. See docs/cli-tools.md.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `["auto"]` |
+| Environment | `SCRIM_RUN_PROFILES` |
+| Flag | `--run-profiles` |
 | Reload | hot |
 
 ### session

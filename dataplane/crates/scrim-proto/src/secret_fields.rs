@@ -6,7 +6,9 @@ use std::fmt;
 
 use zeroize::Zeroize;
 
-use crate::v1::{AskCaller, CaCertificate, CaptureRequest, PlaceholderKey, ValueEntry};
+use crate::v1::{
+    AskCaller, CaCertificate, CaptureRequest, PlaceholderKey, RedactRequest, ValueEntry,
+};
 
 /// What `Debug` prints in place of secret bytes.
 pub const REDACTED: &str = "[scrim:redacted]";
@@ -86,6 +88,21 @@ impl fmt::Debug for AskCaller {
     }
 }
 
+impl fmt::Debug for RedactRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RedactRequest")
+            .field("protocol", &self.protocol)
+            .field("text", &Redacted(self.text.len()))
+            .finish()
+    }
+}
+
+impl Drop for RedactRequest {
+    fn drop(&mut self) {
+        self.text.zeroize();
+    }
+}
+
 impl Drop for AskCaller {
     fn drop(&mut self) {
         self.kubernetes_token.zeroize();
@@ -141,13 +158,17 @@ mod tests {
 
         let mut capture = crate::v1::CaptureRequest::default();
         capture.value.clone_from(&secret);
+        let redact = crate::v1::RedactRequest {
+            protocol: 1,
+            text: secret.clone(),
+        };
         let mut caller = crate::v1::AskCaller::default();
         caller.kubernetes_token.clone_from(&secret);
         let ask = crate::v1::AskRequest {
             caller: Some(caller),
             ..Default::default()
         };
-        let out = format!("{snap:?} {snap:#?} {capture:?} {ask:?} {ask:#?}");
+        let out = format!("{snap:?} {snap:#?} {capture:?} {ask:?} {ask:#?} {redact:?}");
         let as_text = String::from_utf8(secret.clone()).unwrap_or_default();
         assert!(!out.contains(&as_text), "debug output leaks: {out}");
         assert!(

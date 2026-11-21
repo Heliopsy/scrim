@@ -259,6 +259,24 @@ impl DataPlane for Service {
         ))
     }
 
+    async fn redact(
+        &self,
+        req: Request<v1::RedactRequest>,
+    ) -> Result<Response<v1::RedactResponse>, Status> {
+        let req = req.into_inner();
+        check(req.protocol)?;
+        let bundle = self
+            .shared
+            .snapshot
+            .load_full()
+            .ok_or_else(|| Status::failed_precondition("no snapshot applied yet"))?;
+        // The core is CPU-bound over the whole text: keep it off the runtime's workers.
+        tokio::task::spawn_blocking(move || redact_text(&bundle, &req.text))
+            .await
+            .map_err(|_| Status::internal("redaction task failed"))?
+            .map(Response::new)
+    }
+
     type CapturesStream = BoxStream<v1::CaptureRequest>;
 
     async fn captures(
@@ -283,6 +301,48 @@ impl DataPlane for Service {
         let out = tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok);
         Ok(Response::new(Box::pin(out)))
     }
+}
+
+/// Redacts `text` with the bundle's redactor, then checks the result with its guard, exactly as a
+/// provider request body is. A repaired result is returned repaired; a withheld one is an error.
+/// Intermediate buffers that may still hold a value are zeroed.
+fn redact_text(bundle: &crate::engine::Bundle, text: &[u8]) -> Result<v1::RedactResponse, Status> {
+    use zeroize::Zeroize;
+
+    let llm = &bundle.llm;
+    let mut out = Vec::with_capacity(text.len());
+    let Ok(report) = llm.redactor.redact(text, &mut out) else {
+        out.zeroize();
+        return Err(Status::internal("redaction failed; the text is withheld"));
+    };
+    let mut refs: Vec<String> = report.refs.iter().map(|r| r.as_str().to_owned()).collect();
+    let mut replacements = report.replacements;
+    match llm.guard.check(&out) {
+        Ok(scrim_llm::GuardVerdict::Clean) => {}
+        Ok(scrim_llm::GuardVerdict::Repaired { bytes, refs: more }) => {
+            out.zeroize();
+            out = bytes;
+            replacements = replacements.saturating_add(more.len());
+            for r in more {
+                if !refs.iter().any(|x| x == r.as_str()) {
+                    refs.push(r.as_str().to_owned());
+                }
+            }
+        }
+        Ok(scrim_llm::GuardVerdict::Refused { .. }) | Err(_) => {
+            out.zeroize();
+            return Err(Status::failed_precondition(
+                "the guard found a known value it could not repair; the text is withheld",
+            ));
+        }
+    }
+    Ok(v1::RedactResponse {
+        protocol: v1::PROTOCOL,
+        text: out,
+        replacements: u32::try_from(replacements).unwrap_or(u32::MAX),
+        refs,
+        snapshot_version: bundle.version,
+    })
 }
 
 impl Service {
