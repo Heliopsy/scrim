@@ -47,3 +47,10 @@ path = "fuzz_targets/restore.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "shaped"
+path = "fuzz_targets/shaped.rs"
+test = false
+doc = false
+bench = false

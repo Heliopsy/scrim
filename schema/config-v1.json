@@ -441,7 +441,7 @@
             "properties": {},
             "type": "object"
           },
-          "description": "Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools. References only, never values.",
+          "description": "Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools, placeholder_format, aws_sigv4, client_certificate. References only, never values.",
           "propertyNames": {
             "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
           },

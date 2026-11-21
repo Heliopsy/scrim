@@ -85,6 +85,10 @@ impl PlaceholderKey {
         self.version
     }
 
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.key
+    }
+
     pub(crate) fn tag(&self, value: &[u8]) -> [u8; TAG_BYTES] {
         let mut m = <Hmac<Sha256> as KeyInit>::new_from_slice(&self.key)
             .unwrap_or_else(|_| unreachable!("HMAC accepts keys of any length"));

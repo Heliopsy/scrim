@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# cargo-fuzz targets for scrim-toolproxy. Not a workspace member: needs nightly and libFuzzer.
+#   cd dataplane/crates/scrim-toolproxy/fuzz && cargo +nightly fuzz run <target> -- -max_total_time=300
+
+[package]
+name = "scrim-toolproxy-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+scrim-toolproxy = { path = ".." }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "sigv4"
+path = "fuzz_targets/sigv4.rs"
+test = false
+doc = false
+bench = false
