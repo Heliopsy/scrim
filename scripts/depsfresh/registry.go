@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -60,12 +61,6 @@ func (r *registry) getWith(ctx context.Context, url string, hdr map[string]strin
 		switch {
 		case err != nil:
 			lastErr = err
-			continue
-		case status == http.StatusOK && len(body) == 0:
-			// The module proxy has been seen answering 200 with an empty
-			// body for a lookup it normally answers 404; treat it like a
-			// 5xx and retry, so one glitch does not fail the gate.
-			lastErr = fmt.Errorf("GET %s: HTTP 200 with an empty body", url)
 			continue
 		case status == http.StatusOK:
 			return body, h, true, nil
@@ -157,6 +152,12 @@ func (r *registry) goLatestQuery(ctx context.Context, path string) (string, bool
 	body, found, err := r.get(ctx, r.goProxy+"/"+escapeModulePath(path)+"/@latest")
 	if err != nil || !found {
 		return "", found, err
+	}
+	// Some proxy edges answer a module path with no versions with an empty
+	// 200 instead of a 404 (an empty @v/list means the same); it names no
+	// version, so treat it as not found rather than as broken JSON.
+	if len(bytes.TrimSpace(body)) == 0 {
+		return "", false, nil
 	}
 	var info struct{ Version string }
 	if err := json.Unmarshal(body, &info); err != nil {
