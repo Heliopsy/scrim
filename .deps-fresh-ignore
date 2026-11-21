@@ -1,0 +1,17 @@
+# Exceptions to the dependency freshness gate (scripts/deps-fresh.sh).
+#
+# One entry per line:
+#
+#   <go|cargo> <name> <expires YYYY-MM-DD> <reason>
+#
+# name is the module path exactly as go.mod requires it, or the crates.io
+# crate name. The entry lets that dependency stay behind its latest major
+# until the end of the expiry day (UTC); after that the gate fails until the
+# dependency is upgraded or the entry is renewed with a new date and reason.
+# Keep expiries short (weeks, not years) and say what the upgrade waits for,
+# with a link to the upstream issue where there is one. An entry that matches
+# no lagging dependency prints a warning: remove it.
+#
+# Example:
+#
+#   cargo rcgen 2027-01-31 waits for x509-parser 0.18 support, https://github.com/<owner>/<repo>/issues/<n>

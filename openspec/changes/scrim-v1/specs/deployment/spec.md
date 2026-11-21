@@ -67,6 +67,49 @@ the locked dependencies and the pinned toolchains, and the release SHALL fail if
 - **WHEN** the linux amd64 binaries are rebuilt from the release tag on a different machine and checkout path
 - **THEN** their SHA-256 digests equal those in the signed checksums of the release
 
+### Requirement: Direct dependencies on their latest major
+
+CI SHALL fail, on every change and on a weekly schedule, when a direct dependency is behind its
+latest stable major release: a non-indirect or tool require in `go.mod`, or a registry entry of a
+dependency table or `[workspace.dependencies]` in a Cargo manifest under `dataplane/`. A 0.x crate
+is behind when a newer 0.x minor exists; a Go module is behind when a newer major module path has a
+stable release, and fails when its module is deprecated.
+
+#### Scenario: Crate a 0.x minor behind
+
+- **WHEN** a Cargo manifest requires `rcgen = "0.13"` and crates.io has a stable `0.14` release
+- **THEN** `just deps-fresh` and the CI job fail and name rcgen, the requirement and the latest version
+
+#### Scenario: New Go major module path
+
+- **WHEN** `go.mod` requires `example.com/m v1.9.0` and the module proxy has a stable release of `example.com/m/v2`
+- **THEN** the check fails and names the `/v2` path and its latest version
+
+#### Scenario: Minor lag after 1.0
+
+- **WHEN** a manifest requires `tokio = "1.40"` and the latest release is `1.54.1`
+- **THEN** the check passes, and the bump is left to Dependabot
+
+### Requirement: Dated exceptions to the freshness check
+
+A dependency MAY stay behind its latest major only through an entry in `.deps-fresh-ignore` that
+names it and gives a reason and an expiry date; an expired entry SHALL fail the check.
+
+#### Scenario: Expired exception
+
+- **WHEN** `.deps-fresh-ignore` holds an entry whose expiry date has passed
+- **THEN** the check fails and names the entry, whether or not the dependency is still behind
+
+### Requirement: Freshness check fails closed
+
+The freshness check SHALL query no host but the Go module proxy and the crates.io index, and a
+lookup that fails SHALL fail the check, never pass it.
+
+#### Scenario: Registry unreachable
+
+- **WHEN** the crates.io index or the module proxy cannot be reached after retries
+- **THEN** the check fails with an error for each dependency it could not look up
+
 ### Requirement: Standalone data plane artifacts
 
 Each release SHALL publish the data plane on its own, as `scrim-dataplane` binaries for the same

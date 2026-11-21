@@ -61,7 +61,7 @@ fuzz:
 # ---------------------------------------------------------------- gates
 
 # The pre-push gate.
-check: fmt-check lint md test spec proto-check vuln monitoring
+check: fmt-check lint md test spec proto-check vuln deps-fresh monitoring
 
 fmt:
     gofmt -w .
@@ -92,6 +92,12 @@ spec:
 vuln:
     go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
     @if command -v cargo-deny >/dev/null; then cd dataplane && cargo deny check; else echo "cargo-deny not installed; skipped (CI runs it)"; fi
+
+# Minor and patch lag is Dependabot's; see scripts/deps-fresh.sh.
+#
+# Fail when a direct Go or Rust dependency is behind its latest stable major (0.x minor before 1.0).
+deps-fresh *args:
+    scripts/deps-fresh.sh {{args}}
 
 # ---------------------------------------------------------------- protocol
 
