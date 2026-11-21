@@ -110,6 +110,7 @@ func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) 
 		src.Stores = staticStores(info.Stores)
 	}
 	src.Service = installedService(ctx, cfg)
+	src.EBPF = ebpfSource{e}
 	stateCfg := cfg
 	if src.Service != nil && src.Service.System && installEUID() == 0 {
 		// Root asks about the system service: report its state, and never

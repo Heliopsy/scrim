@@ -326,7 +326,7 @@ suite against your setup, see [docs/leak-assurance.md](docs/leak-assurance.md).
 | Transparent (nftables) | redirect per UID or cgroup, direct egress denied | planned, M2 |
 | Managed agent settings | the agent's managed settings pin the endpoint to scrim | planned, M2 |
 | Kubernetes injection | injection by label, with a NetworkPolicy | planned, M2 |
-| Transparent (eBPF) | cgroup connect hooks, privileged loader | planned, M3 |
+| Transparent (eBPF) | cgroup connect hooks, privileged loader (`scrim ebpf attach`) | on `main` |
 | DNS override | provider hostnames resolve to scrim | planned, M3 |
 | Agent hooks | the agent's hooks call scrim; reported as partial protection | planned, M3 |
 

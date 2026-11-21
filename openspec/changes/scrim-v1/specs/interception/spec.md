@@ -203,19 +203,63 @@ configuration.
 
 ### Requirement: Transparent mode with eBPF
 
-scrim SHALL offer a Linux transparent mode that attaches connection hooks to selected control
-groups, redirecting provider connections to scrim and denying direct egress. Loading the hooks SHALL
-require a privileged loader, and agents SHALL run unprivileged.
+scrim SHALL offer a Linux transparent mode that attaches connection hooks to selected cgroup v2
+control groups. In a covered control group and its descendants, TCP connections to ports 80 and 443
+of any address that is not loopback SHALL be redirected to scrim's transparent listener on loopback
+and datagrams to port 443 SHALL be refused. Processes outside the covered control groups SHALL NOT
+be affected.
 
 #### Scenario: Wrapped agent in its own control group
 
 - **WHEN** an agent runs in a control group covered by the eBPF mode
 - **THEN** its provider connections reach scrim and direct provider connections are denied
 
+#### Scenario: Process outside the covered control groups
+
+- **WHEN** a process in a control group the mode does not cover connects to a provider
+- **THEN** its connection is neither redirected nor denied
+
+#### Scenario: QUIC from a covered control group
+
+- **WHEN** a process in a covered control group sends a UDP datagram to port 443 of a provider
+- **THEN** the send fails and nothing reaches the provider
+
+### Requirement: eBPF egress denial
+
+Independently of the redirect, any TCP packet to port 80 or 443 or UDP packet to port 443 that
+leaves a covered control group for an address that is not loopback SHALL be dropped.
+
+#### Scenario: Packet that bypassed the redirect
+
+- **WHEN** only the egress hook is attached and a covered process connects to port 443 of a provider
+- **THEN** its packets are dropped and the connection never reaches the provider
+
+### Requirement: eBPF loader and status
+
+Loading the eBPF hooks SHALL require a privileged loader, and agents SHALL run unprivileged. The
+hooks SHALL stay attached when scrim or the loader stops, so covered connections fail instead of
+going direct. Status SHALL report a control group as active only after confirming with the kernel
+that every hook the loader attached is still attached to it.
+
+#### Scenario: scrim not listening
+
+- **WHEN** nothing listens on the transparent listener's port and a covered process connects to a provider
+- **THEN** the connection is refused and nothing reaches the provider
+
 #### Scenario: Loader not available
 
 - **WHEN** the eBPF mode is configured but the privileged loader is not installed or lacks rights
 - **THEN** scrim refuses to report the mode as active and status names the missing privilege
+
+#### Scenario: Attachment not confirmed
+
+- **WHEN** status runs in a process that may not query the kernel's cgroup attachments
+- **THEN** each covered control group is reported unverified, not active, and the direct egress protection is not claimed for it
+
+#### Scenario: Control group recreated
+
+- **WHEN** a covered control group is removed and created again under the same path after the hooks were attached
+- **THEN** status reports it as not active and names the command that attaches it again
 
 ### Requirement: DNS override mode
 

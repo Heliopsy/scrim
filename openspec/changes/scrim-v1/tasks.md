@@ -167,7 +167,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 15. Remaining edge modes
 
-- [ ] 15.1 eBPF cgroup interception with a privileged loader; verify: per-cgroup redirect and direct-egress denial on a test kernel
+- [x] 15.1 eBPF cgroup interception with a privileged loader; verify: per-cgroup redirect and direct-egress denial on a test kernel (`scrim ebpf attach|detach|status`, internal/bpfredirect; `just ebpf-vm-test` boots a kernel in qemu and runs the kernel tests as root there, CI job `ebpf`; redaction end to end needs the 13.3 transparent listener)
+- [ ] 15.1a `scrim install --ebpf`: attach at boot from a oneshot unit and detach on uninstall, with the 13.3 transparent listener drop-in; verify: the VM test covers install and uninstall
 - [ ] 15.2 DNS override mode; verify: an agent resolving the provider host reaches scrim
 - [ ] 15.3 Agent hooks mode reported as partial; verify: status shows partial protection
 - [ ] 15.4 ssh-agent with keys from stores and per-signature approval; verify: git over SSH works and a denied signature fails
