@@ -222,6 +222,7 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
                 core_class(v.class()),
                 rc::SecretValue::from_slice(&v.value),
             )
+            .with_shape(v.placeholder_format == "shape")
         })
         .collect();
     let config = rc::Config {
@@ -323,10 +324,29 @@ fn tool_proxy_snapshot(
     }
     let mut tool_proxy = scrim_toolproxy::Snapshot::from_proto(snap, |e| {
         let slug = slug_of(e);
-        keyring
-            .keys()
-            .map(|k| rc::placeholder_for(k, &slug, &e.value))
-            .collect()
+        // Format-preserving placeholders first (current key first), as the redaction core shows
+        // them, then the bracket forms, which keep resolving.
+        let shaped: Option<Vec<String>> = (e.placeholder_format == "shape"
+            && core_class(e.class()) == rc::ValueClass::Credential)
+            .then(|| {
+                keyring
+                    .keys()
+                    .map(|k| rc::shaped_placeholder_for(k, &slug, &e.value))
+                    .collect()
+            })
+            .flatten();
+        let mut out: Vec<String> = Vec::new();
+        for p in shaped.into_iter().flatten().chain(
+            keyring
+                .keys()
+                .map(|k| rc::placeholder_for(k, &slug, &e.value)),
+        ) {
+            // Keys with equal bytes derive one shaped placeholder; list it once.
+            if !out.contains(&p) {
+                out.push(p);
+            }
+        }
+        out
     })
     .map_err(|e| invalid(format!("tool proxy: {e}")))?;
     let handle = Arc::new(rc::SnapshotHandle::new());
@@ -518,6 +538,36 @@ mod tests {
             Ok(b) => b,
             Err(e) => panic!("rejected: {e}"),
         }
+    }
+
+    #[test]
+    fn shaped_entries_get_the_same_placeholder_in_the_core_and_the_tool_proxy() {
+        // Generated-looking test token, not a real one.
+        const TOKEN: &[u8] = b"ghp_TeStV4lu3N0tR34l0123456789abcdefABCD";
+        let mut s = snap(1);
+        s.values[0] = entry(TOKEN);
+        s.values[0].placeholder_format = "shape".into();
+        let b = ok(s);
+        let k = rc::PlaceholderKey::new(2, &[9; 32]).unwrap();
+        let shaped =
+            rc::shaped_placeholder_for(&k, &rc::RefSlug::new("a-token").unwrap(), TOKEN).unwrap();
+        assert!(shaped.starts_with("ghp_") && shaped.len() == TOKEN.len());
+        let mut redacted = Vec::new();
+        b.applied
+            .redaction
+            .redactor()
+            .redact(TOKEN, &mut redacted)
+            .unwrap();
+        assert_eq!(redacted, shaped.as_bytes());
+        let creds = b.tool_proxy.credentials.credentials();
+        assert_eq!(creds[0].placeholders[0].text, shaped);
+        // The bracket forms keep resolving.
+        assert!(
+            creds[0]
+                .placeholders
+                .iter()
+                .any(|p| p.text.starts_with('\u{27e6}'))
+        );
     }
 
     #[test]

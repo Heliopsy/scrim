@@ -25,9 +25,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/fsview"
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/profiles"
 	"github.com/heliopsy/scrim/internal/secret"
@@ -76,9 +78,37 @@ type Options struct {
 	Signals <-chan os.Signal
 	// Log receives operational messages. Optional.
 	Log *slog.Logger
+	// FSView configures the session filesystem view; the zero value is
+	// off.
+	FSView FSViewOptions
 
 	// dryRun builds the plan only (PrintEnv).
 	dryRun bool
+}
+
+// FSViewOptions configure the session filesystem view (package fsview).
+type FSViewOptions struct {
+	// Mode is run.fs-view; empty is off.
+	Mode string
+	// Hide are run.fs-view-hide patterns.
+	Hide []string
+	// Helper is the executable that sets up the namespace view (it calls
+	// fsview.Main); empty is os.Executable.
+	Helper string
+	// Probe checks the namespace view works; nil is fsview.Probe.
+	Probe func(ctx context.Context, helper string) fsview.Availability
+	// PasswdHome overrides the password-database home; tests set it.
+	PasswdHome string
+}
+
+func (f FSViewOptions) helper() string {
+	if f.Helper != "" {
+		return f.Helper
+	}
+	if exe, err := os.Executable(); err == nil {
+		return exe
+	}
+	return "scrim"
 }
 
 // ErrRefused wraps every reason scrim run refuses to start the agent.
@@ -244,9 +274,18 @@ func (p *Prepared) build(ctx context.Context, ep Endpoints) error {
 		return fmt.Errorf("%w: %w", ErrRefused, err)
 	}
 	p.Plan = plan
-	if o.dry() {
-		return nil
+	if !o.dry() {
+		if err := p.writeFiles(); err != nil {
+			return err
+		}
 	}
+	return p.buildView(ctx, dir, rendered)
+}
+
+// writeFiles writes the plan's directories and files into the session
+// directory.
+func (p *Prepared) writeFiles() error {
+	plan := p.Plan
 	for _, d := range plan.Dirs {
 		if err := os.MkdirAll(filepath.Join(p.Dir, filepath.FromSlash(d)), 0o700); err != nil {
 			return refused("creating %s failed: %v", d, err)
@@ -262,6 +301,79 @@ func (p *Prepared) build(ctx context.Context, ep Endpoints) error {
 		}
 	}
 	return nil
+}
+
+// buildView builds the session filesystem view over the profiles' fixed
+// paths and run.fs-view-hide, and prepares it outside a dry run.
+func (p *Prepared) buildView(ctx context.Context, dir string, rendered *profiles.Rendered) error {
+	o := p.opts
+	env := o.environ()
+	in := fsview.Input{Mode: o.FSView.Mode, Home: envMap(env)["HOME"], PasswdHome: o.FSView.PasswdHome,
+		Hide: o.FSView.Hide, SessionDir: dir, Paths: viewPaths(rendered, filepath.Join(dir, ProfilesDir))}
+	in.Available = func() fsview.Availability {
+		probe := o.FSView.Probe
+		if probe == nil {
+			probe = fsview.Probe
+		}
+		return probe(ctx, o.FSView.helper())
+	}
+	v, err := fsview.Build(in)
+	if err != nil {
+		return refused("session filesystem view: %v", err)
+	}
+	p.Plan.FSView = v
+	if !v.Active() {
+		return nil
+	}
+	if v.Mode == fsview.ModeHome {
+		for _, fv := range v.Vars(env) {
+			p.Plan.Set = slices.DeleteFunc(p.Plan.Set, func(x Var) bool { return x.Name == fv.Name })
+			p.Plan.Set = append(p.Plan.Set, Var{Name: fv.Name, Value: fv.Value, Why: fv.Why})
+		}
+		why := "run.fs-view is home"
+		if v.Fallback != "" {
+			why = "user namespaces are unavailable: " + v.Fallback
+		}
+		p.Plan.Warnings = append(p.Plan.Warnings, "filesystem view: HOME points at a mirror of your home without its credential files ("+why+"); not covered: "+strings.Join(v.Gaps, "; "))
+	}
+	if o.dry() {
+		return nil
+	}
+	if err := v.Prepare(); err != nil {
+		return refused("preparing the session filesystem view failed: %v", err)
+	}
+	return nil
+}
+
+// viewPaths are the profiles' fixed paths, each with its replacement only
+// when the profile generates it.
+func viewPaths(r *profiles.Rendered, profilesDir string) []fsview.Path {
+	if r == nil {
+		return nil
+	}
+	generated := func(abs string) bool {
+		for _, f := range r.Files {
+			g := filepath.Join(profilesDir, filepath.FromSlash(f.Path))
+			if g == abs || strings.HasPrefix(g, abs+string(filepath.Separator)) {
+				return true
+			}
+		}
+		for _, d := range r.Dirs {
+			if filepath.Join(profilesDir, filepath.FromSlash(d)) == abs {
+				return true
+			}
+		}
+		return false
+	}
+	out := make([]fsview.Path, 0, len(r.Paths))
+	for _, pv := range r.Paths {
+		fp := fsview.Path{Home: pv.Home, Origin: pv.Profile}
+		if pv.Generated != "" && generated(pv.Generated) {
+			fp.Source = pv.Generated
+		}
+		out = append(out, fp)
+	}
+	return out
 }
 
 // unprotected either refuses (the default) or, with AllowUnredacted,
@@ -326,7 +438,21 @@ func (p *Prepared) Start(ctx context.Context) error {
 	}
 	cmd := &exec.Cmd{Path: path, Args: p.Plan.Args, Env: env, Dir: o.Dir,
 		Stdin: o.Stdin, Stdout: o.Stdout, Stderr: o.Stderr}
-	return supervise(cmd, o.Signals, o.stderr())
+	started := func() error { return nil }
+	if v := p.Plan.FSView; !p.Unprotected && v.Active() && v.Mode == fsview.ModeNamespace {
+		launch, err := fsview.Wrap(cmd, o.FSView.helper(), v)
+		if err != nil {
+			return refused("session filesystem view: %v", err)
+		}
+		defer launch.Close()
+		started = func() error {
+			if err := launch.Started(); err != nil {
+				return refused("session filesystem view: %v", err)
+			}
+			return nil
+		}
+	}
+	return supervise(cmd, o.Signals, o.stderr(), started)
 }
 
 // lookPath resolves name against the agent's own PATH.

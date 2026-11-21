@@ -6,7 +6,8 @@
 // podman, npm, terraform, tofu, gcloud, az, pip, twine, cargo, hcloud,
 // doctl, aws) under `scrim run` with their tool profiles applied, against
 // a fake of each tool's API on the tool's default host inside the sandbox
-// (tasks 10a.1, 10a.5, 10a.6, 10a.10). Run it with `just e2e-profiles`.
+// (tasks 10a.1, 10a.5, 10a.6, 10a.10), and the session filesystem view
+// (10a.7). Run it with `just e2e-profiles`.
 //
 // Each tool sees only placeholders: its credentials come from the
 // variables and files the profile generates in the session directory, the
@@ -348,6 +349,43 @@ az account list --query '[].name' -o tsv`, path("az"))
 		must(t, r, "aws configure get")
 		contains(t, r, "SCRIM_AWS_ID")
 		contains(t, r, "SCRIM_AWS_SECRET")
+	})
+
+	// The session filesystem view (tasks.md 10a.7): with the override
+	// variable removed, aws reads ~/.aws/credentials from the home
+	// directory and finds the generated placeholder file mounted there; the
+	// ssh key and doctl's config are hidden, so cat fails.
+	t.Run("filesystem view", func(t *testing.T) {
+		harness.LookPath(t, "aws")
+		home := t.TempDir()
+		decoy := leak.Generate(leak.KindAWSSecret).Value()
+		for rel, data := range map[string]string{
+			".aws/credentials":          "[default]\naws_access_key_id = AKIADECOY\naws_secret_access_key = " + decoy + "\n",
+			".ssh/id_ed25519":           "-----BEGIN OPENSSH PRIVATE KEY-----\n" + decoy + "\n",
+			".config/doctl/config.yaml": "access-token: " + decoy + "\n",
+		} {
+			p := filepath.Join(home, rel)
+			if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := e.sh(t, "", `env -u AWS_SHARED_CREDENTIALS_FILE -u AWS_SECRET_ACCESS_KEY aws configure get aws_secret_access_key
+cat "$HOME/.ssh/id_ed25519" && echo SSH-KEY-READ
+cat "$HOME/.config/doctl/config.yaml" && echo DOCTL-READ
+true`, path("aws"), "HOME="+home)
+		must(t, r, "filesystem view")
+		contains(t, r, "SCRIM_AWS_SECRET")
+		for _, bad := range []string{decoy, "SSH-KEY-READ", "DOCTL-READ"} {
+			if strings.Contains(r.Output(), bad) {
+				t.Errorf("the session read a real file (%s):\n%s", strings.TrimSuffix(bad, decoy), r.Output())
+			}
+		}
+		if b, err := os.ReadFile(filepath.Join(home, ".aws/credentials")); err != nil || !strings.Contains(string(b), decoy) {
+			t.Errorf("the real file changed: %v", err)
+		}
 	})
 }
 

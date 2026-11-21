@@ -246,6 +246,7 @@ func (b *SnapshotBuilder) values(cat *catalog.Catalog) []*pb.ValueEntry {
 			if !s.Retained && !s.Pending {
 				e.BoundHosts = slices.Clone(bd.Hosts)
 				e.InjectLocations = slices.Clone(bd.Inject)
+				bindExtras(e, cat, bd)
 				if bd.Placeholder != "" && !declared[bd.Placeholder] {
 					declared[bd.Placeholder] = true
 					e.DeclaredPlaceholders = []string{bd.Placeholder}
@@ -272,6 +273,26 @@ func (b *SnapshotBuilder) labels(ref stores.Ref, native map[string]string) map[s
 		out[stores.LabelStoreName] = ref.Scheme
 	}
 	return out
+}
+
+// bindExtras copies the placeholder format, the client certificate flag and
+// the AWS SigV4 link of a catalog binding into an entry. The SigV4 link names
+// the access key id entry by its reference; one that does not resolve is
+// left out, so the data plane never re-signs with a half-configured pair.
+func bindExtras(e *pb.ValueEntry, cat *catalog.Catalog, bd catalog.Binding) {
+	if bd.Class != catalog.ClassDisplay {
+		e.PlaceholderFormat = bd.PlaceholderFormat
+	}
+	e.ClientCertificate = bd.ClientCertificate
+	if a := bd.AWSSigV4; a != nil && cat != nil {
+		if ak, err := cat.Name(a.AccessKeyID); err == nil && !ak.Ref.IsZero() {
+			e.AwsSigv4 = &pb.AwsSigV4{
+				AccessKeyIdRef: ak.Ref.String(),
+				Regions:        slices.Clone(a.Regions),
+				Services:       slices.Clone(a.Services),
+			}
+		}
+	}
 }
 
 // uniqueNames drops repeated values and gives every credential entry a name no
@@ -356,6 +377,7 @@ func unavailable(cat *catalog.Catalog, values []*pb.ValueEntry) []*pb.ValueEntry
 			declared[bd.Placeholder] = true
 			u.DeclaredPlaceholders = []string{bd.Placeholder}
 		}
+		bindExtras(u, cat, bd)
 		out = append(out, u)
 	}
 	return out

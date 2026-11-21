@@ -61,6 +61,10 @@ pub enum ErrorCode {
     /// a rule denied it, or an approval was denied or did not come in time. Nothing was sent
     /// upstream. 403.
     PolicyDenied,
+    /// A request signed with a credential's placeholder access key id was not signed with that
+    /// credential's placeholder secret (AWS `SigV4`), or presented a certificate that is not
+    /// the placeholder certificate. Nothing was sent upstream. 403.
+    SignatureInvalid,
 }
 
 impl ErrorCode {
@@ -84,6 +88,7 @@ impl ErrorCode {
             ErrorCode::ResponseWithheld => "response_withheld",
             ErrorCode::RedactionFailed => "redaction_failed",
             ErrorCode::PolicyDenied => "policy_denied",
+            ErrorCode::SignatureInvalid => "signature_invalid",
         }
     }
 
@@ -96,7 +101,8 @@ impl ErrorCode {
             ErrorCode::UnboundCredential
             | ErrorCode::UnboundDestination
             | ErrorCode::UndeclaredLocation
-            | ErrorCode::PolicyDenied => StatusCode::FORBIDDEN,
+            | ErrorCode::PolicyDenied
+            | ErrorCode::SignatureInvalid => StatusCode::FORBIDDEN,
             ErrorCode::UnrepresentableValue | ErrorCode::ResigningUnsupported => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
