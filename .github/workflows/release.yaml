@@ -51,6 +51,13 @@ on:
         description: The tag to build, for example v0.1.0.
         required: true
         type: string
+      chart-only:
+        description: >-
+          Only package, push, sign and attest the Helm chart for an existing
+          release (for a release whose chart step failed).
+        required: false
+        default: false
+        type: boolean
   pull_request:
     paths:
       - .github/workflows/release.yaml
@@ -136,6 +143,8 @@ jobs:
   dataplane:
     name: Data plane (${{ matrix.platform }})
     needs: plan
+    # Every binary and image job depends on this one, so chart-only skips them all.
+    if: inputs.chart-only != true
     # matrix.runner is JSON, or "mac" for the runner the plan picked.
     runs-on: ${{ fromJSON(matrix.runner == 'mac' && needs.plan.outputs.mac-runner || matrix.runner) }}
     timeout-minutes: 60
@@ -548,7 +557,7 @@ jobs:
   chart:
     name: Helm chart
     needs: [plan, image]
-    if: always() && needs.plan.result == 'success' && (needs.plan.outputs.publish != 'true' || needs.image.result == 'success')
+    if: always() && needs.plan.result == 'success' && (needs.plan.outputs.publish != 'true' || needs.image.result == 'success' || inputs.chart-only == true)
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -580,7 +589,12 @@ jobs:
         if: env.PUBLISH == 'true'
         env:
           TOKEN: ${{ github.token }}
-        run: printf '%s' "$TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+        # helm keeps its own registry config; cosign and the provenance action
+        # read the Docker one, so log in to both.
+        run: |
+          set -euo pipefail
+          printf '%s' "$TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          printf '%s' "$TOKEN" | cosign login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
       - name: Push
         id: push
         if: env.PUBLISH == 'true'

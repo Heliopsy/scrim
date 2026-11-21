@@ -6,6 +6,10 @@ templates:
 release:
   name: rel
   namespace: ns
+# The image tag follows appVersion; pin it here so the tests do not change on
+# every release.
+chart:
+  appVersion: 1.2.3
 tests:
   - it: renders the ServiceAccount, Deployment, Service and PDB, no HPA by default
     template: deployment.yaml
@@ -20,7 +24,7 @@ tests:
     documentSelector: {path: kind, value: Deployment}
     asserts:
       - equal: {path: 'spec.template.spec.containers[0].args', value: [proxy]}
-      - equal: {path: 'spec.template.spec.containers[0].image', value: ghcr.io/heliopsy/scrim:0.1.0}
+      - equal: {path: 'spec.template.spec.containers[0].image', value: ghcr.io/heliopsy/scrim:1.2.3}
       - contains:
           path: 'spec.template.spec.containers[0].env'
           content: {name: SCRIM_CONFIG, value: /etc/scrim/config/config.yaml:/etc/scrim/config/chart.yaml}
@@ -53,7 +57,7 @@ tests:
       global.imageRegistry: mirror.example.com
       image.digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
     asserts:
-      - equal: {path: 'spec.template.spec.containers[0].image', value: 'mirror.example.com/heliopsy/scrim:0.1.0@sha256:0000000000000000000000000000000000000000000000000000000000000000'}
+      - equal: {path: 'spec.template.spec.containers[0].image', value: 'mirror.example.com/heliopsy/scrim:1.2.3@sha256:0000000000000000000000000000000000000000000000000000000000000000'}
   - it: mounts each Secret slot at /run/secrets/scrim/<slot>
     template: deployment.yaml
     documentSelector: {path: kind, value: Deployment}

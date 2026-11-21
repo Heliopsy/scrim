@@ -8,11 +8,11 @@ metadata:
   name: scrim-agents-sidecar
   namespace: agents
   labels:
-    helm.sh/chart: scrim-0.1.0
+    helm.sh/chart: scrim-0.2.0
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.2.0"
 spec:
   podSelector:
     matchLabels:
@@ -48,11 +48,11 @@ metadata:
   name: scrim-sidecar-ca
   namespace: agents
   labels:
-    helm.sh/chart: scrim-0.1.0
+    helm.sh/chart: scrim-0.2.0
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.2.0"
 type: kubernetes.io/tls
 data:
   tls.crt: <generated>
@@ -65,11 +65,11 @@ metadata:
   name: scrim-sidecar-keys
   namespace: agents
   labels:
-    helm.sh/chart: scrim-0.1.0
+    helm.sh/chart: scrim-0.2.0
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.2.0"
 type: Opaque
 data:
   k1: <generated>
@@ -81,11 +81,11 @@ metadata:
   name: scrim-ca
   namespace: scrim
   labels:
-    helm.sh/chart: scrim-0.1.0
+    helm.sh/chart: scrim-0.2.0
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.2.0"
   annotations:
     # Agents trust this CA; deleting it with the release would break them, so it stays.
     helm.sh/resource-policy: keep
@@ -101,11 +101,11 @@ metadata:
   name: scrim-placeholder-keys
   namespace: scrim
   labels:
-    helm.sh/chart: scrim-0.1.0
+    helm.sh/chart: scrim-0.2.0
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.2.0"
   annotations:
     # Placeholders in running conversations are derived from this key.
     helm.sh/resource-policy: keep
@@ -120,11 +120,11 @@ metadata:
   name: scrim-agent-env-sidecar
   namespace: agents
   labels:
-    helm.sh/chart: scrim-0.1.0
+    helm.sh/chart: scrim-0.2.0
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.2.0"
 data:
   ANTHROPIC_BASE_URL: "http://127.0.0.1:9790/anthropic"
   OPENAI_BASE_URL: "http://127.0.0.1:9790/openai/v1"
@@ -154,11 +154,11 @@ metadata:
   name: scrim-sidecar-config
   namespace: agents
   labels:
-    helm.sh/chart: scrim-0.1.0
+    helm.sh/chart: scrim-0.2.0
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.2.0"
 data:
   config.yaml: |
     apiVersion: scrim.dev/v1
@@ -222,11 +222,11 @@ metadata:
   name: scrim-ca
   namespace: scrim
   labels:
-    helm.sh/chart: scrim-0.1.0
+    helm.sh/chart: scrim-0.2.0
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.2.0"
 data:
   # scrim's interception CA, for runtimes that add to their roots (NODE_EXTRA_CA_CERTS).
   scrim-ca.pem: |
@@ -283,11 +283,11 @@ metadata:
   name: scrim-ca
   namespace: agents
   labels:
-    helm.sh/chart: scrim-0.1.0
+    helm.sh/chart: scrim-0.2.0
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.2.0"
 data:
   # scrim's interception CA, for runtimes that add to their roots (NODE_EXTRA_CA_CERTS).
   scrim-ca.pem: |
@@ -345,11 +345,11 @@ kind: ClusterRole
 metadata:
   name: scrim-scrim-tokenreview
   labels:
-    helm.sh/chart: scrim-0.1.0
+    helm.sh/chart: scrim-0.2.0
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.2.0"
 rules:
   - apiGroups: [authentication.k8s.io]
     resources: [tokenreviews]
@@ -361,11 +361,11 @@ kind: ClusterRoleBinding
 metadata:
   name: scrim-scrim-tokenreview
   labels:
-    helm.sh/chart: scrim-0.1.0
+    helm.sh/chart: scrim-0.2.0
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.2.0"
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -382,11 +382,11 @@ kind: ClusterPolicy
 metadata:
   name: scrim-scrim-inject
   labels:
-    helm.sh/chart: scrim-0.1.0
+    helm.sh/chart: scrim-0.2.0
     app.kubernetes.io/part-of: scrim
     app.kubernetes.io/instance: scrim
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.2.0"
   annotations:
     policies.kyverno.io/title: scrim agent injection
     policies.kyverno.io/description: >-
@@ -478,7 +478,7 @@ spec:
                   limits:
                     memory: 32Mi
               - name: scrim
-                image: ghcr.io/heliopsy/scrim:0.1.0
+                image: ghcr.io/heliopsy/scrim:0.2.0
                 imagePullPolicy: IfNotPresent
                 # A native sidecar: it starts, and passes its startup probe, before the agent.
                 restartPolicy: Always

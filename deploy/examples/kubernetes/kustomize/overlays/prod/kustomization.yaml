@@ -19,7 +19,7 @@ replicas:
     count: 3
 images:
   - name: ghcr.io/heliopsy/scrim
-    newTag: 0.1.0 # x-release-please-version
+    newTag: 0.2.0 # x-release-please-version
     # digest: sha256:<the digest cosign verify printed>
 patches:
   - target:

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/Heliopsy/scrim/compare/v0.1.0...v0.2.0) (2026-11-20)
+
+
+### Features
+
+* **deploy:** Helm chart with Kyverno injection, NetworkPolicy and sidecar mode ([#46](https://github.com/Heliopsy/scrim/issues/46)) ([0389df2](https://github.com/Heliopsy/scrim/commit/0389df29e1bc66968f8536f3b53e2581a5968acf))
+* **install:** scrim install and uninstall as a user, system or Quadlet service ([#45](https://github.com/Heliopsy/scrim/issues/45)) ([536fe6c](https://github.com/Heliopsy/scrim/commit/536fe6c79d5df37d248eec0adb23efc47a3baed8))
+* Kubernetes service account identity, per-agent store identity and shared state across replicas ([#47](https://github.com/Heliopsy/scrim/issues/47)) ([e3a52d6](https://github.com/Heliopsy/scrim/commit/e3a52d647aca732fe5bd71a1ca7dbff93d59dfab))
+* **metrics:** Prometheus monitoring behind metrics.enabled ([#44](https://github.com/Heliopsy/scrim/issues/44)) ([d4b5526](https://github.com/Heliopsy/scrim/commit/d4b55268374dbcc0152b1648caaea624e5975bdf))
+
+
+### Bug Fixes
+
+* CA rotation, git identity and snapshot bugs found running scrim against real tools ([#43](https://github.com/Heliopsy/scrim/issues/43)) ([885f36f](https://github.com/Heliopsy/scrim/commit/885f36fb559dd8586da439d3842637104ac57268))
+* fail closed on empty redact targets, service-account tokens and unresolved placeholders ([#51](https://github.com/Heliopsy/scrim/issues/51)) ([2305f34](https://github.com/Heliopsy/scrim/commit/2305f34ccf5b6bee470b4215573182ed5a819b02))
+
 ## 0.1.0 (2026-11-20)
 
 
