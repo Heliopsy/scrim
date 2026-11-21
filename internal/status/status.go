@@ -119,6 +119,61 @@ type Report struct {
 	Service *Service `json:"service,omitempty"`
 	// EBPF is the eBPF transparent mode, when it is configured or attached.
 	EBPF *EBPF `json:"ebpf,omitempty"`
+	// AgentModes are the agent-side modes `scrim install` set up: agent
+	// hooks and managed agent settings.
+	AgentModes []AgentMode `json:"agent_modes,omitempty"`
+	// Coverage is "partial" when agent hooks are the only interception: no
+	// listener of scrim's carries the agent's traffic.
+	Coverage string `json:"coverage,omitempty"`
+	// RunView is the filesystem view `scrim run` gives its sessions on
+	// this host.
+	RunView *RunView `json:"run_fs_view,omitempty"`
+}
+
+// RunView is the session filesystem view of `scrim run` on this host
+// (specs/credential-injection, "Filesystem view fallback without
+// namespaces").
+type RunView struct {
+	// Requested is run.fs-view.
+	Requested string `json:"requested"`
+	// Mode is the view sessions get: namespace, home or off; "refused"
+	// when run.fs-view is namespace and the host has none, so scrim run
+	// refuses to start agents.
+	Mode string `json:"mode"`
+	// Fallback is why the namespace view is unavailable, when auto falls
+	// back to the home mirror (or namespace refuses).
+	Fallback string `json:"fallback,omitempty"`
+	// Gaps are what the view does not cover.
+	Gaps []string `json:"gaps,omitempty"`
+}
+
+// RunViewRefused is RunView.Mode when scrim run refuses to start agents.
+const RunViewRefused = "refused"
+
+// Agent-side modes and their coverage.
+const (
+	AgentModeHooks   = "hooks"
+	AgentModeManaged = "managed-settings"
+
+	CoveragePartial = "partial"
+	CoverageAddOn   = "enforcement add-on"
+)
+
+// AgentMode is one agent-side mode and what it does and does not cover.
+type AgentMode struct {
+	// Mode is hooks or managed-settings.
+	Mode   string   `json:"mode"`
+	Agents []string `json:"agents"`
+	// Coverage is partial (hooks) or enforcement add-on (managed settings).
+	Coverage   string   `json:"coverage"`
+	Covers     []string `json:"covers"`
+	NotCovered []string `json:"not_covered"`
+	// Files are the agent configuration files the mode changed.
+	Files []string `json:"files"`
+	// Changed lists files that are missing or no longer hold what install
+	// wrote; the mode is then not in force as installed.
+	Changed  []string `json:"changed,omitempty"`
+	Manifest string   `json:"manifest"`
 }
 
 // EBPF is the eBPF transparent mode on this host
@@ -233,6 +288,10 @@ type Sources struct {
 	Service *Service
 	// EBPF is the eBPF transparent mode, read from this host.
 	EBPF EBPFSource
+	// AgentModes are the installed agent-side modes.
+	AgentModes []AgentMode
+	// RunView is scrim run's filesystem view on this host, if checked.
+	RunView *RunView
 }
 
 // Collect gathers a report and derives the degraded list.
@@ -286,6 +345,14 @@ func Collect(ctx context.Context, src Sources) Report {
 		r.DataPlane = DataPlane{Detail: "data plane not reported"}
 	}
 
+	r.AgentModes = append(r.AgentModes, src.AgentModes...)
+	if hooksOnly(r) {
+		r.Coverage = CoveragePartial
+	}
+	for _, m := range r.AgentModes {
+		r.Interception = append(r.Interception, m.Mode+" ("+m.Coverage+"): "+strings.Join(m.Agents, ", "))
+	}
+
 	sort.Strings(r.Interception)
 	sort.Slice(r.Protections, func(i, j int) bool { return r.Protections[i].Name < r.Protections[j].Name })
 	sort.Slice(r.Providers, func(i, j int) bool { return r.Providers[i].Name < r.Providers[j].Name })
@@ -298,14 +365,55 @@ func Collect(ctx context.Context, src Sources) Report {
 		r.EBPF = src.EBPF.EBPFStatus()
 	}
 	addEBPF(&r)
+	r.RunView = src.RunView
 	r.Degraded = derive(r)
 	return r
+}
+
+// carriers are interception modes that put an agent's model traffic on
+// scrim: a wrapped session, or redirection the agent cannot skip. A bound
+// base-URL or forward-proxy listener alone says nothing about whether an
+// agent uses it.
+var carriers = []string{"wrapper", "transparent", "kubernetes"}
+
+// hooksOnly reports agent hooks installed with nothing that routes the
+// agents' model traffic through scrim: no wrapped session, no enforcing
+// interception and no managed settings in force pinning the endpoint.
+func hooksOnly(r Report) bool {
+	hooks := false
+	for _, m := range r.AgentModes {
+		switch {
+		case m.Mode == AgentModeHooks:
+			hooks = true
+		case m.Mode == AgentModeManaged && len(m.Changed) == 0:
+			return false
+		}
+	}
+	if !hooks {
+		return false
+	}
+	for _, m := range r.Interception {
+		for _, c := range carriers {
+			if strings.HasPrefix(m, c) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func derive(r Report) []Component {
 	out := []Component{}
 	if r.Service != nil && r.Service.Active != "active" {
 		out = append(out, Component{Name: "service:" + r.Service.Unit, Reason: "installed but " + r.Service.Active})
+	}
+	for _, m := range r.AgentModes {
+		if len(m.Changed) > 0 {
+			out = append(out, Component{Name: "agent-mode:" + m.Mode, Reason: "changed or removed since install: " + strings.Join(m.Changed, ", ")})
+		}
+	}
+	if v := r.RunView; v != nil && v.Mode == RunViewRefused {
+		out = append(out, Component{Name: "run-fs-view", Reason: "run.fs-view is namespace and this host has none, so scrim run refuses to start agents: " + v.Fallback})
 	}
 	if !r.DataPlane.Running || !r.DataPlane.Healthy {
 		out = append(out, Component{Name: "data-plane", Reason: orDefault(r.DataPlane.Detail, "not running or unhealthy")})

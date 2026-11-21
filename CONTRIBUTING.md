@@ -13,6 +13,22 @@ merged.
 openspec validate --all --strict
 ```
 
+## Documented commands
+
+Shell blocks in the README and the user docs listed in `test/e2e/docs` run in CI as written. Mark a
+runnable block with `test` after the language (and a mode where it needs one, see the package
+comment of `test/e2e/docs/docs_test.go`):
+
+````markdown
+```sh test
+scrim config validate
+```
+````
+
+A command that cannot run in the sandbox (it needs the network, a published release or root) says
+why on the line above the block, `<!-- docs-test: skip: downloads a release from GitHub -->`. A
+shell block with neither fails the test. Run it with `just docs-test`.
+
 ## Dependencies
 
 Before you add or bump a dependency, Go module or Rust crate, look up its latest stable release in

@@ -220,6 +220,30 @@ rootless or with `--system` as the dedicated user.
 - **WHEN** a user who is not in `scrim-agents` runs `scrim run` against the system service
 - **THEN** the agent is not started
 
+### Requirement: Host-level interception install
+
+`scrim install --system` SHALL install the transparent mode with `--transparent` (nftables rules for
+the users and control groups given with `--cover-user` and `--cover-cgroup`, loaded by a unit
+independent of the scrim service, and a drop-in that turns on the transparent listener) and the DNS
+override with `--dns` (a block in `/etc/hosts` and a drop-in that turns on the SNI listener on port
+443), recording each change in the install manifest. It SHALL refuse to cover scrim's own user.
+
+#### Scenario: Transparent install and uninstall
+
+- **WHEN** a user runs `scrim install --system --transparent --cover-user agent1`, then `scrim uninstall --system --purge`
+- **THEN** agent1's provider connections were redirected while installed
+- **AND** after uninstall the file system and `nft list ruleset` are identical to before the install
+
+#### Scenario: Rules outlive the service
+
+- **WHEN** scrim.service stops while the transparent mode is installed
+- **THEN** the nftables rules stay loaded and the covered users' provider connections fail
+
+#### Scenario: Edited hosts block
+
+- **WHEN** the scrim block in `/etc/hosts` was edited before uninstall
+- **THEN** the block stays, is listed with the manual step, and the command exits non-zero
+
 ### Requirement: Install upgrades in place
 
 Running `scrim install` again in the mode already installed SHALL keep the recorded changes,

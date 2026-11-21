@@ -1,0 +1,21 @@
+description: pip with a private package index (PIP_INDEX_URL)
+tools: [pip, pip3, uv]
+credentials:
+  - name: password
+    description: Password or token of a private index. The entry's first bound host serves the index at the index-path param.
+    inject: ["header:Authorization"]
+    required: true
+params:
+  username: __token__
+  index-path: /simple/
+env:
+  PIP_INDEX_URL: '{{ with host "password" }}https://{{ param "username" }}:{{ placeholder "password" }}@{{ . }}{{ param "index-path" }}{{ end }}'
+  UV_INDEX_URL: '{{ with host "password" }}https://{{ param "username" }}:{{ placeholder "password" }}@{{ . }}{{ param "index-path" }}{{ end }}'
+unset: [PIP_EXTRA_INDEX_URL, UV_EXTRA_INDEX_URL]
+paths:
+  - home: .config/pip/pip.conf
+  - home: .pip/pip.conf
+  - home: .netrc
+test:
+  command: [pip, config, list]
+  expect: '{{ placeholder "password" }}'

@@ -47,6 +47,8 @@ that identity.
 Needs `curl`, [`cosign`](https://docs.sigstore.dev/cosign/system_config/installation/) 2.4 or later,
 and optionally the [GitHub CLI](https://cli.github.com/) for the provenance check.
 
+<!-- docs-test: skip: downloads a published release from GitHub -->
+
 ```sh
 VERSION=0.1.0
 OS=linux        # linux or darwin
@@ -59,6 +61,8 @@ curl -fsSLO "$BASE/checksums.txt.sigstore.json"
 ```
 
 1. Check that the checksums file was signed by the scrim release workflow:
+
+   <!-- docs-test: skip: verifies the downloaded release online with Sigstore -->
 
    ```sh
    cosign verify-blob \
@@ -73,12 +77,16 @@ curl -fsSLO "$BASE/checksums.txt.sigstore.json"
 
 2. Check the archive against the signed checksums:
 
+   <!-- docs-test: skip: needs the downloaded release files -->
+
    ```sh
    sha256sum --check --ignore-missing checksums.txt
    # macOS: shasum -a 256 --check --ignore-missing checksums.txt
    ```
 
 3. Check the build provenance, which ties the archive to the commit and workflow run that built it:
+
+   <!-- docs-test: skip: verifies the downloaded release online with the GitHub CLI -->
 
    ```sh
    gh attestation verify "scrim_${VERSION}_${OS}_${ARCH}.tar.gz" \
@@ -87,6 +95,8 @@ curl -fsSLO "$BASE/checksums.txt.sigstore.json"
    ```
 
    Without the GitHub CLI, download the attestation bundle and use cosign:
+
+   <!-- docs-test: skip: downloads the attestation of the release from GitHub -->
 
    ```sh
    DIGEST=$(sha256sum "scrim_${VERSION}_${OS}_${ARCH}.tar.gz" | cut -d' ' -f1)
@@ -102,6 +112,8 @@ curl -fsSLO "$BASE/checksums.txt.sigstore.json"
    ```
 
 4. Unpack and run:
+
+   <!-- docs-test: skip: unpacks the downloaded release into ~/.local/bin -->
 
    ```sh
    tar -xzf "scrim_${VERSION}_${OS}_${ARCH}.tar.gz" ./scrim
@@ -125,6 +137,8 @@ data plane.
 Verify before running. The signature, the SBOM attestation and the provenance are all checked
 against the registry:
 
+<!-- docs-test: skip: verifies the published image online -->
+
 ```sh
 IMAGE=ghcr.io/heliopsy/scrim:0.1.0
 ID='^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(heads/main|tags/v.+)$'
@@ -139,6 +153,8 @@ gh attestation verify "oci://$IMAGE" --repo Heliopsy/scrim
 
 Each architecture has its own SBOM, attested to that architecture's manifest rather than to the
 index, so look its digest up first:
+
+<!-- docs-test: skip: reads the published image from ghcr.io -->
 
 ```sh
 ARCH=amd64   # or arm64
@@ -156,6 +172,8 @@ For deployments, pull by the digest `cosign verify` printed rather than by tag.
 
 Run with rootless podman. The image works with a read-only root filesystem; state goes to the volume
 at `/var/lib/scrim`, and a config file is read from `/etc/scrim/config.yaml`:
+
+<!-- docs-test: skip: runs the published image -->
 
 ```sh
 podman volume create scrim-state
@@ -182,6 +200,8 @@ To run the image as a service, `scrim install --quadlet` writes a Quadlet unit f
 
 The data plane image runs stateless and needs no volume:
 
+<!-- docs-test: skip: runs the published image -->
+
 ```sh
 podman run --rm --read-only --cap-drop=all ghcr.io/heliopsy/scrim-dataplane:0.1.0 --version
 ```
@@ -191,6 +211,8 @@ podman run --rm --read-only --cap-drop=all ghcr.io/heliopsy/scrim-dataplane:0.1.
 Needs Go and Rust at the versions in `go.mod` and `rust-toolchain.toml`, `git`, GNU `tar`, and for a
 release-identical build `cargo-auditable` (`cargo install --locked cargo-auditable`). Linux builds
 target musl; on Debian and Ubuntu install `musl-tools`.
+
+<!-- docs-test: skip: clones and builds a release; the release workflow's reproduce job runs it -->
 
 ```sh
 git clone https://github.com/Heliopsy/scrim
@@ -207,6 +229,8 @@ on every release by rebuilding linux-amd64 on a second runner and comparing.
 
 To compare a local build with a release:
 
+<!-- docs-test: skip: needs a release archive and a release build -->
+
 ```sh
 just release-build linux-amd64
 tar -xzf "scrim_0.1.0_linux_amd64.tar.gz" -O ./scrim | sha256sum
@@ -215,6 +239,8 @@ sha256sum dist/bin/linux-amd64/scrim
 
 Container images are assembled from the built binaries, never compiled inside the container, so
 they too are reproducible from the same binaries:
+
+<!-- docs-test: skip: builds release binaries and images -->
 
 ```sh
 just release-build linux-amd64 linux-arm64   # arm64 needs an arm64 host or a cross linker

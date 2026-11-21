@@ -9,16 +9,19 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/heliopsy/scrim/internal/ca"
+	"github.com/heliopsy/scrim/internal/daemon"
 	"github.com/heliopsy/scrim/internal/install"
 	"github.com/heliopsy/scrim/internal/version"
 )
@@ -47,6 +50,11 @@ type installFlags struct {
 	user, system, quadlet, dryRun, purge bool
 	image                                string
 	agents                               []string
+	intercept                            install.Interception
+	// hooks and managed select an agent-side mode; agentNames are its
+	// agents and forwardProxy also pins the forward proxy.
+	hooks, managed, forwardProxy bool
+	agentNames                   []string
 }
 
 // Install sets scrim up as a local service (specs/deployment "Local service
@@ -54,7 +62,7 @@ type installFlags struct {
 func (Commands) Install(e *Env) *cobra.Command {
 	var f installFlags
 	c := &cobra.Command{
-		Use:   "install (--user | --system | --quadlet [--system])",
+		Use:   "install (--user | --system | --quadlet [--system] | --hooks | --managed-settings)",
 		Short: "Run scrim as a service: a systemd user unit, a hardened system unit, or a podman Quadlet container",
 		Long: "Shows every change before making it and records it in a manifest, so `scrim uninstall` reverts exactly " +
 			"those changes. Running it again with a new binary upgrades the service.\n\n" +
@@ -65,7 +73,20 @@ func (Commands) Install(e *Env) *cobra.Command {
 			"trust store.\n" +
 			"--quadlet: the container image under rootless podman for this user; with --system under root's podman as " +
 			"the user scrim.\n\n" +
-			"See docs/service.md.",
+			"Host-level interception, with --system (Linux):\n" +
+			"--transparent: nftables rules redirect TCP 80 and 443 of the --cover-user users and --cover-cgroup control " +
+			"groups to scrim's transparent listener, which routes by TLS server name; their direct and QUIC egress is " +
+			"rejected, so an agent needs no configuration and cannot reach providers around scrim. The rules load from " +
+			"scrim-transparent.service and stay while scrim is stopped (connections fail instead of going direct).\n" +
+			"--dns: provider host names resolve to scrim's SNI listener through /etc/hosts. Connections made by address " +
+			"bypass it; combine it with --transparent where that matters.\n" +
+			"Both add the CA to the Java truststores as well as the system store.\n\n" +
+			"Agent-side modes, recorded in a manifest of their own and also reverted by `scrim uninstall`:\n" +
+			"--hooks: scrim's PostToolUse and UserPromptSubmit hooks in this user's Claude Code and Codex configuration " +
+			"(partial protection: tool results and prompts only; see docs/interception.md, method 6).\n" +
+			"--managed-settings (as root): Claude Code's managed settings drop-in and Codex's requirements.toml, pinning " +
+			"each agent to scrim's endpoint so its own settings cannot point it elsewhere.\n\n" +
+			"See docs/service.md and docs/interception.md.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			in, err := newInstaller(cmd, e, f, true)
@@ -80,7 +101,20 @@ func (Commands) Install(e *Env) *cobra.Command {
 	c.Flags().BoolVar(&f.quadlet, "quadlet", false, "run the container image through a podman Quadlet unit (rootless, or with --system as root)")
 	c.Flags().StringVar(&f.image, "image", "", "image for --quadlet (default "+install.DefaultImage+":<this version>)")
 	c.Flags().StringSliceVar(&f.agents, "agent-user", nil, "with --system: add this user to the group scrim-agents and map it to an agent of the same name (repeatable)")
+	c.Flags().BoolVar(&f.hooks, "hooks", false, "install scrim's hooks into this user's agent configuration (partial protection)")
+	c.Flags().BoolVar(&f.managed, "managed-settings", false, "write the agents' managed settings so they can only use scrim's endpoint (needs root)")
+	c.Flags().StringSliceVar(&f.agentNames, "agent", nil, "with --hooks or --managed-settings: claude or codex (repeatable; default the agents found on this machine)")
+	c.Flags().BoolVar(&f.forwardProxy, "forward-proxy", false, "with --managed-settings: also pin Claude Code's HTTPS_PROXY to scrim's forward proxy (the CA must be in the system trust store)")
 	c.Flags().BoolVar(&f.dryRun, "dry-run", false, "show the changes without making them")
+	c.Flags().BoolVar(&f.intercept.Transparent, "transparent", false, "with --system: redirect the covered users' and control groups' provider connections to scrim with nftables and block their direct egress")
+	c.Flags().StringSliceVar(&f.intercept.CoverUsers, "cover-user", nil, "with --transparent: a user whose connections are redirected (repeatable)")
+	c.Flags().StringSliceVar(&f.intercept.CoverCgroups, "cover-cgroup", nil, "with --transparent: a control group below /sys/fs/cgroup, such as agents.slice, whose connections are redirected (repeatable)")
+	c.Flags().IntVar(&f.intercept.Port, "transparent-port", install.DefaultTransparentPort, "with --transparent: the port of the transparent listener on 127.0.0.1 and ::1")
+	c.Flags().BoolVar(&f.intercept.BlockUnrouted, "block-unrouted", false, "with --transparent or --dns: close connections to hosts scrim has no route for instead of passing them through untouched")
+	c.Flags().BoolVar(&f.intercept.DNS, "dns", false, "with --system: resolve provider host names to scrim's SNI listener through /etc/hosts (connections by address bypass it)")
+	c.Flags().StringSliceVar(&f.intercept.DNSHosts, "dns-host", nil, "with --dns: a host name to resolve to scrim (repeatable; default the provider hosts of the configured routes)")
+	c.Flags().StringVar(&f.intercept.DNSAddress, "dns-address", install.DefaultDNSAddress, "with --dns: the loopback address the names resolve to; the SNI listener binds port 443 on it")
+	c.Flags().StringSliceVar(&f.intercept.JavaHomes, "java-home", nil, "with --transparent or --dns: a JDK outside /usr/lib/jvm whose truststore gets the CA (repeatable)")
 	return c
 }
 
@@ -89,16 +123,28 @@ func (Commands) Install(e *Env) *cobra.Command {
 func (Commands) Uninstall(e *Env) *cobra.Command {
 	var f installFlags
 	c := &cobra.Command{
-		Use:   "uninstall [--user | --system] [--purge]",
+		Use:   "uninstall [--user | --system | --hooks | --managed-settings] [--purge]",
 		Short: "Revert every change `scrim install` recorded",
 		Long: "Reverts each change in the install manifest, newest first: the CA trust, the service, the unit, the " +
 			"configuration file it wrote, the binary, the users and groups it created. A change that cannot be " +
 			"reverted (a file edited since) stays listed with the manual step, and the command exits 1.\n\n" +
 			"The state (CA, placeholder keys, state database, audit log), and for Quadlet the volume and the pulled " +
 			"image, are kept unless --purge is given.\n\n" +
-			"Without --user or --system: the system install when run as root, otherwise this user's.",
+			"Without --user or --system: the system install when run as root, otherwise this user's. Each also reverts " +
+			"the agent-side mode of its scope: managed settings for the system, hooks for a user. --hooks or " +
+			"--managed-settings reverts only that mode.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if f.hooks || f.managed {
+				if f.user || f.system || (f.hooks && f.managed) {
+					return errors.New("--hooks and --managed-settings each stand alone")
+				}
+				in, err := newInstaller(cmd, e, f, false)
+				if err != nil {
+					return err
+				}
+				return in.Uninstall(cmd.Context())
+			}
 			if f.user && f.system {
 				return errors.New("choose one of --user and --system")
 			}
@@ -110,11 +156,25 @@ func (Commands) Uninstall(e *Env) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return in.Uninstall(cmd.Context())
+			if err := in.Uninstall(cmd.Context()); err != nil {
+				return err
+			}
+			// The agent-side mode of the same scope, when one is recorded.
+			af := installFlags{dryRun: f.dryRun, hooks: f.user, managed: f.system}
+			ain, err := newInstaller(cmd, e, af, false)
+			if err != nil {
+				return err
+			}
+			if _, found, err := install.ReadManifest(ain.ManifestPath()); err != nil || !found {
+				return err
+			}
+			return ain.Uninstall(cmd.Context())
 		},
 	}
 	c.Flags().BoolVar(&f.user, "user", false, "uninstall this user's service")
 	c.Flags().BoolVar(&f.system, "system", false, "uninstall the system service (needs root)")
+	c.Flags().BoolVar(&f.hooks, "hooks", false, "revert only the agent hooks of this user")
+	c.Flags().BoolVar(&f.managed, "managed-settings", false, "revert only the managed agent settings (needs root)")
 	c.Flags().BoolVar(&f.purge, "purge", false, "also remove the state directory, the podman volume and the pulled image")
 	c.Flags().BoolVar(&f.dryRun, "dry-run", false, "show what would be reverted without changing anything")
 	return c
@@ -125,7 +185,17 @@ func newInstaller(cmd *cobra.Command, e *Env, f installFlags, installing bool) (
 		return nil, errors.New("scrim install supports Linux with systemd; on " + installGOOS + " run `scrim proxy` from a launch agent (not automated yet)")
 	}
 	in := &install.Installer{Root: installRoot, Runner: installRunner, Probe: installProbe, Chown: installChown,
-		Out: cmd.OutOrStdout(), DryRun: f.dryRun, Purge: f.purge, AgentUsers: f.agents}
+		Out: cmd.OutOrStdout(), DryRun: f.dryRun, Purge: f.purge, AgentUsers: f.agents, Intercept: f.intercept}
+	if f.hooks || f.managed {
+		return agentInstaller(in, cmd, e, f, installing)
+	}
+	if f.intercept.DNS && len(f.intercept.DNSHosts) == 0 {
+		cfg, err := e.Config()
+		if err != nil {
+			return nil, err
+		}
+		in.Intercept.DNSHosts = daemon.ProviderHosts(cfg)
+	}
 	switch {
 	case f.quadlet:
 		in.Mode, in.System = install.ModeQuadlet, f.system
@@ -194,6 +264,108 @@ func newInstaller(cmd *cobra.Command, e *Env, f installFlags, installing bool) (
 		return &dirTrust{e: e, cmd: cmd}
 	}
 	return in, nil
+}
+
+// agentInstaller sets up an agent-side mode: hooks for this user, or
+// managed settings for the machine.
+func agentInstaller(in *install.Installer, cmd *cobra.Command, e *Env, f installFlags, installing bool) (*install.Installer, error) {
+	switch {
+	case f.hooks && f.managed:
+		return nil, errors.New("choose one of --hooks and --managed-settings")
+	case f.user || f.system || f.quadlet:
+		return nil, errors.New("--hooks and --managed-settings change agents, not the service: run them on their own")
+	case f.forwardProxy && !f.managed:
+		return nil, errors.New("--forward-proxy goes with --managed-settings")
+	}
+	cfg, err := e.Config()
+	if err != nil {
+		return nil, err
+	}
+	if installing {
+		if in.Agents, err = agentsFor(f.agentNames, e.getenv); err != nil {
+			return nil, err
+		}
+	}
+	if f.managed {
+		in.Mode = install.ModeManaged
+		if installEUID() != 0 && !f.dryRun && installRoot == "" {
+			return nil, errors.New("managed settings live in system directories (/etc/claude-code, /etc/codex): run it as root (or with --dry-run)")
+		}
+		listen := daemon.ProxyListen.Get(cfg)
+		if listen == "" {
+			return nil, errors.New("proxy.listen is empty: managed settings pin the agents to scrim's LLM proxy base URL, so it must be on")
+		}
+		in.Managed = install.ManagedOptions{AnthropicBaseURL: "http://" + listen + "/anthropic", OpenAIBaseURL: "http://" + listen + "/openai/v1"}
+		if f.forwardProxy {
+			fwd := daemon.ForwardListen.Get(cfg)
+			if fwd == "" {
+				return nil, errors.New("--forward-proxy: proxy.forward-listen is empty")
+			}
+			in.Managed.ForwardProxy = "http://" + fwd
+		}
+		return in, nil
+	}
+	in.Mode = install.ModeHooks
+	getenv := e.getenv
+	in.Home = getenv("HOME")
+	if in.Home == "" || !filepath.IsAbs(in.Home) {
+		return nil, errors.New("install: $HOME is not set")
+	}
+	if in.StateDir, err = cfg.StateDir(); err != nil {
+		return nil, err
+	}
+	in.ClaudeConfigDir = filepath.Join(in.Home, ".claude")
+	if d := getenv("CLAUDE_CONFIG_DIR"); d != "" && filepath.IsAbs(d) {
+		in.ClaudeConfigDir = d
+	}
+	in.CodexHome = filepath.Join(in.Home, ".codex")
+	if d := getenv("CODEX_HOME"); d != "" && filepath.IsAbs(d) {
+		in.CodexHome = d
+	}
+	if installing {
+		exe, err := installExecutable()
+		if err != nil {
+			return nil, err
+		}
+		if in.HookExecutable, err = filepath.EvalSymlinks(exe); err != nil {
+			return nil, fmt.Errorf("install: %w", err)
+		}
+	}
+	return in, nil
+}
+
+// agentsFor checks the agents named, or finds the agents on this machine:
+// an executable on PATH or a configuration directory in HOME.
+func agentsFor(names []string, getenv func(string) string) ([]string, error) {
+	if len(names) > 0 {
+		var out []string
+		for _, n := range names {
+			if n != install.AgentClaude && n != install.AgentCodex {
+				return nil, fmt.Errorf("--agent %q: one of claude, codex", n)
+			}
+			if !slices.Contains(out, n) {
+				out = append(out, n)
+			}
+		}
+		return out, nil
+	}
+	home := getenv("HOME")
+	var out []string
+	for _, a := range []struct{ name, dir string }{{install.AgentClaude, ".claude"}, {install.AgentCodex, ".codex"}} {
+		_, err := installRunner.LookPath(a.name)
+		if err == nil || (home != "" && dirExists(filepath.Join(home, a.dir))) {
+			out = append(out, a.name)
+		}
+	}
+	if len(out) == 0 {
+		return nil, errors.New("no agent found (claude or codex on PATH, or ~/.claude, ~/.codex): name one with --agent")
+	}
+	return out, nil
+}
+
+func dirExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }
 
 var releaseVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)

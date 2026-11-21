@@ -168,6 +168,41 @@ func fixtures() map[string]Sources {
 					{Cgroup: "ci.slice", State: "unverified", AttachedAt: refreshed, Detail: "attached according to the loader's record (/run/scrim-ebpf/attachments.json); confirming it with the kernel needs CAP_NET_ADMIN: run `sudo scrim status`"},
 				}},
 		},
+		// Agent hooks as the only interception, next to managed settings
+		// whose Codex file was edited since install.
+		"hooks-only": {
+			Version:   "0.1.0",
+			DataPlane: fakeDP{Running: true, PID: 4242, Version: "0.1.0", Healthy: true},
+			State:     fakeState{Backend: "sqlite", SchemaVersion: 1, Healthy: true},
+			AgentModes: []AgentMode{
+				{Mode: AgentModeHooks, Agents: []string{"claude", "codex"}, Coverage: CoveragePartial,
+					Covers:     []string{"tool results"},
+					NotCovered: []string{"model requests", "model replies", "network egress"},
+					Files:      []string{"/home/u/.claude/settings.json", "/home/u/.codex/hooks.json"},
+					Manifest:   "/home/u/.local/state/scrim/agent-hooks.json"},
+				{Mode: AgentModeManaged, Agents: []string{"claude", "codex"}, Coverage: CoverageAddOn,
+					Covers:     []string{"endpoint pinned"},
+					NotCovered: []string{"processes the agent starts"},
+					Files:      []string{"/etc/claude-code/managed-settings.d/90-scrim.json", "/etc/codex/requirements.toml"},
+					Changed:    []string{"/etc/codex/requirements.toml"},
+					Manifest:   "/etc/scrim/managed-settings.json"},
+			},
+		},
+		// scrim run on a host without user namespaces: the home mirror.
+		"run-fs-view-fallback": {
+			Version:   "0.1.0",
+			DataPlane: fakeDP{Running: true, PID: 7, Healthy: true},
+			State:     fakeState{Backend: "memory", Healthy: true},
+			RunView: &RunView{Requested: "auto", Mode: "home", Fallback: "darwin has no user or mount namespaces",
+				Gaps: []string{"tools that find the home directory through the password database instead of HOME (ssh) read the real files"}},
+		},
+		// run.fs-view: namespace on a host without user namespaces.
+		"run-fs-view-refused": {
+			Version:   "0.1.0",
+			DataPlane: fakeDP{Running: true, PID: 7, Healthy: true},
+			State:     fakeState{Backend: "memory", Healthy: true},
+			RunView:   &RunView{Requested: "namespace", Mode: RunViewRefused, Fallback: "creating a user namespace is not allowed: operation not permitted"},
+		},
 		// Weakened settings taken from the configuration manager.
 		"config-weakened": {
 			Version: "0.1.0",
@@ -343,5 +378,46 @@ func TestEmptyRedactTargetIsReported(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("doctor does not warn about the empty target")
+	}
+}
+
+// TestHooksOnlyIsPartial is the interception spec scenario "Status in
+// hooks-only mode": status reports protection as partial and lists what is
+// not covered; doctor warns.
+func TestHooksOnlyIsPartial(t *testing.T) {
+	src := fixtures()["hooks-only"]
+	src.AgentModes = src.AgentModes[:1]
+	r := Collect(context.Background(), src)
+	if r.Coverage != CoveragePartial {
+		t.Fatalf("coverage = %q", r.Coverage)
+	}
+	var human bytes.Buffer
+	if err := WriteHuman(&human, r); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"protection: PARTIAL", "not covered: model replies", "not covered: network egress"} {
+		if !strings.Contains(human.String(), want) {
+			t.Fatalf("status lacks %q:\n%s", want, human.String())
+		}
+	}
+	d := Diagnose(context.Background(), time.Second, ReportChecks(r)...)
+	found := false
+	for _, f := range d.Findings {
+		if f.Check == "agent-mode:hooks" && f.Outcome == Warn && strings.Contains(f.Message, "partial") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("doctor findings = %+v", d.Findings)
+	}
+	// A bound listener alone does not carry an agent's traffic.
+	src.Runtime = fakeRuntime{modes: []string{"base-url http://127.0.0.1:9790", "forward-proxy http://127.0.0.1:9791"}}
+	if r := Collect(context.Background(), src); r.Coverage != CoveragePartial {
+		t.Fatalf("coverage with listeners only = %q", r.Coverage)
+	}
+	// A wrapped session does: hooks are an extra.
+	src.Runtime = fakeRuntime{modes: []string{"wrapper (1 scrim run session(s))"}}
+	if r := Collect(context.Background(), src); r.Coverage != "" {
+		t.Fatalf("coverage with the wrapper = %q", r.Coverage)
 	}
 }

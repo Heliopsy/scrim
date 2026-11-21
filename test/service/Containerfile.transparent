@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Disposable systemd host for test/service/transparent-test.sh: Debian with
+# systemd as PID 1, nftables, iproute2 for the stand-in provider address,
+# dnsmasq as the stand-in upstream name server, and the distribution's JDK
+# (with ca-certificates-java) for the Java client. Not shipped; built and
+# removed by the test.
+FROM docker.io/library/debian:trixie-slim
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      systemd systemd-sysv dbus ca-certificates curl jq passwd procps \
+      nftables iproute2 dnsmasq-base default-jdk-headless \
+ && apt-get clean && rm -rf /var/lib/apt/lists/* \
+ && systemctl mask apt-daily.timer apt-daily-upgrade.timer dpkg-db-backup.timer \
+ && useradd --create-home --uid 1001 --shell /bin/bash agent1 \
+ && useradd --create-home --uid 1002 --shell /bin/bash bob
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

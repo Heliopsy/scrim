@@ -189,7 +189,7 @@ data:
           version: 1
           key: file:/etc/scrim/placeholder/k1
     deployment:
-      # Replicas sharing this state; more than one needs postgres for state and events.
+      # Replicas sharing this state; more than one needs postgres for state (and postgres, valkey or nats for events).
       replicas: 2
     state:
       backend: postgres
@@ -304,7 +304,7 @@ spec:
         app.kubernetes.io/name: scrim-proxy
         app.kubernetes.io/component: proxy
       annotations:
-        checksum/config: cdbc612491e40f93296b2ea3c3444741969d5380a623a6cd54cf8227406f3e49
+        checksum/config: 8bddbf7277bd4233f43836711e2cdd7ed9a3d2687ce13c9fa0a1854523e9a098
     spec:
       serviceAccountName: scrim-proxy
       automountServiceAccountToken: true

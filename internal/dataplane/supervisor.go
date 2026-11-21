@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
+	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/version"
 )
 
@@ -292,6 +293,25 @@ func (s *Supervisor) Metrics(ctx context.Context) (*pb.MetricsResponse, error) {
 		return nil, errors.New("dataplane: not running")
 	}
 	return p.Client.Metrics(ctx, &pb.MetricsRequest{Protocol: Protocol})
+}
+
+// Redact runs text through the data plane's redactor and guard (the same
+// pair a provider request passes) and returns the redacted bytes. text may
+// hold secret values: it is wiped once sent, whatever the outcome. The
+// gRPC send buffer is out of reach, as for snapshots.
+func (s *Supervisor) Redact(ctx context.Context, text []byte) (*pb.RedactResponse, error) {
+	req := &pb.RedactRequest{Protocol: Protocol, Text: text}
+	defer func() {
+		secret.WipeBytes(text)
+		req.Text = nil
+	}()
+	s.mu.Lock()
+	p := s.cur
+	s.mu.Unlock()
+	if p == nil {
+		return nil, errors.New("dataplane: not running")
+	}
+	return p.Client.Redact(ctx, req)
 }
 
 // wipe zeroes the secret bytes of a sent snapshot. The gRPC send buffer is

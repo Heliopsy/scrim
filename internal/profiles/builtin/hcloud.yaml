@@ -1,0 +1,22 @@
+description: Hetzner Cloud CLI (hcloud)
+tools: [hcloud]
+credentials:
+  - name: token
+    description: A Hetzner Cloud API token.
+    hosts: [api.hetzner.cloud]
+    inject: ["header:Authorization"]
+    required: true
+env:
+  HCLOUD_TOKEN: '{{ placeholder "token" }}'
+  HCLOUD_CONFIG: '{{ path "cli.toml" }}'
+files:
+  - path: cli.toml
+    content: |
+      active_context = "scrim"
+
+      [[contexts]]
+        name = "scrim"
+        token = "{{ placeholder "token" }}"
+paths:
+  - home: .config/hcloud/cli.toml
+    generated: cli.toml

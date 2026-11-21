@@ -355,6 +355,70 @@ configuration.
   `api.acme.internal`
 - **THEN** that CLI works through scrim like a built-in profile
 
+#### Scenario: Override a built-in profile
+
+- **WHEN** configuration sets `tool-profiles.docker.params.username: robot`
+- **THEN** the docker profile keeps its built-in variables and files and writes `robot` as the
+  registry user name
+
+### Requirement: Tool profile selection
+
+`scrim run` SHALL apply the tool profiles `run.profiles` names, where `auto` (the default) stands for
+every profile a resolved catalog credential fills by naming it in its tools list (`gh`, or
+`aws.secret-access-key` for a slot other than the first) and `none` applies none, plus the profiles
+they require. A profile whose required credential is not filled SHALL NOT be applied, and
+`scrim run` SHALL name the missing catalog tools entry.
+
+#### Scenario: Automatic selection
+
+- **WHEN** the catalog maps `github` with `tools: [gh, git]` and nothing else names a profile
+- **THEN** `scrim run` applies the gh and git profiles and no other
+
+#### Scenario: Required credential missing
+
+- **WHEN** an entry names `aws` and no entry names `aws.secret-access-key`
+- **THEN** the aws profile is not applied and `scrim run` warns that no entry names
+  `aws.secret-access-key`
+
+### Requirement: Tool profiles stay within their tool
+
+A tool profile SHALL NOT set or remove a variable `scrim run` owns (proxy, trust, session and
+`SCRIM_` variables, `HOME`, `PATH`, `XDG_RUNTIME_DIR`). Two profiles setting one variable to
+different values SHALL refuse the session. Profiles SHALL only be applied when the forward proxy
+runs, because their placeholders are injected there.
+
+#### Scenario: Profile sets a proxy variable
+
+- **WHEN** a configured profile sets `HTTPS_PROXY`
+- **THEN** the configuration is rejected naming the profile and the variable
+
+### Requirement: Catalog entries take their tool profile's binding
+
+A catalog credential that names a tool profile slot and declares no hosts SHALL be bound to the
+hosts that slot declares, and its injection locations SHALL default to the slot's. One that declares
+no placeholder SHALL get the declared placeholder `SCRIM_<NAME>` (its name upper-cased, other
+characters as underscores), unique like any declared placeholder. `scrim catalog show` SHALL mark
+the fields derived this way.
+
+#### Scenario: Entry without hosts
+
+- **WHEN** the catalog maps `github: {ref: bao://kv/agents/github#token, tools: [gh]}`
+- **THEN** the credential is bound to `api.github.com`, `github.com` and `uploads.github.com`
+- **AND** `GH_TOKEN` in the session holds `SCRIM_GITHUB`, which the tool proxy swaps for the token
+  toward those hosts only
+
+### Requirement: Testing tool profiles
+
+`scrim profiles test` SHALL run each installed profile's test command with an empty home directory,
+the profile applied with sample placeholders, and decoys placed at the tool's fixed credential paths
+and in the variables the profile removes. It SHALL fail when the tool prints a decoy or not the
+generated placeholder, and SHALL never read or send a real credential.
+
+#### Scenario: Tool ignores its override variable
+
+- **WHEN** a kubectl profile no longer sets `KUBECONFIG` and `~/.kube/config` holds a decoy
+- **THEN** `scrim profiles test kubectl` fails, naming the decoy read
+
 ### Requirement: Re-signing for signed request protocols
 
 For protocols where the client signs requests with the secret (AWS SigV4 first), the tool proxy
@@ -414,12 +478,20 @@ override variable when one exists (for example `AWS_SHARED_CREDENTIALS_FILE`, `K
 - **WHEN** the docker profile is enabled
 - **THEN** `DOCKER_CONFIG` points at a generated directory whose auth entries are placeholders
 
+#### Scenario: Inherited credential variable
+
+- **WHEN** the caller's environment holds `GITHUB_TOKEN` or `AWS_SECRET_ACCESS_KEY` with a real
+  value and the gh or aws profile is applied
+- **THEN** the variable is removed from the agent's environment, and the tool reads the placeholder
+  from the profile's variable or generated file
+
 ### Requirement: Session filesystem view for fixed paths
 
-On Linux, `scrim run` SHALL be able to start the agent in an unprivileged mount namespace where
-configured credential paths (for example `~/.aws/credentials`, `~/.kube/config`, `~/.netrc`,
-`~/.ssh/id_*`, `~/.config/gh/hosts.yml`) show generated placeholder versions or are hidden, while the
-rest of the home directory stays as it is. The real files SHALL not be readable from the session.
+On Linux, `scrim run` SHALL be able to start the agent in an unprivileged user and mount namespace
+where configured credential paths (the applied tool profiles' fixed paths such as
+`~/.aws/credentials`, and `run.fs-view-hide` such as `~/.ssh/id_*`), in `$HOME` and in the
+password-database home, show placeholder versions or are hidden, and the rest of the home stays as
+it is. The real files SHALL not be readable from the session.
 
 #### Scenario: Tool that ignores environment overrides
 
@@ -430,7 +502,36 @@ rest of the home directory stays as it is. The real files SHALL not be readable 
 #### Scenario: Real file hidden
 
 - **WHEN** the agent runs `cat ~/.ssh/id_ed25519` inside the session
-- **THEN** the file is absent or empty and the agent is pointed at `SSH_AUTH_SOCK`
+- **THEN** the file is absent or unreadable and the agent is pointed at `SSH_AUTH_SOCK`
+
+### Requirement: Filesystem view integrity
+
+A hidden path SHALL be an empty, unreadable, read-only file or directory. The agent SHALL run with
+no capabilities, so it cannot unmount the view. If any part of the view cannot be set up, `scrim
+run` SHALL refuse to start the agent (exit 125) rather than start it with a partial view.
+
+#### Scenario: Agent tries to remove the view
+
+- **WHEN** the agent unmounts `~/.aws/credentials`, directly or from a user namespace of its own
+- **THEN** the unmount fails and the path still shows the placeholder version
+
+#### Scenario: View cannot be set up
+
+- **WHEN** a mount of the view fails, or the helper that sets it up does not run
+- **THEN** `scrim run` exits 125 and the agent is not started
+
+### Requirement: Filesystem view selection
+
+`run.fs-view` SHALL select `auto` (the default: the namespace where the host allows it, the fallback
+elsewhere), `namespace` (refuse to start the agent when the host has no unprivileged user
+namespaces), `home` (the fallback) or `off`. A session with no configured path present SHALL start
+without a namespace.
+
+#### Scenario: Namespace required on a host without one
+
+- **WHEN** `run.fs-view` is `namespace` and the host forbids unprivileged user namespaces
+- **THEN** `scrim run` refuses to start the agent, naming the reason, and `scrim doctor` fails the
+  `run-fs-view` check
 
 ### Requirement: Filesystem view fallback without namespaces
 
@@ -442,6 +543,20 @@ report in status which tools may still read the real files because they bypass `
 
 - **WHEN** `scrim run` starts an agent on macOS
 - **THEN** `HOME` points at the session directory and `scrim status` lists the fallback and its gaps
+
+### Requirement: Session home mirror
+
+The session home SHALL link every other entry to the real home, so the agent's writes there land in
+the real files, and SHALL move the XDG base directory variables that point into the real home along
+with `HOME`. `scrim run` SHALL print the fallback and its gaps before the agent starts, and `scrim
+doctor` SHALL warn about it with the fix.
+
+#### Scenario: Linux host without user namespaces
+
+- **WHEN** `scrim run` starts an agent on a Linux host whose AppArmor policy forbids unprivileged
+  user namespaces, with `run.fs-view` left at `auto`
+- **THEN** the agent gets the session home, `scrim status` names the reason, and `scrim doctor`
+  warns with the sysctl or profile that allows the namespace view
 
 ### Requirement: Credential helpers
 

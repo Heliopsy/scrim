@@ -1390,6 +1390,7 @@ dependencies = [
  "rustix",
  "rustls",
  "rustls-pki-types",
+ "scrim-dns",
  "scrim-llm",
  "scrim-metrics",
  "scrim-policy",
@@ -1406,6 +1407,17 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zeroize",
+]
+
+[[package]]
+name = "scrim-dns"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "hyper-util",
+ "tokio",
+ "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -1430,6 +1442,7 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "rustls-pemfile",
+ "scrim-dns",
  "scrim-llm",
  "scrim-metrics",
  "scrim-redact",
@@ -1518,6 +1531,7 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "rustls-pemfile",
+ "scrim-dns",
  "scrim-proto",
  "scrim-redact",
  "serde",

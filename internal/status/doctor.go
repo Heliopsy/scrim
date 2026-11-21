@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -151,6 +152,27 @@ func ReportChecks(r Report) []Check {
 				Fix: "check state.backend and its location or DSN with `scrim config show --effective`"}}
 		}},
 	}
+	if v := r.RunView; v != nil {
+		checks = append(checks, Check{Name: "run-fs-view", Run: func(context.Context) []Finding {
+			fix := "allow unprivileged user namespaces (on Ubuntu: sysctl kernel.apparmor_restrict_unprivileged_userns=0, " +
+				"or an AppArmor profile for scrim that allows userns), or accept the gaps listed in `scrim status`"
+			switch {
+			case v.Mode == RunViewRefused:
+				return []Finding{{Outcome: Fail, Message: "run.fs-view is namespace, but this host has no unprivileged user namespaces: " + v.Fallback,
+					Fix: fix + "; or set run.fs-view: auto to fall back to the home mirror"}}
+			case v.Fallback != "":
+				return []Finding{{Outcome: Warn, Message: "scrim run falls back to the home mirror: " + v.Fallback +
+					"; tools that bypass HOME still read the real credential files", Fix: fix}}
+			case v.Mode == "home":
+				return []Finding{{Outcome: Warn, Message: "run.fs-view is home: tools that bypass HOME still read the real credential files",
+					Fix: "set run.fs-view: auto where the host allows user namespaces"}}
+			case v.Mode == "off":
+				return []Finding{{Outcome: Warn, Message: "run.fs-view is off: real credential files in the home directory are readable from scrim run sessions",
+					Fix: "set run.fs-view: auto"}}
+			}
+			return nil
+		}})
+	}
 	for _, s := range r.Stores {
 		checks = append(checks, Check{Name: "store:" + s.Name, Run: func(context.Context) []Finding {
 			if !s.Reachable {
@@ -189,6 +211,24 @@ func ReportChecks(r Report) []Check {
 	}
 	if e := r.EBPF; e != nil {
 		checks = append(checks, Check{Name: "ebpf", Run: func(context.Context) []Finding { return ebpfFindings(e) }})
+	}
+	for _, m := range r.AgentModes {
+		checks = append(checks, Check{Name: "agent-mode:" + m.Mode, Run: func(context.Context) []Finding {
+			var fs []Finding
+			for _, c := range m.Changed {
+				fs = append(fs, Finding{Outcome: Fail, Message: c + " was changed or removed since scrim installed it",
+					Fix: "scrim install --" + m.Mode + " to write it again, or scrim uninstall --" + m.Mode})
+			}
+			if len(fs) > 0 {
+				return fs
+			}
+			if m.Mode == AgentModeHooks && r.Coverage == CoveragePartial {
+				return []Finding{{Outcome: Warn,
+					Message: "agent hooks are the only interception: partial protection; not covered: " + strings.Join(m.NotCovered, "; "),
+					Fix:     "run the agent with scrim run, or point it at the forward proxy, for full coverage"}}
+			}
+			return []Finding{{Outcome: Pass, Message: m.Mode + " in force for " + strings.Join(m.Agents, ", ")}}
+		}})
 	}
 	if len(r.Weakened) > 0 {
 		checks = append(checks, Check{Name: "weakened-settings", Run: func(context.Context) []Finding {

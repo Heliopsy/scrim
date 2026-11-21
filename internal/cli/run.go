@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -15,7 +16,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/heliopsy/scrim/internal/catalog"
+	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/fsview"
 	"github.com/heliopsy/scrim/internal/obs"
+	"github.com/heliopsy/scrim/internal/profiles"
 	agentrun "github.com/heliopsy/scrim/internal/run"
 )
 
@@ -59,6 +63,7 @@ func (Commands) Run(e *Env) *cobra.Command {
 				MCP: agentrun.MCP.Get(cfg), SessionName: name, SessionTTL: ttl,
 				AllowUnredacted: agentrun.AllowUnredactedStart.Get(cfg),
 				Reserved:        agentrun.ReservedBy(e.Registry),
+				FSView:          agentrun.FSViewOptions{Mode: fsview.Setting.Get(cfg), Hide: fsview.Hide.Get(cfg)},
 			}
 			if log, err := obs.LoggerFromConfig(e.Stderr, cfg, nil); err == nil {
 				o.Log = obs.WithComponent(log, "run")
@@ -77,6 +82,12 @@ func (Commands) Run(e *Env) *cobra.Command {
 						return nil, err
 					}
 					return cat.Placeholders(), nil
+				}
+			}
+			want := profiles.Enabled.Get(cfg)
+			if !slices.Contains(want, profiles.None) {
+				o.Profiles = func(ctx context.Context, agentName string, sess profiles.Session) (*profiles.Rendered, error) {
+					return renderProfiles(ctx, cfg, agentName, want, sess)
 				}
 			}
 			ctx := cmd.Context()
@@ -104,6 +115,31 @@ func (Commands) Run(e *Env) *cobra.Command {
 	f.StringVar(&name, "name", "", "session name shown in audit and whoami (default: the agent's command name)")
 	f.DurationVar(&ttl, "ttl", 0, "session token lifetime (default session.ttl); the session ends earlier when the agent exits")
 	return cmd
+}
+
+// renderProfiles selects and renders the session's tool profiles against the
+// catalog the agent's session resolves.
+func renderProfiles(ctx context.Context, cfg *config.Config, agentName string, want []string, sess profiles.Session) (*profiles.Rendered, error) {
+	set, err := profiles.Load(cfg)
+	if err != nil {
+		return nil, err
+	}
+	sel := catalog.SelectionFrom(cfg)
+	sel.Agent = agentName
+	cat, err := catalog.Load(ctx, cfg, nil, sel)
+	if err != nil {
+		return nil, err
+	}
+	chosen, err := set.Select(want, cat)
+	if err != nil {
+		return nil, err
+	}
+	r, err := profiles.Render(chosen.Profiles, cat, sess)
+	if err != nil {
+		return nil, err
+	}
+	r.Warnings = append(chosen.Warnings, r.Warnings...)
+	return r, nil
 }
 
 // runExit maps the run's outcome to scrim's exit code.
@@ -140,16 +176,48 @@ func writePlan(w io.Writer, p *agentrun.Plan, format string) error {
 		}
 		_, _ = fmt.Fprintf(w, "  %-*s  # %s\n", width, kv, v.Why)
 	}
+	if len(p.Profiles) > 0 {
+		_, _ = fmt.Fprintf(w, "\ntool profiles\n  %s\n", strings.Join(p.Profiles, "\n  "))
+	}
 	if len(p.Unset) > 0 {
 		_, _ = fmt.Fprintf(w, "\nunset\n  %s\n", strings.Join(p.Unset, "\n  "))
 	}
 	if files := fileNames(p); len(files) > 0 {
 		_, _ = fmt.Fprintf(w, "\nsession files (in <session-dir>, removed when the agent exits)\n  %s\n", strings.Join(files, "\n  "))
 	}
+	writeView(w, p.FSView)
 	if len(p.Warnings) > 0 {
 		_, _ = fmt.Fprintf(w, "\nwarnings\n  %s\n", strings.Join(p.Warnings, "\n  "))
 	}
 	return nil
+}
+
+// writeView prints the session filesystem view.
+func writeView(w io.Writer, v *fsview.Plan) {
+	if v == nil {
+		return
+	}
+	head := v.Mode
+	switch {
+	case v.Fallback != "":
+		head += " (fallback: " + v.Fallback + ")"
+	case v.Mode == fsview.ModeNamespace:
+		head += " (user and mount namespace)"
+	}
+	_, _ = fmt.Fprintf(w, "\nfilesystem view: %s\n", head)
+	if v.Mode != fsview.ModeOff && len(v.Entries) == 0 {
+		_, _ = fmt.Fprintln(w, "  nothing to cover")
+	}
+	for _, e := range v.Entries {
+		what := "hidden"
+		if !e.Hidden() {
+			what = "shows " + e.Source
+		}
+		_, _ = fmt.Fprintf(w, "  %s  %s  (%s)\n", e.Target, what, e.Origin)
+	}
+	for _, g := range v.Gaps {
+		_, _ = fmt.Fprintf(w, "  not covered: %s\n", g)
+	}
 }
 
 func fileNames(p *agentrun.Plan) []string {

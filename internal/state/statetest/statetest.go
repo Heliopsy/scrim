@@ -42,6 +42,7 @@ func Run(t *testing.T, f Factory) {
 		{"EventsInOrder", eventsInOrder},
 		{"LastEventID", lastEventID},
 		{"EventCommitHook", eventCommitHook},
+		{"AuditTap", auditTap},
 		{"ViewIsReadOnly", viewIsReadOnly},
 	}
 	for _, c := range cases {
@@ -566,6 +567,71 @@ func eventCommitHook(t *testing.T, s state.Store) {
 	})
 	if got := n.Load(); got != 1 {
 		t.Fatalf("hook ran %d times for one committed transaction", got)
+	}
+}
+
+// auditTap: the tap sees each transaction's entries, with IDs, before the
+// commit; its error rolls the change back; done reports the outcome; a
+// transaction without audit entries does not call it.
+func auditTap(t *testing.T, s state.Store) {
+	ctx := t.Context()
+	tp, ok := s.(state.AuditTap)
+	if !ok {
+		t.Fatal("backend does not implement state.AuditTap")
+	}
+	var (
+		seen     [][]audit.Entry
+		outcomes []bool
+		refuse   error
+	)
+	tp.SetAuditTap(func(_ context.Context, es []audit.Entry) (func(bool), error) {
+		seen = append(seen, es)
+		if refuse != nil {
+			return nil, refuse
+		}
+		return func(c bool) { outcomes = append(outcomes, c) }, nil
+	})
+	err := state.Apply(ctx, s, func(tx state.Tx) (state.Change, error) {
+		return state.Change{Audit: audit.Entry{Time: t0, Action: "tap.one", Attrs: map[string]string{"k": "v"}}}, tx.CreateGrant(ctx, &state.Grant{ID: "tg1", CreatedAt: t0, ExpiresAt: t0.Add(time.Hour)})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 1 || len(seen[0]) != 1 || seen[0][0].Action != "tap.one" || seen[0][0].ID == 0 || seen[0][0].Attrs["k"] != "v" {
+		t.Fatalf("tap saw %+v", seen)
+	}
+	if len(outcomes) != 1 || !outcomes[0] {
+		t.Fatalf("done outcomes %v, want [true]", outcomes)
+	}
+	update(t, s, func(tx state.Tx) error { return tx.Emit(ctx, &state.Event{Kind: "no.audit", Time: t0}) })
+	if len(seen) != 1 {
+		t.Fatalf("tap ran for a transaction without audit entries")
+	}
+	refuse = errors.New("sink full")
+	err = state.Apply(ctx, s, func(tx state.Tx) (state.Change, error) {
+		return state.Change{Audit: audit.Entry{Time: t0, Action: "tap.two"}}, tx.CreateGrant(ctx, &state.Grant{ID: "tg2", CreatedAt: t0, ExpiresAt: t0.Add(time.Hour)})
+	})
+	if !errors.Is(err, refuse) {
+		t.Fatalf("Apply with a refusing tap = %v", err)
+	}
+	err = s.View(ctx, func(tx state.Tx) error {
+		if _, err := tx.GetGrant(ctx, "tg2"); !errors.Is(err, state.ErrNotFound) {
+			t.Errorf("the refused change was kept: %v", err)
+		}
+		es, err := tx.QueryAudit(ctx, state.AuditQuery{Action: "tap.two"})
+		if err != nil || len(es) != 0 {
+			t.Errorf("the refused audit entry was kept: %v %v", es, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refuse = nil
+	tp.SetAuditTap(nil)
+	update(t, s, func(tx state.Tx) error { return tx.AppendAudit(ctx, &audit.Entry{Time: t0, Action: "untapped"}) })
+	if len(seen) != 2 {
+		t.Fatalf("tap ran after it was removed (%d calls)", len(seen))
 	}
 }
 

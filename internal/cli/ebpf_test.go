@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/heliopsy/scrim/internal/bpfredirect"
+	"github.com/heliopsy/scrim/internal/install"
 	"github.com/heliopsy/scrim/internal/status"
 )
 
@@ -149,5 +150,13 @@ func TestEBPFStatusConfiguredNotAttached(t *testing.T) {
 	rep = status.Report{}
 	if err := json.Unmarshal([]byte(r.stdout), &rep); err != nil || rep.EBPF != nil {
 		t.Fatalf("unused mode in status: %+v %v", rep.EBPF, err)
+	}
+}
+
+// The programs redirect to the transparent listener scrim install
+// --transparent sets up, so both default to the same port.
+func TestEBPFPortIsTheTransparentListener(t *testing.T) {
+	if bpfredirect.DefaultPort != install.DefaultTransparentPort {
+		t.Fatalf("interception.ebpf.port defaults to %d, the transparent listener to %d", bpfredirect.DefaultPort, install.DefaultTransparentPort)
 	}
 }

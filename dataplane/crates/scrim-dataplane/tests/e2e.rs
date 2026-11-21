@@ -693,6 +693,7 @@ fn snapshot(
         name: name.into(),
         kind: kind.into(),
         address: address.into(),
+        ..Default::default()
     };
     v1::Snapshot {
         protocol: v1::PROTOCOL,

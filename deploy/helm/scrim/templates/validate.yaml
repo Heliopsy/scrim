@@ -1,6 +1,7 @@
 {{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
 {{- /* Combinations the schema cannot express. Renders nothing. */ -}}
 {{- include "scrim.checkConfig" . -}}
+{{- include "scrim.checkScale" . -}}
 {{- range $k, $c := .Values.extraConfigMaps -}}
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $k) -}}
 {{- fail (printf "extraConfigMaps: key %q must be a DNS label (it becomes part of the ConfigMap name)" $k) -}}
@@ -30,7 +31,7 @@ monitor with nothing to scrape.
 {{- fail "secrets.externalSecrets.enabled needs secrets.externalSecrets.secretStoreRef.name" -}}
 {{- end -}}
 {{- range $slot, $_ := .Values.secrets.existing -}}
-{{- if not (has $slot (list "admin" "metrics" "postgres")) -}}
-{{- fail (printf "secrets.existing.%s: no such slot (admin, metrics, postgres)" $slot) -}}
+{{- if not (has $slot (list "admin" "metrics" "postgres" "valkey" "nats" "otlp" "loki" "kafka")) -}}
+{{- fail (printf "secrets.existing.%s: no such slot (admin, metrics, postgres, valkey, nats, otlp, loki, kafka)" $slot) -}}
 {{- end -}}
 {{- end -}}

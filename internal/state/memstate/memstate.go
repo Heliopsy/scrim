@@ -47,6 +47,7 @@ type Store struct {
 
 	hookMu sync.Mutex
 	hooks  []func()
+	tap    state.AuditTapFunc
 }
 
 // New returns an empty store.
@@ -142,8 +143,32 @@ func (s *Store) update(ctx context.Context, fn func(state.Tx) error) (emitted bo
 			t.rollback()
 		}
 	}()
-	err = fn(t)
-	return t.emitted, err
+	if err = fn(t); err != nil {
+		return false, err
+	}
+	s.hookMu.Lock()
+	tap := s.tap
+	s.hookMu.Unlock()
+	if tap != nil && len(t.audited) > 0 {
+		done, terr := tap(ctx, t.audited)
+		if terr != nil {
+			return false, terr
+		}
+		if done != nil {
+			// The commit cannot fail from here on.
+			defer done(true)
+		}
+	}
+	return t.emitted, nil
+}
+
+var _ state.AuditTap = (*Store)(nil)
+
+// SetAuditTap implements state.AuditTap.
+func (s *Store) SetAuditTap(fn state.AuditTapFunc) {
+	s.hookMu.Lock()
+	defer s.hookMu.Unlock()
+	s.tap = fn
 }
 
 type tx struct {
@@ -151,6 +176,7 @@ type tx struct {
 	readOnly bool
 	emitted  bool
 	undo     []func()
+	audited  []audit.Entry
 }
 
 func (t *tx) rollback() {
@@ -420,6 +446,7 @@ func (t *tx) AppendAudit(_ context.Context, e *audit.Entry) error {
 		e.ID = t.s.auditLog[n-1].ID + 1
 	}
 	t.s.auditLog = append(t.s.auditLog, cloneEntry(*e))
+	t.audited = append(t.audited, cloneEntry(*e))
 	t.undo = append(t.undo, func() { t.s.auditLog = t.s.auditLog[:n] })
 	return nil
 }

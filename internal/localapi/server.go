@@ -61,7 +61,35 @@ type Server struct {
 	// caller did not start offers its listeners, for `scrim run` under
 	// another user than the daemon's (a system service).
 	Endpoints func() Endpoints
+	// Redactor, when set, serves POST /v1/redact: the data plane's redactor
+	// and guard over text an agent hook hands in (a tool result, a prompt).
+	// It owns text and wipes it.
+	Redactor func(ctx context.Context, text []byte) (Redacted, error)
 }
+
+// Redacted is what the redactor returns: text with every known value
+// replaced by its placeholder, and the store references found (for the
+// audit log only).
+type Redacted struct {
+	Text         []byte
+	Replacements int
+	Refs         []string
+}
+
+// RedactOutput is the answer of POST /v1/redact. It holds no secret value:
+// the text passed the guard.
+type RedactOutput struct {
+	Text         string `json:"text"`
+	Replacements int    `json:"replacements"`
+}
+
+// MaxRedactSize bounds the text POST /v1/redact accepts, below the data
+// plane's gRPC message limit. Larger text is refused, never passed through.
+const MaxRedactSize = 3 << 20
+
+// ToolRedact is the audit tool name of a redaction that replaced values or
+// failed.
+const ToolRedact = "redact"
 
 type ctxKey int
 
@@ -195,6 +223,7 @@ func (s *Server) Handler() http.Handler {
 	authed("POST "+v+"/asks", s.ask)
 	authed("GET "+v+"/status/{id}", s.status)
 	authed("GET "+v+"/grants", s.grants)
+	authed("POST "+v+"/redact", s.redact)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, agenttools.Errorf(agenttools.CodeNotFound, "no such route in API %s", Version))
 	})
@@ -494,6 +523,43 @@ func (s *Server) grants(w http.ResponseWriter, r *http.Request, id identity.Iden
 	reply(w, out, err)
 }
 
+// redact runs the request body, raw bytes, through the data plane's redactor
+// and guard. Only the redacted text goes back. A call that replaced values or
+// failed is audited with the references involved, never the text.
+func (s *Server) redact(w http.ResponseWriter, r *http.Request, id identity.Identity) {
+	if s.Redactor == nil {
+		writeError(w, agenttools.Errorf(agenttools.CodeUnavailable, "redaction is not available from this scrim process"))
+		return
+	}
+	if ct := r.Header.Get("Content-Type"); ct != "" && ct != "application/octet-stream" {
+		writeError(w, agenttools.Errorf(agenttools.CodeInvalid, "the text must be sent as application/octet-stream"))
+		return
+	}
+	text, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxRedactSize+1))
+	if err != nil || len(text) > MaxRedactSize {
+		secret.WipeBytes(text)
+		writeError(w, agenttools.Errorf(agenttools.CodeInvalid, "the text is larger than %d bytes; it is not redacted", MaxRedactSize))
+		return
+	}
+	entry := agenttools.AuditEntry{Agent: id.Agent, Principal: id.Principal(), Source: string(id.Source), SessionID: id.SessionID,
+		UID: id.Peer.UID, PID: id.Peer.PID, Tool: ToolRedact}
+	out, err := s.Redactor(r.Context(), text)
+	if err != nil {
+		s.logger().Warn("redaction for an agent hook failed", "agent", id.Agent, "error", err)
+		entry.Outcome, entry.Detail = agenttools.OutcomeError, "redaction failed; the text was withheld"
+		s.audit(r.Context(), entry)
+		writeError(w, agenttools.Errorf(agenttools.CodeUnavailable, "scrim could not redact the text; it is withheld"))
+		return
+	}
+	if out.Replacements > 0 {
+		entry.Outcome = agenttools.OutcomeOK
+		entry.Ref = strings.Join(out.Refs, ",")
+		entry.Detail = strconv.Itoa(out.Replacements) + " values replaced"
+		s.audit(r.Context(), entry)
+	}
+	writeJSON(w, http.StatusOK, RedactOutput{Text: string(out.Text), Replacements: out.Replacements})
+}
+
 // maxBody bounds a JSON request body.
 const maxBody = 64 << 10
 
@@ -533,6 +599,7 @@ var statusOf = map[agenttools.Code]int{
 	agenttools.CodeNotFound:        http.StatusNotFound,
 	agenttools.CodeConflict:        http.StatusConflict,
 	agenttools.CodeUnavailable:     http.StatusServiceUnavailable,
+	agenttools.CodeRateLimited:     http.StatusTooManyRequests,
 	agenttools.CodeInternal:        http.StatusInternalServerError,
 }
 

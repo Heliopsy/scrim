@@ -69,6 +69,35 @@ pub fn contains(hay: &[u8], needle: &[u8]) -> bool {
     !needle.is_empty() && memchr::memmem::find(hay, needle).is_some()
 }
 
+/// Whether `needle` occurs in `out` outside the placeholders of `values` (as [`entries`] names
+/// them, under [`keyring`]). A placeholder's slug and tag can contain a value's bytes by
+/// coincidence (a short value of hex digits inside the tag, a value that is part of a slug); the
+/// redactor and the guard keep genuine placeholders byte for byte, so only an occurrence outside
+/// one is a surviving value. The placeholders are computed here rather than parsed by the crate,
+/// so a resolver that accepted too much would not hide a leak from this check.
+pub fn exposed(values: &[&[u8]], out: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let kr = keyring();
+    let mut spans = Vec::new();
+    for (i, v) in values.iter().enumerate() {
+        let slug = RefSlug::new(&format!("s{}", i + 1)).unwrap();
+        let p = placeholder_for(kr.current(), &slug, v);
+        let pct = p
+            .replace('\u{27e6}', "%E2%9F%A6")
+            .replace('\u{27e7}', "%E2%9F%A7");
+        for form in [p.as_bytes(), pct.as_bytes()] {
+            spans.extend(memchr::memmem::find_iter(out, form).map(|at| (at, at + form.len())));
+        }
+    }
+    memchr::memmem::find_iter(out, needle).any(|at| {
+        !spans
+            .iter()
+            .any(|&(a, b)| a <= at && at + needle.len() <= b)
+    })
+}
+
 pub fn ph(s: &Snapshot, value: &[u8]) -> Vec<u8> {
     let out = redact(s, value);
     assert!(

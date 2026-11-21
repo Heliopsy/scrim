@@ -27,7 +27,9 @@ var fromTerminal = map[os.Signal]bool{syscall.SIGINT: true, syscall.SIGQUIT: tru
 // stop the agent when the command's context ends: the context is cancelled
 // by Ctrl-C, which the agent handles itself (Claude Code, for one, treats
 // the first Ctrl-C as "clear the input").
-func supervise(cmd *exec.Cmd, sigs <-chan os.Signal, stderr io.Writer) error {
+// started is called right after the start; when it fails, the process is
+// waited for and its error returned.
+func supervise(cmd *exec.Cmd, sigs <-chan os.Signal, stderr io.Writer, started func() error) error {
 	if sigs == nil {
 		own := make(chan os.Signal, 8)
 		signal.Notify(own, forwarded...)
@@ -36,6 +38,10 @@ func supervise(cmd *exec.Cmd, sigs <-chan os.Signal, stderr io.Writer) error {
 	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("%w: starting %s failed: %w", ErrRefused, cmd.Args[0], err)
+	}
+	if err := started(); err != nil {
+		_ = cmd.Wait()
+		return err
 	}
 	// When the agent shares our foreground process group on a terminal, a
 	// Ctrl-C reaches it directly; forwarding it again would deliver it twice.

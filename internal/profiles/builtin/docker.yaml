@@ -1,0 +1,20 @@
+description: Docker CLI registry credentials (DOCKER_CONFIG)
+tools: [docker, buildx, crane]
+credentials:
+  - name: registry
+    description: Password or token for a container registry; one auth entry per bound host. Docker Hub is registry-1.docker.io and auth.docker.io.
+    inject: ["header:Authorization"]
+    required: true
+params:
+  username: scrim
+env:
+  DOCKER_CONFIG: '{{ path "docker" }}'
+files:
+  - path: docker/config.json
+    content: '{{ authsjson "registry" (param "username") }}'
+paths:
+  - home: .docker/config.json
+    generated: docker/config.json
+notes:
+  - docker login and docker pull are performed by dockerd, outside the session, so their registry traffic is not injected; podman, buildah, skopeo, crane and BuildKit run in the session and are.
+  - Registries that check the user name need the username param set in a tool-profiles.docker override.

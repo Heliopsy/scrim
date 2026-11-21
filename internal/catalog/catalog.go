@@ -24,6 +24,9 @@ type Binding struct {
 	Inject      []string   `json:"inject,omitempty"`
 	Tools       []string   `json:"tools,omitempty"`
 	Source      Source     `json:"source"`
+	// Derived names the fields the entry left empty and its tool profiles
+	// filled in: "hosts", "inject", "placeholder".
+	Derived []string `json:"derived,omitempty"`
 	// Selected says which variant applied: "default" or the variant's
 	// selection, for example "profile=dev".
 	Selected string `json:"selected"`
@@ -78,6 +81,62 @@ type Input struct {
 	// Listings holds, per bulk prefix (as written, with /*), the secrets
 	// listed under it. A bulk entry without a listing stays unresolved.
 	Listings map[string][]stores.Metadata
+	// Tools returns the defaults of a tool profile slot named in an entry's
+	// tools ("gh", "aws.secret-access-key"). Optional; see [ToolDefaults].
+	Tools func(tool string) (ToolDefaults, bool)
+}
+
+// ToolDefaults are what a tool profile slot binds an entry to when the
+// entry does not say so itself (specs/credential-injection, "Built-in tool
+// profiles").
+type ToolDefaults struct {
+	// Hosts the slot's credential is sent to by the tool.
+	Hosts []string
+	// Inject names the injection locations the tool uses.
+	Inject []string
+}
+
+// applyTools fills an entry's empty hosts and injection locations from the
+// tool profiles it names, and derives a declared placeholder
+// (SCRIM_<NAME>) when it has none, so the profile's generated files have a
+// placeholder the tool proxy substitutes. It returns the derived fields.
+func applyTools(e *Entry, tools func(string) (ToolDefaults, bool)) []string {
+	if len(e.Tools) == 0 || e.Prefix != "" {
+		return nil
+	}
+	var derived []string
+	if tools != nil {
+		var hosts, inject []string
+		for _, t := range e.Tools {
+			d, ok := tools(t)
+			if !ok {
+				continue
+			}
+			for _, h := range d.Hosts {
+				hosts = appendUnique(hosts, h)
+			}
+			for _, i := range d.Inject {
+				inject = appendUnique(inject, i)
+			}
+		}
+		if len(e.Hosts) == 0 && len(hosts) > 0 {
+			e.Hosts, derived = hosts, append(derived, "hosts")
+		}
+		if len(e.Inject) == 0 && len(inject) > 0 {
+			e.Inject, derived = inject, append(derived, "inject")
+		}
+	}
+	if e.Placeholder == "" {
+		e.Placeholder, derived = "SCRIM_"+envName(e.Name), append(derived, "placeholder")
+	}
+	return derived
+}
+
+func appendUnique(list []string, s string) []string {
+	if !slices.Contains(list, s) {
+		list = append(list, s)
+	}
+	return list
 }
 
 // Empty returns a catalog with no entries, which still resolves reference
@@ -163,6 +222,7 @@ func Compile(in Input, sel Selection) (*Catalog, error) {
 	}
 
 	add := func(d *def) {
+		derived := applyTools(&d.e, in.Tools)
 		r := &Resolved{Entry: d.e, Overridden: d.over}
 		b, selected, ok, err := resolveEntry(d.e, sel)
 		if err != nil {
@@ -172,6 +232,7 @@ func Compile(in Input, sel Selection) (*Catalog, error) {
 		r.OK = ok
 		if ok {
 			b.Selected = selected
+			b.Derived = derived
 			r.Binding = b
 		}
 		c.resolved[d.e.Name] = r

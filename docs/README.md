@@ -55,6 +55,7 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 
 | Page | Covers |
 | --- | --- |
+| [cli-tools.md](cli-tools.md) | Tool profiles: gh, git, kubectl, aws, terraform and other CLIs with placeholder credentials |
 | [run.md](run.md) | `scrim run`: what it sets for Claude Code, Codex and other agents, failing closed, signals |
 | [agent-tools.md](agent-tools.md) | The MCP server, `scrim secret` commands and the human entry page |
 | [identity.md](identity.md) | How scrim knows which agent is calling: peer credentials and session tokens |

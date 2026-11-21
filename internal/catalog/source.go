@@ -12,6 +12,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.yaml.in/yaml/v4"
@@ -362,6 +363,9 @@ func Load(ctx context.Context, c *config.Config, lister Lister, sel Selection) (
 			warnings = append(warnings, w...)
 		}
 	}
+	if fn := toolDefaults.Load(); fn != nil {
+		in.Tools = func(tool string) (ToolDefaults, bool) { return (*fn)(c, tool) }
+	}
 	cat, err := Compile(in, sel)
 	if err != nil {
 		return nil, err
@@ -369,6 +373,17 @@ func Load(ctx context.Context, c *config.Config, lister Lister, sel Selection) (
 	cat.warnings = append(warnings, cat.warnings...)
 	return cat, nil
 }
+
+// ToolDefaultsFunc returns the defaults of a tool profile slot under a
+// configuration.
+type ToolDefaultsFunc func(c *config.Config, tool string) (ToolDefaults, bool)
+
+var toolDefaults atomic.Pointer[ToolDefaultsFunc]
+
+// RegisterToolDefaults makes [Load] fill entries that name tool profiles
+// from those profiles. internal/profiles registers itself in init; the
+// catalog cannot import it, since profiles read the catalog.
+func RegisterToolDefaults(fn ToolDefaultsFunc) { toolDefaults.Store(&fn) }
 
 // SelectionFrom returns the selection configured in c.
 func SelectionFrom(c *config.Config) Selection {
