@@ -110,6 +110,7 @@ func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) 
 		src.Stores = staticStores(info.Stores)
 	}
 	src.Service = installedService(ctx, cfg)
+	src.AgentModes = installedAgentModes(cfg)
 	stateCfg := cfg
 	if src.Service != nil && src.Service.System && installEUID() == 0 {
 		// Root asks about the system service: report its state, and never
@@ -152,6 +153,33 @@ func installedService(ctx context.Context, cfg *config.Config) *status.Service {
 		return &status.Service{Mode: string(mf.Mode), System: mf.System, Unit: install.UnitName, Active: active, Manifest: p}
 	}
 	return nil
+}
+
+// installedAgentModes reports the agent-side modes `scrim install` set up:
+// the machine's managed agent settings and this user's agent hooks.
+func installedAgentModes(cfg *config.Config) []status.AgentMode {
+	paths := []string{filepath.Join(installRoot, install.ManagedManifest)}
+	if dir, err := cfg.StateDir(); err == nil {
+		paths = append(paths, filepath.Join(dir, install.HooksManifestName))
+	}
+	var out []status.AgentMode
+	for _, p := range paths {
+		st, found, err := install.ReadAgentMode(p, installRoot)
+		if err != nil || !found {
+			continue
+		}
+		m := status.AgentMode{Mode: string(st.Mode), Agents: st.Agents, Files: st.Files, Changed: st.Changed, Manifest: p}
+		switch st.Mode {
+		case install.ModeHooks:
+			m.Coverage, m.Covers, m.NotCovered = status.CoveragePartial, install.HooksCovers, install.HooksNotCovered
+		case install.ModeManaged:
+			m.Coverage, m.Covers, m.NotCovered = status.CoverageAddOn, install.ManagedCovers, install.ManagedNotCovered
+		default:
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 func openStateForStatus(ctx context.Context, cfg *config.Config) (status.StateOf, func()) {

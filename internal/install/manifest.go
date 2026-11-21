@@ -69,8 +69,11 @@ type Entry struct {
 	Tool string `json:"tool,omitempty"`
 	// Reload names the systemd manager (system or user) to reload after a
 	// unit file is removed.
-	Reload string    `json:"reload,omitempty"`
-	At     time.Time `json:"at"`
+	Reload string `json:"reload,omitempty"`
+	// Created says install created the file of an agent-hooks entry, so
+	// uninstall removes it once nothing else is left in it.
+	Created bool      `json:"created,omitempty"`
+	At      time.Time `json:"at"`
 }
 
 func (e Entry) same(o Entry) bool {

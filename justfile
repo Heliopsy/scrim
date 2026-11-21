@@ -178,8 +178,17 @@ e2e-chain *args:
 e2e-session *args:
     test/e2e/run.sh session {{args}}
 
+# Claude Code with scrim's agent hooks only, no scrim run (tasks.md 15.3); skipped without claude.
+e2e-agentmodes *args:
+    test/e2e/run.sh agentmodes {{args}}
+
+# Claude Code under scrim's managed settings, in a disposable rootless podman container with no
+# network (tasks.md 13.4): managed settings live in /etc, never written on the host.
+e2e-managed-settings:
+    test/e2e/agentmodes/managed-settings.sh
+
 # Every end-to-end run above.
-e2e: e2e-tools e2e-chain e2e-session
+e2e: e2e-tools e2e-chain e2e-session e2e-agentmodes e2e-managed-settings
 
 ntfy_image := "docker.io/binwiederhier/ntfy:v2.38.1"
 

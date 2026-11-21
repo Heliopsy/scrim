@@ -26,8 +26,8 @@ agent's identity.
 The system SHALL serve a versioned local API on a Unix socket that the MCP server and the CLI use for
 every tool call. Each request SHALL be attributed from the socket's peer credentials and, when
 present, a session token; callers that are not mapped to an agent SHALL be refused. Request bodies
-with unknown fields SHALL be refused. Exactly one route SHALL accept a value, as a raw request body,
-and no route SHALL return one.
+with unknown fields SHALL be refused. Exactly one route SHALL store a value, taken as a raw request
+body, and no route SHALL return one.
 
 #### Scenario: Unmapped local user
 
@@ -38,6 +38,18 @@ and no route SHALL return one.
 
 - **WHEN** a client sends a `value` field in the body of a generate request
 - **THEN** the request is refused and nothing is generated or stored
+
+### Requirement: Redaction route for agent hooks
+
+The local API SHALL offer a route that takes text that may hold values, for agent hooks, and SHALL
+answer only with that text as the data plane's redactor and guard left it, or with an error that
+carries none of it.
+
+#### Scenario: Hook text redacted
+
+- **WHEN** an agent hook sends a tool result holding a known value to the redact route
+- **THEN** the answer holds the value's placeholder and not the value
+- **AND** when the data plane cannot redact it, the answer is an error that holds no part of the text
 
 ### Requirement: Every tool has an equivalent CLI command
 

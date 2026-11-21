@@ -1,0 +1,44 @@
+scrim 0.1.0
+overall: DEGRADED (1 degraded, 0 weakened)
+protection: PARTIAL (agent hooks only: no scrim run session, enforcing interception or managed settings puts model traffic on scrim)
+
+Interception
+  hooks (partial): claude, codex
+  managed-settings (enforcement add-on): claude, codex
+  hooks:
+    file: /home/u/.claude/settings.json
+    file: /home/u/.codex/hooks.json
+    covers: tool results
+    not covered: model requests
+    not covered: model replies
+    not covered: network egress
+  managed-settings:
+    file: /etc/claude-code/managed-settings.d/90-scrim.json
+    file: /etc/codex/requirements.toml
+    covers: endpoint pinned
+    not covered: processes the agent starts
+    CHANGED since install: /etc/codex/requirements.toml
+
+Protections
+  none
+
+Providers
+  none
+
+Stores
+  none
+
+State
+  sqlite, schema 1, healthy
+
+Audit sinks
+  none
+
+Data plane
+  running, pid 4242, version 0.1.0, up 0s, healthy
+
+Degraded
+  agent-mode:managed-settings: changed or removed since install: /etc/codex/requirements.toml
+
+Weakened protections
+  none
