@@ -4,7 +4,8 @@
 # Golden tests of the Helm chart, run by deploy/helm/scrim/ci/verify.sh:
 # `helm template` of every values file in golden/cases compared with golden/out, and every file in
 # golden/fail must be refused with the message on its `# expect:` line.
-# Generated material (the CA, the placeholder key) is masked before comparing.
+# Generated material (the CA, the placeholder key) is masked before comparing,
+# and the chart is rendered at a fixed version (GOLDEN_VERSION below).
 # Every scrim configuration a case renders is checked with `scrim config
 # validate` (unresolvable file: references aside, since the mounts do not
 # exist here), the chart's monitoring copies must equal deploy/monitoring, and
@@ -52,6 +53,19 @@ for pair in "rules/scrim.rules.yaml:scrim.rules.yaml" "grafana/scrim-dashboard.j
   fi
 done
 
+# The goldens render a copy of the chart with version and appVersion pinned, as
+# the unit tests pin appVersion, so a release bump changes no golden (labels,
+# image tag, the config checksums that hash them).
+GOLDEN_VERSION=1.2.3
+render="$tmp/chart/$(basename "$chart")"
+mkdir -p "$tmp/chart"
+cp -R "$chart" "$render"
+sed -i -E "s/^version: .*/version: $GOLDEN_VERSION/; s/^appVersion: .*/appVersion: \"$GOLDEN_VERSION\"/" "$render/Chart.yaml"
+if [ "$(grep -cE "^(version: $GOLDEN_VERSION|appVersion: \"$GOLDEN_VERSION\")\$" "$render/Chart.yaml")" != 2 ]; then
+  echo "golden: could not pin version and appVersion in a copy of $chart/Chart.yaml" >&2
+  exit 1
+fi
+
 scrim="${SCRIM_BIN:-}"
 if [ -z "$scrim" ]; then
   scrim="$tmp/scrim"
@@ -91,7 +105,7 @@ validate_configs() {
 mkdir -p "$dir/out"
 for values in "$dir"/cases/*.yaml; do
   case="$(basename "$values" .yaml)"
-  helm template scrim "$chart" -n scrim -f "$values" > "$tmp/$case.raw"
+  helm template scrim "$render" -n scrim -f "$values" > "$tmp/$case.raw"
   mask < "$tmp/$case.raw" > "$tmp/$case.yaml"
   validate_configs "$case"
   if [ "$update" = 1 ]; then
@@ -104,7 +118,7 @@ done
 for values in "$dir"/fail/*.yaml; do
   case="$(basename "$values" .yaml)"
   want="$(sed -n 's/^# expect: //p' "$values")"
-  if out="$(helm template scrim "$chart" -n scrim -f "$values" 2>&1)"; then
+  if out="$(helm template scrim "$render" -n scrim -f "$values" 2>&1)"; then
     echo "golden: fail/$case rendered, want an error containing: $want" >&2
     status=1
   elif ! grep -qF "$want" <<<"$out"; then

@@ -4,13 +4,13 @@
 # Builds scrim, the debug data plane and one end-to-end test package, then
 # runs the package inside test/e2e/sandbox.sh.
 #
-#   test/e2e/run.sh tools|chain|session|profiles [go test flags, e.g. -test.run TestTools]
+#   test/e2e/run.sh tools|chain|session|profiles|agentmodes [go test flags, e.g. -test.run TestTools]
 #
 # SCRIM_DATAPLANE_PATH names a data plane binary to use instead of building
 # the debug one.
 set -euo pipefail
 
-pkg="${1:?usage: $0 tools|chain|session|profiles [test flags]}"
+pkg="${1:?usage: $0 tools|chain|session|profiles|agentmodes [test flags]}"
 shift
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 out="$(mktemp -d "${TMPDIR:-/tmp}/scrim-e2e-bin.XXXXXX")"

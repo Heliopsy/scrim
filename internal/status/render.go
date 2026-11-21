@@ -33,6 +33,9 @@ func WriteHuman(w io.Writer, r Report) error {
 	} else {
 		p.line("overall: DEGRADED (%d degraded, %d weakened)", len(r.Degraded), len(r.Weakened))
 	}
+	if r.Coverage == CoveragePartial {
+		p.line("protection: PARTIAL (agent hooks only: no scrim run session, enforcing interception or managed settings puts model traffic on scrim)")
+	}
 
 	if c := r.Config; c != nil {
 		p.section("Configuration")
@@ -73,6 +76,21 @@ func WriteHuman(w io.Writer, r Report) error {
 	}
 	for _, m := range r.Interception {
 		p.line("  %s", m)
+	}
+	for _, m := range r.AgentModes {
+		p.line("  %s:", m.Mode)
+		for _, f := range m.Files {
+			p.line("    file: %s", f)
+		}
+		for _, c := range m.Covers {
+			p.line("    covers: %s", c)
+		}
+		for _, c := range m.NotCovered {
+			p.line("    not covered: %s", c)
+		}
+		for _, c := range m.Changed {
+			p.line("    CHANGED since install: %s", c)
+		}
 	}
 
 	p.section("Protections")

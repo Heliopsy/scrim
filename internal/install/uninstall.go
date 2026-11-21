@@ -227,6 +227,8 @@ func (in *Installer) describeRevert(e Entry) (string, *result) {
 		return "remove the directory " + e.Target + " if empty", nil
 	case KindFile:
 		return "remove " + e.Target, nil
+	case KindHooks:
+		return fmt.Sprintf("remove scrim's hooks for %s from %s", e.Group, e.Target), nil
 	case KindService:
 		if in.Mode == ModeQuadlet {
 			return "stop " + e.Target + " (systemctl stop)", nil
@@ -290,6 +292,8 @@ func (in *Installer) revert(ctx context.Context, e Entry) result {
 			}
 		}
 		return r
+	case KindHooks:
+		return in.revertHooks(e)
 	case KindService:
 		return in.stopService(ctx, e)
 	case KindSystemTrust:
