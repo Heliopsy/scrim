@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="scrim"><title>scrim</title>
+<!-- Redaction S: a squared "s" whose middle stroke is hidden under a marker-yellow redaction bar. -->
+<path d="M48 10H26A13.5 13.5 0 0 0 12.5 23.5V24.5H21.5V23.5A4.5 4.5 0 0 1 26 19H48ZM51.5 39.5V40.5A13.5 13.5 0 0 1 38 54H16V45H38A4.5 4.5 0 0 0 42.5 40.5V39.5Z" fill="currentColor"/><rect x="9" y="27" width="46" height="10" rx="2" fill="currentColor"/>
+</svg>
