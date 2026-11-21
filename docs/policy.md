@@ -87,7 +87,7 @@ scrim adds one rule after the rules from your file:
 | --- | --- | --- |
 | `op` | string | `llm.forward`, `inject`, `restore`, `store.read`, `store.write`, `secret.gen`, `grant`, `exec`, `mcp.tool`, `secret.ask`, `ssh.sign`, `database.auth` |
 | `agent` | object | `id`, `kind` (`peer`, `session`, `k8s`, `mtls`, empty when unknown), `known` (bool), `session`, `labels` (map) |
-| `secret` | object | `ref`, `name` (catalog name), `store`, `class`, `labels` (map) |
+| `secret` | object | `ref`, `name` (catalog name), `store`, `class`, `labels` (map, see [Labels from stores](#labels-from-stores)) |
 | `provider` | string | `anthropic`, `openai`, ... |
 | `dest` | object | `host`, `method`, `path` |
 | `tool` | object | `name`, `command` |
@@ -192,6 +192,118 @@ and revocable like any other:
   grant: {ttl: 1h}
 ```
 
+## Labels from stores
+
+`secret.labels` describes where a secret lives, in every backend's own terms, so a rule can follow a
+Vaultwarden collection, an OpenBao mount or an Infisical environment instead of a reference
+spelling. Every operation that names a secret carries them: `store.write`, `secret.gen`,
+`store.read`, grants, `inject` and `restore` (the data plane gets them in its snapshot).
+
+Run `scrim catalog labels <name|reference>` to see every label a secret has and where each comes
+from, and `scrim policy eval --label key=value` to try a rule against them.
+
+| Keys | Set by | Example |
+| --- | --- | --- |
+| `store.name`, `store.kind`, `store.path`, `store.container`, `store.field` | scrim, for every secret of every store | `store.kind=vaultwarden`, `store.container=kv/prod/app` |
+| `<kind>.<attribute>` | the store adapter, from the store's own structure | `vaultwarden.org=Acme`, `openbao.mount=kv`, `infisical.environment=prod`, `env.variable=GITHUB_TOKEN`, `file.format=json` |
+| `<kind>.<attribute>.<value>` | the adapter, one per value of a multi-valued attribute | `vaultwarden.collection.Prod=true` |
+| `<kind>.meta.<key>` | the adapter, from metadata store users can edit (custom fields, tags) | `vaultwarden.meta.owner=alice` |
+| `scrim.*` | catalog metadata kept in the store | `scrim.hosts=api.github.com` |
+| anything else | the store's `labels` option (below) | `team=Acme` |
+
+`store.path` is the reference path without selectors or field, `store.container` the path before
+its last segment (empty at the top), `store.field` the field when the reference names one. The
+attributes each backend reports are listed in its page under [stores](stores/README.md#labels).
+
+A multi-valued attribute (a Vaultwarden item in several collections) is one comma-joined key plus
+one presence key per value, so membership is an exact test:
+
+```cel
+"vaultwarden.collection.Prod" in secret.labels       // in collection Prod, whatever else
+secret.labels["vaultwarden.collection"] == "Prod"     // in Prod and nothing else
+```
+
+Labels are trustworthy where the store's permissions are. A native label (`vaultwarden.org`) comes
+from the store's structure: changing it needs the right to move the item. User-editable metadata
+never becomes a native label, it stays under `<kind>.meta.`, so a person who can edit a custom field
+cannot put an item "into" a collection. Match on `<kind>.meta.*` only if whoever can edit the item
+may decide the outcome. scrim replaces any `store.*` label an adapter reports and drops labels an
+adapter reports under another backend's prefix.
+
+### Rules on labels
+
+A label that a secret does not have is an error in CEL, and an erroring deny or ask rule counts as
+matching (see [How rules combine](#how-rules-combine)). Test for the key first, which also keeps the
+rule in the data plane:
+
+```cel
+"vaultwarden.org" in secret.labels && secret.labels["vaultwarden.org"] == "Acme"
+has(secret.labels.team) && secret.labels.team == "payments"
+secret.labels["store.path"].startsWith("prod/")
+```
+
+Anything in Vaultwarden collection Prod, folder Deploy or organisation Acme needs a human (an ask on
+`restore` keeps the placeholder, since a streamed reply cannot wait for one). The second rule is the
+write-only form, for when reads and injection there may go ahead:
+
+```yaml
+- name: vaultwarden-governed
+  decision: ask
+  when: >-
+    "vaultwarden.collection.Prod" in secret.labels ||
+    ("vaultwarden.folder" in secret.labels && secret.labels["vaultwarden.folder"] == "Deploy") ||
+    ("vaultwarden.org" in secret.labels && secret.labels["vaultwarden.org"] == "Acme")
+  reason: Prod, Deploy and Acme secrets need a human
+- name: vaultwarden-governed-writes
+  decision: ask
+  when: >-
+    op in ["store.write", "secret.gen"] &&
+    ("vaultwarden.collection.Prod" in secret.labels || ("vaultwarden.org" in secret.labels &&
+    secret.labels["vaultwarden.org"] == "Acme"))
+  reason: Writes into Prod or Acme need a human
+```
+
+No production value is restored into a tool call, whatever store it lives in:
+
+```yaml
+- name: no-prod-restore
+  decision: deny
+  when: op == "restore" && "tier" in secret.labels && secret.labels.tier == "prod"
+```
+
+A write or generate to an item that does not exist yet sees the labels it would get: the `store.*`
+labels from its reference, the derived labels below, and whatever native labels its adapter can tell
+from the reference alone (a backend that can implements `stores.WriteLabeler`). So `store.container`
+works for "any write under this folder" before anything is there. Labels that only exist on the item
+itself (a collection it is later shared into) are not known until scrim has read it; a secret in a
+store's redaction set always carries its full labels.
+
+### Deriving your own labels
+
+Each store can derive labels with its own names in configuration, so rules stay the same when a
+secret moves between backends. Each entry is a label name and where it comes from:
+
+```yaml
+# scrim.yaml (configuration, not a rules file)
+stores:
+  vw:
+    kind: vaultwarden
+    labels:
+      team: vaultwarden.org                                     # copy another label
+      env: {value: prod}                                        # constant for the whole store
+      shared: {from: vaultwarden.collection.Shared, value: "yes"}   # constant when a label exists
+      tier: {from: store.path, regex: "^prod/", value: prod}    # when a label matches
+      app: {from: store.path, regex: "^apps/([^/]+)/", value: "$1"} # submatch
+```
+
+A string is short for `{from: <label>}`. With `from` and no `value` the label copies the source;
+with `regex` and no `value` it is the matched text, and `$1` or `${name}` in `value` expand to
+submatches. A rule with `from` sets nothing when the source label is missing or does not match.
+Sources are the native and `store.*` labels, not other derived labels. A derived label never
+replaces a native or `store.*` label, and a name under `store.`, `scrim.` or a backend kind's prefix
+(`vaultwarden.`, `env.`) is refused when the configuration loads. Names are lower-case letters,
+digits, `-` and `_`, separated by dots.
+
 ## How the data plane decides
 
 The data plane handles every byte of agent traffic and does not run CEL (design D7). The control
@@ -234,8 +346,8 @@ caches a grant: a request that needs one asks again, and the control plane check
 ### Injection and provider requests
 
 Each credential a request through the tool proxy would carry is decided as `op == "inject"`, with
-`secret.ref`, `secret.name`, `secret.store`, `secret.class`, `dest.host`, `dest.method` and
-`dest.path`, after its host binding allows it. A deny refuses the whole request with
+`secret.ref`, `secret.name`, `secret.store`, `secret.class`, `secret.labels`, `dest.host`,
+`dest.method` and `dest.path`, after its host binding allows it. A deny refuses the whole request with
 `403 policy_denied`, and nothing is sent. The default effect applies, so with
 `policy.builtin.inject: off`, `default: deny` without an allow rule for `inject` injects nothing.
 
@@ -256,9 +368,10 @@ Restoring a placeholder into a response (`op == "restore"`) is governed by the t
 away. A deny or ask rule that matches, or could match, a restore keeps the placeholder; allow rules
 and the default decision are not consulted, so `default: deny` does not switch restore off. The data
 plane cannot hold a streamed response for an approval, so an ask on restore keeps the placeholder
-too. A restore request carries `tool.name`, the value's `secret.ref`, `secret.name`, `secret.store`
-and `secret.class`, and the agent identity when the listener knows it; `secret.labels` is not
-available, and a rule that depends on a field the data plane does not have keeps the placeholder.
+too. A restore request carries `tool.name`, the value's `secret.ref`, `secret.name`, `secret.store`,
+`secret.class` and `secret.labels`, and the agent identity when the listener knows it. A rule that
+depends on a field the data plane does not have keeps the placeholder (a value whose snapshot entry
+has no labels, from an older control plane, counts as not having them).
 
 ```yaml
 - name: no-prod-in-tools
