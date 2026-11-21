@@ -23,7 +23,10 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose, SanType};
+use rcgen::{
+    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, IsCa, KeyPair, KeyUsagePurpose,
+    SanType,
+};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
 use scrim_toolproxy::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -84,8 +87,7 @@ pub fn echo_handler() -> Handler {
 
 /// A test CA for upstream servers, plus leaf issuance.
 pub struct UpstreamCa {
-    pub cert: rcgen::Certificate,
-    pub key: KeyPair,
+    pub issuer: CertifiedIssuer<'static, KeyPair>,
 }
 
 impl UpstreamCa {
@@ -99,12 +101,13 @@ impl UpstreamCa {
             KeyUsagePurpose::KeyCertSign,
             KeyUsagePurpose::DigitalSignature,
         ];
-        let cert = p.self_signed(&key).unwrap();
-        Self { cert, key }
+        Self {
+            issuer: CertifiedIssuer::self_signed(p, key).unwrap(),
+        }
     }
 
     pub fn der(&self) -> CertificateDer<'static> {
-        self.cert.der().clone()
+        self.issuer.der().clone()
     }
 
     pub fn server_config(&self, hosts: &[&str]) -> rustls::ServerConfig {
@@ -113,7 +116,7 @@ impl UpstreamCa {
             .unwrap();
         p.subject_alt_names
             .push(SanType::IpAddress("127.0.0.1".parse().unwrap()));
-        let cert = p.signed_by(&key, &self.cert, &self.key).unwrap();
+        let cert = p.signed_by(&key, &self.issuer).unwrap();
         let mut cfg = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))

@@ -6,4 +6,4 @@
 # reference: copy it there in the Dependabot pull request and run
 # `ci/verify.sh --generate`. The scrim image follows the release
 # (Chart.yaml appVersion) and is not listed.
-FROM docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
+FROM docker.io/curlimages/curl:8.23.0@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93

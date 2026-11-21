@@ -17,8 +17,9 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, SanType, SerialNumber,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, DnValue,
+    ExtendedKeyUsagePurpose, IsCa, Issuer, KeyIdMethod, KeyPair, KeyUsagePurpose,
+    PKCS_ECDSA_P256_SHA256, SanType, SerialNumber,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::sign::CertifiedKey;
@@ -66,9 +67,12 @@ impl Default for CaOptions {
 
 /// One CA generation.
 pub struct CertificateAuthority {
-    /// Issuer handle for signing (rebuilt from parameters when loaded from PEM).
-    issuer: rcgen::Certificate,
-    key: KeyPair,
+    /// Issuer handle for signing; owns the private key.
+    issuer: Issuer<'static, KeyPair>,
+    /// The certificate's subject and key identifier method, which a cross certificate for this
+    /// generation repeats. rcgen's `Issuer` keeps both private.
+    subject: DistinguishedName,
+    key_id: KeyIdMethod,
     cert_der: CertificateDer<'static>,
     cert_pem: String,
     not_after: OffsetDateTime,
@@ -118,14 +122,15 @@ impl CertificateAuthority {
         let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
         let params = ca_params(opts, now)?;
         let not_after = params.not_after;
-        let issuer = params.self_signed(&key)?;
-        let cert_der = issuer.der().clone();
-        let cert_pem = issuer.pem();
+        let cert = params.self_signed(&key)?;
+        let subject = params.distinguished_name.clone();
+        let key_id = params.key_identifier_method.clone();
         Ok(Self {
-            issuer,
-            key,
-            cert_der,
-            cert_pem,
+            issuer: Issuer::new(params, key),
+            subject,
+            key_id,
+            cert_der: cert.der().clone(),
+            cert_pem: cert.pem(),
             not_after,
         })
     }
@@ -133,21 +138,21 @@ impl CertificateAuthority {
     /// Loads a persisted generation from its certificate and PKCS#8 key in PEM.
     pub fn from_pem(cert_pem: &str, key_pem: &str) -> Result<Self, CaError> {
         let key = KeyPair::from_pem(key_pem).map_err(|_| CaError::Parse("private key".into()))?;
-        let params = CertificateParams::from_ca_cert_pem(cert_pem)
-            .map_err(|e| CaError::Parse(e.to_string()))?;
-        let not_after = params.not_after;
         let der = rustls_pki_pem_cert(cert_pem)?;
-        let issuer = params.self_signed(&key)?;
+        let parsed = ParsedCa::from_der(&der)?;
         // The certificate must belong to the key.
-        if issuer_spki(&der).as_deref() != Some(rcgen::PublicKeyData::der_bytes(&key)) {
+        if parsed.spki != rcgen::PublicKeyData::der_bytes(&key) {
             return Err(CaError::Parse("certificate does not match the key".into()));
         }
+        let issuer =
+            Issuer::from_ca_cert_der(&der, key).map_err(|e| CaError::Parse(e.to_string()))?;
         Ok(Self {
             issuer,
-            key,
+            subject: parsed.subject,
+            key_id: parsed.key_id,
+            not_after: parsed.not_after,
             cert_der: der,
             cert_pem: cert_pem.to_owned(),
-            not_after,
         })
     }
 
@@ -164,7 +169,7 @@ impl CertificateAuthority {
     /// The private key in PKCS#8 PEM, wiped on drop. Only for persisting the CA where agents
     /// cannot read it; never log or send it.
     pub fn key_pem(&self) -> Zeroizing<String> {
-        Zeroizing::new(self.key.serialize_pem())
+        Zeroizing::new(self.issuer.key().serialize_pem())
     }
 
     /// When the CA certificate expires.
@@ -175,7 +180,7 @@ impl CertificateAuthority {
     /// Issues a cross certificate: `newer`'s name and key, signed by `self`.
     fn cross_sign(&self, newer: &CertificateAuthority) -> Result<CertificateDer<'static>, CaError> {
         let mut p = CertificateParams::default();
-        p.distinguished_name = newer.issuer.params().distinguished_name.clone();
+        p.distinguished_name = newer.subject.clone();
         p.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
         p.key_usages = vec![
             KeyUsagePurpose::KeyCertSign,
@@ -189,11 +194,9 @@ impl CertificateAuthority {
         // Node) accept the cross certificate as the leaf's issuer only when its subject key
         // identifier is the one the leaf's authority key identifier names: the newer CA's own,
         // which a CA loaded from disk may have computed another way.
-        p.key_identifier_method = newer.issuer.params().key_identifier_method.clone();
+        p.key_identifier_method = newer.key_id.clone();
         p.use_authority_key_identifier_extension = true;
-        Ok(p.signed_by(&newer.key, &self.issuer, &self.key)?
-            .der()
-            .clone())
+        Ok(p.signed_by(newer.issuer.key(), &self.issuer)?.der().clone())
     }
 
     /// Issues a leaf certificate for `host` valid for `validity` (capped at the CA's expiry).
@@ -232,7 +235,7 @@ impl CertificateAuthority {
         p.use_authority_key_identifier_extension = true;
         let not_after = p.not_after;
         let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
-        let cert = p.signed_by(&key, &self.issuer, &self.key)?;
+        let cert = p.signed_by(&key, &self.issuer)?;
         let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
         Ok((cert.der().clone(), key_der, not_after))
     }
@@ -243,16 +246,79 @@ fn rustls_pki_pem_cert(pem: &str) -> Result<CertificateDer<'static>, CaError> {
     CertificateDer::from_pem_slice(pem.as_bytes()).map_err(|e| CaError::Parse(e.to_string()))
 }
 
-/// The `SubjectPublicKeyInfo`'s public key bit string of a certificate, compared against the key.
-fn issuer_spki(der: &CertificateDer<'_>) -> Option<Vec<u8>> {
-    let (_, cert) = x509_parser::parse_x509_certificate(der).ok()?;
-    Some(
-        cert.tbs_certificate
-            .subject_pki
-            .subject_public_key
-            .data
-            .to_vec(),
-    )
+/// What a loaded CA certificate contributes besides the issuer handle.
+struct ParsedCa {
+    /// The `SubjectPublicKeyInfo`'s public key bit string, compared against the key.
+    spki: Vec<u8>,
+    subject: DistinguishedName,
+    /// The subject key identifier the certificate carries, else rcgen's default derivation.
+    key_id: KeyIdMethod,
+    not_after: OffsetDateTime,
+}
+
+impl ParsedCa {
+    fn from_der(der: &CertificateDer<'_>) -> Result<Self, CaError> {
+        use x509_parser::extensions::ParsedExtension;
+        let (_, cert) = x509_parser::parse_x509_certificate(der)
+            .map_err(|_| CaError::Parse("CA certificate".into()))?;
+        let key_id = cert
+            .iter_extensions()
+            .find_map(|ext| match ext.parsed_extension() {
+                ParsedExtension::SubjectKeyIdentifier(id) => {
+                    Some(KeyIdMethod::PreSpecified(id.0.to_vec()))
+                }
+                _ => None,
+            })
+            .unwrap_or(KeyIdMethod::Sha256);
+        Ok(Self {
+            spki: cert
+                .tbs_certificate
+                .subject_pki
+                .subject_public_key
+                .data
+                .to_vec(),
+            subject: distinguished_name(cert.subject())?,
+            key_id,
+            not_after: cert.validity().not_after.to_datetime(),
+        })
+    }
+}
+
+/// Converts a parsed subject into rcgen's form, attribute by attribute and keeping each value's
+/// string type, so a cross certificate's subject encodes exactly like the original's.
+fn distinguished_name(
+    name: &x509_parser::x509::X509Name<'_>,
+) -> Result<DistinguishedName, CaError> {
+    use rcgen::string::{BmpString, UniversalString};
+    use x509_parser::der_parser::asn1_rs::Tag;
+    let bad = || CaError::Parse("CA certificate subject".into());
+    let mut dn = DistinguishedName::new();
+    for rdn in name.iter() {
+        let mut attrs = rdn.iter();
+        let (Some(attr), None) = (attrs.next(), attrs.next()) else {
+            return Err(bad());
+        };
+        let oid: Vec<u64> = attr.attr_type().iter().ok_or_else(bad)?.collect();
+        let data = attr.attr_value().data;
+        let text = || std::str::from_utf8(data).map_err(|_| bad());
+        let value = match attr.attr_value().header.tag() {
+            Tag::Utf8String => DnValue::Utf8String(text()?.to_owned()),
+            Tag::PrintableString => {
+                DnValue::PrintableString(text()?.try_into().map_err(|_| bad())?)
+            }
+            Tag::Ia5String => DnValue::Ia5String(text()?.try_into().map_err(|_| bad())?),
+            Tag::T61String => DnValue::TeletexString(text()?.try_into().map_err(|_| bad())?),
+            Tag::BmpString => {
+                DnValue::BmpString(BmpString::from_utf16be(data.to_vec()).map_err(|_| bad())?)
+            }
+            Tag::UniversalString => DnValue::UniversalString(
+                UniversalString::from_utf32be(data.to_vec()).map_err(|_| bad())?,
+            ),
+            _ => return Err(bad()),
+        };
+        dn.push(DnType::from_oid(&oid), value);
+    }
+    Ok(dn)
 }
 
 /// Settings of the leaf cache.
@@ -635,6 +701,31 @@ mod tests {
             "the cross certificate is the leaf's issuer"
         );
         assert_eq!(cross_aki, Some(vec![0x11; 20]), "the previous CA issued it");
+    }
+
+    /// The control plane's CA certificates encode their subject as `PrintableString`. A cross
+    /// certificate for one loaded from PEM must repeat that subject byte for byte, or chain
+    /// builders do not take it for the leaf's issuer.
+    #[test]
+    fn cross_certificate_repeats_a_loaded_subject_exactly() {
+        let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut p = ca_params(&CaOptions::default(), OffsetDateTime::now_utc()).unwrap();
+        let mut dn = DistinguishedName::new();
+        dn.push(
+            DnType::CommonName,
+            DnValue::PrintableString("scrim interception CA 1".try_into().unwrap()),
+        );
+        dn.push(DnType::OrganizationName, "scrim");
+        p.distinguished_name = dn;
+        let cert = p.self_signed(&key).unwrap();
+        let newer = CertificateAuthority::from_pem(&cert.pem(), &key.serialize_pem()).unwrap();
+        let older = CertificateAuthority::generate(&CaOptions::default()).unwrap();
+        let cross = older.cross_sign(&newer).unwrap();
+        let subject = |der: &[u8]| {
+            let (_, c) = x509_parser::parse_x509_certificate(der).unwrap();
+            c.subject().as_raw().to_vec()
+        };
+        assert_eq!(subject(&cross), subject(newer.cert_der()));
     }
 
     #[test]
