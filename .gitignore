@@ -25,6 +25,7 @@
 .env.*
 !.env.example
 leak-report.json
+/load-results/
 
 # Pinned tools of `just deploy-examples-check`
 /.tools/

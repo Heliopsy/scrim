@@ -106,9 +106,9 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 ## 10a. Command-line tools
 
 - [x] 10a.1 Tool profiles with generated placeholder env and config files, removed at session end; verify: gh, git over HTTPS, kubectl, helm, npm and docker login work through `scrim run` with no real value in the session
-- [ ] 10a.2 AWS SigV4 re-signing toward bound endpoints; verify: `aws s3 ls` and `aws sts get-caller-identity` succeed against LocalStack with placeholder keys, unbound region refused
-- [ ] 10a.3 Format-preserving placeholders; verify: a client that checks the token prefix sends the placeholder and the guard still catches it
-- [ ] 10a.4 Upstream client certificates; verify: kubectl with certificate auth in kind
+- [x] 10a.2 AWS SigV4 re-signing toward bound endpoints; verify: `aws s3 ls` and `aws sts get-caller-identity` succeed against LocalStack with placeholder keys, unbound region refused
+- [x] 10a.3 Format-preserving placeholders; verify: a client that checks the token prefix sends the placeholder and the guard still catches it
+- [x] 10a.4 Upstream client certificates; verify: kubectl with certificate auth in kind
 - [x] 10a.6 Environment override mapping per profile; verify: each built-in profile's tool reads only the generated placeholder config in a session test
 - [x] 10a.7 Linux session filesystem view (mount namespace, placeholder or hidden credential paths); verify: a tool reading `~/.aws/credentials` via the password-database home sees the placeholder and `cat` of a real key file fails
   - done: `internal/fsview`, `run.fs-view` (auto, namespace, home, off) and `run.fs-view-hide`. `TestFSViewPasswdHome` mounts a temporary directory over the password-database home in a namespace of the test's own and reads `~/.aws/credentials` through it under `scrim run`: placeholder, never the decoy. `TestFSViewNamespace` checks `cat ~/.ssh/id_ed25519` fails, unmounting fails (also from a nested user namespace), the session still identifies the agent, and `/bin/true` as helper refuses the start. `e2e-profiles` "filesystem view": the real aws CLI with `AWS_SHARED_CREDENTIALS_FILE` removed reads the placeholder over a decoy. CI runs the namespace tests in `e2e-profiles` with `SCRIM_TEST_REQUIRE_USERNS=1`
@@ -167,7 +167,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 - [x] 14.1 Valkey and NATS event backends, Valkey rate limits; verify: contract suites and a multi-replica load test
 - [x] 14.2 Audit sinks OTLP, Loki and Kafka with backpressure policy; verify: a slow sink never drops silently
-- [ ] 14.3 Proxy-level load test at 1,000 concurrent streams; verify: published numbers meet the performance spec
+- [x] 14.3 Proxy-level load test at 1,000 concurrent streams; verify: published numbers meet the performance spec
+  - done: `test/load` (`just load-test`, workflow `load.yaml`: smoke on pull requests, full weekly, on demand and with the `load-test:full` label). The full run on GitHub-hosted ubuntu-24.04 passed with Valkey and with NATS events: 1,000 streams through three replicas, zero leaks, restore, injection and cross-replica approval failures, scrim's p99 2.5 to 4.3 ms per request (budget 5 ms) and 22 to 24 µs per chunk (budget 50 µs); numbers and thresholds in docs/state-and-observability.md, Load test. Watched failing with `--sabotage leak` and `--sabotage events`
 
 ## 15. Remaining edge modes
 

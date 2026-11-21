@@ -1,0 +1,18 @@
+[
+  {
+    "placeholder": "⟦scrim:kind-admin:01aabbccddeeff0011⟧",
+    "public_key_hex": "953bbf8175db9ab0e7ec63904e9df862cee42393cab961a4ad8107ac9d13d503"
+  },
+  {
+    "placeholder": "%E2%9F%A6scrim:kind-admin:01aabbccddeeff0011%E2%9F%A7",
+    "public_key_hex": "0c105489f5bd722fa24d17e5954d738c4eeefceda9255581c29b003100dd1c0b"
+  },
+  {
+    "placeholder": "SCRIM_KIND_ADMIN_CERT",
+    "public_key_hex": "e2034a45f39ec08a2ef88e5b7187966d445c47ef06a74273df3ce4d7035a0803"
+  },
+  {
+    "placeholder": "{{scrim:bao://kv/agents/kind#client}}",
+    "public_key_hex": "64ff1806736d9841971aab5f69fad3215082a9640e818e680c0c3781e496e721"
+  }
+]

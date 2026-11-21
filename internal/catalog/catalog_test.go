@@ -464,3 +464,25 @@ func TestEnvName(t *testing.T) {
 		}
 	}
 }
+
+func TestPlaceholderFormatAndSigV4Validation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		e    Entry
+		ok   bool
+	}{
+		{"shape", Entry{Name: "gh", Ref: "env://GH", PlaceholderFormat: "shape"}, true},
+		{"unknown format", Entry{Name: "gh", Ref: "env://GH", PlaceholderFormat: "jwt"}, false},
+		{"display shape", Entry{Name: "gh", Ref: "env://GH", Class: ClassDisplay, PlaceholderFormat: "shape"}, false},
+		{"sigv4", Entry{Name: "aws-secret", Ref: "env://S", AWSSigV4: &AWSSigV4{AccessKeyID: "aws-akid", Regions: []string{"us-east-1"}}}, true},
+		{"sigv4 self", Entry{Name: "aws-secret", Ref: "env://S", AWSSigV4: &AWSSigV4{AccessKeyID: "aws-secret"}}, false},
+		{"sigv4 bad region", Entry{Name: "aws-secret", Ref: "env://S", AWSSigV4: &AWSSigV4{AccessKeyID: "aws-akid", Regions: []string{"US EAST"}}}, false},
+		{"sigv4 and cert", Entry{Name: "x", Ref: "env://S", ClientCertificate: true, AWSSigV4: &AWSSigV4{AccessKeyID: "y"}}, false},
+	} {
+		e := tc.e
+		err := validateEntry(&e)
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: err = %v", tc.name, err)
+		}
+	}
+}

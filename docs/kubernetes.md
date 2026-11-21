@@ -477,6 +477,11 @@ Past a handful of replicas, three more choices scale separately (design D9):
 - `auditSinks` copies the audit log to an OpenTelemetry collector, Loki or Kafka, each with its own
   queue and backpressure policy ([state-and-observability.md](state-and-observability.md#external-audit-sinks)).
 
+What three replicas on PostgreSQL with Valkey or NATS events sustain at 1,000 concurrent streams,
+and the CPU and memory each replica used doing it, is measured by the proxy-level load test
+([state-and-observability.md](state-and-observability.md#load-test)); size `resources` and the HPA
+from those numbers and your own traffic.
+
 ```yaml
 postgres:
   enabled: true
