@@ -28,7 +28,8 @@ NAME="$(sed -n 's/^name: *//p' "$CHART/Chart.yaml")"
 REL_PATH="deploy/helm/$(basename "$CHART")"
 CLUSTER="${CLUSTER:-scrim-chart-tests}"
 CTX="kind-$CLUSTER"
-# kind v0.33.0's node image for the cluster version verify.sh validates against.
+# kind v0.33.0's node image for the Kubernetes minor verify.sh validates against
+# (kind publishes one node image per minor with each release).
 KIND_NODE_IMAGE="${KIND_NODE_IMAGE:-docker.io/kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5}"
 KIND_PROVIDER="${KIND_PROVIDER:-podman}"
 OUT="${OUT:-$(mktemp -d)}/kind"

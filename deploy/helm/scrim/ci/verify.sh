@@ -36,6 +36,7 @@ set -euo pipefail
 CHART="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(cd "$CHART/../../.." && pwd)"
 NAME="$(sed -n 's/^name: *//p' "$CHART/Chart.yaml")"
+# renovate: datasource=github-releases depName=kubernetes/kubernetes extractVersion=^v(?<version>.+)$
 K8S_VERSION="${K8S_VERSION:-1.37.2}"
 OUT="${OUT:-$(mktemp -d "${TMPDIR:-/tmp}/scrim-verify.XXXXXX")}"
 mkdir -p "$OUT"

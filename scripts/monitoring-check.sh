@@ -11,8 +11,11 @@
 # from the pinned prom/prometheus image with rootless podman instead.
 set -euo pipefail
 
+# renovate: datasource=github-releases depName=prometheus/prometheus extractVersion=^v(?<version>.+)$
 PROMETHEUS_VERSION=3.16.0
+# sha256: https://github.com/prometheus/prometheus/releases/download/v{version}/prometheus-{version}.linux-amd64.tar.gz
 PROMETHEUS_SHA256_LINUX_AMD64=68727009472a2c02e1ff7f062fd5b3e637285bffc8fc2d340c76fb449d6e0f34
+# sha256: https://github.com/prometheus/prometheus/releases/download/v{version}/prometheus-{version}.linux-arm64.tar.gz
 PROMETHEUS_SHA256_LINUX_ARM64=fd8571b8162f4020232d886f17340bcf92e1722985ae3b4c1d096157826c0fbe
 PROMETHEUS_IMAGE="docker.io/prom/prometheus:v${PROMETHEUS_VERSION}"
 

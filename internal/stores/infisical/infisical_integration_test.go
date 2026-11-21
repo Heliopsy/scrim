@@ -23,6 +23,7 @@ import (
 )
 
 // defaultInfisicalVersion is the image tag the integration test runs.
+// renovate: datasource=docker depName=docker.io/infisical/infisical
 const defaultInfisicalVersion = "v0.167.14"
 
 // admin talks to Infisical with an admin identity token, for test setup

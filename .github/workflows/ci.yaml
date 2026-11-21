@@ -48,6 +48,7 @@ jobs:
       - run: go vet ./...
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
         with:
+          # renovate: datasource=github-releases depName=golangci/golangci-lint
           version: v2.15.0
       # Container-backed store tests run in their own job below.
       - run: go test -race -count=1 ./...
@@ -138,7 +139,9 @@ jobs:
     permissions:
       contents: read
     env:
+      # renovate: datasource=github-releases depName=binwiederhier/ntfy extractVersion=^v(?<version>.+)$
       NTFY_VERSION: 2.38.1
+      # sha256: https://github.com/binwiederhier/ntfy/releases/download/v{version}/ntfy_{version}_linux_amd64.tar.gz
       NTFY_LINUX_AMD64_SHA256: 9727d45e5da86c3f338f0f329044485bddde76f3fbbbc3f9e695c14776f09c32
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -356,7 +359,9 @@ jobs:
     env:
       # The committed Go code names this protoc in its header. Upstream
       # publishes no checksums; this is the sha256 of the release asset.
+      # renovate: datasource=github-releases depName=protocolbuffers/protobuf extractVersion=^v(?<version>.+)$
       PROTOC_VERSION: "36.2"
+      # sha256: https://github.com/protocolbuffers/protobuf/releases/download/v{version}/protoc-{version}-linux-x86_64.zip
       PROTOC_LINUX_X86_64_SHA256: 121f6c7afe1d4d0e3ea6aab9432038599250134cbf4474cb1167d2c7decd4278
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -402,7 +407,9 @@ jobs:
       # is a Docker container action and cannot run on the ho-z10 pods.
       - name: cargo-deny
         env:
+          # renovate: datasource=github-releases depName=EmbarkStudios/cargo-deny
           CARGO_DENY_VERSION: 0.22.0
+          # sha256: https://github.com/EmbarkStudios/cargo-deny/releases/download/{version}/cargo-deny-{version}-x86_64-unknown-linux-musl.tar.gz
           CARGO_DENY_SHA256: 98c56e6a408bfa5c3c60744b6015aaa6aa08f743fdeb88386d06fca035bb1786
         run: |
           set -euo pipefail
@@ -418,7 +425,9 @@ jobs:
       # gitleaks scans every fetched branch, including unmerged ones.
       - name: gitleaks
         env:
+          # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v(?<version>.+)$
           GITLEAKS_VERSION: 8.30.1
+          # sha256: https://github.com/gitleaks/gitleaks/releases/download/v{version}/gitleaks_{version}_linux_x64.tar.gz
           GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
         run: |
           set -euo pipefail

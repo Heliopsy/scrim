@@ -10,6 +10,10 @@
       "extra-files": [
         {
           "type": "generic",
+          "path": "deploy/examples/argocd/application-helm.yaml"
+        },
+        {
+          "type": "generic",
           "path": "deploy/helm/scrim/Chart.yaml"
         },
         {

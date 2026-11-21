@@ -18,7 +18,7 @@ Copy it to the root of the fleet repository as `renovate.json`, or merge its `cu
 committing:
 
 ```sh
-npx --yes --package renovate@44.198.3 -- renovate-config-validator renovate.json
+npx --yes --package renovate@44.257.7 -- renovate-config-validator renovate.json
 ```
 
 With Renovate in place, Flux image automation and Argo CD Image Updater are optional: Renovate

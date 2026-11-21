@@ -1,0 +1,210 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Everything Dependabot does not update: release binaries pinned in scripts, env files and workflows, container images, the Kubernetes target, npm and Python tools, the Go and Rust toolchains. Dependabot keeps go.mod, the Cargo manifests and the workflow actions (.github/dependabot.yml); the two never manage the same file. The annotated pins are also what scripts/depsfresh -pins checks. See AGENTS.md, Dependencies.",
+  "extends": ["config:recommended", ":semanticCommits", "schedule:weekly"],
+  "enabledManagers": ["custom.regex", "dockerfile", "asdf", "argocd", "pip-compile"],
+  "semanticCommitType": "build",
+  "ignorePresets": [":ignoreModulesAndTests"],
+  "ignorePaths": ["**/node_modules/**", "dataplane/target/**", ".worktrees/**", "openspec/changes/archive/**"],
+  "argocd": {
+    "managerFilePatterns": ["/^deploy/examples/argocd/.+\\.ya?ml$/"]
+  },
+  "pip-compile": {
+    "managerFilePatterns": ["/^deploy/examples/ansible/requirements-lint\\.txt$/"]
+  },
+  "packageRules": [
+    {
+      "description": "release-please owns every scrim version in this repository (x-release-please-version markers), except SCRIM_VERSION in scripts/deploy-examples/tools.env, which installs a published release and so moves after it.",
+      "matchPackageNames": ["/^ghcr\\.io/heliopsy//", "/^oci://ghcr\\.io/heliopsy//"],
+      "enabled": false
+    },
+    {
+      "description": "Pins in workflows and actions are CI changes.",
+      "matchFileNames": [".github/**"],
+      "semanticCommitType": "ci"
+    },
+    {
+      "description": "Test images and the kind test add-ons are test changes.",
+      "matchFileNames": ["test/**", "internal/**"],
+      "semanticCommitType": "test"
+    },
+    {
+      "description": "A release binary pinned with its sha256: Renovate moves the version only, so the checksum is stale until `just pin-sums` runs on the branch. CI fails on the mismatch (the pins job names each one).",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["github-releases", "github-tags"],
+      "prBodyNotes": [
+        "This pin has a sha256 next to it that Renovate cannot compute. Check out this branch, run `just pin-sums` (it downloads each changed asset and rewrites its sum), review the diff and push. Until then the Pinned checksums job fails."
+      ]
+    },
+    {
+      "description": "The Helm 3 leg of the chart matrix stays on Helm 3; HELM4_VERSION and the release carry the current major.",
+      "matchDepNames": ["helm/helm"],
+      "matchCurrentValue": "/^v3\\./",
+      "allowedVersions": "<4.0.0"
+    },
+    {
+      "description": "One pull request for every pin of a tool that appears in several files, so the pins never disagree.",
+      "matchDepNames": ["helm/helm"],
+      "matchCurrentValue": "/^v4\\./",
+      "groupName": "helm 4"
+    },
+    {
+      "description": "The Kubernetes target: kubectl, verify.sh K8S_VERSION, the deployment examples' KUBERNETES_VERSION and the kind node image move together. kind publishes a node image per Kubernetes minor with each kind release, so the node can trail the patch the others name.",
+      "matchDepNames": ["kubernetes/kubernetes", "docker.io/kindest/node", "kubernetes-sigs/kind"],
+      "groupName": "kubernetes"
+    },
+    {
+      "matchDepNames": ["prometheus/prometheus"],
+      "groupName": "prometheus"
+    },
+    {
+      "matchDepNames": ["sigstore/cosign"],
+      "groupName": "cosign"
+    },
+    {
+      "matchDepNames": ["yannh/kubeconform"],
+      "groupName": "kubeconform"
+    },
+    {
+      "matchDepNames": ["binwiederhier/ntfy", "docker.io/binwiederhier/ntfy"],
+      "groupName": "ntfy"
+    },
+    {
+      "matchDepNames": ["casey/just", "just"],
+      "groupName": "just"
+    },
+    {
+      "matchDepNames": ["golangci/golangci-lint", "golangci-lint"],
+      "groupName": "golangci-lint"
+    },
+    {
+      "description": "go.mod's go line and .tool-versions name the same Go.",
+      "matchDepNames": ["go", "golang"],
+      "groupName": "go toolchain"
+    },
+    {
+      "description": "The chart's test image: values.yaml, Chart.yaml's image list, ci/Containerfile.images and the goldens in one pull request (verify.sh fails when they disagree).",
+      "matchDepNames": ["docker.io/curlimages/curl", "curlimages/curl"],
+      "groupName": "chart test image"
+    },
+    {
+      "matchDepNames": ["docker.io/library/postgres"],
+      "groupName": "postgres test image"
+    },
+    {
+      "description": "LTS releases only: the cloud-init check runs on the current Ubuntu LTS, and CLOUD_INIT_VERSION names that release's package.",
+      "matchDepNames": ["docker.io/library/ubuntu"],
+      "versioning": "ubuntu"
+    },
+    {
+      "description": "Kyverno 1.20 (chart 3.10) no longer runs kyverno.io/v1 ClusterPolicies, which the chart's injection policy and the image verification example are. Approve the update from the dependency dashboard once the chart moved to policies.kyverno.io (.deps-fresh-ignore has the matching dated entry).",
+      "matchDepNames": ["kyverno"],
+      "matchUpdateTypes": ["minor", "major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "A new cosign major changes signing and verification defaults that the release relies on, and only a release run exercises them. Approve it from the dependency dashboard after reading the release notes.",
+      "matchDepNames": ["sigstore/cosign"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "A pin annotated on the line above: '# renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [extractVersion=<re>] [registryUrl=<url>]' (// in Go). KEY=value, KEY: value, Go constants and ${VAR:-default} forms.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^scripts/.+\\.(sh|env)$/",
+        "/^deploy/helm/scrim/ci/.+\\.sh$/",
+        "/^test/k8s/.+\\.sh$/",
+        "/^\\.github/workflows/.+\\.ya?ml$/",
+        "/^\\.github/actions/.+/action\\.ya?ml$/",
+        "/^internal/.+\\.go$/"
+      ],
+      "matchStrings": [
+        "(?:#|//) renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: packageName=(?<packageName>\\S+))?(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?(?: registryUrl=(?<registryUrl>\\S+))?\\n\\s*(?:const |export )?[A-Za-z0-9_]+(?: = |=|: )\"?(?:\\$\\{[A-Za-z0-9_]+:-)?(?<currentValue>[^\"\\s}]+)"
+      ]
+    },
+    {
+      "description": "A commit pin: '# renovate: datasource=git-refs depName=<name> packageName=<git url> branch=<branch>' above KEY=<sha>.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^scripts/.+\\.env$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>git-refs) depName=(?<depName>\\S+) packageName=(?<packageName>\\S+) branch=(?<currentValue>\\S+)\\n[A-Za-z0-9_]+=(?<currentDigest>[0-9a-f]{40})"
+      ]
+    },
+    {
+      "description": "Container images written inline as registry/repository:tag[@digest] in scripts, Go test helpers, test pods, the chart's image list and the goldens. Containerfiles go through the dockerfile manager instead.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^scripts/deploy-examples/tools\\.env$/",
+        "/^deploy/helm/scrim/ci/kind-test\\.sh$/",
+        "/^deploy/helm/scrim/Chart\\.yaml$/",
+        "/^test/k8s/e2e\\.sh$/",
+        "/^test/k8s/identity/run\\.sh$/",
+        "/^test/k8s/golden/out/.+\\.yaml$/",
+        "/^internal/testing/pgtest/pgtest\\.go$/",
+        "/^internal/stores/openbao/openbao_integration_test\\.go$/",
+        "/^internal/stores/vaultwarden/vwtest/vwtest\\.go$/",
+        "/^internal/stores/infisical/testdata/pod\\.yaml$/",
+        "/^bench/redact-bench/harness/(env\\.sh|proxybench\\.py)$/",
+        "/^justfile$/"
+      ],
+      "matchStrings": [
+        "(?<depName>(?:docker\\.io|quay\\.io|ghcr\\.io|gcr\\.io)/[a-z0-9][a-z0-9._/-]*):(?<currentValue>[A-Za-z0-9][A-Za-z0-9._-]*)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?"
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "The chart's test image in values.yaml, written as registry, repository, tag and digest; tag and digest move together.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^deploy/helm/scrim/values\\.yaml$/"],
+      "matchStrings": [
+        "registry: (?<registry>\\S+)\\n\\s*repository: (?<repository>\\S+)\\n\\s*tag: \"(?<currentValue>[^\"]+)\"\\n\\s*useAppVersion: false\\n\\s*digest: (?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "{{{registry}}}/{{{repository}}}"
+    },
+    {
+      "description": "npm tools run through npx at a pinned version.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^justfile$/", "/^\\.github/workflows/.+\\.ya?ml$/", "/^docs/.+\\.md$/"],
+      "matchStrings": [
+        "npx --yes (?:--package )?(?<depName>(?:@[a-z0-9-]+/)?[a-z0-9][a-z0-9._-]*)@(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "datasourceTemplate": "npm"
+    },
+    {
+      "description": "govulncheck, run with go run at a pinned module version.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^justfile$/", "/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": ["golang\\.org/x/vuln/cmd/govulncheck@(?<currentValue>v[0-9][^\\s]*)"],
+      "datasourceTemplate": "go",
+      "depNameTemplate": "golang.org/x/vuln"
+    },
+    {
+      "description": "Python tools pip installs inline in a workflow step.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStringsStrategy": "recursive",
+      "matchStrings": ["pip\"? install [^\\n]+", "(?<depName>[a-z][a-z0-9_.-]*)==(?<currentValue>[0-9][^\\s]*)"],
+      "datasourceTemplate": "pypi"
+    },
+    {
+      "description": "The Go toolchain go.mod names (Dependabot updates the requirements, not this line).",
+      "customType": "regex",
+      "managerFilePatterns": ["/^go\\.mod$/"],
+      "matchStrings": ["\\ngo (?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\\n"],
+      "datasourceTemplate": "golang-version",
+      "depNameTemplate": "go"
+    },
+    {
+      "description": "The Rust toolchain of the data plane.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^dataplane/rust-toolchain\\.toml$/"],
+      "matchStrings": ["channel = \"(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\""],
+      "datasourceTemplate": "github-tags",
+      "depNameTemplate": "rust-lang/rust"
+    }
+  ]
+}
