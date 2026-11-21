@@ -178,8 +178,14 @@ e2e-chain *args:
 e2e-session *args:
     test/e2e/run.sh session {{args}}
 
+# Real CLIs (gh, git, kubectl, helm, podman, npm, terraform, tofu, gcloud, az, pip, twine,
+# cargo, hcloud, doctl, aws) with their tool profiles against fakes of their APIs. A CLI that is
+# not installed is skipped; SCRIM_E2E_REQUIRE_TOOLS=1 fails instead.
+e2e-profiles *args:
+    test/e2e/run.sh profiles {{args}}
+
 # Every end-to-end run above.
-e2e: e2e-tools e2e-chain e2e-session
+e2e: e2e-tools e2e-chain e2e-session e2e-profiles
 
 ntfy_image := "docker.io/binwiederhier/ntfy:v2.38.1"
 

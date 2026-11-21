@@ -14,10 +14,7 @@ env:
 unset: [NPM_CONFIG__AUTH, NPM_CONFIG__AUTHTOKEN]
 files:
   - path: npmrc
-    content: |
-      {{- range $c := creds "token" }}{{ range $c.Hosts }}
-      //{{ . }}/:_authToken={{ $c.Placeholder }}
-      {{- end }}{{ end }}
+    content: "{{ range $c := creds \"token\" }}{{ range $c.Hosts }}//{{ . }}/:_authToken={{ $c.Placeholder }}\n{{ end }}{{ end }}"
 paths:
   - home: .npmrc
     generated: npmrc

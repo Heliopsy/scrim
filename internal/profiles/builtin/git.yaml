@@ -19,10 +19,7 @@ env:
   GIT_TERMINAL_PROMPT: "0"
 files:
   - path: git-credentials
-    content: |
-      {{- range $c := creds "password" }}{{ range $c.Hosts }}
-      https://{{ param "username" }}:{{ $c.Placeholder }}@{{ . }}
-      {{- end }}{{ end }}
+    content: "{{ range $c := creds \"password\" }}{{ range $c.Hosts }}https://{{ param \"username\" }}:{{ $c.Placeholder }}@{{ . }}\n{{ end }}{{ end }}"
 paths:
   - home: .git-credentials
     generated: git-credentials

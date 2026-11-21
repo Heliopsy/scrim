@@ -33,6 +33,8 @@ type Cred struct {
 	Hosts []string
 	// Host is the first of Hosts, or "".
 	Host string
+
+	bound int // bound hosts, wildcards included
 }
 
 // Filled returns the entries filling each slot of p, keyed by slot name.
@@ -52,7 +54,7 @@ func Filled(p *Profile, b Bindings) map[string][]Cred {
 			if !ok {
 				continue
 			}
-			c := Cred{Name: bd.Name, Placeholder: bd.Placeholder}
+			c := Cred{Name: bd.Name, Placeholder: bd.Placeholder, bound: len(bd.Hosts)}
 			for _, h := range bd.Hosts {
 				if !strings.HasPrefix(h, "*.") {
 					c.Hosts = append(c.Hosts, h)
@@ -263,7 +265,7 @@ func Render(ps []*Profile, b Bindings, sess Session) (*Rendered, error) {
 						hosts = append(hosts, h)
 					}
 				}
-				if len(c.Hosts) == 0 {
+				if c.bound == 0 {
 					out.Warnings = append(out.Warnings, fmt.Sprintf("tool profile %s: catalog entry %s has no bound hosts; its placeholder is never injected", p.Name, c.Name))
 				}
 			}
