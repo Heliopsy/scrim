@@ -39,7 +39,7 @@ data:
       placeholder-keys:
         {{- include "scrim.placeholderKeysConfig" (dict "root" . "path" "/etc/scrim/placeholder") | trim | nindent 8 }}
     deployment:
-      # Replicas sharing this state; more than one needs postgres for state and events.
+      # Replicas sharing this state; more than one needs postgres for state (and postgres, valkey or nats for events).
       replicas: {{ include "scrim.maxReplicas" . }}
     {{- if .Values.postgres.enabled }}
     state:
@@ -48,12 +48,15 @@ data:
         dsn: file:/run/secrets/scrim/postgres/{{ include "chart.secretKey" (list . "postgres" "dsn") }}
         max-conns: {{ .Values.postgres.maxConns }}
     events:
-      backend: postgres
+      backend: {{ .Values.events.backend }}
     {{- else }}
     state:
       backend: memory
     events:
       backend: local
+    {{- end }}
+    {{- with include "scrim.scaleSettings" . | trim }}
+    {{- . | nindent 4 }}
     {{- end }}
   {{- with .Values.policyRules }}
   policy.yaml: |

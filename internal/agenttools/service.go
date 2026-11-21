@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/heliopsy/scrim/internal/identity"
+	"github.com/heliopsy/scrim/internal/ratelimit"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -30,9 +31,12 @@ type Deps struct {
 	Auditor   Auditor
 	Notifier  Notifier
 	Links     EntryLinks
-	Logger    *slog.Logger
-	Now       func() time.Time
-	Rand      io.Reader
+	// Limits rate-limits calls per agent (ratelimit.agent-api.*, and
+	// ratelimit.asks.* for secret_ask_human); nil means unlimited.
+	Limits Limits
+	Logger *slog.Logger
+	Now    func() time.Time
+	Rand   io.Reader
 }
 
 // Service implements every agent tool.
@@ -91,15 +95,41 @@ func (s *Service) begin(id identity.Identity, tool, ref, store string) *call {
 	}}
 }
 
-// authorize checks identity and scope.
-func (c *call) authorize() error {
+// Limits decides whether an agent may make one more request of a class
+// (ratelimit.Set implements it).
+type Limits interface {
+	Check(ctx context.Context, class, agent string) error
+}
+
+// authorize checks identity, scope and the agent API rate limit.
+func (c *call) authorize(ctx context.Context) error {
 	if !c.id.Known() {
 		return Errorf(CodeUnauthenticated, "the caller has no agent identity")
 	}
 	if !c.id.Has(scopeFor[c.entry.Tool]) {
 		return Errorf(CodeForbidden, "the caller's identity lacks scope %s", scopeFor[c.entry.Tool])
 	}
-	return nil
+	return c.limit(ctx, ratelimit.ClassAgentAPI)
+}
+
+// limit applies one rate-limit class to the caller's agent.
+func (c *call) limit(ctx context.Context, class string) error {
+	if c.s.d.Limits == nil {
+		return nil
+	}
+	err := c.s.d.Limits.Check(ctx, class, c.id.Agent)
+	var limited *ratelimit.LimitedError
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &limited):
+		c.entry.Outcome = OutcomeRefused
+		return Errorf(CodeRateLimited, "%s", limited.Error())
+	default:
+		c.s.d.Logger.Warn("rate limit check failed; refusing", "class", class, "error", err)
+		c.entry.Outcome = OutcomeRefused
+		return Errorf(CodeUnavailable, "the rate limiter is unavailable")
+	}
 }
 
 // decide evaluates policy for the call's operation.
@@ -164,7 +194,7 @@ func (s *Service) List(ctx context.Context, id identity.Identity, in ListInput) 
 }
 
 func (s *Service) list(ctx context.Context, c *call, in ListInput) (ListOutput, error) {
-	if err := c.authorize(); err != nil {
+	if err := c.authorize(ctx); err != nil {
 		return ListOutput{}, err
 	}
 	if err := checkStore(in.Store); err != nil {
@@ -216,7 +246,7 @@ func (s *Service) Request(ctx context.Context, id identity.Identity, in RequestI
 }
 
 func (s *Service) request(ctx context.Context, c *call, in RequestInput) (RequestOutput, error) {
-	if err := c.authorize(); err != nil {
+	if err := c.authorize(ctx); err != nil {
 		return RequestOutput{}, err
 	}
 	if err := checkRef(in.Ref); err != nil {
@@ -271,7 +301,7 @@ func (s *Service) Status(ctx context.Context, id identity.Identity, in StatusInp
 }
 
 func (s *Service) status(ctx context.Context, c *call, in StatusInput) (StatusOutput, error) {
-	if err := c.authorize(); err != nil {
+	if err := c.authorize(ctx); err != nil {
 		return StatusOutput{}, err
 	}
 	if in.ID == "" || len(in.ID) > 128 {
@@ -308,7 +338,7 @@ func (s *Service) Grants(ctx context.Context, id identity.Identity) (GrantsOutpu
 }
 
 func (s *Service) grants(ctx context.Context, c *call) (GrantsOutput, error) {
-	if err := c.authorize(); err != nil {
+	if err := c.authorize(ctx); err != nil {
 		return GrantsOutput{}, err
 	}
 	gs, err := s.d.Approvals.Grants(ctx, c.id)
@@ -336,7 +366,7 @@ func (s *Service) Check(ctx context.Context, id identity.Identity, in CheckInput
 	}
 	c := s.begin(id, in.Tool, in.Ref, in.Store)
 	c.entry.Detail = "check"
-	err := c.authorize()
+	err := c.authorize(ctx)
 	if err == nil {
 		err = checkRef(in.Ref)
 	}
@@ -369,7 +399,7 @@ func (s *Service) Generate(ctx context.Context, id identity.Identity, in GenInpu
 }
 
 func (s *Service) generate(ctx context.Context, c *call, in GenInput) (WriteOutput, error) {
-	if err := c.authorize(); err != nil {
+	if err := c.authorize(ctx); err != nil {
 		return WriteOutput{}, err
 	}
 	if err := checkRef(in.Ref); err != nil {
@@ -410,7 +440,7 @@ func (s *Service) Put(ctx context.Context, id identity.Identity, in PutInput, v 
 }
 
 func (s *Service) put(ctx context.Context, c *call, in PutInput, v secret.Value) (WriteOutput, error) {
-	if err := c.authorize(); err != nil {
+	if err := c.authorize(ctx); err != nil {
 		return WriteOutput{}, err
 	}
 	if in.Origin != "" && in.Origin != ToolSecretPut && in.Origin != ToolSecretCapture {

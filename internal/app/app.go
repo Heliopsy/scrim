@@ -18,12 +18,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/audit"
+	"github.com/heliopsy/scrim/internal/audit/sinks"
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/dataplane"
 	"github.com/heliopsy/scrim/internal/events"
 	"github.com/heliopsy/scrim/internal/notify"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/policy"
+	"github.com/heliopsy/scrim/internal/ratelimit"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/refresh"
@@ -55,6 +58,13 @@ type App struct {
 	// Events follows the state outbox and wakes the policy components when
 	// another replica changes something; RunPolicy runs it.
 	Events *events.Bus
+	// AuditSinks feeds the external audit sinks (audit.sinks) from the
+	// state backend's audit tap; empty when only db is configured.
+	AuditSinks *audit.Fanout
+	// RateLimits enforces the per-agent limits (ratelimit.*).
+	RateLimits *ratelimit.Set
+
+	sinkTargets []audit.Target
 
 	configs *configDigests
 	stop    context.CancelFunc
@@ -162,11 +172,23 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 		_ = a.State.Close()
 		return nil, fmt.Errorf("state: migrate: %w", err)
 	}
+	if err := a.initAuditSinks(cfg); err != nil {
+		_ = a.State.Close()
+		return nil, err
+	}
+	if a.RateLimits, err = ratelimit.FromConfig(cfg, a.Instruments); err != nil {
+		_ = a.closeAuditSinks()
+		_ = a.State.Close()
+		return nil, err
+	}
+	a.Config.Subscribe(func(_, cur *config.Config) { a.RateLimits.SetLimits(ratelimit.Limits(cur)) })
 	if err := a.initEvents(ctx, cfg); err != nil {
+		_ = a.closeAuditSinks()
 		_ = a.State.Close()
 		return nil, err
 	}
 	if err := a.initPolicy(ctx, cfg); err != nil {
+		_ = a.closeAuditSinks()
 		_ = a.State.Close()
 		return nil, fmt.Errorf("policy: %w", err)
 	}
@@ -181,6 +203,7 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 		},
 	})
 	if err != nil {
+		_ = a.closeAuditSinks()
 		_ = a.State.Close()
 		return nil, err
 	}
@@ -192,6 +215,7 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 	}
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	a.stop = cancel
+	a.AuditSinks.Start(runCtx)
 	go func() {
 		if err := a.Config.Run(runCtx); err != nil {
 			a.Log.Warn("configuration watch stopped", "err", err)
@@ -222,8 +246,63 @@ func (a *App) Close() error {
 	if a.Stores != nil {
 		errs = append(errs, a.Stores.Close())
 	}
+	errs = append(errs, a.closeAuditSinks(), a.RateLimits.Close())
 	if a.State != nil {
 		errs = append(errs, a.State.Close())
 	}
 	return errors.Join(errs...)
+}
+
+// initAuditSinks builds the external audit sinks and taps the state
+// backend: every write transaction that appends audit entries reserves room
+// for them on the block-policy sinks before it commits (and is refused when
+// there is none within the sink's timeout), and queues them on every sink
+// once it has committed.
+func (a *App) initAuditSinks(cfg *config.Config) error {
+	targets, err := sinks.Targets(cfg)
+	if err != nil {
+		return err
+	}
+	a.sinkTargets = targets
+	a.AuditSinks = audit.NewFanout(audit.FanoutOptions{Scrub: a.Scrubber.Scrub, Observer: a.Instruments,
+		Log: obs.WithComponent(a.Log, "audit")}, targets...)
+	if a.AuditSinks.Empty() {
+		return nil
+	}
+	tap, ok := a.State.(state.AuditTap)
+	if !ok {
+		sinks.CloseAll(targets)
+		return fmt.Errorf("audit.sinks: state backend %s cannot feed external audit sinks", a.State.Backend())
+	}
+	fan := a.AuditSinks
+	tap.SetAuditTap(func(ctx context.Context, entries []audit.Entry) (func(bool), error) {
+		r, err := fan.Reserve(ctx, len(entries))
+		if err != nil {
+			return nil, err
+		}
+		return func(committed bool) {
+			if committed {
+				r.Commit(entries)
+			} else {
+				r.Cancel()
+			}
+		}, nil
+	})
+	return nil
+}
+
+// closeAuditSinks drains the external sinks for up to ten seconds; what
+// they did not take is counted and logged by the fanout.
+func (a *App) closeAuditSinks() error {
+	if a.AuditSinks.Empty() {
+		return nil
+	}
+	if tap, ok := a.State.(state.AuditTap); ok {
+		tap.SetAuditTap(nil)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := a.AuditSinks.Close(ctx)
+	sinks.CloseAll(a.sinkTargets)
+	return err
 }
