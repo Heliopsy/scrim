@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"text/template"
+
+	"github.com/heliopsy/scrim/internal/credhelper"
 )
 
 // Profile is one tool profile: where a command-line tool reads its
@@ -55,6 +57,10 @@ type Profile struct {
 	// filesystem view (10a.7) shows the generated file there, or hides the
 	// path when Generated is empty.
 	Paths []Path `yaml:"paths,omitempty" json:"paths,omitempty"`
+	// Bin are credential helper executables (docker-credential-scrim) that
+	// scrim run links to scrim in the session's bin directory, which it puts
+	// first on PATH. Only names in credhelper.Binaries are accepted.
+	Bin []string `yaml:"bin,omitempty" json:"bin,omitempty"`
 	// Test is the command `scrim profiles test` and the session tests run to
 	// show the tool reads only the generated configuration.
 	Test *Test `yaml:"test,omitempty" json:"test,omitempty"`
@@ -244,6 +250,11 @@ func (p *Profile) validate() error {
 			}
 		}
 	}
+	for _, b := range p.Bin {
+		if !slices.Contains(credhelper.Binaries, b) {
+			return fail("bin %q is not one of scrim's credential helpers (%s)", b, strings.Join(credhelper.Binaries, ", "))
+		}
+	}
 	if p.Test != nil {
 		if len(p.Test.Command) == 0 {
 			return fail("test has no command")
@@ -322,6 +333,7 @@ func (p *Profile) clone() *Profile {
 	c.Files = slices.Clone(p.Files)
 	c.Paths = slices.Clone(p.Paths)
 	c.Dirs = slices.Clone(p.Dirs)
+	c.Bin = slices.Clone(p.Bin)
 	c.Notes = slices.Clone(p.Notes)
 	if p.Test != nil {
 		t := *p.Test

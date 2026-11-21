@@ -7,14 +7,20 @@ credentials:
     required: true
 params:
   username: scrim
+  # The credential helper named in credHelpers for each bound registry:
+  # docker-credential-scrim answers from the generated auths and refuses to
+  # store a credential docker login hands it. "" leaves auths only.
+  helper: scrim
 env:
   DOCKER_CONFIG: '{{ path "docker" }}'
+bin: [docker-credential-scrim]
 files:
   - path: docker/config.json
-    content: '{{ authsjson "registry" (param "username") }}'
+    content: '{{ authsjson "registry" (param "username") (param "helper") }}'
 paths:
   - home: .docker/config.json
     generated: docker/config.json
 notes:
   - docker login and docker pull are performed by dockerd, outside the session, so their registry traffic is not injected; podman, buildah, skopeo, crane and BuildKit run in the session and are.
+  - docker-credential-scrim is linked into the session's bin directory, first on PATH; `docker login` with a real password is refused by it instead of being kept in the session's config.
   - Registries that check the user name need the username param set in a tool-profiles.docker override.

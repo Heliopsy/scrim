@@ -54,6 +54,13 @@ func testAgent(mode string) int {
 	case "sleep":
 		time.Sleep(time.Minute)
 		return 0
+	case "rewrite":
+		// Changes the project's .env while running, for the watch.
+		if err := os.WriteFile(".env", []byte("LATER_API_TOKEN="+os.Getenv("TEST_LATER_VALUE")+"\n"), 0o600); err != nil {
+			return 2
+		}
+		time.Sleep(1500 * time.Millisecond)
+		return 0
 	case "env":
 		tok := os.Getenv(localapi.EnvToken)
 		for _, kv := range os.Environ() {

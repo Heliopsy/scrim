@@ -30,6 +30,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/profiles"
+	"github.com/heliopsy/scrim/internal/projectscan"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -76,6 +77,13 @@ type Options struct {
 	Signals <-chan os.Signal
 	// Log receives operational messages. Optional.
 	Log *slog.Logger
+	// ScanProject scans the working directory for secret values in project
+	// files (.env*, *.tfvars, application config) and registers them for
+	// redaction before the agent starts (run.scan-project).
+	ScanProject bool
+	// ScanInterval is how often the project files are rescanned while the
+	// agent runs; zero or negative scans once.
+	ScanInterval time.Duration
 
 	// dryRun builds the plan only (PrintEnv).
 	dryRun bool
@@ -135,6 +143,7 @@ type Prepared struct {
 	instance Instance
 	token    secret.Value
 	client   *localapi.Client
+	project  *projectscan.Result
 }
 
 // Prepare ensures scrim runs, mints the session, writes the session
@@ -224,7 +233,7 @@ func (p *Prepared) build(ctx context.Context, ep Endpoints) error {
 			o.say("tool profiles are not applied: scrim has no forward proxy, so their placeholders would never be injected")
 		} else {
 			sess := profiles.Session{Dir: filepath.Join(dir, ProfilesDir), CABundle: filepath.Join(dir, FileBundle),
-				Home: envMap(o.environ())["HOME"]}
+				Home: envMap(o.environ())["HOME"], Scrim: scrimPath}
 			var err error
 			if rendered, err = o.Profiles(ctx, p.Session.Agent, sess); err != nil {
 				return refused("tool profiles: %v", err)
@@ -244,12 +253,26 @@ func (p *Prepared) build(ctx context.Context, ep Endpoints) error {
 		return fmt.Errorf("%w: %w", ErrRefused, err)
 	}
 	p.Plan = plan
+	if o.ScanProject {
+		if err := p.scanProject(ctx); err != nil {
+			return err
+		}
+	}
 	if o.dry() {
 		return nil
 	}
 	for _, d := range plan.Dirs {
 		if err := os.MkdirAll(filepath.Join(p.Dir, filepath.FromSlash(d)), 0o700); err != nil {
 			return refused("creating %s failed: %v", d, err)
+		}
+	}
+	for name, target := range plan.Links {
+		l := filepath.Join(p.Dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(l), 0o700); err != nil {
+			return refused("creating the directory of %s failed: %v", name, err)
+		}
+		if err := os.Symlink(target, l); err != nil {
+			return refused("linking %s failed: %v", name, err)
 		}
 	}
 	for name, data := range plan.Files {
@@ -293,6 +316,8 @@ func (p *Prepared) Close(ctx context.Context) {
 		p.client = nil
 	}
 	p.token.Wipe()
+	p.project.Wipe()
+	p.project = nil
 	if p.Dir != "" {
 		_ = os.RemoveAll(p.Dir)
 		p.Dir = ""
@@ -326,6 +351,10 @@ func (p *Prepared) Start(ctx context.Context) error {
 	}
 	cmd := &exec.Cmd{Path: path, Args: p.Plan.Args, Env: env, Dir: o.Dir,
 		Stdin: o.Stdin, Stdout: o.Stdout, Stderr: o.Stderr}
+	wctx, stop := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); p.watchProject(wctx) }()
+	defer func() { stop(); <-done }()
 	return supervise(cmd, o.Signals, o.stderr())
 }
 

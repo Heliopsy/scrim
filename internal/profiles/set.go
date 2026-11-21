@@ -93,6 +93,7 @@ type spec struct {
 	Files       []fileSpec        `json:"files"`
 	Dirs        []string          `json:"dirs"`
 	Paths       []Path            `json:"paths"`
+	Bin         []string          `json:"bin"`
 	Test        *Test             `json:"test"`
 	Notes       []string          `json:"notes"`
 }
@@ -117,7 +118,7 @@ func decode(name string, tree map[string]any) (*Profile, map[string]bool, error)
 	}
 	p := &Profile{Name: name, Description: s.Description, Tools: s.Tools, Requires: s.Requires,
 		Credentials: s.Credentials, Params: s.Params, Env: s.Env, Unset: s.Unset, Dirs: s.Dirs, Paths: s.Paths,
-		Test: s.Test, Notes: s.Notes}
+		Bin: s.Bin, Test: s.Test, Notes: s.Notes}
 	for _, f := range s.Files {
 		p.Files = append(p.Files, File(f))
 	}
@@ -166,6 +167,7 @@ func override(base, o *Profile, present map[string]bool) *Profile {
 	set("files", func() { p.Files = o.Files })
 	set("dirs", func() { p.Dirs = o.Dirs })
 	set("paths", func() { p.Paths = o.Paths })
+	set("bin", func() { p.Bin = o.Bin })
 	set("test", func() { p.Test = o.Test })
 	set("notes", func() { p.Notes = o.Notes })
 	return p

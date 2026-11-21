@@ -65,6 +65,22 @@ type Server struct {
 	// and guard over text an agent hook hands in (a tool result, a prompt).
 	// It owns text and wipes it.
 	Redactor func(ctx context.Context, text []byte) (Redacted, error)
+	// SessionValues, when set, serves PUT /v1/sessions/self/values: the
+	// values `scrim run` found in the session's project files, added to the
+	// redaction set for that session only and applied before the call
+	// returns. It owns the values and wipes them. A later call replaces the
+	// session's set; the set goes when the session ends.
+	SessionValues func(ctx context.Context, sessionID string, values []NamedValue) error
+	// SessionEnded, when set, is called with the ID of every session this
+	// API revokes or sweeps.
+	SessionEnded func(id string)
+}
+
+// NamedValue is one value registered for redaction. Name says where it was
+// found (`<file>#<key>`); it is not secret.
+type NamedValue struct {
+	Name  string
+	Value secret.Value
 }
 
 // Redacted is what the redactor returns: text with every known value
@@ -188,6 +204,9 @@ func (s *Server) SweepOnce(ctx context.Context) {
 		s.audit(ctx, agenttools.AuditEntry{Agent: sess.Agent, Principal: sess.Agent + "/" + sess.ID,
 			Source: string(identity.SourceSession), SessionID: sess.ID, UID: sess.UID, Tool: "session_revoke",
 			Outcome: agenttools.OutcomeOK, Detail: identity.RevokeRootExited})
+		if s.SessionEnded != nil {
+			s.SessionEnded(sess.ID)
+		}
 	}
 }
 
@@ -215,6 +234,7 @@ func (s *Server) Handler() http.Handler {
 	authed("POST "+v+"/sessions", s.mint)
 	authed("DELETE "+v+"/sessions/self", s.revokeSelf)
 	authed("DELETE "+v+"/sessions/{id}", s.revoke)
+	authed("PUT "+v+"/sessions/self/values", s.sessionValues)
 	authed("GET "+v+"/secrets", s.list)
 	authed("POST "+v+"/secrets/request", s.request)
 	authed("POST "+v+"/secrets/generate", s.generate)
@@ -442,6 +462,9 @@ func (s *Server) revokeID(w http.ResponseWriter, r *http.Request, id identity.Id
 		s.logger().Error("revoking a session failed", "session", sid, "error", err)
 		writeError(w, agenttools.Errorf(agenttools.CodeUnavailable, "the session could not be revoked"))
 		return
+	}
+	if s.SessionEnded != nil {
+		s.SessionEnded(sid)
 	}
 	s.audit(r.Context(), agenttools.AuditEntry{Agent: id.Agent, Principal: id.Principal(), Source: string(id.Source),
 		SessionID: sid, UID: id.Peer.UID, PID: id.Peer.PID, Tool: "session_revoke", Outcome: agenttools.OutcomeOK, Detail: reason})

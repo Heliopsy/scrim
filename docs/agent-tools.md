@@ -303,6 +303,7 @@ HTTP/1.1 with JSON on the Unix socket, every route under `/v1`, every response c
 | `POST /v1/sessions` | mint a session token (`scrim run`) |
 | `DELETE /v1/sessions/self` | end the caller's session |
 | `DELETE /v1/sessions/{id}` | revoke a session of the same user |
+| `PUT /v1/sessions/self/values` | add the values found in the session's project files to the redaction set (`scrim run`) |
 | `GET /v1/secrets` | `secrets_list` |
 | `POST /v1/secrets/request` | `secret_request` |
 | `POST /v1/secrets/generate` | `secret_gen` |
@@ -319,6 +320,13 @@ are refused, so a `value` field cannot be smuggled into a tool call. `PUT /v1/se
 only route that stores a value and no route returns one; the session token from
 `POST /v1/sessions` is the one credential the API returns, once, to the process that will start the
 agent.
+
+`PUT /v1/sessions/self/values` is what `scrim run` calls with the secret values it found in project
+files ([run.md](run.md#secrets-in-project-files)). Only a session may call it. The body is the values
+and their names (`<file>#<key>`), each a uvarint length and the bytes, up to 1000 values and 4 MiB;
+the call replaces the session's set and returns once the data plane applied it. The values are
+redacted, never injected or stored, and wiped when the session ends. Each call is audited as
+`tool.session_values` with the count, never a value or name.
 
 `POST /v1/redact` is what `scrim hooks run` calls (hooks-only interception,
 [interception.md](interception.md#6-hooks-only)). Its body is raw bytes, up to 3 MiB, such as a tool
