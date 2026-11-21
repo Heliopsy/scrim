@@ -1,0 +1,114 @@
+name: Load test
+
+# The proxy-level load test (tasks.md 14.3, test/load): three scrim replicas
+# on PostgreSQL with Valkey or NATS events, the release data plane, a fake
+# provider and a fake HTTPS tool API, all in memory- and CPU-capped rootless
+# podman containers on one runner. It fails on any leak, unrestored
+# placeholder, failed injection or approval that did not cross replicas, and
+# on the thresholds in test/load/profiles.json.
+#
+# - smoke (60 streams, 30 s): every pull request and push to main that
+#   touches the request path. A few minutes, most of it building the
+#   release data plane.
+# - full (1,000 streams, 3 min, Valkey and NATS): weekly, on demand, and on a
+#   pull request labelled load-test:full. Too heavy for every pull request:
+#   it needs the whole runner for about 15 minutes per events backend.
+#
+# GitHub-hosted: the ho-z10 pods have no podman. result.json, report.md and
+# every container's log are uploaded; report.md is also the job summary.
+# No secrets: every value is generated at run time and the containers are
+# removed at the end.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - dataplane/**
+      - internal/**
+      - main.go
+      - go.mod
+      - go.sum
+      - test/load/**
+      - .github/workflows/load.yaml
+  push:
+    branches: [main]
+    paths:
+      - dataplane/**
+      - internal/**
+      - main.go
+      - go.mod
+      - go.sum
+      - test/load/**
+      - .github/workflows/load.yaml
+  schedule:
+    - cron: '23 2 * * 1'
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Profile in test/load/profiles.json
+        type: choice
+        options: [full, smoke]
+        default: full
+
+permissions: read-all
+
+concurrency:
+  group: load-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  load:
+    name: Load test (${{ matrix.profile }}, ${{ matrix.events }})
+    # A label event runs only for the full label; the smoke run of that
+    # commit already ran on its push.
+    if: github.event.action != 'labeled' || github.event.label.name == 'load-test:full'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJSON((github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.profile == 'full') || contains(github.event.pull_request.labels.*.name, 'load-test:full')) && '["full"]' || '["smoke"]') }}
+        events: ${{ fromJSON((github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.profile == 'full') || contains(github.event.pull_request.labels.*.name, 'load-test:full')) && '["valkey","nats"]' || '["valkey"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - run: rustup toolchain install && cargo --version
+        working-directory: dataplane
+      - name: Runner
+        run: |
+          podman version --format '{{.Client.Version}}'
+          podman info --format '{{.Host.CgroupControllers}} {{.Host.CgroupsVersion}} {{.Host.CgroupManager}}'
+          nproc; free -m; df -h "$RUNNER_TEMP"
+      - name: Load test
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/target
+          PROFILE: ${{ matrix.profile }}
+          EVENTS: ${{ matrix.events }}
+        run: |
+          machine="GitHub-hosted ubuntu-24.04, $(nproc) vCPU, $(free -g | awk '/Mem:/ {print $2}') GiB"
+          test/load/run.sh --profile "$PROFILE" --events "$EVENTS" --out load-results --machine "$machine"
+      - name: Job summary
+        if: always()
+        run: cat load-results/report.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: load-${{ matrix.profile }}-${{ matrix.events }}
+          path: load-results/
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Remove leftover containers
+        if: always()
+        run: |
+          podman ps -a --filter name=scrim-load- --format '{{.Names}}'
+          podman ps -aq --filter name=scrim-load- | xargs -r podman rm -f -v
+          podman volume prune -f
