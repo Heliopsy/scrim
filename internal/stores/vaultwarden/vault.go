@@ -117,6 +117,9 @@ type vault struct {
 	warnings    []string
 	// metaLabels copies text custom fields into vaultwarden.meta.* labels.
 	metaLabels bool
+	// scope is the configured scope; text field values and secret values
+	// of items outside it are never decrypted for meta labels.
+	scope []string
 }
 
 func parseTime(s string) time.Time {
@@ -131,6 +134,7 @@ func parseTime(s string) time.Time {
 func buildVault(s *syncResponse, keys *keyring, revision int64, scope []string, metaLabels bool) *vault {
 	v := &vault{
 		metaLabels:  metaLabels,
+		scope:       scope,
 		revision:    revision,
 		email:       s.Profile.Email,
 		userID:      s.Profile.ID,
@@ -181,7 +185,7 @@ func buildVault(s *syncResponse, keys *keyring, revision int64, scope []string, 
 		v.items = append(v.items, it)
 	}
 	if metaLabels {
-		guardMeta(v.items, v.items, keys)
+		guardMeta(v.items, v.inScopeItems(), keys)
 	}
 	return v
 }
@@ -301,7 +305,7 @@ func (v *vault) decryptItem(c cipherJSON, keys *keyring) (*item, error) {
 		if _, dup := it.custom[fn]; dup {
 			continue // first field of a name wins, as in Bitwarden clients
 		}
-		if f.Type == fieldText && v.metaLabels && f.Value != nil {
+		if f.Type == fieldText && v.metaLabels && f.Value != nil && inScope(it.paths, v.scope) {
 			// A text field is shown in clear by Bitwarden clients: item
 			// metadata. Hidden fields never become labels.
 			if val, err := k.DecryptMetadata(*f.Value); err == nil {
@@ -334,6 +338,17 @@ func (it *item) finish() {
 	it.all = mergeNative(user, it.native)
 }
 
+// inScopeItems returns the items inside the configured scope.
+func (v *vault) inScopeItems() []*item {
+	var out []*item
+	for _, it := range v.items {
+		if it.inScope {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
 // guardMeta is the second guard on vaultwarden.meta.* labels: it drops every
 // candidate of targets whose value equals or contains a secret value of any
 // of sources (passwords, usernames, TOTP seeds, notes, SSH keys and hidden
@@ -342,7 +357,9 @@ func (it *item) finish() {
 // what meta labels describe. Values are decrypted one at a time and wiped.
 // If a value does not decrypt, the guard cannot vouch for anything and drops
 // every candidate. Only targets change, so items shared with readers can be
-// left out of them.
+// left out of them. Callers pass only in-scope items as sources: items
+// outside the configured scope are never decrypted (design D6), so a text
+// field repeating an out-of-scope secret is not caught.
 func guardMeta(targets, sources []*item, keys *keyring) {
 	var cands []*item
 	for _, it := range targets {

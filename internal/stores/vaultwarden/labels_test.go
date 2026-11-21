@@ -363,3 +363,42 @@ func TestMetaGuard(t *testing.T) {
 		t.Error("meta label with meta labels off")
 	}
 }
+
+// TestMetaGuardScope checks that the guard never decrypts items outside the
+// configured scope: an out-of-scope item whose hidden value cannot decrypt
+// would otherwise make the guard drop every meta label, and one repeating
+// an in-scope text value would suppress it.
+func TestMetaGuardScope(t *testing.T) {
+	f := newLabelFixture(t)
+	uk := f.keys.user
+	f.folder(t, "f2", "Personal")
+	f.sync.Ciphers = append(f.sync.Ciphers, cipherJSON{
+		ID: "in", Type: cipherLogin, Name: *f.enc(t, uk, "In"), FolderID: ptr("f1"), Login: &loginJSON{},
+		Fields: []fieldJSON{f.field(t, uk, fieldText, "env", "prod-eu-1")},
+	}, cipherJSON{
+		ID: "out", Type: cipherLogin, Name: *f.enc(t, uk, "Bank"), FolderID: ptr("f2"), Login: &loginJSON{},
+		Fields: []fieldJSON{
+			// A value that cannot decrypt: decrypting it would fail the guard.
+			{Type: fieldHidden, Name: f.enc(t, uk, "broken"), Value: ptr("2.AAAA|AAAA|AAAA")},
+			f.field(t, uk, fieldHidden, "same", "prod-eu-1"),
+			f.field(t, uk, fieldText, "outside", "visible"),
+		},
+	})
+	v := buildVault(f.sync, f.keys, 1, []string{"Agents"}, true)
+	in, _, _ := v.lookup("Agents/CI/In", "")
+	if in == nil || in.all[metaPrefix+"env"] != "prod-eu-1" {
+		t.Error("an out-of-scope item was decrypted by the meta guard")
+	}
+	for _, it := range v.items {
+		if it.raw.ID == "out" && len(it.meta) > 0 {
+			t.Error("text fields of an out-of-scope item were decrypted")
+		}
+	}
+	// Without a scope the whole account is in scope, so the broken value
+	// makes the guard drop every meta label.
+	all := buildVault(f.sync, f.keys, 1, nil, true)
+	in, _, _ = all.lookup("Agents/CI/In", "")
+	if _, ok := in.all[metaPrefix+"env"]; ok {
+		t.Error("guard did not cover the whole account without a scope")
+	}
+}

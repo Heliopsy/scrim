@@ -313,9 +313,9 @@ path its reference uses.
 
 Text custom fields that are not `scrim.*` labels SHALL be reported as `vaultwarden.meta.<key>`
 only when the operator enables it, and doctor SHALL warn while it is on. A meta label whose value
-equals or contains a secret value of the store SHALL NOT be reported. Hidden fields, passwords, TOTP
-seeds, notes and key material SHALL never become labels. Native labels SHALL override any
-user-supplied label.
+equals or contains a secret value of an in-scope item SHALL NOT be reported, and items outside the
+scope SHALL NOT be decrypted for it. Hidden fields, passwords, TOTP seeds, notes and key material
+SHALL never become labels. Native labels SHALL override any user-supplied label.
 
 #### Scenario: Meta labels are off by default
 
@@ -326,8 +326,14 @@ user-supplied label.
 #### Scenario: Meta label repeating a secret is dropped
 
 - **WHEN** `meta-labels` is on and a text custom field holds a value that equals or contains a
-  password, hidden field, TOTP seed, note or key of any item in the store
+  password, hidden field, TOTP seed, note or key of any item inside the configured scope
 - **THEN** that field is not reported as a label
+
+#### Scenario: Meta guard stays inside the scope
+
+- **WHEN** `meta-labels` is on and the store has a scope
+- **THEN** the guard decrypts no item outside the scope, and no text field of such an item becomes a
+  label
 
 #### Scenario: Native label cannot be forged
 

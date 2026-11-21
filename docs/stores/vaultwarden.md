@@ -165,12 +165,16 @@ long as it is on.
 
 When it is on, a text custom field that is not a `scrim.*` label becomes `vaultwarden.meta.<key>`
 (at most 256 bytes; the first field of a key wins). Hidden, boolean and linked fields are never
-reported. As a second guard, scrim decrypts the secret values of every item of the account
-(passwords, usernames, TOTP seeds, notes, SSH keys and hidden custom fields, in or outside the
-scope) after each sync and drops any meta label whose value equals or contains one of them; values
-are compared one at a time and wiped. If any of those values fails to decrypt, no meta labels are
-reported at all. The guard catches a secret copied into a text field next to its hidden original;
-a secret that lives only in a text field is still reported, so keep secrets in hidden fields.
+reported, and neither is any text field of an item outside the `scope`. As a second guard, scrim
+decrypts the secret values of every item inside the scope (passwords, usernames, TOTP seeds, notes,
+SSH keys and hidden custom fields; the whole account when no scope is set) after each sync and drops
+any meta label whose value equals or contains one of them; values are compared one at a time and
+wiped. If any of those values fails to decrypt, no meta labels are reported at all.
+
+The guard catches a secret copied into a text field next to its hidden original. It does not catch
+a secret that lives only in a text field, nor a text field repeating a secret of an item outside the
+scope: items outside the scope are never decrypted, not even for this comparison. Keep secrets in
+hidden fields.
 
 ### Example policy
 
