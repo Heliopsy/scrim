@@ -3,7 +3,9 @@
 package matrix_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"net/url"
@@ -154,9 +156,23 @@ func TestNaiveRedactorPattern(t *testing.T) {
 		}
 	}
 	// A value with a quote or a backslash is escaped twice inside a tool
-	// call's JSON arguments string, which a verbatim matcher misses.
-	if r := get("openai-chat/tool-call-input/raw", string(leak.KindPassword)); r.Outcome != matrix.OutcomeLeaked {
-		t.Errorf("double-escaped password should leak through the naive stub: %s", r.Describe())
+	// call's JSON arguments string, which a verbatim matcher misses. The
+	// exception: when every quote and backslash of the generated password
+	// leads it, the once-escaped form is itself a substring of the
+	// twice-escaped one (\"abc escapes to \\\"abc), so the naive stub
+	// does catch it.
+	for _, s := range seeds {
+		if s.Kind != leak.KindPassword {
+			continue
+		}
+		once := jsonEscape(s.Value())
+		if strings.Contains(jsonEscape(once), once) {
+			t.Logf("password seed escapes into itself twice; naive stub catches it")
+			break
+		}
+		if r := get("openai-chat/tool-call-input/raw", string(leak.KindPassword)); r.Outcome != matrix.OutcomeLeaked {
+			t.Errorf("double-escaped password should leak through the naive stub: %s", r.Describe())
+		}
 	}
 	tot := matrix.Tally(results)
 	t.Logf("naive stub: %+v", tot)
@@ -203,5 +219,26 @@ func TestDocsMatchCatalogue(t *testing.T) {
 	}
 	if n := len(matrix.Rows()); !strings.Contains(doc, fmt.Sprintf("%d rows", n)) {
 		t.Errorf("docs/leak-assurance.md does not state the row count %d", n)
+	}
+}
+
+// jsonEscape is the body of a JSON string holding v, without HTML escaping,
+// the form the naive stub matches.
+func jsonEscape(v string) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(v)
+	q := bytes.TrimSpace(b.Bytes())
+	return string(q[1 : len(q)-1])
+}
+
+func TestJSONEscapeSelfContainment(t *testing.T) {
+	// The case the naive self-test allows for, and one it does not.
+	if once := jsonEscape(`\"abc`); !strings.Contains(jsonEscape(once), once) {
+		t.Errorf("leading escapes: once-escaped form should be inside the twice-escaped one")
+	}
+	if once := jsonEscape(`ab"c\d`); strings.Contains(jsonEscape(once), once) {
+		t.Errorf("inner escapes: once-escaped form should not survive a second escape")
 	}
 }
