@@ -286,7 +286,7 @@ is out of date.
 | [`identity.store-credentials`](#identitystore-credentials) | map | `{}` | restart required |
 | [`identity.store-login`](#identitystore-login) | map | `{}` | restart required |
 | [`interception.ebpf.cgroups`](#interceptionebpfcgroups) | list | `[]` | hot |
-| [`interception.ebpf.port`](#interceptionebpfport) | int | `9792` | hot |
+| [`interception.ebpf.port`](#interceptionebpfport) | int | `9793` | hot |
 | [`log.format`](#logformat) | string | `text` | hot |
 | [`log.level`](#loglevel) | string | `info` | hot |
 | [`metrics.allow-unauthenticated-remote`](#metricsallow-unauthenticated-remote) | bool | `false` | restart required |
@@ -1385,7 +1385,7 @@ Port of the transparent listener on 127.0.0.1 and ::1 that the eBPF transparent 
 | | |
 |---|---|
 | Type | int |
-| Default | `9792` |
+| Default | `9793` |
 | Environment | `SCRIM_INTERCEPTION_EBPF_PORT` |
 | Flag | none |
 | Reload | hot |
@@ -1858,7 +1858,7 @@ Unix socket path for the LLM proxy base URL, for agents that can connect to one.
 
 #### `proxy.transparent-listen`
 
-TCP addresses of the transparent listener (Linux): connections redirected to it by nftables are routed by TLS server name or Host header, provider hosts to the LLM proxy, bound tool hosts to the tool proxy. scrim install --transparent sets 127.0.0.1:9792 and [::1]:9792. Empty disables it.
+TCP addresses of the transparent listener (Linux): connections redirected to it by nftables are routed by TLS server name or Host header, provider hosts to the LLM proxy, bound tool hosts to the tool proxy. scrim install --transparent sets 127.0.0.1:9793 and [::1]:9793 (9792 is metrics.listen). Empty disables it.
 
 | | |
 |---|---|
