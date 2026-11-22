@@ -12,6 +12,7 @@
 //! per-content-block holdback. Thinking, reasoning and signatures are never touched.
 
 pub(crate) mod anthropic;
+pub(crate) mod converse;
 pub mod gemini;
 pub(crate) mod openai_chat;
 pub(crate) mod openai_responses;
@@ -32,6 +33,9 @@ pub enum Api {
     /// Google Gemini `generateContent`, `streamGenerateContent` and `countTokens`, on the
     /// Gemini API and on Vertex AI.
     Gemini,
+    /// Amazon Bedrock Converse (`/model/{modelId}/converse`, `/converse-stream`). Its stream is
+    /// an event stream, restored by [`crate::eventstream::EventStreamRestorer`].
+    BedrockConverse,
     /// Anything else on a provider route. The whole body is redacted, nothing is allowlisted,
     /// and responses pass through without resolution.
     Generic,
@@ -45,6 +49,7 @@ impl Api {
             Self::OpenAiChat => "openai-chat",
             Self::OpenAiResponses => "openai-responses",
             Self::Gemini => "gemini",
+            Self::BedrockConverse => "bedrock-converse",
             Self::Generic => "generic",
         }
     }
@@ -136,6 +141,7 @@ pub(crate) fn plan(api: Api, body: &[u8]) -> Result<Plan, PlanError> {
         Api::OpenAiChat => openai_chat::plan(&Doc::parse(body)?)?,
         Api::OpenAiResponses => openai_responses::plan(&Doc::parse(body)?)?,
         Api::Gemini => gemini::plan(&Doc::parse(body)?)?,
+        Api::BedrockConverse => converse::plan(&Doc::parse(body)?)?,
     };
     Ok(plan.finish())
 }
@@ -169,6 +175,7 @@ pub(crate) fn restore_json(api: Api, ctx: &Ctx<'_>, body: &[u8]) -> Option<Vec<u
             openai_responses::restore_response(ctx, doc.root(), &mut edits, &|_| true);
         }
         Api::Gemini => gemini::restore_response(ctx, doc.root(), &mut edits),
+        Api::BedrockConverse => converse::restore_response(ctx, doc.root(), &mut edits),
         Api::Generic => return None,
     }
     edits.apply(body)
@@ -396,7 +403,8 @@ pub(crate) fn stream_codec(api: Api, limits: StreamLimits) -> Option<Box<dyn Str
         Api::OpenAiChat => Some(Box::new(openai_chat::Stream::new(limits))),
         Api::OpenAiResponses => Some(Box::new(openai_responses::Stream::new(limits))),
         Api::Gemini => Some(Box::new(gemini::SseStream::new(limits))),
-        Api::Generic => None,
+        // Event streams, not SSE (crate::eventstream).
+        Api::BedrockConverse | Api::Generic => None,
     }
 }
 
