@@ -896,7 +896,7 @@
               "x-scrim-weakening": false
             },
             "port": {
-              "default": 9792,
+              "default": 9793,
               "description": "Port of the transparent listener on 127.0.0.1 and ::1 that the eBPF transparent mode redirects to. It must match the port of proxy.transparent-listen; nothing listening there means covered connections fail, never go direct.",
               "maximum": 9223372036854775807,
               "minimum": -9223372036854775808,
@@ -1346,7 +1346,7 @@
         },
         "transparent-listen": {
           "default": [],
-          "description": "TCP addresses of the transparent listener (Linux): connections redirected to it by nftables are routed by TLS server name or Host header, provider hosts to the LLM proxy, bound tool hosts to the tool proxy. scrim install --transparent sets 127.0.0.1:9792 and [::1]:9792. Empty disables it.",
+          "description": "TCP addresses of the transparent listener (Linux): connections redirected to it by nftables are routed by TLS server name or Host header, provider hosts to the LLM proxy, bound tool hosts to the tool proxy. scrim install --transparent sets 127.0.0.1:9793 and [::1]:9793 (9792 is metrics.listen). Empty disables it.",
           "items": {
             "type": "string"
           },

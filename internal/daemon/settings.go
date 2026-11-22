@@ -56,7 +56,7 @@ var (
 	TransparentListen = config.Register(config.Spec[[]string]{
 		Key:             "proxy.transparent-listen",
 		Default:         []string{},
-		Description:     "TCP addresses of the transparent listener (Linux): connections redirected to it by nftables are routed by TLS server name or Host header, provider hosts to the LLM proxy, bound tool hosts to the tool proxy. scrim install --transparent sets 127.0.0.1:9792 and [::1]:9792. Empty disables it.",
+		Description:     "TCP addresses of the transparent listener (Linux): connections redirected to it by nftables are routed by TLS server name or Host header, provider hosts to the LLM proxy, bound tool hosts to the tool proxy. scrim install --transparent sets 127.0.0.1:9793 and [::1]:9793 (9792 is metrics.listen). Empty disables it.",
 		Flag:            true,
 		RestartRequired: true,
 		Validate:        hostPorts,
