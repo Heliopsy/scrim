@@ -77,6 +77,9 @@ func TestEBPFAttachUsesSettings(t *testing.T) {
 	if r := runScrim(runEnv(t), "ebpf", "attach", "--cgroup", "x.slice", "--port", "1234"); r.code != 0 || l2.port != 1234 || l2.attached[0] != "x.slice" {
 		t.Fatalf("flags: exit %d %v %d %s", r.code, l2.attached, l2.port, r.stderr)
 	}
+	if r := runScrim(runEnv(t), "ebpf", "attach", "--cgroup", "x.slice", "--no-listener-check"); r.code != 0 || r.stderr != "" {
+		t.Fatalf("--no-listener-check: exit %d, stderr %q", r.code, r.stderr)
+	}
 }
 
 func TestEBPFAttachRefusals(t *testing.T) {

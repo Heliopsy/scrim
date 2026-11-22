@@ -244,6 +244,27 @@ override with `--dns` (a block in `/etc/hosts` and a drop-in that turns on the S
 - **WHEN** the scrim block in `/etc/hosts` was edited before uninstall
 - **THEN** the block stays, is listed with the manual step, and the command exits non-zero
 
+### Requirement: eBPF interception install
+
+`scrim install --system --ebpf` SHALL install a oneshot unit that attaches the eBPF hooks to the
+`--cover-cgroup` control groups at every boot, before the network and the scrim service, and the
+transparent listener drop-in. It SHALL check the loader's privileges before any change and refuse a
+control group that holds the scrim service. `scrim uninstall` SHALL detach each recorded control
+group before removing the unit.
+
+#### Scenario: eBPF install, reboot and uninstall
+
+- **WHEN** a user runs `scrim install --system --ebpf --cover-cgroup agents.slice`, reboots, then `scrim uninstall --system --purge`
+- **THEN** the hooks were attached to agents.slice after install and again at boot before the scrim service started
+- **AND** after uninstall no hook is attached or pinned and the file system is identical to before the install
+- **AND** running `scrim uninstall` again changes nothing
+
+#### Scenario: eBPF install without privileges
+
+- **WHEN** a process without CAP_BPF and CAP_NET_ADMIN runs `scrim install --system --ebpf`
+- **THEN** the install changes nothing and names the missing privilege
+- **AND** with `--dry-run` it prints the unit and the drop-in it would write
+
 ### Requirement: Install upgrades in place
 
 Running `scrim install` again in the mode already installed SHALL keep the recorded changes,

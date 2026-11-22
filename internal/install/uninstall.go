@@ -243,6 +243,8 @@ func (in *Installer) describeRevert(e Entry) (string, *result) {
 		return "delete the nftables table " + e.Target + " (nft delete table " + e.Target + ")", nil
 	case KindHosts:
 		return "remove the scrim block from " + e.Target, nil
+	case KindEBPF:
+		return "detach the eBPF programs from the control group " + e.Target + " (scrim ebpf detach --cgroup " + e.Target + ")", nil
 	case KindJavaTrust:
 		return fmt.Sprintf("remove the scrim CA from the Java truststore %s (keytool -delete -alias %s)", e.Target, JavaAlias), nil
 	case KindState:
@@ -322,6 +324,8 @@ func (in *Installer) revert(ctx context.Context, e Entry) result {
 		return resultOf(in.run(ctx, "nft", "delete", "table", "inet", "scrim"), manual)
 	case KindHosts:
 		return in.removeHostsBlock(e)
+	case KindEBPF:
+		return in.revertEBPF(e)
 	case KindJavaTrust:
 		return in.revertJava(ctx, e)
 	case KindUserTrust:
