@@ -577,12 +577,33 @@ control group in `interception.ebpf.cgroups` or in the record:
 | `active` | the kernel lists every program the loader attached on the control group (needs `CAP_NET_ADMIN`, so `sudo scrim status`) |
 | `unverified` | the record says it is attached, but this process may not ask the kernel; status does not count it |
 | `not-attached` | configured but never attached, or attached for another port; the detail names the privilege the loader needs and whether this process has it |
-| `lost` | the control group was removed or recreated since, or a program is no longer attached (`getsockopt` is checked on the root control group); an attachment made before the `sockops` and `getsockopt` programs existed shows as `lost` until attached again |
+| `lost` | the control group was removed or recreated since, or a program is no longer attached (`getsockopt` is checked on the root control group); an attachment made by an older scrim without the `sockops` and `getsockopt` programs shows as `lost` ("attached by an older scrim without the sockops program"), and its connections fail closed until it is attached again |
+| `stale` | every program is attached, but they are another scrim's: the loader records the scrim version and the sha256 of the programs with each attachment, and they differ from this binary's. The control group is still redirected; status does not count it |
 
 Only an `active` control group appears under Interception and turns on the "direct egress blocked"
 protection for that group. Every other state is listed as degraded, `doctor` fails on
-`not-attached` and `lost` and warns on `unverified`, and both check that something accepts
-connections on `127.0.0.1:<port>`.
+`not-attached` and `lost` and warns on `unverified` and `stale`, and both check that something
+accepts connections on `127.0.0.1:<port>`. For `not-attached`, `lost` and `stale` the detail, the
+`fix` field of `scrim status --json` and the doctor finding name the command that attaches again:
+`sudo systemctl reload-or-restart scrim-ebpf` where `scrim install --ebpf` installed the boot unit,
+`sudo scrim ebpf attach` otherwise.
+
+#### Upgrades
+
+The programs that are attached come from the binary that attached them, so a new scrim with other
+programs has to attach again. With the boot unit installed this happens on its own:
+`scrim-ebpf-reattach.path` watches `/usr/local/bin/scrim`, and when a new binary is written or
+renamed over it (by `scrim install`, a package, or by hand) it starts
+`scrim-ebpf-reattach.service`, which runs `systemctl try-reload-or-restart scrim-ebpf.service`.
+The reload attaches in place, so no control group is uncovered in between, and a binary that fails
+to attach leaves the old programs attached. A stopped `scrim-ebpf.service` stays stopped. Running
+`scrim install --system --ebpf` again also reattaches every control group that is not `active`
+with this binary's programs, and says why.
+
+An attachment made by hand with `scrim ebpf attach` from scrim 0.4.0, before the boot unit
+existed, has nothing to reload it. It shows as `lost` after the upgrade: run
+`sudo scrim ebpf attach` once, or install the boot unit with
+`sudo scrim install --system --ebpf --cover-cgroup ...`, which attaches and handles later upgrades.
 
 #### Verifying
 

@@ -204,6 +204,8 @@ phase1() {
   "$t/scrim" install --system --ebpf --cover-cgroup agents.slice
   [ "$(systemctl is-active scrim-ebpf.service)" = active ] || fail "scrim-ebpf.service is not active"
   [ "$(systemctl is-enabled scrim-ebpf.service)" = enabled ] || fail "scrim-ebpf.service is not enabled"
+  [ "$(systemctl is-active scrim-ebpf-reattach.path)" = active ] || fail "scrim-ebpf-reattach.path is not active"
+  [ "$(systemctl is-enabled scrim-ebpf-reattach.path)" = enabled ] || fail "scrim-ebpf-reattach.path is not enabled"
   [ "$(ebpf_state /usr/local/bin/scrim)" = active ] || fail "agents.slice is not attached (verified with the kernel)"
   ls /sys/fs/bpf/scrim/*/
   wait_scrim
@@ -220,13 +222,98 @@ phase1() {
   check_direct 1
   check_redacted 0
 
+  upgrade
+
   echo 2 >"$st/phase"
+}
+
+record=/run/scrim-ebpf/attachments.json
+edit_record() { # edit_record JQ: rewrite the agents.slice entry of the loader's record
+  jq "(.attachments[] | select(.cgroup == \"agents.slice\")) |= ($1)" "$record" >"$record.new"
+  mv "$record.new" "$record"
+}
+ebpf_fix() {
+  /usr/local/bin/scrim ebpf status --json | jq -r '.cgroups[] | select(.cgroup == "agents.slice") | .fix'
+}
+wait_state() { # wait_state STATE WHAT
+  for _ in $(seq 60); do
+    [ "$(ebpf_state /usr/local/bin/scrim)" = "$1" ] && return 0
+    sleep 0.5
+  done
+  fail "$2: agents.slice is $(ebpf_state /usr/local/bin/scrim), want $1"
+}
+redacted_once() {
+  wait_healthy
+  agent https://api.anthropic.com/v1/messages --resolve api.anthropic.com:443:10.99.0.1
+  check_redacted 1
+  check_direct 0
+}
+
+# upgrade: attachments an older scrim made are replaced without a reboot,
+# by the path unit when the binary is replaced and by an install re-run.
+upgrade() {
+  log "upgrade: an attachment made before the sockops and getsockopt programs existed"
+  # What scrim 0.4.0 left: no sockops or getsockopt link, none in its record.
+  pin="$(jq -r '.attachments[] | select(.cgroup == "agents.slice") | .pin_dir' "$record")"
+  rm "$pin/sockops" "$pin/getsockopt"
+  edit_record '.programs |= del(.sockops, .getsockopt) | del(.version, .object)'
+  sleep 1 # the kernel drops an unpinned link after an RCU grace period
+  [ "$(ebpf_state /usr/local/bin/scrim)" = lost ] || fail "an attachment without getsockopt is not lost"
+  /usr/local/bin/scrim ebpf status | grep agents.slice
+  [ "$(ebpf_fix)" = "sudo systemctl reload-or-restart scrim-ebpf" ] || fail "status names the fix $(ebpf_fix)"
+  if /usr/local/bin/scrim doctor >"$st/doctor.txt" 2>&1; then fail "doctor passes with a lost attachment"; fi
+  # shellcheck disable=SC2016 # the backticks are literal
+  grep -F 'run `sudo systemctl reload-or-restart scrim-ebpf`' "$st/doctor.txt" || fail "doctor does not name the fix"
+  agent https://api.anthropic.com/v1/messages --resolve api.anthropic.com:443:10.99.0.1 &&
+    fail "a connection got through without an original destination"
+  check_redacted 0
+  check_direct 0
+  echo "lost, failing closed, status and doctor name the fix"
+
+  log "upgrade: replacing the binary reattaches through scrim-ebpf-reattach.path"
+  install -m 0755 "$t/scrim" /usr/local/bin/.scrim.new
+  mv -f /usr/local/bin/.scrim.new /usr/local/bin/scrim
+  wait_state active "after the binary was replaced"
+  journalctl -b -u scrim-ebpf-reattach.service -u scrim-ebpf.service --no-pager -o cat | tail -n 4
+  [ "$(systemctl show -p ExecMainExitTimestampMonotonic --value scrim-ebpf-reattach.service)" -gt 0 ] ||
+    fail "scrim-ebpf-reattach.service did not run"
+  [ "$(systemctl is-active scrim-ebpf.service)" = active ] || fail "scrim-ebpf.service is not active after the reload"
+  [ "$(jq -r '.attachments[] | select(.cgroup == "agents.slice") | .object | length' "$record")" = 64 ] ||
+    fail "the new attachment recorded no object digest"
+  [ "$(find /sys/fs/bpf/scrim -mindepth 1 -maxdepth 1 | wc -l)" = 1 ] || fail "old pins left: $(ls /sys/fs/bpf/scrim)"
+  redacted_once
+  echo "reattached without a reboot, redacted through scrim"
+
+  log "upgrade: programs of another scrim, fixed by running the install again"
+  edit_record '.object = "'"$(printf '0%.0s' $(seq 64))"'" | .version = "0.4.9"'
+  [ "$(ebpf_state /usr/local/bin/scrim)" = stale ] || fail "another scrim's programs are not stale"
+  /usr/local/bin/scrim install --system --ebpf --cover-cgroup agents.slice | tee "$st/rerun.txt"
+  grep -q 'reload scrim-ebpf.service (attach to the control groups in place: agents.slice is stale' "$st/rerun.txt" ||
+    fail "the install re-run did not reattach the stale attachment"
+  [ "$(ebpf_state /usr/local/bin/scrim)" = active ] || fail "agents.slice is not active after the install re-run"
+  redacted_once
+  echo "reattached by the install re-run, redacted through scrim"
+
+  log "upgrade: a stopped scrim-ebpf.service stays stopped when the binary is replaced"
+  systemctl stop scrim-ebpf.service
+  install -m 0755 "$t/scrim" /usr/local/bin/.scrim.new
+  mv -f /usr/local/bin/.scrim.new /usr/local/bin/scrim
+  sleep 2
+  [ "$(systemctl is-active scrim-ebpf.service)" = inactive ] || fail "replacing the binary started a stopped scrim-ebpf.service"
+  case "$(ebpf_state /usr/local/bin/scrim)" in
+    "" | not-attached) ;;
+    *) fail "agents.slice is attached with scrim-ebpf.service stopped" ;;
+  esac
+  echo "scrim-ebpf.service stopped: replacing the binary attached nothing"
+  systemctl start scrim-ebpf.service
+  wait_state active "after starting scrim-ebpf.service again"
 }
 
 phase2() {
   log "phase 2, after the reboot"
   setup
   [ "$(systemctl is-active scrim-ebpf.service)" = active ] || fail "scrim-ebpf.service did not start at boot"
+  [ "$(systemctl is-active scrim-ebpf-reattach.path)" = active ] || fail "scrim-ebpf-reattach.path did not start at boot"
   journalctl -b -u scrim-ebpf.service --no-pager -o cat | tail -n 5
   [ "$(ebpf_state /usr/local/bin/scrim)" = active ] || fail "agents.slice is not attached after the reboot"
   attached="$(systemctl show -p ExecMainExitTimestampMonotonic --value scrim-ebpf.service)"
@@ -242,6 +329,9 @@ phase2() {
   rm -rf /etc/scrim/conf.d /var/lib/scrim-test
   "$t/scrim" uninstall --system --purge
   [ "$(systemctl show -p LoadState --value scrim-ebpf.service)" = not-found ] || fail "scrim-ebpf.service is still loaded"
+  for u in scrim-ebpf-reattach.path scrim-ebpf-reattach.service; do
+    [ "$(systemctl show -p LoadState --value "$u")" = not-found ] || fail "$u is still loaded"
+  done
   [ -z "$(ls -A /sys/fs/bpf/scrim 2>/dev/null)" ] || fail "pins left in /sys/fs/bpf/scrim: $(ls /sys/fs/bpf/scrim)"
   [ -z "$(ebpf_state "$t/scrim")" ] || fail "scrim ebpf status still lists agents.slice"
   echo "detached: no unit, no pins, nothing recorded"

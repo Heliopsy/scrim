@@ -26,6 +26,16 @@ const (
 	EBPFUnit = "scrim-ebpf.service"
 	// EBPFUnitPath is the unit file.
 	EBPFUnitPath = "/etc/systemd/system/" + EBPFUnit
+	// EBPFReattachPath watches the installed binary; when it is replaced
+	// it starts EBPFReattachService, which reloads EBPFUnit, so the new
+	// binary's programs replace the old ones without a reboot.
+	EBPFReattachPath = "scrim-ebpf-reattach.path"
+	// EBPFReattachService is the oneshot the path unit starts.
+	EBPFReattachService = "scrim-ebpf-reattach.service"
+	// EBPFReattachPathFile is the path unit's file.
+	EBPFReattachPathFile = "/etc/systemd/system/" + EBPFReattachPath
+	// EBPFReattachUnitFile is the oneshot's unit file.
+	EBPFReattachUnitFile = "/etc/systemd/system/" + EBPFReattachService
 	// KindEBPF is a control group the programs were attached to; reverted
 	// with the loader's detach, which waits until the kernel confirms it.
 	KindEBPF = "ebpf"
@@ -44,6 +54,47 @@ type EBPFLoader interface {
 	// Detach removes a control group's attachment; detaching one that is
 	// not attached is not an error.
 	Detach(cgroup string) error
+	// Current reports whether a control group is attached with this
+	// binary's programs for port, confirmed with the kernel, and if not,
+	// why. Reading it changes nothing.
+	Current(cgroup string, port int) (bool, string)
+}
+
+// EBPFUnitInstalled reports whether the boot unit is installed under root.
+func EBPFUnitInstalled(root string) bool { return exists(filepath.Join(root, EBPFUnitPath)) }
+
+// EBPFReattachPathUnit watches the scrim binary. PathChanged fires once a
+// writer closes the file or a new one is renamed over it, not halfway
+// through a write.
+func EBPFReattachPathUnit(binary string) string {
+	return fmt.Sprintf(`# Written by scrim install --ebpf; scrim uninstall --system removes it.
+[Unit]
+Description=Reattach scrim's eBPF programs when %[1]s is replaced
+Documentation=%[2]s
+
+[Path]
+PathChanged=%[1]s
+Unit=%[3]s
+
+[Install]
+WantedBy=paths.target
+`, binary, docURL, EBPFReattachService)
+}
+
+// EBPFReattachServiceUnit reloads the boot unit with the replaced binary.
+// try-reload-or-restart leaves a stopped boot unit stopped; a reload
+// attaches again in place, so no control group is uncovered in between, and
+// a binary that fails to attach leaves the old programs attached.
+func EBPFReattachServiceUnit() string {
+	return fmt.Sprintf(`# Written by scrim install --ebpf; scrim uninstall --system removes it.
+[Unit]
+Description=Reattach scrim's eBPF programs with the replaced scrim binary
+Documentation=%s
+
+[Service]
+Type=oneshot
+ExecStart=systemctl try-reload-or-restart %s
+`, docURL, EBPFUnit)
 }
 
 // EBPFUnitFile is the oneshot unit that attaches the programs to cgroups.
@@ -181,8 +232,12 @@ func (in *Installer) ebpfAttach(ctx context.Context) error {
 		in.show(unit)
 	}
 	svc := Entry{Kind: KindService, Target: EBPFUnit, Scope: ScopeSystem}
-	if changed && in.recorded(svc) {
-		in.printf("+ %sreload %s (attach to the control groups in place)\n", in.verb(), EBPFUnit)
+	why := ""
+	if in.recorded(svc) {
+		why = in.ebpfReattachReason(cgroups, port, changed)
+	}
+	if why != "" {
+		in.printf("+ %sreload %s (attach to the control groups in place: %s)\n", in.verb(), EBPFUnit, why)
 		if !in.DryRun {
 			if err := in.systemctl(ctx, ScopeSystem, "reload-or-restart", EBPFUnit); err != nil {
 				return fmt.Errorf("%w (see journalctl -u %s)", err, strings.TrimSuffix(EBPFUnit, ".service"))
@@ -217,7 +272,46 @@ func (in *Installer) ebpfAttach(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	return in.ebpfReattachUnits(ctx)
+}
+
+// ebpfReattachReason says why a re-run reloads the boot unit: the unit
+// changed, or a control group is not attached with this binary's programs
+// (a binary replaced in place, an attachment lost or made by another
+// scrim). Empty when nothing needs attaching again.
+func (in *Installer) ebpfReattachReason(cgroups []string, port int, changed bool) string {
+	if changed {
+		return "the unit changed"
+	}
+	for _, cg := range cgroups {
+		if ok, why := in.EBPF.Current(cg, port); !ok {
+			return cg + " is " + why
+		}
+	}
+	return ""
+}
+
+// ebpfReattachUnits installs the path unit that reloads the boot unit when
+// the binary is replaced, by `scrim install`, a package or by hand. It is
+// recorded after the attachments, so uninstall stops it before it detaches
+// or removes the binary.
+func (in *Installer) ebpfReattachUnits(ctx context.Context) error {
+	svc := EBPFReattachServiceUnit()
+	changed, err := in.unitFile(in.path(EBPFReattachUnitFile), []byte(svc), ScopeSystem)
+	if err != nil {
+		return err
+	}
+	if changed {
+		in.show(svc)
+	}
+	path := EBPFReattachPathUnit(SystemBinary)
+	if changed, err = in.unitFile(in.path(EBPFReattachPathFile), []byte(path), ScopeSystem); err != nil {
+		return err
+	}
+	if changed {
+		in.show(path)
+	}
+	return in.enableUnit(ctx, EBPFReattachPath, "reattach the eBPF programs whenever "+SystemBinary+" is replaced")
 }
 
 func (in *Installer) revertEBPF(e Entry) result {

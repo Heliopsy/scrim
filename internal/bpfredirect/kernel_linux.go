@@ -5,6 +5,8 @@
 package bpfredirect
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -16,7 +18,18 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
 	"golang.org/x/sys/unix"
+
+	"github.com/heliopsy/scrim/internal/version"
 )
+
+// ObjectDigest is the sha256 of the programs this binary carries (the
+// embedded object for this byte order). The loader records it with each
+// attachment, so status and `scrim install` notice an attachment made by
+// another scrim.
+func ObjectDigest() string {
+	s := sha256.Sum256(_RedirectBytes)
+	return hex.EncodeToString(s[:])
+}
 
 // attachTypes maps each hook to its cgroup attach type.
 var attachTypes = map[string]ebpf.AttachType{
@@ -125,6 +138,7 @@ func (l Loader) Attach(cgroup string, port int) (Attachment, error) {
 		Cgroup: cg, CgroupID: id, Port: port, Programs: map[string]uint32{},
 		PinDir:     filepath.Join(l.PinRoot, fmt.Sprintf("cg-%d-%d", id, l.Now().UnixNano())),
 		AttachedAt: l.Now().UTC().Truncate(time.Second),
+		Version:    version.Version, Object: ObjectDigest(),
 	}
 	if err := os.MkdirAll(a.PinDir, 0o700); err != nil {
 		return Attachment{}, refused("creating "+a.PinDir, err)

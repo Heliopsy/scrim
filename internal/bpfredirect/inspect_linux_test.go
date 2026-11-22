@@ -44,7 +44,7 @@ func newFakeHost(t *testing.T) *fakeHost {
 			Dial: func(string) error { return nil },
 		},
 		rec: Attachment{Cgroup: "agents.slice", CgroupID: id, Port: DefaultPort, Programs: map[string]uint32{},
-			AttachedAt: time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)},
+			AttachedAt: time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC), Version: "0.5.0", Object: ObjectDigest()},
 	}
 	attached := map[string][]uint32{}
 	for i, hk := range slices.Concat(Hooks, ListenerHooks) {
@@ -52,10 +52,15 @@ func newFakeHost(t *testing.T) *fakeHost {
 		attached[hk] = []uint32{7, uint32(100 + i)}
 	}
 	h.in.Query = func(string) (map[string][]uint32, error) { return attached, nil }
+	h.write(t)
+	return h
+}
+
+func (h *fakeHost) write(t *testing.T) {
+	t.Helper()
 	if err := writeRecord(h.in.RecordPath, Record{Attachments: []Attachment{h.rec}}); err != nil {
 		t.Fatal(err)
 	}
-	return h
 }
 
 func (h *fakeHost) one(t *testing.T, configured []string, port int) CgroupReport {
@@ -133,6 +138,38 @@ func TestInspectStates(t *testing.T) {
 			t.Fatalf("%+v", c)
 		}
 	})
+	t.Run("an attachment made before the newer programs existed is lost, with the fix", func(t *testing.T) {
+		h := newFakeHost(t)
+		h.rec.Version, h.rec.Object = "", ""
+		delete(h.rec.Programs, "sockops")
+		delete(h.rec.Programs, "getsockopt")
+		h.write(t)
+		c := h.one(t, []string{"agents.slice"}, DefaultPort)
+		if c.State != Lost || !strings.Contains(c.Detail, "attached by an older scrim without the sockops program") ||
+			c.Fix != AttachCommand || !strings.Contains(c.Detail, "run `"+AttachCommand+"`") {
+			t.Fatalf("%+v", c)
+		}
+		// Without the privilege to query, the record alone shows it.
+		h.in.Caps = func() Caps { return 0 }
+		if c := h.one(t, []string{"agents.slice"}, DefaultPort); c.State != Lost {
+			t.Fatalf("unprivileged: %+v", c)
+		}
+	})
+	t.Run("stale when another scrim's programs are attached", func(t *testing.T) {
+		h := newFakeHost(t)
+		h.rec.Version, h.rec.Object = "0.4.9", strings.Repeat("0", 64)
+		h.write(t)
+		h.in.AttachCommand = "sudo systemctl reload-or-restart scrim-ebpf"
+		r := Inspect(h.in, []string{"agents.slice"}, DefaultPort)
+		c := r.Cgroups[0]
+		if c.State != Stale || !strings.Contains(c.Detail, "attached by scrim 0.4.9 with programs other than this binary's") ||
+			c.Fix != "sudo systemctl reload-or-restart scrim-ebpf" || !strings.Contains(c.Detail, "run `sudo systemctl reload-or-restart scrim-ebpf`") {
+			t.Fatalf("%+v", c)
+		}
+		if r.Active() {
+			t.Fatal("a stale control group counts as active")
+		}
+	})
 	t.Run("another port is not this attachment", func(t *testing.T) {
 		h := newFakeHost(t)
 		if c := h.one(t, []string{"agents.slice"}, 9999); c.State != NotAttached || !strings.Contains(c.Detail, "port 9793") {
@@ -151,6 +188,36 @@ func TestInspectStates(t *testing.T) {
 			t.Fatal("report with no verified group is active")
 		}
 	})
+}
+
+func TestCurrent(t *testing.T) {
+	h := newFakeHost(t)
+	if ok, why := h.in.Current("agents.slice", DefaultPort); !ok {
+		t.Fatalf("this binary's attachment is not current: %s", why)
+	}
+	if ok, why := h.in.Current("agents.slice", 9999); ok || !strings.Contains(why, "not-attached") {
+		t.Fatalf("other port: %v %s", ok, why)
+	}
+	if ok, why := h.in.Current("ci.slice", DefaultPort); ok || !strings.Contains(why, "not attached") {
+		t.Fatalf("unattached: %v %s", ok, why)
+	}
+	h.rec.Object = strings.Repeat("0", 64)
+	h.write(t)
+	if ok, why := h.in.Current("agents.slice", DefaultPort); ok || !strings.HasPrefix(why, "stale: ") || strings.Contains(why, "run `") {
+		t.Fatalf("stale: %v %s", ok, why)
+	}
+	h.rec.Object = ""
+	h.write(t)
+	if ok, why := h.in.Current("agents.slice", DefaultPort); ok || !strings.Contains(why, "did not record") {
+		t.Fatalf("unrecorded object: %v %s", ok, why)
+	}
+}
+
+func TestObjectDigest(t *testing.T) {
+	d := ObjectDigest()
+	if len(d) != 64 || d != ObjectDigest() {
+		t.Fatalf("digest %q", d)
+	}
 }
 
 // TestEmbeddedObject checks the committed object without loading it: the

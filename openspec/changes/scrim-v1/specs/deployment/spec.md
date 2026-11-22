@@ -266,6 +266,35 @@ group before removing the unit.
 - **THEN** the install changes nothing and names the missing privilege
 - **AND** with `--dry-run` it prints the unit and the drop-in it would write
 
+### Requirement: eBPF reattach on upgrade
+
+`scrim install --system --ebpf` SHALL install a path unit that reloads the eBPF boot unit whenever
+the installed scrim binary is replaced, so the new binary's hooks replace the old ones in place
+without a reboot and without leaving a covered control group uncovered. A stopped boot unit SHALL
+stay stopped. `scrim uninstall` SHALL stop the path unit before it detaches and remove both units.
+
+#### Scenario: Binary replaced over an older attachment
+
+- **WHEN** the installed binary is replaced while a covered control group carries an attachment that lacks the sockops and getsockopt hooks
+- **THEN** status reported it lost, with the fix, and its connections failed closed until the replacement
+- **AND** after the replacement it is active again without a reboot and an agent in it is redacted through scrim
+
+#### Scenario: Binary replaced with the boot unit stopped
+
+- **WHEN** the boot unit was stopped and the installed binary is replaced
+- **THEN** the boot unit stays stopped and nothing is attached
+
+### Requirement: eBPF attachments record their programs
+
+The loader SHALL record the scrim version and a digest of the programs with each attachment, and
+running `scrim install --system --ebpf` again SHALL reattach, in place, any covered control group
+that is not attached with the running binary's programs.
+
+#### Scenario: Install re-run over another scrim's programs
+
+- **WHEN** a covered control group carries programs another scrim attached and the user runs the install again
+- **THEN** the install reloads the boot unit, naming why, and the control group is active with this binary's programs
+
 ### Requirement: eBPF install port is the listener port
 
 Where `interception.ebpf.port` is not set, `scrim status`, `scrim doctor` and `scrim ebpf attach`

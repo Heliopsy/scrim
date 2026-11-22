@@ -259,6 +259,8 @@ type checkLoader struct{ err error }
 func (l checkLoader) Check() error        { return l.err }
 func (l checkLoader) Detach(string) error { return nil }
 
+func (l checkLoader) Current(string, int) (bool, string) { return true, "" }
+
 func TestEBPFInstallDryRunAndRefusals(t *testing.T) {
 	f := newInstallFixture(t, 1000)
 	unprivileged := &bpfredirect.PrivilegeError{Op: "attaching eBPF programs", Missing: []string{"CAP_BPF", "CAP_NET_ADMIN"}}

@@ -121,6 +121,11 @@ type Attachment struct {
 	Programs   map[string]uint32 `json:"programs"`
 	PinDir     string            `json:"pin_dir"`
 	AttachedAt time.Time         `json:"attached_at"`
+	// Version is the scrim version that attached; Object the sha256 of the
+	// programs it loaded ([ObjectDigest]). Both are empty in an attachment
+	// made before scrim recorded them.
+	Version string `json:"version,omitempty"`
+	Object  string `json:"object,omitempty"`
 }
 
 // String names an attachment for messages.
@@ -283,7 +288,14 @@ const (
 	Unverified  State = "unverified"
 	NotAttached State = "not-attached"
 	Lost        State = "lost"
+	// Stale is attached and confirmed with the kernel, but with programs
+	// other than this binary's: attached by an older or newer scrim.
+	Stale State = "stale"
 )
+
+// AttachCommand is the command status suggests to attach again when the
+// boot unit of `scrim install --ebpf` is not installed.
+const AttachCommand = "sudo scrim ebpf attach"
 
 // CgroupReport is one control group's state.
 type CgroupReport struct {
@@ -292,6 +304,9 @@ type CgroupReport struct {
 	Detail     string    `json:"detail"`
 	AttachedAt time.Time `json:"attached_at,omitzero"`
 	Port       int       `json:"port,omitempty"`
+	// Fix is the command that attaches the control group again, for every
+	// state but Active and Unverified.
+	Fix string `json:"fix,omitempty"`
 }
 
 // Report is what status and doctor show about the mode.
@@ -323,6 +338,13 @@ type Inspector struct {
 	Query func(cgroupDir string) (map[string][]uint32, error)
 	// Dial checks the listener; nil dials TCP.
 	Dial func(addr string) error
+	// Object is the digest of the programs this binary carries; empty
+	// uses [ObjectDigest].
+	Object string
+	// AttachCommand is the fix status suggests for a control group that
+	// needs attaching again: `sudo systemctl reload-or-restart scrim-ebpf`
+	// where the boot unit is installed, else [AttachCommand] (the default).
+	AttachCommand string
 }
 
 func (in Inspector) withDefaults() Inspector {
@@ -337,6 +359,12 @@ func (in Inspector) withDefaults() Inspector {
 	}
 	if in.Query == nil {
 		in.Query = queryKernel
+	}
+	if in.Object == "" {
+		in.Object = ObjectDigest()
+	}
+	if in.AttachCommand == "" {
+		in.AttachCommand = AttachCommand
 	}
 	if in.Dial == nil {
 		in.Dial = func(addr string) error {
@@ -400,10 +428,11 @@ func (in Inspector) CheckListener(port int) (bool, string) {
 
 func (in Inspector) inspectOne(rec Record, c string, port int, caps Caps, broken bool) CgroupReport {
 	cr := CgroupReport{Cgroup: c}
+	run := "run `" + in.AttachCommand + "`"
 	a, ok := rec.Find(c)
 	if broken || !ok {
-		cr.State = NotAttached
-		cr.Detail = "not attached: run `sudo scrim ebpf attach`"
+		cr.State, cr.Fix = NotAttached, in.AttachCommand
+		cr.Detail = "not attached: " + run
 		if m := caps.MissingToLoad(); len(m) > 0 {
 			cr.Detail += "; attaching needs root, or CAP_BPF and CAP_NET_ADMIN, and this process lacks " + strings.Join(m, " and ")
 		}
@@ -415,19 +444,29 @@ func (in Inspector) inspectOne(rec Record, c string, port int, caps Caps, broken
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		cr.State, cr.Detail = Lost, "control group "+dir+" no longer exists; its programs went with it"
+		cr.Fix = in.AttachCommand
 		return cr
 	case err != nil:
 		cr.State, cr.Detail = Lost, "cannot read control group "+dir+": "+err.Error()
 		return cr
 	case id != a.CgroupID:
-		cr.State = Lost
-		cr.Detail = fmt.Sprintf("control group %s was recreated after the programs were attached (id %d, now %d): run `sudo scrim ebpf attach` again", dir, a.CgroupID, id)
+		cr.State, cr.Fix = Lost, in.AttachCommand
+		cr.Detail = fmt.Sprintf("control group %s was recreated after the programs were attached (id %d, now %d): %s again", dir, a.CgroupID, id, run)
 		return cr
 	}
 	if a.Port != port {
-		cr.State = NotAttached
-		cr.Detail = fmt.Sprintf("attached for port %d but interception.ebpf.port is %d: run `sudo scrim ebpf attach` to move it", a.Port, port)
+		cr.State, cr.Fix = NotAttached, in.AttachCommand
+		cr.Detail = fmt.Sprintf("attached for port %d but interception.ebpf.port is %d: %s to move it", a.Port, port, run)
 		return cr
+	}
+	// An attachment made by a scrim that had fewer programs lacks the
+	// newer hooks; the kernel query below would only say they are gone.
+	for _, h := range slices.Concat(Hooks, ListenerHooks) {
+		if _, ok := a.Programs[h]; !ok {
+			cr.State, cr.Fix = Lost, in.AttachCommand
+			cr.Detail = "attached by " + a.attacher() + " without the " + h + " program, so covered connections fail closed: " + run
+			return cr
+		}
 	}
 	if m := caps.MissingToQuery(); len(m) > 0 {
 		cr.State = Unverified
@@ -446,16 +485,72 @@ func (in Inspector) inspectOne(rec Record, c string, port int, caps Caps, broken
 		}
 		for _, h := range q.hooks {
 			if !slices.Contains(got[h], a.Programs[h]) {
-				cr.State = Lost
-				cr.Detail = "the " + h + " program the loader attached to " + q.dir + " is no longer attached: run `sudo scrim ebpf attach`"
+				cr.State, cr.Fix = Lost, in.AttachCommand
+				cr.Detail = "the " + h + " program the loader attached to " + q.dir + " is no longer attached: " + run
 				return cr
 			}
 		}
+	}
+	if a.Object != "" && a.Object != in.Object {
+		cr.State, cr.Fix = Stale, in.AttachCommand
+		cr.Detail = "attached by " + a.attacher() + " with programs other than this binary's (still redirecting, verified with the kernel): " +
+			run + " to replace them in place"
+		return cr
 	}
 	cr.State = Active
 	cr.Detail = fmt.Sprintf("TCP 80 and 443 redirected to 127.0.0.1:%d and [::1]:%d with their original destination, "+
 		"direct and QUIC egress denied (verified with the kernel)", port, port)
 	return cr
+}
+
+// attacher names the scrim that made the attachment, for messages.
+func (a Attachment) attacher() string {
+	if a.Version == "" {
+		return "an older scrim"
+	}
+	return "scrim " + a.Version
+}
+
+// Current reports whether a control group is attached with this binary's
+// programs for port and confirmed with the kernel, and if not, why. A
+// re-run of `scrim install --ebpf` reattaches when it is not. An
+// attachment that recorded no object digest is not current: attaching
+// again is cheap and replaces it in place.
+func (l Loader) Current(cgroup string, port int) (bool, string) {
+	return Inspector{CgroupRoot: l.CgroupRoot, RecordPath: l.RecordPath, Caps: l.Caps}.Current(cgroup, port)
+}
+
+// Current is [Loader.Current] against what in reads.
+func (in Inspector) Current(cgroup string, port int) (bool, string) {
+	in = in.withDefaults()
+	in.Dial = func(string) error { return nil }
+	cg, err := CleanCgroup(cgroup)
+	if err != nil {
+		return false, err.Error()
+	}
+	r := Inspect(in, []string{cg}, port)
+	switch {
+	case r == nil:
+		return false, "not attached"
+	case r.Problem != "":
+		return false, r.Problem
+	}
+	i := slices.IndexFunc(r.Cgroups, func(c CgroupReport) bool { return c.Cgroup == cg })
+	if i < 0 {
+		return false, "not attached"
+	}
+	c := r.Cgroups[i]
+	if c.State != Active {
+		// The caller attaches again; the detail's own fix is not for it.
+		why, _, _ := strings.Cut(c.Detail, ": run `")
+		return false, string(c.State) + ": " + why
+	}
+	if rec, err := ReadRecord(in.RecordPath); err == nil {
+		if a, _ := rec.Find(cg); a.Object == "" {
+			return false, "attached by an older scrim that did not record its programs"
+		}
+	}
+	return true, ""
 }
 
 // supported checks for a cgroup v2 hierarchy at root.

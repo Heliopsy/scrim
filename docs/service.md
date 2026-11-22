@@ -258,6 +258,7 @@ in the manifest:
 | `/etc/systemd/system/scrim.service.d/interception.conf` | turns on the transparent listener (`127.0.0.1:9793`, `[::1]:9793`) | the same | turns on the SNI listener (`127.0.83.1:443`) and grants `CAP_NET_BIND_SERVICE` |
 | `/etc/scrim/transparent.nft`, `scrim-transparent.service`, the nftables table `inet scrim` | the redirect and deny rules for the covered users and cgroups | | |
 | `/etc/systemd/system/scrim-ebpf.service`, the pinned links under `/sys/fs/bpf/scrim` | | a oneshot unit that runs `scrim ebpf attach` for the covered control groups at every boot and `scrim ebpf detach` when stopped | |
+| `/etc/systemd/system/scrim-ebpf-reattach.path` and `scrim-ebpf-reattach.service` | | reload `scrim-ebpf.service` when `/usr/local/bin/scrim` is replaced, so the new binary's programs are attached without a reboot | |
 | `/etc/hosts` | | | one marked block resolving the provider hosts to scrim |
 | Java truststores | the CA, checked in the stores the system trust tool rebuilds and imported into other JDKs' `cacerts` (`--java-home` for one outside `/usr/lib/jvm`) | the same | the same |
 
@@ -278,6 +279,17 @@ exits and while scrim is stopped. Stopping the unit, or shutting down, detaches 
 install again with other `--cover-cgroup` values reattaches in place (`systemctl reload`) and
 detaches the control groups that are no longer listed.
 
+Upgrades reattach without a reboot. `scrim-ebpf-reattach.path` (`PathChanged=/usr/local/bin/scrim`,
+enabled with the install) starts the oneshot `scrim-ebpf-reattach.service` once a new binary is
+written or renamed over the old one, whatever replaced it, and that runs
+`systemctl try-reload-or-restart scrim-ebpf.service`: the new binary attaches in place, and a
+stopped boot unit stays stopped. Running the install again reloads the boot unit too when a covered
+control group is not attached with this binary's programs (lost, or attached by another scrim; the
+loader records the version and a digest of the programs with each attachment), and prints the
+reason. When status or doctor reports a control group `lost` or `stale`, the fix it names is
+`sudo systemctl reload-or-restart scrim-ebpf`. An attachment made by hand with 0.4.0 has no boot
+unit: `sudo scrim ebpf attach`, or this install, fixes it.
+
 The install needs root, or `CAP_BPF` and `CAP_NET_ADMIN`, and the cgroup v2 hierarchy; it checks
 both before changing anything and names what is missing. `--dry-run` needs neither and prints the
 unit and the drop-in it would write. It refuses `--cover-user` (use `--transparent`) and a control
@@ -287,8 +299,9 @@ With a `--transparent-port` other than 9793 there is nothing else to set: while
 `interception.ebpf.port` is unset, `scrim status`, `scrim doctor` and `scrim ebpf attach` use the
 port the installed unit attaches with. A value you set yourself takes precedence.
 
-Uninstall detaches each recorded control group first and waits until the kernel confirms it, then
-stops and disables the unit and removes it and the drop-in, reloading systemd after each. Running
+Uninstall stops and disables the path unit first, so removing the binary triggers nothing, then
+detaches each recorded control group and waits until the kernel confirms it, then stops and
+disables the boot unit and removes the units and the drop-in, reloading systemd after each. Running
 it again finds nothing to do.
 
 `scrim status` lists the active modes under Interception, and `direct egress blocked` as active
@@ -325,9 +338,16 @@ gets the connection with its original destination, and scrim's upstream receives
 a placeholder where the generated secret was. Plain HTTP by address to ports 80 and 443 is
 refused, connections made straight to the listener's port from outside the slice (no original
 destination) are closed, the agent fails while scrim is stopped, the stand-in provider is never
-reached directly, and a process outside the slice is untouched. Second boot: the unit attached
+reached directly, and a process outside the slice is untouched. Then the upgrade cases: the
+`sockops` and `getsockopt` pins and record entries are removed, which is what an attachment by
+scrim 0.4.0 looks like, and status reports `lost` with `sudo systemctl reload-or-restart scrim-ebpf`
+as the fix, doctor fails naming it, and the agent fails closed; a copy of the binary renamed over
+`/usr/local/bin/scrim` makes `scrim-ebpf-reattach.path` reload the boot unit, and the control group
+is `active` again and the agent redacted, with no reboot. A faked digest of another scrim's
+programs shows as `stale` and an install re-run reattaches it; with the boot unit stopped,
+replacing the binary attaches nothing. Second boot: the unit attached
 again before `scrim.service` started, the agent still redacted through scrim, then
-`uninstall --purge` (no unit, no pins, nothing recorded, the slice reaches the stand-in directly
+`uninstall --purge` (no units, no pins, nothing recorded, the slice reaches the stand-in directly
 again), the file system identical to the snapshot, and a second uninstall that does nothing.
 
 ## Not covered yet
