@@ -22,6 +22,29 @@ other selector is refused rather than ignored, so a pinned reference never silen
 another version. String fields are used as they are. Numbers, booleans and objects are used as
 their JSON text.
 
+### Names that need escaping
+
+A path segment with a space or another character that is not allowed in a URL path as it is
+(`bao://kv/agents/git hub`) is sent to OpenBao escaped once, so the secret lives in OpenBao under
+the name you wrote: `bao kv get -mount=kv 'agents/git hub'` finds it.
+
+Releases up to 0.4.0 escaped such paths twice. OpenBao decoded them once and stored the secret under
+an escaped copy of its name: scrim wrote `agents/git hub` as `agents/git%20hub`. Those secrets
+still work. When a read finds nothing under the correct name and the name has characters that
+needed escaping, scrim looks the secret up under the old name, uses it if it is there, and logs one
+warning per secret naming both paths (never a value). A secret under the correct name always wins.
+This lookup will be removed in a later release, so move each secret the warning names:
+
+```sh
+bao kv get -mount=kv -format=json -field=data 'agents/git%20hub' \
+  | bao kv put -mount=kv 'agents/git hub' -
+bao kv metadata delete -mount=kv 'agents/git%20hub'
+```
+
+`kv put` copies the current version only. Copy custom metadata (`scrim.hosts`, labels) with
+`bao kv metadata put -custom-metadata=...` before deleting the old name. A policy that grants paths
+by their exact names needs the correct names too.
+
 ## Capabilities
 
 | read | list | watch | write | generate | dynamic |
@@ -389,6 +412,10 @@ path "kv/detailed-metadata/agents/inbox/*" { capabilities = ["list"] }
   `metadata/` and reading each secret's metadata, which needs `read` on `metadata/`.
 - `read` on `metadata/` also fills the metadata [labels](#labels) of a read. Without it reads still
   work and those labels are missing.
+- `read` on `metadata/` lets policy label an existing secret that is not in a redaction set (a
+  write to it, `scrim catalog labels`) from its metadata alone, without reading its value. Without
+  it scrim reads the secret's data and wipes the values at once, as for a store that has no
+  metadata read. Paths in `write-only-paths` are refused either way.
 - `token/lookup-self` (in the `default` policy) is used by the health check.
 - Grant no `delete` or `destroy`. scrim never deletes from a store.
 
@@ -435,11 +462,14 @@ contains any value sent in the request, it is replaced by `(store message withhe
 
 `go test -race ./internal/stores/openbao/` runs unit tests against an in-process fake. With podman
 available it also starts `quay.io/openbao/openbao:2.7.3` in dev mode, sets up a KV v2 mount, the
-policy above and an AppRole role with a 30 second TTL, and then runs four things. The first is
+policy above and an AppRole role with a 30 second TTL, and then runs these checks. The first is
 the conformance suite, with the outage simulated by pausing the container. The second covers
 token auth and the write-only policy. The third stops the store mid-run under the refresher. The
 fourth creates a described mount and a secret with version settings and custom metadata, then
-checks its labels through a token with full access and one that may only read the data. See the
+checks its labels through a token with full access and one that may only read the data, and that
+`ReadMetadata` reports the same labels without reading the value. A last test writes a name with
+a space and a `%` and checks OpenBao stores it under that name, and that a secret stored under the
+double-escaped name of 0.4.0 and earlier is still read. See the
 [stores overview](README.md#conformance) for the switches.
 
 Kubernetes auth is covered by the unit tests: an in-process OpenBao checks the login body,

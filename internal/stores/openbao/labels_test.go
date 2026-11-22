@@ -28,7 +28,10 @@ type fakeKV struct {
 	deletion  string
 	sysCalls  atomic.Int32
 	metaCalls atomic.Int32
-	logins    atomic.Int32
+	dataCalls atomic.Int32
+	// metaStatus, when set, is the status of every metadata/ GET.
+	metaStatus int
+	logins     atomic.Int32
 }
 
 func (f *fakeKV) meta() map[string]any {
@@ -65,6 +68,7 @@ func (f *fakeKV) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"config": map[string]any{"default_lease_ttl": 0, "listing_visibility": "hidden", "audit_non_hmac_request_keys": []string{"a", "b"}},
 		}})
 	case p == "/v1/kv-prod/data/prod/eu/db":
+		f.dataCalls.Add(1)
 		if r.Method == http.MethodPost {
 			writeJSON(w, 200, map[string]any{"data": map[string]any{"version": 4, "created_time": "2026-04-01T00:00:00Z"}})
 			return
@@ -78,6 +82,10 @@ func (f *fakeKV) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.metaCalls.Add(1)
 		if f.deny && r.Method == http.MethodGet {
 			denied()
+			return
+		}
+		if f.metaStatus != 0 && r.Method == http.MethodGet {
+			writeJSON(w, f.metaStatus, map[string]any{"errors": []string{"boom"}})
 			return
 		}
 		writeJSON(w, 200, map[string]any{"data": f.meta()})
@@ -339,8 +347,8 @@ func TestLabelKeyAndLists(t *testing.T) {
 		"Team": "team", "cost center": "cost_center", "a/b.c-d_e": "a_b.c-d_e", "Zürich": "z_rich",
 		"x:y=z": "x_y_z", "..a..b.": "a.b", "...": "",
 	} {
-		if got := labelKey(in); got != want {
-			t.Errorf("labelKey(%q) = %q, want %q", in, got, want)
+		if got := stores.LabelKey(in); got != want {
+			t.Errorf("stores.LabelKey(%q) = %q, want %q", in, got, want)
 		}
 	}
 	l := map[string]string{}
@@ -360,4 +368,126 @@ func TestLabelKeyAndLists(t *testing.T) {
 	if fmt.Sprint(l) != fmt.Sprint(map[string]string{"openbao.mount": "kv"}) {
 		t.Errorf("single-valued labels %v", l)
 	}
+}
+
+// TestReadMetadataMatchesRead: ReadMetadata reports what Read would, labels
+// included, without asking for the data, with and without label lookups.
+func TestReadMetadataMatchesRead(t *testing.T) {
+	for _, opts := range []map[string]any{{"namespace": "team-a/eu"}, {"labels.lookups": false}} {
+		f, srv := newFakeKV(t)
+		a := newTest(t, srv, opts, nil)
+		ref := stores.MustParseRef("bao://kv-prod/prod/eu/db#password")
+		s, err := a.Read(t.Context(), ref.Secret())
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.Wipe()
+		f.dataCalls.Store(0)
+		m, err := a.ReadMetadata(t.Context(), ref)
+		if err != nil {
+			t.Fatalf("ReadMetadata %v: %v", opts, err)
+		}
+		if n := f.dataCalls.Load(); n != 0 {
+			t.Errorf("ReadMetadata %v asked for the data %d times", opts, n)
+		}
+		if fmt.Sprint(m.Labels) != fmt.Sprint(s.Meta.Labels) {
+			t.Errorf("ReadMetadata %v labels\n%v\nwant Read's\n%v", opts, m.Labels, s.Meta.Labels)
+		}
+		if m.Ref != ref.Secret() || m.Version != s.Meta.Version || !m.CreatedAt.Equal(s.Meta.CreatedAt) || !m.UpdatedAt.Equal(s.Meta.UpdatedAt) {
+			t.Errorf("ReadMetadata %v = %+v, want Read's %+v", opts, m, s.Meta)
+		}
+		for k, v := range m.Labels {
+			if strings.Contains(k, f.value) || strings.Contains(v, f.value) {
+				t.Errorf("label %q carries the value", k)
+			}
+		}
+	}
+}
+
+// TestReadMetadataFailsLikeRead: every case Read refuses or misses,
+// ReadMetadata refuses or misses the same way; a refused metadata read
+// falls back to Read with its values wiped.
+func TestReadMetadataFailsLikeRead(t *testing.T) {
+	f, srv := newFakeKV(t)
+	a := newTest(t, srv, map[string]any{"write-only-paths": []any{"kv-prod/inbox"}}, nil)
+	ctx := t.Context()
+	for ref, kind := range map[string]error{
+		"bao://kv-prod/inbox/x":                stores.ErrPermission,
+		"bao://kv-prod":                        stores.ErrInvalidRef,
+		"bao://kv-prod/prod/eu/db?color=blue":  stores.ErrInvalidRef,
+		"bao://kv-prod/prod/eu/db?version=abc": stores.ErrInvalidRef,
+	} {
+		r := stores.MustParseRef(ref)
+		_, rerr := a.Read(ctx, r)
+		_, merr := a.ReadMetadata(ctx, r)
+		if !errors.Is(rerr, kind) || !errors.Is(merr, kind) {
+			t.Errorf("%s: Read %v, ReadMetadata %v, want %v", ref, rerr, merr, kind)
+		}
+	}
+	// The fake serves the data of version 3 whatever is asked; OpenBao
+	// answers these with 404 (covered live in TestReadMetadataLive).
+	for _, v := range []string{"1", "2", "9"} { // destroyed, deleted, not yet
+		if _, err := a.ReadMetadata(ctx, stores.MustParseRef("bao://kv-prod/prod/eu/db?version="+v)); !errors.Is(err, stores.ErrNotFound) {
+			t.Errorf("version %s: %v, want not found", v, err)
+		}
+	}
+	if _, err := a.ReadMetadata(ctx, stores.MustParseRef("bao://kv-prod/prod/eu/db?version=3")); err != nil {
+		t.Errorf("current version by selector: %v", err)
+	}
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	a.c.now = func() time.Time { return now }
+	f.deletion = now.Add(-time.Hour).Format(time.RFC3339)
+	if _, err := a.ReadMetadata(ctx, stores.MustParseRef("bao://kv-prod/prod/eu/db")); !errors.Is(err, stores.ErrNotFound) {
+		t.Errorf("current version deleted: %v", err)
+	}
+	f.deletion = now.Add(time.Hour).Format(time.RFC3339)
+	if _, err := a.ReadMetadata(ctx, stores.MustParseRef("bao://kv-prod/prod/eu/db")); err != nil {
+		t.Errorf("scheduled deletion: %v", err)
+	}
+	f.deletion = ""
+
+	// A store failure is returned, never papered over with a Read.
+	f.metaStatus = http.StatusInternalServerError
+	f.dataCalls.Store(0)
+	if _, err := a.ReadMetadata(ctx, stores.MustParseRef("bao://kv-prod/prod/eu/db")); !errors.Is(err, stores.ErrUnavailable) {
+		t.Errorf("metadata 500: %v, want unavailable", err)
+	}
+	if f.dataCalls.Load() != 0 {
+		t.Error("a failed metadata read fell back to reading the data")
+	}
+	f.metaStatus = 0
+
+	// A policy without read on metadata/ gets what Read gives it.
+	f.deny = true
+	s, err := a.Read(ctx, stores.MustParseRef("bao://kv-prod/prod/eu/db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Wipe()
+	m, err := a.ReadMetadata(ctx, stores.MustParseRef("bao://kv-prod/prod/eu/db"))
+	if err != nil {
+		t.Fatalf("ReadMetadata with metadata refused: %v", err)
+	}
+	if fmt.Sprint(m.Labels) != fmt.Sprint(s.Meta.Labels) {
+		t.Errorf("fallback labels %v, want Read's %v", m.Labels, s.Meta.Labels)
+	}
+}
+
+// TestSetMetadataUsesReadMetadata: stores.Set.Metadata goes through
+// ReadMetadata, so the value is never fetched.
+func TestSetMetadataUsesReadMetadata(t *testing.T) {
+	f, srv := newFakeKV(t)
+	a := newTest(t, srv, nil, nil)
+	set := stores.NewSet()
+	if err := set.Add(a); err != nil {
+		t.Fatal(err)
+	}
+	m, exists, err := set.Metadata(t.Context(), stores.MustParseRef("bao://kv-prod/prod/eu/db#password"))
+	if err != nil || !exists {
+		t.Fatalf("Metadata: %v %v", exists, err)
+	}
+	if f.dataCalls.Load() != 0 {
+		t.Error("Set.Metadata read the value")
+	}
+	wantLabels(t, "Set.Metadata", m.Labels, map[string]string{"openbao.mount": "kv-prod", "openbao.current_version": "3", "team": "payments"})
 }

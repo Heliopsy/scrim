@@ -544,6 +544,56 @@ The OpenBao adapter SHALL treat a version as deleted only once its deletion time
 - **WHEN** the current version has a deletion time in the future, set by `delete_version_after`
 - **THEN** it is read and listed as usual, with that time in `openbao.deletion_time`
 
+### Requirement: OpenBao paths are escaped once
+
+The OpenBao adapter SHALL send a secret path to OpenBao with each segment escaped exactly once, so
+OpenBao stores and finds the secret under the name in its reference.
+
+#### Scenario: Path with a space
+
+- **WHEN** scrim writes `bao://kv/agents/git hub`
+- **THEN** OpenBao receives the path `kv/data/agents/git%20hub` and stores the secret as
+  `agents/git hub`
+
+### Requirement: OpenBao secrets under the legacy double-escaped name
+
+When a secret is not found under its name and the name contains characters that need escaping, the
+OpenBao adapter SHALL look it up under the name releases up to 0.4.0 stored it under (each segment
+escaped once more), use it if it exists, and log one warning per secret naming both paths and no
+value. A secret under the correct name SHALL take precedence.
+
+#### Scenario: Secret under the legacy double-escaped name
+
+- **WHEN** a secret written by an earlier release exists only as `agents/git%20hub` and scrim reads
+  `bao://kv/agents/git hub` twice
+- **THEN** both reads return it
+- **AND** one warning names `kv/agents/git hub` and `kv/agents/git%20hub` and no value
+
+### Requirement: OpenBao metadata without values
+
+The OpenBao adapter SHALL implement the metadata read of "Metadata without values" from the KV v2
+metadata endpoint, returning the labels, version and times a read would return without reading
+the secret's data. It SHALL miss the same versions a read misses and refuse the same references,
+write-only paths included. When the store refuses the metadata read, it SHALL fall back to reading
+the secret and wiping every value; any other failure SHALL be returned as an error.
+
+#### Scenario: Labels of an existing secret without its value
+
+- **WHEN** a policy decision needs the labels of `bao://kv-prod/prod/eu/db`, which is in no
+  redaction set
+- **THEN** scrim requests `kv-prod/metadata/prod/eu/db` and not `kv-prod/data/prod/eu/db`
+- **AND** the labels equal the labels a read of the secret reports
+
+#### Scenario: Metadata refused
+
+- **WHEN** scrim's token may read the secret's data but not its metadata
+- **THEN** scrim reads the secret, wipes the values, and uses the labels of that read
+
+#### Scenario: Store failure
+
+- **WHEN** the metadata read fails with a server error
+- **THEN** the lookup fails with the store unavailable and the data is not read
+
 ### Requirement: Store login with the pod's Kubernetes service account
 
 When scrim runs in Kubernetes, the OpenBao adapter (`auth.method: kubernetes`) and the Infisical

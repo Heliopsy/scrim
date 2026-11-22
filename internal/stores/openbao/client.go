@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -31,6 +32,10 @@ type client struct {
 	http    *http.Client
 	resolve func(context.Context, config.SecretRef) (secret.Value, error)
 	now     func() time.Time
+	// log receives warnings (legacy secret names); never values.
+	log *slog.Logger
+	// legacyWarned holds the legacy paths already warned about.
+	legacyWarned sync.Map
 
 	mu sync.Mutex
 	// token is the token sent with requests: the configured token, or the
@@ -157,8 +162,16 @@ func (c *client) do(ctx context.Context, r request) (*response, error) {
 
 // attempt sends r once, with token unless r.noAuth.
 func (c *client) attempt(ctx context.Context, r request, token secret.Value) (*response, error) {
+	// r.path is escaped already. Path must hold its decoded form: url.URL
+	// uses RawPath only when it decodes to Path, and escapes Path again
+	// otherwise, which sent "git hub" as "git%2520hub" (and so stored it as
+	// "git%20hub") up to 0.4.
+	decoded, err := url.PathUnescape(r.path)
+	if err != nil {
+		return nil, c.storeErr(r, stores.ErrInvalidRef, "cannot build request", err)
+	}
 	u := *c.opts.Address
-	u.Path = c.opts.Address.Path + "/v1/" + r.path
+	u.Path = c.opts.Address.Path + "/v1/" + decoded
 	u.RawPath = c.opts.Address.EscapedPath() + "/v1/" + r.path
 	if r.query != nil {
 		u.RawQuery = r.query.Encode()
