@@ -40,6 +40,10 @@ func TestParsePasswordLine(t *testing.T) {
 	if got := keychainAttr(out, "labl"); got != "Deploy key" {
 		t.Errorf("keychainAttr = %q", got)
 	}
+	numbered := []byte("    0x00000007 <blob>=\"Deploy key\"\n    \"svce\"<blob>=\"scrim\"\n")
+	if got := keychainAttr(numbered, "labl"); got != "Deploy key" {
+		t.Errorf("keychainAttr(numbered) = %q", got)
+	}
 }
 
 func TestKeychainErrors(t *testing.T) {

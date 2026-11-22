@@ -162,11 +162,17 @@ func parsePasswordLine(stderr []byte) ([]byte, error) {
 // keychainAttr returns a quoted string attribute (`"labl"<blob>="x"`) from
 // the attribute listing security writes to stdout, or "".
 func keychainAttr(stdout []byte, name string) string {
-	key := []byte(`"` + name + `"<blob>="`)
+	keys := [][]byte{[]byte(`"` + name + `"<blob>="`)}
+	// security prints a few attributes by number: the label is 7.
+	if name == "labl" {
+		keys = append(keys, []byte(`0x00000007 <blob>="`))
+	}
 	for line := range bytes.Lines(stdout) {
 		line = bytes.TrimSpace(line)
-		if rest, ok := bytes.CutPrefix(line, key); ok && bytes.HasSuffix(rest, []byte(`"`)) {
-			return string(rest[:len(rest)-1])
+		for _, key := range keys {
+			if rest, ok := bytes.CutPrefix(line, key); ok && bytes.HasSuffix(rest, []byte(`"`)) {
+				return string(rest[:len(rest)-1])
+			}
 		}
 	}
 	return ""

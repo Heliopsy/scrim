@@ -27,8 +27,11 @@ support is refused before anything is attempted.
 | `env`       | yes  | yes  | no    | no    | no       | no      |
 | `file`      | yes  | yes  | yes   | no    | no       | no      |
 | `sops`      | yes  | yes  | yes   | no    | no       | no      |
-| `keyring`   | yes  | Linux | no   | no    | no       | no      |
+| `keyring`   | yes  | yes  | no    | no    | no       | no      |
 | `memory`    | yes  | yes  | yes   | yes   | no       | no      |
+
+The keyring source lists on Linux only (Secret Service); on macOS and Windows it reads single
+secrets.
 
 Watch on OpenBao, Infisical and Bitwarden Secrets Manager polls version metadata. It never fetches
 values, so it stays cheap even with a short interval. Generated secrets are produced by scrim and

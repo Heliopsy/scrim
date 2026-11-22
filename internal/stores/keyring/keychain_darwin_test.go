@@ -5,12 +5,14 @@
 package keyring
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
@@ -89,6 +91,19 @@ func TestKeychain(t *testing.T) {
 		security(t, "add-generic-password", "-U", "-s", "scrim-conformance", "-a", "locked", "-w", gen(t), "-T", "/usr/bin/security", path)
 		security(t, "lock-keychain", path)
 		defer security(t, "unlock-keychain", "-p", pw, path)
+		// TEMP diagnostics: which security calls answer on a locked keychain.
+		for _, args := range [][]string{
+			{"show-keychain-info", path},
+			{"find-generic-password", "-s", "scrim-conformance", "-a", "locked", path},
+			{"list-keychains", "-d", "user"},
+		} {
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			cmd := exec.CommandContext(ctx, "/usr/bin/security", args...)
+			cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C"}
+			out, err := cmd.CombinedOutput()
+			cancel()
+			t.Logf("DIAG %v: err=%v exit=%d out=%q", args[0], err, cmd.ProcessState.ExitCode(), out)
+		}
 		a := newAdapter(t)
 		_, err := a.Read(t.Context(), stores.MustParseRef("kc://scrim-conformance/locked"))
 		if !errors.Is(err, stores.ErrLocked) {
