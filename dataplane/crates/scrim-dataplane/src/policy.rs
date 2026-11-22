@@ -417,7 +417,7 @@ impl InjectionPolicy for ToolGate {
                 req.secret.name = info.name.to_string();
                 req.secret.store = info.store.to_string();
                 info.class.as_str().clone_into(&mut req.secret.class);
-                if let Some(l) = &info.labels {
+                if let Some(l) = info.labels.as_ref().filter(|l| !l.is_empty()) {
                     req.secret.labels.clone_from(l);
                 }
             }

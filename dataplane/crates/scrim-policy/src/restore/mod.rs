@@ -320,6 +320,8 @@ impl RestoreEngine {
             None => FieldSet::AGENT,
         };
         match &info.labels {
+            // The request starts with no labels; most values have none a rule reads.
+            Some(l) if l.is_empty() => {}
             Some(l) => req.secret.labels.clone_from(l),
             None => unknown = unknown.with(Field::SecretLabels),
         }
