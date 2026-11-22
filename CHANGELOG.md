@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.0](https://github.com/Heliopsy/scrim/compare/v0.4.0...v0.5.0) (2026-11-22)
+
+
+### Features
+
+* **interception:** original destination for eBPF-redirected connections ([#97](https://github.com/Heliopsy/scrim/issues/97)) ([11e8838](https://github.com/Heliopsy/scrim/commit/11e88380df12f1e2b827779e22528399fbd6c493))
+* **interception:** reattach eBPF programs when scrim is upgraded ([#101](https://github.com/Heliopsy/scrim/issues/101)) ([965921d](https://github.com/Heliopsy/scrim/commit/965921d19ec81dd0794543470dda50a818292f5c))
+* **interception:** scrim install --ebpf attaches at boot and uninstall detaches ([#93](https://github.com/Heliopsy/scrim/issues/93)) ([73a401f](https://github.com/Heliopsy/scrim/commit/73a401f6fc3b4f17e8b498f1dee47883b29ceafe))
+* **stores:** read Vaultwarden and Infisical labels without values ([#92](https://github.com/Heliopsy/scrim/issues/92)) ([37d9ecc](https://github.com/Heliopsy/scrim/commit/37d9ecc78a9e8510d67fb52372be914fa4b44efc))
+
+
+### Bug Fixes
+
+* **interception:** take the eBPF port from the installed unit ([#98](https://github.com/Heliopsy/scrim/issues/98)) ([660fa91](https://github.com/Heliopsy/scrim/commit/660fa91b5e58cfc30f04435ca016ca713525fe6d))
+* **status:** open PostgreSQL state read-only and never migrate it ([#100](https://github.com/Heliopsy/scrim/issues/100)) ([9141a27](https://github.com/Heliopsy/scrim/commit/9141a270f4a093ec07c64d1f05fa0eb6700f92cf))
+* **status:** open SQLite state read-only without the process lock ([#95](https://github.com/Heliopsy/scrim/issues/95)) ([0ad799e](https://github.com/Heliopsy/scrim/commit/0ad799e2b3d74c06be119645b9f2b505137fe34e))
+* **stores:** escape OpenBao paths once, read labels without the value ([#91](https://github.com/Heliopsy/scrim/issues/91)) ([6f2a7e0](https://github.com/Heliopsy/scrim/commit/6f2a7e061c2a19564fadc14b59ab51c0148c8c7d))
+* **stores:** refuse an Infisical read whose value is hidden ([#96](https://github.com/Heliopsy/scrim/issues/96)) ([346acaf](https://github.com/Heliopsy/scrim/commit/346acaf79cf14916981dc011cd51040551173560))
+
 ## [0.4.0](https://github.com/Heliopsy/scrim/compare/v0.3.0...v0.4.0) (2026-11-22)
 
 
