@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,83 +29,20 @@ import (
 // Native keys are set first and never overwritten. Labels carry metadata
 // only, never a value.
 //
-// The helpers follow the convention of stores.SetNative, stores.UserMeta
-// and stores.LabelKey (feat/store-labels-core) with the same semantics, so
-// they can be swapped for those once both land.
+// The keys follow the shared convention of stores.SetNative,
+// stores.UserMeta and stores.LabelKey; the list attributes are declared
+// multi-valued in init.
 
 // labelPrefix starts every native label key.
 const labelPrefix = Kind + "."
 
-// metaAttr is the attribute custom metadata is filed under.
-const metaAttr = "meta"
-
 // multiAttrs are the list attributes: they get presence keys even with one
 // value.
-var multiAttrs = map[string]bool{"ancestors": true, "segments": true, "namespaces": true}
+var multiAttrs = []string{"ancestors", "segments", "namespaces"}
 
-// labelKey folds s into a label key: lower-case ASCII letters, digits, '-'
-// and '_' in dot-separated segments. Other characters become '_', empty
-// segments are dropped. It returns "" when nothing is left.
-func labelKey(s string) string {
-	var b strings.Builder
-	for seg := range strings.SplitSeq(strings.ToLower(s), ".") {
-		if seg == "" {
-			continue
-		}
-		if b.Len() > 0 {
-			b.WriteByte('.')
-		}
-		for _, c := range seg {
-			switch {
-			case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-', c == '_':
-				b.WriteRune(c)
-			default:
-				b.WriteByte('_')
-			}
-		}
-	}
-	return b.String()
-}
-
-// setNative sets the native attribute attr, replacing what is there. One
-// value of a single-valued attribute is stored as it is; several values, or
-// any values of a list attribute, are stored comma-joined (duplicates
-// dropped) with a presence key "openbao.<attr>.<value>" = "true" for each.
-// Empty values are skipped; with none left nothing is set.
+// setNative sets the native attribute attr (stores.SetNative for Kind).
 func setNative(l map[string]string, attr string, values ...string) {
-	a := labelKey(attr)
-	if a == "" || a == metaAttr || strings.HasPrefix(a, metaAttr+".") {
-		return
-	}
-	vals := make([]string, 0, len(values))
-	for _, v := range values {
-		if v != "" && !slices.Contains(vals, v) {
-			vals = append(vals, v)
-		}
-	}
-	if len(vals) == 0 {
-		return
-	}
-	key := labelPrefix + a
-	l[key] = strings.Join(vals, ",")
-	if len(vals) > 1 || multiAttrs[a] {
-		for _, v := range vals {
-			l[key+"."+v] = "true"
-		}
-	}
-}
-
-// userMeta files one custom metadata entry as openbao.meta.<folded key>,
-// never overwriting a key already set.
-func userMeta(l map[string]string, key, value string) {
-	k := labelKey(key)
-	if k == "" {
-		return
-	}
-	full := labelPrefix + metaAttr + "." + k
-	if _, taken := l[full]; !taken {
-		l[full] = value
-	}
+	stores.SetNative(l, Kind, attr, values...)
 }
 
 // passThrough reports whether a custom metadata key is also copied under
@@ -127,7 +63,7 @@ func customLabels(l map[string]string, custom map[string]string) {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		userMeta(l, k, custom[k])
+		stores.UserMeta(l, Kind, k, custom[k])
 		if _, taken := l[k]; passThrough(k) && !taken {
 			l[k] = custom[k]
 		}
@@ -303,12 +239,12 @@ func (a *Adapter) labels(in labelInput) map[string]string {
 		setNative(l, "mount_seal_wrap", strconv.FormatBool(mi.SealWrap))
 		setNative(l, "mount_external_entropy_access", strconv.FormatBool(mi.ExternalAccess))
 		for k, v := range mi.Options {
-			if nk := labelKey(k); nk != "" {
+			if nk := stores.LabelKey(k); nk != "" {
 				setNative(l, "mount_option."+nk, v)
 			}
 		}
 		for k, v := range mi.Config {
-			if nk := labelKey(k); nk != "" {
+			if nk := stores.LabelKey(k); nk != "" {
 				setNative(l, "mount_config."+nk, configValue(v))
 			}
 		}

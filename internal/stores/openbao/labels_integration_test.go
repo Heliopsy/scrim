@@ -3,6 +3,8 @@
 package openbao_test
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -161,4 +163,72 @@ func TestNativeLabelsLive(t *testing.T) {
 		// the mount, so mount labels survive a data-only policy.
 		"openbao.mount_type": "kv", "openbao.mount_description": "Production, team Payments",
 	})
+}
+
+// TestReadMetadataLive: against OpenBao, ReadMetadata reports the labels
+// Read reports, for the current version and an older one, misses the
+// versions Read misses, and with a data-only policy falls back to Read.
+func TestReadMetadataLive(t *testing.T) {
+	s := startServer(t)
+	if _, err := s.api("POST", "sys/mounts/kv-labels", map[string]any{
+		"type": "kv", "description": "Production, team Payments", "options": map[string]string{"version": "2"},
+	}); err != nil && !strings.Contains(err.Error(), "HTTP 400") {
+		t.Fatal(err)
+	}
+	p := "prod/md/app-" + randHex(t, 4)
+	value := "pw_" + randHex(t, 16)
+	if _, err := s.api("POST", "kv-labels/metadata/"+p, map[string]any{
+		"custom_metadata": map[string]string{"team": "payments"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if _, err := s.api("POST", "kv-labels/data/"+p, map[string]any{"data": map[string]string{"password": value}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.api("POST", "kv-labels/delete/"+p, map[string]any{"versions": []int{1}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	same := func(a *openbao.Adapter, ref stores.Ref) {
+		t.Helper()
+		got, err := a.Read(ctx, ref)
+		if err != nil {
+			t.Fatalf("Read %s: %v", ref, err)
+		}
+		got.Wipe()
+		m, err := a.ReadMetadata(ctx, ref)
+		if err != nil {
+			t.Fatalf("ReadMetadata %s: %v", ref, err)
+		}
+		if len(m.Labels) == 0 || fmt.Sprint(m.Labels) != fmt.Sprint(got.Meta.Labels) {
+			t.Errorf("%s: ReadMetadata labels\n%v\nwant Read's\n%v", ref, m.Labels, got.Meta.Labels)
+		}
+		if m.Version != got.Meta.Version || !m.UpdatedAt.Equal(got.Meta.UpdatedAt) || !m.CreatedAt.Equal(got.Meta.CreatedAt) {
+			t.Errorf("%s: ReadMetadata %+v, want Read's %+v", ref, m, got.Meta)
+		}
+		for k, v := range m.Labels {
+			if strings.Contains(k, value) || strings.Contains(v, value) {
+				t.Errorf("label %q carries the value", k)
+			}
+		}
+	}
+	full := s.tokenAdapter(t, "bao-md", labelsPolicy)
+	ref := stores.Ref{Scheme: "bao-md", Path: "kv-labels/" + p}
+	same(full, ref)
+	same(full, stores.Ref{Scheme: "bao-md", Path: ref.Path, Selectors: "version=2"})
+	for _, sel := range []string{"version=1", "version=9"} {
+		r := stores.Ref{Scheme: "bao-md", Path: ref.Path, Selectors: sel}
+		_, rerr := full.Read(ctx, r)
+		_, merr := full.ReadMetadata(ctx, r)
+		if !errors.Is(rerr, stores.ErrNotFound) || !errors.Is(merr, stores.ErrNotFound) {
+			t.Errorf("%s: Read %v, ReadMetadata %v, want not found", sel, rerr, merr)
+		}
+	}
+	if _, err := full.ReadMetadata(ctx, stores.Ref{Scheme: "bao-md", Path: "kv-labels/prod/md/missing-" + randHex(t, 4)}); !errors.Is(err, stores.ErrNotFound) {
+		t.Errorf("missing secret: %v", err)
+	}
+	thin := s.tokenAdapter(t, "bao-md-thin", dataOnlyPolicy)
+	same(thin, stores.Ref{Scheme: "bao-md-thin", Path: ref.Path})
 }
