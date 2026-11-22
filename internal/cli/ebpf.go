@@ -232,7 +232,12 @@ func ebpfReport(e *Env) *status.EBPF {
 	if cfg, err := e.Config(); err == nil {
 		cgs, port = bpfredirect.CgroupsSetting.Get(cfg), ebpfPort(cfg)
 	}
-	r := bpfredirect.Inspect(ebpfInspector, cgs, port)
+	in := ebpfInspector
+	if in.AttachCommand == "" && install.EBPFUnitInstalled(installRoot) {
+		// The boot unit attaches with the right control groups and port.
+		in.AttachCommand = "sudo systemctl reload-or-restart " + strings.TrimSuffix(install.EBPFUnit, ".service")
+	}
+	r := bpfredirect.Inspect(in, cgs, port)
 	if r == nil {
 		return nil
 	}
@@ -243,6 +248,7 @@ func ebpfReport(e *Env) *status.EBPF {
 	for _, c := range r.Cgroups {
 		s.Cgroups = append(s.Cgroups, status.EBPFCgroup{
 			Cgroup: c.Cgroup, State: string(c.State), Detail: c.Detail, AttachedAt: c.AttachedAt.UTC().Truncate(time.Second),
+			Fix: c.Fix,
 		})
 	}
 	return s

@@ -28,3 +28,6 @@ func (Loader) Detach(string) error { return ErrUnsupported }
 func cgroupID(string) (uint64, error) { return 0, ErrUnsupported }
 
 func queryKernel(string) (map[string][]uint32, error) { return nil, ErrUnsupported }
+
+// ObjectDigest is empty: this platform carries no programs.
+func ObjectDigest() string { return "" }

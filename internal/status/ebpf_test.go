@@ -74,3 +74,35 @@ func TestEBPFProblem(t *testing.T) {
 		t.Fatalf("findings = %+v", d.Findings)
 	}
 }
+
+// TestEBPFStaleAndLostFix: an attachment made by another scrim is degraded,
+// not a mode, and doctor warns with the loader's fix; a lost one fails with
+// it.
+func TestEBPFStaleAndLostFix(t *testing.T) {
+	const fix = "sudo systemctl reload-or-restart scrim-ebpf"
+	r := Collect(context.Background(), Sources{EBPF: fakeEBPF{Configured: []string{"a.slice", "b.slice"}, Port: 9793,
+		ListenerUp: true, Listener: "127.0.0.1:9793 accepts connections",
+		Cgroups: []EBPFCgroup{
+			{Cgroup: "a.slice", State: "stale", Detail: "attached by scrim 0.4.9 with programs other than this binary's", Fix: fix},
+			{Cgroup: "b.slice", State: "lost", Detail: "attached by an older scrim without the sockops program", Fix: fix},
+		}}})
+	if len(r.EBPF.ActiveCgroups()) != 0 || slices.ContainsFunc(r.Interception, func(m string) bool { return strings.Contains(m, "ebpf") }) {
+		t.Errorf("a stale control group counts as active: %v", r.Interception)
+	}
+	if !slices.ContainsFunc(r.Degraded, func(c Component) bool { return c.Name == "ebpf:a.slice" }) {
+		t.Errorf("stale control group not degraded: %+v", r.Degraded)
+	}
+	d := Diagnose(context.Background(), time.Second, ReportChecks(r)...)
+	var got []string
+	for _, f := range d.Findings {
+		if f.Check == "ebpf" {
+			got = append(got, string(f.Outcome)+" "+f.Message+" | "+f.Fix)
+		}
+	}
+	joined := strings.Join(got, "\n")
+	for _, want := range []string{"warn a.slice: attached by scrim 0.4.9", "fail b.slice: attached by an older scrim", "| run `" + fix + "`"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("doctor ebpf findings lack %q:\n%s", want, joined)
+		}
+	}
+}

@@ -311,6 +311,11 @@ that every hook the loader attached is still attached to it.
 - **WHEN** a covered control group is removed and created again under the same path after the hooks were attached
 - **THEN** status reports it as not active and names the command that attaches it again
 
+#### Scenario: Attachment made by another scrim
+
+- **WHEN** a covered control group was attached by a scrim whose programs differ from the running binary's, or that lacked a hook this binary attaches
+- **THEN** status reports it as stale (hooks present, other programs) or lost (a hook missing), not active, and `scrim doctor` names the exact command that attaches it again: `systemctl reload-or-restart scrim-ebpf` where the boot unit is installed, `scrim ebpf attach` otherwise
+
 ### Requirement: DNS override mode
 
 scrim SHALL offer a mode in which provider host names resolve to scrim, which serves certificates

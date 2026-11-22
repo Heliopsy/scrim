@@ -5,10 +5,13 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/heliopsy/scrim/internal/bpfredirect"
@@ -210,5 +213,47 @@ func TestEBPFPortFromInstalledUnit(t *testing.T) {
 	withEBPF(t, l)
 	if r := runScrim(runEnv(t), "ebpf", "attach", "--cgroup", "agents.slice", "--no-listener-check"); r.code != 0 || l.port != 9800 {
 		t.Fatalf("attach without --port: exit %d port %d %s", r.code, l.port, r.stderr)
+	}
+}
+
+// With the boot unit installed, status names the unit reload as the fix for
+// an attachment made by an older scrim; without it, a manual attach.
+func TestEBPFStatusFixNamesTheBootUnit(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("control group IDs are read on Linux only")
+	}
+	withEBPF(t, &fakeLoader{})
+	ebpfInspector.Caps = func() bpfredirect.Caps { return 1 << 12 } // CAP_NET_ADMIN
+	cg := filepath.Join(ebpfInspector.CgroupRoot, "agents.slice")
+	if err := os.Mkdir(cg, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var st syscall.Stat_t
+	if err := syscall.Stat(cg, &st); err != nil {
+		t.Fatal(err)
+	}
+	rec := fmt.Sprintf(`{"attachments":[{"cgroup":"agents.slice","cgroup_id":%d,"port":9793,"programs":{"connect4":1,"connect6":2,"sendmsg4":3,"sendmsg6":4,"egress":5},"pin_dir":"/sys/fs/bpf/scrim/x","attached_at":"2026-11-01T00:00:00Z"}]}`, st.Ino)
+	if err := os.WriteFile(ebpfInspector.RecordPath, []byte(rec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fixOf := func() status.EBPFCgroup {
+		t.Helper()
+		r := runScrim(runEnv(t, "SCRIM_INTERCEPTION_EBPF_CGROUPS=agents.slice"), "ebpf", "status", "--json")
+		var e status.EBPF
+		if err := json.Unmarshal([]byte(r.stdout), &e); err != nil || len(e.Cgroups) != 1 {
+			t.Fatalf("%v\n%s%s", err, r.stdout, r.stderr)
+		}
+		return e.Cgroups[0]
+	}
+	if c := fixOf(); c.State != "lost" || c.Fix != "sudo scrim ebpf attach" || !strings.Contains(c.Detail, "without the sockops program") {
+		t.Fatalf("without the boot unit: %+v", c)
+	}
+	withInstalledEBPFUnit(t, 9793)
+	if c := fixOf(); c.State != "lost" || c.Fix != "sudo systemctl reload-or-restart scrim-ebpf" {
+		t.Fatalf("with the boot unit: %+v", c)
+	}
+	r := runScrim(runEnv(t, "SCRIM_INTERCEPTION_EBPF_CGROUPS=agents.slice"), "doctor")
+	if !strings.Contains(r.stdout+r.stderr, "sudo systemctl reload-or-restart scrim-ebpf") {
+		t.Errorf("doctor does not name the fix:\n%s%s", r.stdout, r.stderr)
 	}
 }

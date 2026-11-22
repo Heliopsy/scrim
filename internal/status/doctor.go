@@ -257,8 +257,13 @@ func ebpfFindings(e *EBPF) []Finding {
 		case "unverified":
 			fs = append(fs, Finding{Outcome: Warn, Message: c.Cgroup + ": " + c.Detail,
 				Fix: "run `sudo scrim doctor` to confirm the attachment with the kernel"})
+		case "stale":
+			fs = append(fs, Finding{Outcome: Warn, Message: c.Cgroup + ": " + c.Detail, Fix: "run `" + c.Fix + "`"})
 		default:
 			fix := "run `sudo scrim ebpf attach`"
+			if c.Fix != "" {
+				fix = "run `" + c.Fix + "`"
+			}
 			if !slices.Contains(e.Configured, c.Cgroup) {
 				fix += ", or `sudo scrim ebpf detach --cgroup " + c.Cgroup + "` if it is no longer wanted"
 			}

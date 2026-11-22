@@ -191,12 +191,15 @@ type EBPF struct {
 }
 
 // EBPFCgroup is one covered control group. Only State "active" was
-// confirmed with the kernel; "unverified" rests on the loader's record.
+// confirmed with the kernel; "unverified" rests on the loader's record;
+// "stale" is confirmed but with another scrim's programs.
 type EBPFCgroup struct {
 	Cgroup     string    `json:"cgroup"`
 	State      string    `json:"state"`
 	Detail     string    `json:"detail"`
 	AttachedAt time.Time `json:"attached_at,omitzero"`
+	// Fix is the command that attaches it again, when that is the fix.
+	Fix string `json:"fix,omitempty"`
 }
 
 // ActiveCgroups lists the control groups confirmed active.

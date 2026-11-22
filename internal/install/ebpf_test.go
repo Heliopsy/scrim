@@ -17,9 +17,18 @@ import (
 type fakeEBPF struct {
 	h   *fakeHost
 	err error
+	// stale names control groups Current reports as not current, with why.
+	stale map[string]string
 }
 
 func (f fakeEBPF) Check() error { return f.err }
+
+func (f fakeEBPF) Current(cg string, _ int) (bool, string) {
+	if why, ok := f.stale[cg]; ok {
+		return false, why
+	}
+	return true, ""
+}
 
 func (f fakeEBPF) Detach(cg string) error {
 	f.h.calls = append(f.h.calls, "ebpf detach "+cg)
@@ -58,6 +67,21 @@ func TestEBPFInstallAndUninstallLeaveNoTrace(t *testing.T) {
 			t.Errorf("unit lacks %q:\n%s", want, unit)
 		}
 	}
+	path := h.read("etc/systemd/system/scrim-ebpf-reattach.path")
+	for _, want := range []string{"[Path]\nPathChanged=/usr/local/bin/scrim\nUnit=scrim-ebpf-reattach.service\n", "WantedBy=paths.target"} {
+		if !strings.Contains(path, want) {
+			t.Errorf("path unit lacks %q:\n%s", want, path)
+		}
+	}
+	reattach := h.read("etc/systemd/system/scrim-ebpf-reattach.service")
+	for _, want := range []string{"Type=oneshot\n", "ExecStart=systemctl try-reload-or-restart scrim-ebpf.service\n"} {
+		if !strings.Contains(reattach, want) {
+			t.Errorf("reattach unit lacks %q:\n%s", want, reattach)
+		}
+	}
+	if strings.Contains(reattach, "[Install]") {
+		t.Errorf("reattach unit is enabled on its own; only the path unit starts it:\n%s", reattach)
+	}
 	drop := h.read("etc/systemd/system/scrim.service.d/interception.conf")
 	if !strings.Contains(drop, "Environment=SCRIM_PROXY_TRANSPARENT_LISTEN=127.0.0.1:9793,[::1]:9793\n") {
 		t.Errorf("drop-in lacks the transparent listener:\n%s", drop)
@@ -66,7 +90,7 @@ func TestEBPFInstallAndUninstallLeaveNoTrace(t *testing.T) {
 		t.Errorf("--ebpf installed another mode: drop-in\n%s", drop)
 	}
 	checkOrder(t, h.calls, []string{"systemctl enable --now scrim.service", "update-ca-certificates",
-		"systemctl daemon-reload", "systemctl enable --now scrim-ebpf.service"})
+		"systemctl daemon-reload", "systemctl enable --now scrim-ebpf.service", "systemctl enable --now scrim-ebpf-reattach.path"})
 	for _, c := range h.calls {
 		if strings.HasPrefix(c, "nft") {
 			t.Errorf("--ebpf ran %s", c)
@@ -82,6 +106,29 @@ func TestEBPFInstallAndUninstallLeaveNoTrace(t *testing.T) {
 	}
 	if c := strings.Join(h.calls, "\n"); strings.Contains(c, "restart") || strings.Contains(c, "reload") || strings.Contains(c, "ebpf detach") {
 		t.Errorf("second install changed things:\n%s", c)
+	}
+
+	// A binary replaced in place, or an attachment lost or made by another
+	// scrim: the same install reattaches in place and changes nothing else.
+	h.calls = nil
+	out.Reset()
+	stale := ebpfInstaller(t, h, j, &out, "agents.slice", "user.slice/user-agents.slice")
+	stale.Executable = in.Executable
+	stale.EBPF = fakeEBPF{h: h, stale: map[string]string{"user.slice/user-agents.slice": "stale: attached by scrim 0.4.0"}}
+	if err := stale.Install(context.Background()); err != nil {
+		t.Fatalf("install over a stale attachment: %v\n%s", err, out.String())
+	}
+	var systemctl []string
+	for _, c := range h.calls {
+		if strings.HasPrefix(c, "systemctl") || strings.HasPrefix(c, "ebpf") {
+			systemctl = append(systemctl, c)
+		}
+	}
+	if c := strings.Join(systemctl, "\n"); c != "systemctl reload-or-restart scrim-ebpf.service" {
+		t.Errorf("install over a stale attachment ran:\n%s", c)
+	}
+	if !strings.Contains(out.String(), "user.slice/user-agents.slice is stale: attached by scrim 0.4.0") {
+		t.Errorf("reload reason not shown:\n%s", out.String())
 	}
 
 	// Dropping a control group reattaches in place and detaches the dropped one.
@@ -122,7 +169,7 @@ func TestEBPFInstallAndUninstallLeaveNoTrace(t *testing.T) {
 	}
 	// Detached (and confirmed by the loader) before the unit is stopped,
 	// the unit and drop-in removed with a reload each, then the service.
-	checkOrder(t, h.calls, []string{"ebpf detach agents.slice", "systemctl disable --now scrim-ebpf.service",
+	checkOrder(t, h.calls, []string{"systemctl disable --now scrim-ebpf-reattach.path", "ebpf detach agents.slice", "systemctl disable --now scrim-ebpf.service",
 		"systemctl daemon-reload", "update-ca-certificates --fresh", "systemctl disable --now scrim.service"})
 	if !strings.Contains(out.String(), "- detach the eBPF programs from the control group agents.slice (scrim ebpf detach --cgroup agents.slice)") {
 		t.Errorf("detach not shown:\n%s", out.String())
@@ -157,6 +204,9 @@ func TestEBPFDryRunPrintsUnitsAndChangesNothing(t *testing.T) {
 		"    ExecStop=/usr/local/bin/scrim ebpf detach --cgroup agents.slice\n",
 		"    Environment=SCRIM_PROXY_TRANSPARENT_LISTEN=127.0.0.1:9793,[::1]:9793\n",
 		"+ would enable and start scrim-ebpf.service",
+		"+ would write " + h.root + "/etc/systemd/system/scrim-ebpf-reattach.path",
+		"    PathChanged=/usr/local/bin/scrim\n",
+		"+ would enable and start scrim-ebpf-reattach.path",
 		"Nothing was changed (dry run).",
 	} {
 		if !strings.Contains(out.String(), want) {

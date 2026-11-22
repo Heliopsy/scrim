@@ -8,7 +8,12 @@
 #
 #   1. snapshot, dry run, install, an agent in agents.slice reaches the
 #      provider through scrim (redacted) and fails while scrim is stopped,
-#      a process outside the slice is untouched; power off.
+#      a process outside the slice is untouched; then the upgrade cases: an
+#      attachment without the sockops and getsockopt programs is lost and
+#      fails closed until a binary renamed over /usr/local/bin/scrim makes
+#      scrim-ebpf-reattach.path attach again (redacted, no reboot), another
+#      scrim's programs are stale until an install re-run, and a stopped
+#      scrim-ebpf.service stays stopped; power off.
 #   2. after the reboot scrim-ebpf.service attached again before scrim.service
 #      started, the agent is still redirected; uninstall --purge detaches,
 #      the agent reaches the stand-in provider directly again, the file system
@@ -31,8 +36,9 @@ set -euo pipefail
 export PATH="$PATH:/usr/sbin:/sbin"
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-image=localhost/scrim-ebpf-install:test
-name="scrim-ebpf-rootfs-$$"
+# SCRIM_VM_IMAGE and SCRIM_VM_NAME rename the throwaway image and container.
+image="${SCRIM_VM_IMAGE:-localhost/scrim-ebpf-install:test}"
+name="${SCRIM_VM_NAME:-scrim-ebpf-rootfs}-$$"
 built_image=0
 
 kernel="${SCRIM_VM_KERNEL:-}"
