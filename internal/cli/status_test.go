@@ -5,6 +5,9 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/audit"
 	"github.com/heliopsy/scrim/internal/auditlog"
+	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/state/sqlite"
@@ -27,7 +31,9 @@ func isolatedEnv(t *testing.T, extra ...string) []string {
 }
 
 func TestStatusJSONShowsWeakenedAndState(t *testing.T) {
-	e, out, errb := newEnv(isolatedEnv(t, "SCRIM_STATE_SQLITE_ALLOW_NETWORK_FILESYSTEM=true")...)
+	env := isolatedEnv(t, "SCRIM_STATE_SQLITE_ALLOW_NETWORK_FILESYSTEM=true")
+	seedState(t, strings.TrimPrefix(env[4], "SCRIM_STATE_SQLITE_PATH="))
+	e, out, errb := newEnv(env...)
 	if code := Run(context.Background(), e, []string{"status", "-o", "json"}); code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
@@ -155,6 +161,73 @@ func TestAuditLog(t *testing.T) {
 		e, _, errb := newEnv(env...)
 		if code := Run(context.Background(), e, append([]string{"audit", "log"}, bad...)); code != 1 {
 			t.Errorf("%v accepted: %s", bad, errb.String())
+		}
+	}
+}
+
+// statusStateConfig is a configuration whose SQLite state lives in a temp
+// dir, and that path.
+func statusStateConfig(t *testing.T) (*config.Config, string) {
+	t.Helper()
+	env := isolatedEnv(t)
+	cfg, err := config.Build(config.Options{Registry: config.Default, Environ: env, SystemDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg, strings.TrimPrefix(env[4], "SCRIM_STATE_SQLITE_PATH=")
+}
+
+// seedState creates and migrates the SQLite state at path, as a first
+// daemon start would, and closes it.
+func seedState(t *testing.T, path string) {
+	t.Helper()
+	s, err := sqlite.Open(t.Context(), path, sqlite.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A daemon that starts while status has the state open must still get the
+// database: status never takes the process lock or writes.
+func TestStatusDoesNotBlockStartingDaemon(t *testing.T) {
+	cfg, path := statusStateConfig(t)
+	seedState(t, path)
+
+	st, closeStatus := openStateForStatus(t.Context(), cfg)
+	defer closeStatus()
+	daemon, err := sqlite.Open(t.Context(), path, sqlite.Options{})
+	if err != nil {
+		t.Fatalf("daemon start while status has the state open: %v", err)
+	}
+	defer func() { _ = daemon.Close() }()
+	if err := daemon.Migrate(t.Context()); err != nil {
+		t.Fatalf("daemon migrate while status has the state open: %v", err)
+	}
+	got := st.StateStatus(t.Context())
+	if !got.Healthy || got.SchemaVersion != 2 || got.Location != path {
+		t.Fatalf("status state = %+v", got)
+	}
+}
+
+// Status before the first start reports the missing file and creates
+// nothing, so the daemon creates the database with its own permissions.
+func TestStatusDoesNotCreateState(t *testing.T) {
+	cfg, path := statusStateConfig(t)
+	st, closeStatus := openStateForStatus(t.Context(), cfg)
+	got := st.StateStatus(t.Context())
+	closeStatus()
+	if !got.Healthy || !strings.Contains(got.Detail, "not created yet") {
+		t.Fatalf("status state = %+v", got)
+	}
+	for _, p := range []string{path, path + ".lock", path + "-wal", path + "-shm"} {
+		if _, err := os.Stat(p); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("status created %s (%v)", p, err)
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -46,7 +47,7 @@ func newFakeHost(t *testing.T) *fakeHost {
 			AttachedAt: time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)},
 	}
 	attached := map[string][]uint32{}
-	for i, hk := range Hooks {
+	for i, hk := range slices.Concat(Hooks, ListenerHooks) {
 		h.rec.Programs[hk] = uint32(100 + i)
 		attached[hk] = []uint32{7, uint32(100 + i)}
 	}
@@ -94,6 +95,21 @@ func TestInspectStates(t *testing.T) {
 			t.Fatalf("%+v", c)
 		}
 	})
+	t.Run("lost when the getsockopt program left the root control group", func(t *testing.T) {
+		h := newFakeHost(t)
+		q := h.in.Query
+		h.in.Query = func(dir string) (map[string][]uint32, error) {
+			got, err := q(dir)
+			if dir == h.in.CgroupRoot {
+				got = map[string][]uint32{"getsockopt": {7}}
+			}
+			return got, err
+		}
+		if c := h.one(t, []string{"agents.slice"}, DefaultPort); c.State != Lost ||
+			!strings.Contains(c.Detail, "getsockopt program the loader attached to "+h.in.CgroupRoot) {
+			t.Fatalf("%+v", c)
+		}
+	})
 	t.Run("lost when the control group was recreated", func(t *testing.T) {
 		h := newFakeHost(t)
 		dir := filepath.Join(h.in.CgroupRoot, "agents.slice")
@@ -138,7 +154,8 @@ func TestInspectStates(t *testing.T) {
 }
 
 // TestEmbeddedObject checks the committed object without loading it: the
-// five programs, their attach points and the port variable the loader sets.
+// programs, their attach points, the maps and the port variable the loader
+// sets.
 func TestEmbeddedObject(t *testing.T) {
 	spec, err := loadRedirect()
 	if err != nil {
@@ -156,12 +173,26 @@ func TestEmbeddedObject(t *testing.T) {
 		if !ok || p.AttachType != at {
 			t.Errorf("%s attaches to %v, want %v", name, p.AttachType, at)
 		}
-		wantType := ebpf.CGroupSockAddr
-		if name == "scrim_egress" {
-			wantType = ebpf.CGroupSKB
+		wantType := map[string]ebpf.ProgramType{
+			"scrim_egress": ebpf.CGroupSKB, "scrim_sockops": ebpf.SockOps, "scrim_getsockopt": ebpf.CGroupSockopt,
+		}[name]
+		if wantType == ebpf.UnspecifiedProgram {
+			wantType = ebpf.CGroupSockAddr
 		}
 		if p.Type != wantType {
 			t.Errorf("%s is %v, want %v", name, p.Type, wantType)
+		}
+	}
+	// LRU maps bound the per-connection state: key and value sizes of
+	// struct conn_key and struct orig_dst, which have no padding.
+	for name, m := range map[string]struct{ key, value, max uint32 }{
+		"scrim_pending": {8, 24, 4096},
+		"scrim_origdst": {36, 24, 16384},
+	} {
+		ms := spec.Maps[name]
+		if ms == nil || ms.Type != ebpf.LRUHash || ms.KeySize != m.key || ms.ValueSize != m.value ||
+			ms.MaxEntries != m.max || ms.Pinning != ebpf.PinNone {
+			t.Errorf("map %s: %+v, want an unpinned LRU hash of %d entries, key %d and value %d bytes", name, ms, m.max, m.key, m.value)
 		}
 	}
 	v := spec.Variables["redirect_port"]

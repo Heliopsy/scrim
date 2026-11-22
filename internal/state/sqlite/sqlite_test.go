@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -371,5 +372,51 @@ func TestUpgradeKeepsSessions(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// OpenReadOnly takes no lock and writes nothing: the owner can open the file
+// while a reader has it, the reader sees committed rows, and writes and
+// migrations through the reader fail.
+func TestOpenReadOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	if _, err := sqlite.OpenReadOnly(t.Context(), path); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("read-only open of a missing file = %v, want ErrNotExist", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("read-only open created %s", path)
+	}
+	seed := open(t, path, sqlite.Options{})
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	ro, err := sqlite.OpenReadOnly(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ro.Close() }()
+	if sqlite.Holder(path) != 0 {
+		t.Fatalf("holder recorded with no owner open")
+	}
+	owner := open(t, path, sqlite.Options{})
+	if got := sqlite.Holder(path); got != os.Getpid() {
+		t.Fatalf("Holder = %d, want %d", got, os.Getpid())
+	}
+	if err := applyGrant(t.Context(), owner, "g1"); err != nil {
+		t.Fatal(err)
+	}
+	err = ro.View(t.Context(), func(tx state.Tx) error {
+		_, err := tx.GetGrant(t.Context(), "g1")
+		return err
+	})
+	if err != nil {
+		t.Fatalf("read-only store does not see the owner's commit: %v", err)
+	}
+	if err := applyGrant(t.Context(), ro, "g2"); err == nil {
+		t.Fatal("write through a read-only store succeeded")
+	}
+	if err := ro.Migrate(t.Context()); !errors.Is(err, sqlite.ErrReadOnly) {
+		t.Fatalf("Migrate = %v, want ErrReadOnly", err)
 	}
 }

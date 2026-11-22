@@ -462,7 +462,9 @@ control group what the nftables rules do per user:
 | --- | --- |
 | `cgroup/connect4`, `cgroup/connect6` | a TCP connection to port 80 or 443 of any address that is not loopback is rewritten to the transparent listener, `127.0.0.1:<port>` or `[::1]:<port>` (an IPv4-mapped destination to `::ffff:127.0.0.1`); a datagram socket connecting to port 443 is refused |
 | `cgroup/sendmsg4`, `cgroup/sendmsg6` | an unconnected datagram to port 443 (QUIC) is refused |
+| `sockops` | records the original destination of each connection the connect hooks rewrote, keyed by the connection (client address and port, listener address and port), and deletes it when the client socket closes |
 | `cgroup_skb/egress` | a second check on the packets themselves: TCP to port 80 or 443, or UDP to 443, leaving for an address that is not loopback is dropped, whatever path it took |
+| `cgroup/getsockopt`, on the root control group | answers the transparent listener's `SO_ORIGINAL_DST` (and `IP6T_SO_ORIGINAL_DST`) query on an accepted connection from that record, so the listener reads the original destination as it does after an nftables redirect |
 
 Loopback destinations (`127.0.0.0/8`, `::1`, the unspecified address and their IPv4-mapped forms)
 are never touched, so local listeners, chained upstreams on loopback and the DNS override keep
@@ -473,7 +475,7 @@ control groups are not affected at all.
 flowchart LR
   loader["scrim ebpf attach<br>(root)"] -. "attach and pin" .-> cg["agent cgroup"]
   agent["agent in cgroup"] -- "connect()" --> hook["connect4/6<br>rewrite to loopback"]
-  hook --> tl["transparent listener<br>routed by SNI"] --> prov["provider"]
+  hook --> tl["transparent listener<br>original dst, SNI"] --> prov["provider"]
   agent -. "UDP 443, or any packet<br>to 80/443 not redirected" .-x prov
   classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
   classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
@@ -487,16 +489,32 @@ flowchart LR
 ```
 
 The programs only move traffic (design D8). The rewritten connection lands on the transparent
-listener's port (`proxy.transparent-listen`, task 13.3), which is meant to read the TLS server
-name, terminate TLS with scrim's CA and route the request, so the CA is still required and a
-pinning client fails.
+listener (`proxy.transparent-listen`, task 13.3), which reads the original destination and the TLS
+server name, terminates TLS with scrim's CA and routes the request, as for an nftables redirect.
+The CA is still required and a pinning client fails.
 
-Known gap (tasks.md 15.1b): the transparent listener today serves only connections nftables
-redirected. It reads the original destination port the kernel's NAT keeps (`SO_ORIGINAL_DST`) and
-closes a connection that has none, which is every connection a connect hook rewrote. A covered
-control group therefore fails closed: its provider connections reach scrim's port and are closed,
-nothing goes direct, nothing is redacted. The install, the boot unit and the uninstall below work
-and are tested; serving the redirected connections needs the listener change first.
+A connect rewrite leaves no NAT entry, so the kernel alone has no `SO_ORIGINAL_DST` answer for it
+(tasks.md 15.1b). The connect hooks run before the kernel picks the source port, so they store the
+original destination under the socket's cookie; the `sockops` program sees the same socket when
+TCP sends its SYN, with the source port set, and moves the entry to a map keyed by the connection.
+The listener's accepted socket sees that connection from the other side, and the `getsockopt`
+program looks it up there when the listener asks. The data plane is unchanged.
+
+- Only the programs write the two maps. They are not pinned, so an unprivileged process cannot
+  open them (opening a map by ID needs `CAP_SYS_ADMIN`), and they go away with the attachment's
+  programs. An unprivileged process cannot create a
+  matching entry: it would need a live connection with the same four addresses and ports, which
+  the kernel does not allow twice.
+- Entries are deleted when the client socket closes. Both maps are LRU hashes with a fixed size
+  (4096 pending connects, 16384 connections per attachment); under pressure the least recently
+  used entry goes, which is an old connection whose destination was read long ago. At worst a
+  connection not yet accepted loses its entry and is closed.
+- A connection with no entry, such as one made straight to the listener's port from outside the
+  covered control groups, gets the kernel's own answer, none, and the listener closes it. The
+  program never overrides an answer the kernel gave, so nftables mode is unaffected.
+- `getsockopt` sits on the root control group so it applies wherever scrim runs. It returns at
+  once for any option other than `SO_ORIGINAL_DST`, and acts only on TCP sockets whose local port
+  is the attachment's listener port. Each attachment has its own program and maps.
 
 #### Setup
 
@@ -521,7 +539,9 @@ sudo scrim ebpf detach --cgroup agents.slice                         # or --all
 
 `attach` prints what it attaches before doing it. It loads the programs with the listener port
 (`interception.ebpf.port`, default 9793, the port `scrim install --transparent` gives the
-transparent listener), attaches one link per hook and pins the links under
+transparent listener; unset, the port of the unit `scrim install --ebpf` installed), attaches one
+link per hook (`getsockopt` on the root control group, the others on the covered one) and pins the
+links under
 `/sys/fs/bpf/scrim/cg-<id>-<time>/`, then records the attachment in
 `/run/scrim-ebpf/attachments.json` (paths, IDs and times, readable by every user). Attaching again
 replaces the attachment in place: the new links go in first and the old ones are removed after, so
@@ -557,7 +577,7 @@ control group in `interception.ebpf.cgroups` or in the record:
 | `active` | the kernel lists every program the loader attached on the control group (needs `CAP_NET_ADMIN`, so `sudo scrim status`) |
 | `unverified` | the record says it is attached, but this process may not ask the kernel; status does not count it |
 | `not-attached` | configured but never attached, or attached for another port; the detail names the privilege the loader needs and whether this process has it |
-| `lost` | the control group was removed or recreated since, or a program is no longer attached |
+| `lost` | the control group was removed or recreated since, or a program is no longer attached (`getsockopt` is checked on the root control group); an attachment made before the `sockops` and `getsockopt` programs existed shows as `lost` until attached again |
 
 Only an `active` control group appears under Interception and turns on the "direct egress blocked"
 protection for that group. Every other state is listed as degraded, `doctor` fails on
@@ -568,14 +588,18 @@ connections on `127.0.0.1:<port>`.
 
 `just ebpf-vm-test` boots a kernel in qemu (the host's `/boot/vmlinuz`, or `SCRIM_VM_KERNEL`) with
 only the test binary as root inside it, and checks per-cgroup redirect over IPv4, IPv6 and
-IPv4-mapped addresses, that child control groups inherit it and other control groups are untouched,
-the QUIC refusal, the egress drop on its own, that the programs survive the loader, fail closed
-with no listener, replace in place and detach cleanly, and what status reports with and without
-the privilege to query. CI runs it on every change. `just ebpf-install-vm-test` boots a Debian root
-file system with systemd in qemu twice and covers `scrim install --ebpf` and `scrim uninstall`
-(see [service.md](service.md#verified-in-a-vm-test)). On a real host, from inside the control
-group, `curl --http3-only https://api.anthropic.com` should fail, and so, until 15.1b, does
-`curl -v https://api.anthropic.com`: the connection reaches scrim's port and is closed.
+IPv4-mapped addresses with the original destination read back through `SO_ORIGINAL_DST` (none for
+a connection that was not redirected, or whose entry was removed), that the entries are gone once
+connections close, whichever side closes first, that child control groups inherit it and other
+control groups are untouched, the QUIC refusal, the egress drop on its own, that the programs
+survive the loader, fail closed with no listener, replace in place and detach cleanly, and what
+status reports with and without the privilege to query. CI runs it on every change.
+`just ebpf-install-vm-test` boots a Debian root file system with systemd in qemu twice and covers
+`scrim install --ebpf` and `scrim uninstall` with an agent in the slice redacted through scrim
+itself (see [service.md](service.md#verified-in-a-vm-test)). On a real host, from inside the
+control group,
+`curl --http3-only https://api.anthropic.com` should fail and `curl -v https://api.anthropic.com`
+should show scrim's CA as the issuer.
 
 ## 4. DNS override
 

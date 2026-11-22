@@ -62,7 +62,8 @@ func TestEBPFAttachUsesSettings(t *testing.T) {
 	if !slices.Equal(l.attached, []string{"agents.slice", "ci.slice"}) || l.port != 9800 {
 		t.Fatalf("attached %v on %d", l.attached, l.port)
 	}
-	for _, want := range []string{"+ attach connect4, connect6, sendmsg4, sendmsg6, egress to /sys/fs/cgroup/agents.slice",
+	for _, want := range []string{"+ attach connect4, connect6, sendmsg4, sendmsg6, sockops, egress to /sys/fs/cgroup/agents.slice",
+		"getsockopt to /sys/fs/cgroup: the listener's SO_ORIGINAL_DST",
 		"127.0.0.1:9800 and [::1]:9800", "pinned in /sys/fs/bpf/scrim/cg-42-1"} {
 		if !strings.Contains(r.stdout, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, r.stdout)
@@ -161,5 +162,53 @@ func TestEBPFStatusConfiguredNotAttached(t *testing.T) {
 func TestEBPFPortIsTheTransparentListener(t *testing.T) {
 	if bpfredirect.DefaultPort != install.DefaultTransparentPort {
 		t.Fatalf("interception.ebpf.port defaults to %d, the transparent listener to %d", bpfredirect.DefaultPort, install.DefaultTransparentPort)
+	}
+}
+
+// withInstalledEBPFUnit writes the boot unit `scrim install --ebpf
+// --transparent-port port` writes, under a fake install root.
+func withInstalledEBPFUnit(t *testing.T, port int) {
+	t.Helper()
+	root := t.TempDir()
+	p := filepath.Join(root, install.EBPFUnitPath)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(install.EBPFUnitFile(install.SystemBinary, []string{"agents.slice"}, port)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := installRoot
+	installRoot = root
+	t.Cleanup(func() { installRoot = old })
+}
+
+// An install with a non-default --transparent-port sets no
+// interception.ebpf.port. Status and a manual attach take the port from the
+// installed boot unit, and an explicit setting still wins.
+func TestEBPFPortFromInstalledUnit(t *testing.T) {
+	withEBPF(t, &fakeLoader{})
+	withInstalledEBPFUnit(t, 9800)
+	ebpfStatusPort := func(env []string) int {
+		t.Helper()
+		r := runScrim(env, "ebpf", "status", "--json")
+		if r.code != 0 {
+			t.Fatalf("exit %d: %s", r.code, r.stderr)
+		}
+		var e status.EBPF
+		if err := json.Unmarshal([]byte(r.stdout), &e); err != nil {
+			t.Fatalf("%v\n%s", err, r.stdout)
+		}
+		return e.Port
+	}
+	if got := ebpfStatusPort(runEnv(t, "SCRIM_INTERCEPTION_EBPF_CGROUPS=agents.slice")); got != 9800 {
+		t.Fatalf("status checks port %d, want the installed unit's 9800", got)
+	}
+	if got := ebpfStatusPort(runEnv(t, "SCRIM_INTERCEPTION_EBPF_CGROUPS=agents.slice", "SCRIM_INTERCEPTION_EBPF_PORT=9900")); got != 9900 {
+		t.Fatalf("status checks port %d, want the explicit 9900", got)
+	}
+	l := &fakeLoader{}
+	withEBPF(t, l)
+	if r := runScrim(runEnv(t), "ebpf", "attach", "--cgroup", "agents.slice", "--no-listener-check"); r.code != 0 || l.port != 9800 {
+		t.Fatalf("attach without --port: exit %d port %d %s", r.code, l.port, r.stderr)
 	}
 }

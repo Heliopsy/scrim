@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/heliopsy/scrim/internal/bpfredirect"
+	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/install"
 	"github.com/heliopsy/scrim/internal/status"
 )
 
@@ -101,13 +103,14 @@ func ebpfAttach(e *Env) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				port = bpfredirect.PortSetting.Get(cfg)
+				port = ebpfPort(cfg)
 			}
 			w := cmd.OutOrStdout()
 			for _, cg := range cgs {
 				_, _ = fmt.Fprintf(w, "+ attach %s to %s/%s: TCP 80 and 443 of other hosts to 127.0.0.1:%d and [::1]:%d, "+
-					"UDP 443 refused, other egress to those ports dropped\n",
-					strings.Join(bpfredirect.Hooks, ", "), bpfredirect.CgroupRoot, cg, port, port)
+					"UDP 443 refused, other egress to those ports dropped; %s to %s: the listener's SO_ORIGINAL_DST for them\n",
+					strings.Join(bpfredirect.Hooks, ", "), bpfredirect.CgroupRoot, cg, port, port,
+					strings.Join(bpfredirect.ListenerHooks, ", "), bpfredirect.CgroupRoot)
 				a, err := ebpfLoader.Attach(cg, port)
 				if err != nil {
 					return err
@@ -208,13 +211,26 @@ func recordPath() string {
 	return bpfredirect.RecordPath
 }
 
+// ebpfPort is the listener port the eBPF mode redirects to: an explicit
+// interception.ebpf.port, else the port the boot unit of `scrim install
+// --ebpf` attaches with (its --transparent-port), else the default.
+func ebpfPort(cfg *config.Config) int {
+	if e, ok := cfg.Entry(bpfredirect.PortSetting.Name()); ok && e.Source.Kind != config.SourceDefault {
+		return bpfredirect.PortSetting.Get(cfg)
+	}
+	if p, ok := install.EBPFUnitPort(installRoot); ok {
+		return p
+	}
+	return bpfredirect.PortSetting.Get(cfg)
+}
+
 // ebpfReport is the eBPF mode as status shows it, nil when it is neither
 // configured nor attached.
 func ebpfReport(e *Env) *status.EBPF {
 	var cgs []string
 	port := bpfredirect.DefaultPort
 	if cfg, err := e.Config(); err == nil {
-		cgs, port = bpfredirect.CgroupsSetting.Get(cfg), bpfredirect.PortSetting.Get(cfg)
+		cgs, port = bpfredirect.CgroupsSetting.Get(cfg), ebpfPort(cfg)
 	}
 	r := bpfredirect.Inspect(ebpfInspector, cgs, port)
 	if r == nil {

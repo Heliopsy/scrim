@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -85,6 +87,31 @@ ExecStop=%s ebpf detach%s
 WantedBy=multi-user.target
 `, attach, attach, binary, sel.String())
 	return b.String()
+}
+
+// EBPFUnitPort is the listener port the installed boot unit under root
+// attaches with (its ExecStart's --port), false when no unit is installed
+// or it names none. It is the --transparent-port of `scrim install --ebpf`.
+func EBPFUnitPort(root string) (int, bool) {
+	b, err := os.ReadFile(filepath.Join(root, EBPFUnitPath)) // #nosec G304 -- fixed unit path under the install root
+	if err != nil {
+		return 0, false
+	}
+	for line := range strings.Lines(string(b)) {
+		cmd, ok := strings.CutPrefix(strings.TrimSpace(line), "ExecStart=")
+		if !ok {
+			continue
+		}
+		f := strings.Fields(cmd)
+		for i := 0; i+1 < len(f); i++ {
+			if f[i] == "--port" {
+				if n, err := strconv.Atoi(f[i+1]); err == nil && n > 0 && n <= 65535 {
+					return n, true
+				}
+			}
+		}
+	}
+	return 0, false
 }
 
 func (in *Installer) checkEBPF() error {

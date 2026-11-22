@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -214,5 +216,32 @@ func TestEBPFChecks(t *testing.T) {
 	in.Intercept = Interception{EBPF: true, CoverCgroups: []string{"a.slice"}}
 	if err := in.Install(context.Background()); err == nil || !strings.Contains(err.Error(), "no eBPF loader") {
 		t.Fatalf("no loader: %v", err)
+	}
+}
+
+// EBPFUnitPort reads back the port EBPFUnitFile writes, so status can check
+// an install with a non-default --transparent-port.
+func TestEBPFUnitPort(t *testing.T) {
+	root := t.TempDir()
+	if p, ok := EBPFUnitPort(root); ok {
+		t.Fatalf("no unit: got %d", p)
+	}
+	path := filepath.Join(root, EBPFUnitPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, port := range []int{DefaultTransparentPort, 9800} {
+		if err := os.WriteFile(path, []byte(EBPFUnitFile(SystemBinary, []string{"agents.slice", "ci.slice"}, port)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if p, ok := EBPFUnitPort(root); !ok || p != port {
+			t.Fatalf("EBPFUnitPort = %d %v, want %d", p, ok, port)
+		}
+	}
+	if err := os.WriteFile(path, []byte("[Service]\nExecStart=/usr/bin/true --port x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := EBPFUnitPort(root); ok {
+		t.Fatalf("unparsable port: got %d", p)
 	}
 }

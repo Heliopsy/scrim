@@ -26,7 +26,9 @@ through the admin API instead.
 - One writer: write transactions go through a single connection and begin `IMMEDIATE`, so writers
   queue in scrim instead of failing with `SQLITE_BUSY`. Reads use a separate pool.
 - One process per file: scrim holds an exclusive lock on `state.db.lock` for its lifetime. A second
-  process refuses to start and names the file and the holding PID.
+  process refuses to start and names the file and the holding PID. `scrim status` and `scrim
+  doctor` open the file read-only and take no lock, so running them while the service starts
+  never makes it fail; before the first start they report the file as not created yet.
 - The directory is created `0700` and the file `0600`.
 - A file on NFS, SMB, sshfs or another network filesystem is refused. The weakening setting
   `state.sqlite.allow-network-filesystem` overrides that; it is logged at start-up and listed by

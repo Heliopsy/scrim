@@ -256,6 +256,7 @@ group before removing the unit.
 
 - **WHEN** a user runs `scrim install --system --ebpf --cover-cgroup agents.slice`, reboots, then `scrim uninstall --system --purge`
 - **THEN** the hooks were attached to agents.slice after install and again at boot before the scrim service started
+- **AND** after each boot an agent in agents.slice with no scrim configuration reaches the provider's host name through scrim, redacted
 - **AND** after uninstall no hook is attached or pinned and the file system is identical to before the install
 - **AND** running `scrim uninstall` again changes nothing
 
@@ -264,6 +265,18 @@ group before removing the unit.
 - **WHEN** a process without CAP_BPF and CAP_NET_ADMIN runs `scrim install --system --ebpf`
 - **THEN** the install changes nothing and names the missing privilege
 - **AND** with `--dry-run` it prints the unit and the drop-in it would write
+
+### Requirement: eBPF install port is the listener port
+
+Where `interception.ebpf.port` is not set, `scrim status`, `scrim doctor` and `scrim ebpf attach`
+SHALL use the port the unit installed by `scrim install --ebpf` attaches with.
+
+#### Scenario: eBPF install with a non-default port
+
+- **WHEN** a user runs `scrim install --system --ebpf --cover-cgroup agents.slice --transparent-port 9800`
+  and sets no `interception.ebpf.port`
+- **THEN** `scrim status` checks the attachment and the listener on port 9800
+- **AND** with `interception.ebpf.port` set, status uses the setting instead
 
 ### Requirement: Install upgrades in place
 

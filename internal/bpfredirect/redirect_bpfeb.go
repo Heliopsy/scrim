@@ -8,20 +8,41 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"structs"
 
 	"github.com/cilium/ebpf"
 )
+
+type redirectConnKey struct {
+	_          structs.HostLayout
+	Client     [4]uint32
+	Server     [4]uint32
+	ClientPort uint16
+	ServerPort uint16
+}
+
+type redirectOrigDst struct {
+	_      structs.HostLayout
+	Family uint32
+	Addr   [4]uint32
+	Port   uint16
+	Pad    uint16
+}
 
 // Names of all BPF objects in the ELF.
 //
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
-	redirectProgScrimConnect4 = "scrim_connect4"
-	redirectProgScrimConnect6 = "scrim_connect6"
-	redirectProgScrimEgress   = "scrim_egress"
-	redirectProgScrimSendmsg4 = "scrim_sendmsg4"
-	redirectProgScrimSendmsg6 = "scrim_sendmsg6"
-	redirectVarRedirectPort   = "redirect_port"
+	redirectMapScrimOrigdst     = "scrim_origdst"
+	redirectMapScrimPending     = "scrim_pending"
+	redirectProgScrimConnect4   = "scrim_connect4"
+	redirectProgScrimConnect6   = "scrim_connect6"
+	redirectProgScrimEgress     = "scrim_egress"
+	redirectProgScrimGetsockopt = "scrim_getsockopt"
+	redirectProgScrimSendmsg4   = "scrim_sendmsg4"
+	redirectProgScrimSendmsg6   = "scrim_sendmsg6"
+	redirectProgScrimSockops    = "scrim_sockops"
+	redirectVarRedirectPort     = "redirect_port"
 )
 
 // loadRedirect returns the embedded CollectionSpec for redirect.
@@ -66,17 +87,21 @@ type redirectSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type redirectProgramSpecs struct {
-	ScrimConnect4 *ebpf.ProgramSpec `ebpf:"scrim_connect4"`
-	ScrimConnect6 *ebpf.ProgramSpec `ebpf:"scrim_connect6"`
-	ScrimEgress   *ebpf.ProgramSpec `ebpf:"scrim_egress"`
-	ScrimSendmsg4 *ebpf.ProgramSpec `ebpf:"scrim_sendmsg4"`
-	ScrimSendmsg6 *ebpf.ProgramSpec `ebpf:"scrim_sendmsg6"`
+	ScrimConnect4   *ebpf.ProgramSpec `ebpf:"scrim_connect4"`
+	ScrimConnect6   *ebpf.ProgramSpec `ebpf:"scrim_connect6"`
+	ScrimEgress     *ebpf.ProgramSpec `ebpf:"scrim_egress"`
+	ScrimGetsockopt *ebpf.ProgramSpec `ebpf:"scrim_getsockopt"`
+	ScrimSendmsg4   *ebpf.ProgramSpec `ebpf:"scrim_sendmsg4"`
+	ScrimSendmsg6   *ebpf.ProgramSpec `ebpf:"scrim_sendmsg6"`
+	ScrimSockops    *ebpf.ProgramSpec `ebpf:"scrim_sockops"`
 }
 
 // redirectMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type redirectMapSpecs struct {
+	ScrimOrigdst *ebpf.MapSpec `ebpf:"scrim_origdst"`
+	ScrimPending *ebpf.MapSpec `ebpf:"scrim_pending"`
 }
 
 // redirectVariableSpecs contains global variables before they are loaded into the kernel.
@@ -106,10 +131,15 @@ func (o *redirectObjects) Close() error {
 //
 // It can be passed to loadRedirectObjects or ebpf.CollectionSpec.LoadAndAssign.
 type redirectMaps struct {
+	ScrimOrigdst *ebpf.Map `ebpf:"scrim_origdst"`
+	ScrimPending *ebpf.Map `ebpf:"scrim_pending"`
 }
 
 func (m *redirectMaps) Close() error {
-	return _RedirectClose()
+	return _RedirectClose(
+		m.ScrimOrigdst,
+		m.ScrimPending,
+	)
 }
 
 // redirectVariables contains all global variables after they have been loaded into the kernel.
@@ -123,11 +153,13 @@ type redirectVariables struct {
 //
 // It can be passed to loadRedirectObjects or ebpf.CollectionSpec.LoadAndAssign.
 type redirectPrograms struct {
-	ScrimConnect4 *ebpf.Program `ebpf:"scrim_connect4"`
-	ScrimConnect6 *ebpf.Program `ebpf:"scrim_connect6"`
-	ScrimEgress   *ebpf.Program `ebpf:"scrim_egress"`
-	ScrimSendmsg4 *ebpf.Program `ebpf:"scrim_sendmsg4"`
-	ScrimSendmsg6 *ebpf.Program `ebpf:"scrim_sendmsg6"`
+	ScrimConnect4   *ebpf.Program `ebpf:"scrim_connect4"`
+	ScrimConnect6   *ebpf.Program `ebpf:"scrim_connect6"`
+	ScrimEgress     *ebpf.Program `ebpf:"scrim_egress"`
+	ScrimGetsockopt *ebpf.Program `ebpf:"scrim_getsockopt"`
+	ScrimSendmsg4   *ebpf.Program `ebpf:"scrim_sendmsg4"`
+	ScrimSendmsg6   *ebpf.Program `ebpf:"scrim_sendmsg6"`
+	ScrimSockops    *ebpf.Program `ebpf:"scrim_sockops"`
 }
 
 func (p *redirectPrograms) Close() error {
@@ -135,8 +167,10 @@ func (p *redirectPrograms) Close() error {
 		p.ScrimConnect4,
 		p.ScrimConnect6,
 		p.ScrimEgress,
+		p.ScrimGetsockopt,
 		p.ScrimSendmsg4,
 		p.ScrimSendmsg6,
+		p.ScrimSockops,
 	)
 }
 

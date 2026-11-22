@@ -1380,7 +1380,7 @@ Control groups (cgroup v2 paths below /sys/fs/cgroup, such as agents.slice) the 
 
 #### `interception.ebpf.port`
 
-Port of the transparent listener on 127.0.0.1 and ::1 that the eBPF transparent mode redirects to. It must match the port of proxy.transparent-listen; nothing listening there means covered connections fail, never go direct.
+Port of the transparent listener on 127.0.0.1 and ::1 that the eBPF transparent mode redirects to. It must match the port of proxy.transparent-listen; nothing listening there means covered connections fail, never go direct. Unset, status and `scrim ebpf attach` use the port of the boot unit `scrim install --ebpf` installed, if any.
 
 | | |
 |---|---|
