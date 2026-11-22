@@ -154,7 +154,7 @@ func (l location) refFor(scheme, folder, key string) stores.Ref {
 // secretReminderNote are free text that may quote a value, so they are not
 // decoded at all.
 type apiSecret struct {
-	SecretKey      string    `json:"secretKey"`
+	Name           string    `json:"secretKey"`
 	SecretValue    wire.Raw  `json:"secretValue"`
 	Version        int       `json:"version"`
 	Type           string    `json:"type"`
@@ -227,7 +227,7 @@ func (a *Adapter) labels(p projectInfo, projectID string, l location, folder str
 			out[e.Key] = e.Value
 		}
 	}
-	nativeLocation(out, p, projectID, l, folder, s.SecretKey)
+	nativeLocation(out, p, projectID, l, folder, s.Name)
 	setNative(out, "encrypted-meta", encrypted...)
 	if s.Type != "" {
 		setNative(out, "type", s.Type)
@@ -432,7 +432,7 @@ func (a *Adapter) List(ctx context.Context, prefix stores.Ref) ([]stores.Metadat
 		if folder == "" {
 			folder = l.folder
 		}
-		out = append(out, s.meta(l.refFor(prefix.Scheme, folder, s.SecretKey), a.labels(p, id, l, folder, s)))
+		out = append(out, s.meta(l.refFor(prefix.Scheme, folder, s.Name), a.labels(p, id, l, folder, s)))
 	}
 	slices.SortFunc(out, func(x, y stores.Metadata) int { return strings.Compare(x.Ref.Path, y.Ref.Path) })
 	return out, nil
@@ -532,8 +532,8 @@ func (a *Adapter) send(ctx context.Context, method, projectID string, l location
 			resp.Secret.SecretMetadata = append(resp.Secret.SecretMetadata, kv{Key: k, Value: labels[k]})
 		}
 	}
-	if resp.Secret.SecretKey == "" {
-		resp.Secret.SecretKey = l.key
+	if resp.Secret.Name == "" {
+		resp.Secret.Name = l.key
 	}
 	resp.Secret.ReminderDays = optInt{} // as in Read
 	return resp.Secret.meta(ref, a.labels(a.c.projectDetails(ctx, projectID), projectID, l, l.folder, &resp.Secret)), nil
