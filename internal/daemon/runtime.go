@@ -45,6 +45,12 @@ func (d *Daemon) runtimeInfo(ctx context.Context, ready bool) Runtime {
 		if a.ToolProxy != "" {
 			rt.Interception = append(rt.Interception, "tool-proxy "+a.ToolProxy)
 		}
+		for _, t := range a.Transparent {
+			rt.Interception = append(rt.Interception, "transparent "+t+" (connections nftables redirects; see nft list table inet scrim)")
+		}
+		if a.SNI != "" {
+			rt.Interception = append(rt.Interception, "dns-override "+a.SNI+" (provider names resolve to scrim; does not stop connections made by address)")
+		}
 		if sessions > 0 {
 			rt.Interception = append(rt.Interception, fmt.Sprintf("wrapper (%d scrim run session(s))", sessions))
 		}
@@ -64,11 +70,23 @@ func (d *Daemon) runtimeInfo(ctx context.Context, ready bool) Runtime {
 		{Name: "redaction", Active: dpUp && len(empty) == 0, Detail: redactionDetail(dpUp, empty)},
 		{Name: "credential injection", Active: dpUp && (a.ForwardProxy != "" || a.ToolProxy != "") && !bg,
 			Detail: detail(a.ForwardProxy != "" || a.ToolProxy != "", "through the tool proxy toward bound hosts", "no forward or tool proxy listener: tools never receive injected credentials")},
-		{Name: "direct egress blocked", Active: false, Detail: "no enforcing interception mode (transparent, eBPF, network policy) is active; an agent can still reach providers directly"},
+		egress(dpUp && len(a.Transparent) > 0),
 		{Name: "break-glass", Active: bg, Detail: detail(bg, "deny-all engaged: injection, grants and approvals are refused", "off")},
 		{Name: "capture mode", Active: d.capture != "", Detail: detail(d.capture != "", "provider requests are written to "+d.capture, "off")},
 	}
 	return rt
+}
+
+// egress is the direct egress protection: only the transparent mode
+// enforces it on a host, and only for the users and control groups its
+// nftables rules cover.
+func egress(transparent bool) status.Protection {
+	if transparent {
+		return status.Protection{Name: "direct egress blocked", Active: true,
+			Detail: "for the users and control groups the nftables rules of scrim install --transparent cover (nft list table inet scrim); other processes can still reach providers directly"}
+	}
+	return status.Protection{Name: "direct egress blocked", Active: false,
+		Detail: "no enforcing interception mode (transparent, eBPF, network policy) is active; an agent can still reach providers directly"}
 }
 
 func detail(ok bool, yes, no string) string {

@@ -16,6 +16,7 @@ brotli = "9"
 bytes = "1"
 flate2 = "1"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+hmac = "0.13"
 http = "1"
 http-body = "1"
 http-body-util = "0.1"
@@ -26,7 +27,9 @@ md-5 = "0.11"
 memchr = "2"
 percent-encoding = "2"
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "x509-parser"] }
+ring = "0.17"
 rustls-native-certs = "0.8"
+scrim-dns = { path = "../scrim-dns" }
 scrim-proto = { path = "../scrim-proto" }
 scrim-redact = { path = "../scrim-redact" }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }

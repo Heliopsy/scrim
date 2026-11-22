@@ -93,6 +93,28 @@ func WriteHuman(w io.Writer, r Report) error {
 		}
 	}
 
+	if v := r.RunView; v != nil {
+		p.section("Filesystem view (scrim run)")
+		switch {
+		case v.Mode == RunViewRefused:
+			p.line("  REFUSED: run.fs-view is namespace, but %s", v.Fallback)
+		case v.Fallback != "":
+			p.line("  %s (fallback: %s)", v.Mode, v.Fallback)
+		case v.Mode == "namespace":
+			p.line("  namespace (user and mount namespace)")
+		default:
+			p.line("  %s (run.fs-view %s)", v.Mode, v.Requested)
+		}
+		for _, g := range v.Gaps {
+			p.line("    not covered: %s", g)
+		}
+	}
+
+	if r.EBPF != nil {
+		p.section("eBPF transparent mode")
+		writeEBPF(p, r.EBPF)
+	}
+
 	p.section("Protections")
 	p.table(len(r.Protections), func(tw io.Writer) {
 		for _, pr := range r.Protections {
@@ -174,6 +196,35 @@ func WriteHuman(w io.Writer, r Report) error {
 		}
 	}
 	return p.err
+}
+
+// WriteEBPF writes the eBPF mode for a terminal (`scrim ebpf status`).
+func WriteEBPF(w io.Writer, e *EBPF) error {
+	p := &printer{w: w}
+	writeEBPF(p, e)
+	return p.err
+}
+
+func writeEBPF(p *printer, e *EBPF) {
+	if len(e.Cgroups) == 0 && e.Problem == "" {
+		p.line("  off (interception.ebpf.cgroups is empty and nothing is attached)")
+		return
+	}
+	if e.Problem != "" {
+		p.line("  NOT AVAILABLE: %s", e.Problem)
+	}
+	p.table(len(e.Cgroups), func(tw io.Writer) {
+		for _, c := range e.Cgroups {
+			state := strings.ToUpper(c.State)
+			if c.State == "active" {
+				state = c.State
+			}
+			_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\n", c.Cgroup, state, c.Detail)
+		}
+	})
+	if len(e.Cgroups) > 0 {
+		p.line("  listener: %s", e.Listener)
+	}
 }
 
 type printer struct {

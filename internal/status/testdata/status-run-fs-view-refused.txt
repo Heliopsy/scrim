@@ -1,0 +1,32 @@
+scrim 0.1.0
+overall: DEGRADED (1 degraded, 0 weakened)
+
+Interception
+  none active
+
+Filesystem view (scrim run)
+  REFUSED: run.fs-view is namespace, but creating a user namespace is not allowed: operation not permitted
+
+Protections
+  none
+
+Providers
+  none
+
+Stores
+  none
+
+State
+  memory, schema 0, healthy
+
+Audit sinks
+  none
+
+Data plane
+  running, pid 7, version unknown, up 0s, healthy
+
+Degraded
+  run-fs-view: run.fs-view is namespace and this host has none, so scrim run refuses to start agents: creating a user namespace is not allowed: operation not permitted
+
+Weakened protections
+  none

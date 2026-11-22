@@ -201,21 +201,93 @@ configuration.
 - **WHEN** transparent mode covers a user and an agent of that user connects to a provider directly
 - **THEN** the connection is redirected to scrim and redacted
 
+### Requirement: Transparent listener routing
+
+The transparent mode SHALL redirect TCP ports 80 and 443 of the covered users and control groups
+to a transparent listener, which SHALL route by the TLS server name (or the `Host` header of plain
+HTTP): provider hosts to the LLM proxy, hosts bound to a credential or capture rule to the tool
+proxy, any other host relayed untouched to that name or closed, as configured. TLS without a server
+name SHALL be closed, and the covered users' unredirected and QUIC egress SHALL be rejected.
+
+#### Scenario: Connection by address
+
+- **WHEN** a covered agent connects to a provider's address without a server name, or with the server name of another host
+- **THEN** the connection does not reach the provider: it is closed, or relayed to the host it names, never to the address it dialled
+
+#### Scenario: Uncovered user
+
+- **WHEN** a user that transparent mode does not cover connects to a provider
+- **THEN** the connection is not redirected and not rejected
+
+### Requirement: Transparent mode excludes scrim
+
+The transparent rules SHALL never redirect scrim's own user or loopback destinations, so scrim's
+upstream connections and local chained upstreams do not loop.
+
+#### Scenario: No loop through scrim
+
+- **WHEN** scrim connects to a provider or to a chained upstream on loopback while transparent mode is active
+- **THEN** its connections are not redirected
+
 ### Requirement: Transparent mode with eBPF
 
-scrim SHALL offer a Linux transparent mode that attaches connection hooks to selected control
-groups, redirecting provider connections to scrim and denying direct egress. Loading the hooks SHALL
-require a privileged loader, and agents SHALL run unprivileged.
+scrim SHALL offer a Linux transparent mode that attaches connection hooks to selected cgroup v2
+control groups. In a covered control group and its descendants, TCP connections to ports 80 and 443
+of any address that is not loopback SHALL be redirected to scrim's transparent listener on loopback
+and datagrams to port 443 SHALL be refused. Processes outside the covered control groups SHALL NOT
+be affected.
 
 #### Scenario: Wrapped agent in its own control group
 
 - **WHEN** an agent runs in a control group covered by the eBPF mode
 - **THEN** its provider connections reach scrim and direct provider connections are denied
 
+#### Scenario: Process outside the covered control groups
+
+- **WHEN** a process in a control group the mode does not cover connects to a provider
+- **THEN** its connection is neither redirected nor denied
+
+#### Scenario: QUIC from a covered control group
+
+- **WHEN** a process in a covered control group sends a UDP datagram to port 443 of a provider
+- **THEN** the send fails and nothing reaches the provider
+
+### Requirement: eBPF egress denial
+
+Independently of the redirect, any TCP packet to port 80 or 443 or UDP packet to port 443 that
+leaves a covered control group for an address that is not loopback SHALL be dropped.
+
+#### Scenario: Packet that bypassed the redirect
+
+- **WHEN** only the egress hook is attached and a covered process connects to port 443 of a provider
+- **THEN** its packets are dropped and the connection never reaches the provider
+
+### Requirement: eBPF loader and status
+
+Loading the eBPF hooks SHALL require a privileged loader, and agents SHALL run unprivileged. The
+hooks SHALL stay attached when scrim or the loader stops, so covered connections fail instead of
+going direct. Status SHALL report a control group as active only after confirming with the kernel
+that every hook the loader attached is still attached to it.
+
+#### Scenario: scrim not listening
+
+- **WHEN** nothing listens on the transparent listener's port and a covered process connects to a provider
+- **THEN** the connection is refused and nothing reaches the provider
+
 #### Scenario: Loader not available
 
 - **WHEN** the eBPF mode is configured but the privileged loader is not installed or lacks rights
 - **THEN** scrim refuses to report the mode as active and status names the missing privilege
+
+#### Scenario: Attachment not confirmed
+
+- **WHEN** status runs in a process that may not query the kernel's cgroup attachments
+- **THEN** each covered control group is reported unverified, not active, and the direct egress protection is not claimed for it
+
+#### Scenario: Control group recreated
+
+- **WHEN** a covered control group is removed and created again under the same path after the hooks were attached
+- **THEN** status reports it as not active and names the command that attaches it again
 
 ### Requirement: DNS override mode
 
@@ -227,6 +299,22 @@ by address.
 
 - **WHEN** an agent resolves a provider host name under the DNS override
 - **THEN** it connects to scrim and its traffic is redacted
+
+#### Scenario: Status names the gap
+
+- **WHEN** the DNS override is active
+- **THEN** `scrim status` lists it with the note that connections made by address bypass it
+
+### Requirement: DNS override does not loop
+
+In DNS override mode the provider names SHALL point at an SNI listener on a loopback address, port
+443, and scrim's own upstream connections SHALL NOT resolve to it: when the system resolver answers
+with the SNI listener, scrim SHALL ask the upstream name servers directly.
+
+#### Scenario: scrim reaches the provider by the overridden name
+
+- **WHEN** scrim's upstream for a provider is named by a host the override points at scrim
+- **THEN** scrim connects to the address the name servers give, not to itself
 
 ### Requirement: Kubernetes injection
 
@@ -323,6 +411,12 @@ to the processes that mode covers, and SHALL remove every trust change it made o
 
 - **WHEN** transparent or DNS mode is installed
 - **THEN** the CA is also installed into the system trust store and the Java truststore
+
+#### Scenario: Java truststores
+
+- **WHEN** transparent or DNS mode is installed on a host with JDKs
+- **THEN** a truststore the system trust tool rebuilds (Debian's ca-certificates-java, Fedora's extracted Java store) is checked to hold the CA, and every other JDK truststore found under `/usr/lib/jvm` or named with `--java-home` gets the CA imported and recorded
+- **AND** uninstall removes the CA from each of them
 
 #### Scenario: Node-based agent
 

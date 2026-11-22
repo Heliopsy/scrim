@@ -25,12 +25,13 @@ use crate::audit::{AuditEvent, AuditSink, TracingAuditSink};
 use crate::body::{BoxError, ProxyBody, empty, full};
 use crate::ca::{CaOptions, CaRing, CertificateAuthority, LeafSettings};
 use crate::capture::{CaptureSink, CapturedValues, RefusingCaptureSink};
+use crate::clientcert::{OptionalClientCert, PresentedCertificate, presented_key};
 use crate::credential::ValidationError;
 use crate::decide::ClientInfo;
 use crate::engine::{Engine, RequestSigner, Snapshot};
 use crate::error::{ErrorCode, Refusal};
 use crate::host::{Destination, Scheme};
-use crate::upstream::{HttpsClient, UpstreamSettings, UpstreamSetupError, build_client};
+use crate::upstream::{UpstreamSettings, UpstreamSetupError, Upstreams};
 
 /// Limits of the tool proxy.
 #[derive(Clone, Debug)]
@@ -102,7 +103,7 @@ pub(crate) struct Shared {
     pub(crate) engine: ArcSwapOption<Engine>,
     source: Option<Arc<dyn SnapshotSource>>,
     pub(crate) ca: CaRing,
-    pub(crate) client: HttpsClient,
+    pub(crate) upstreams: Upstreams,
     pub(crate) audit: Arc<dyn AuditSink>,
     pub(crate) capture_sink: Arc<dyn CaptureSink>,
     pub(crate) captured: Arc<CapturedValues>,
@@ -199,13 +200,14 @@ impl ToolProxyBuilder {
             None => CertificateAuthority::generate(&CaOptions::default())
                 .map_err(|e| BuildError(e.to_string()))?,
         };
-        let client = build_client(&self.upstream).map_err(|UpstreamSetupError(e)| BuildError(e))?;
+        let upstreams =
+            Upstreams::new(&self.upstream).map_err(|UpstreamSetupError(e)| BuildError(e))?;
         Ok(ToolProxy {
             shared: Arc::new(Shared {
                 engine: ArcSwapOption::empty(),
                 source: self.source,
                 ca: CaRing::new(ca, self.leaf),
-                client,
+                upstreams,
                 audit: self.audit,
                 capture_sink: self.capture_sink,
                 captured: Arc::new(CapturedValues::new(self.settings.captured_values_capacity)),
@@ -239,7 +241,7 @@ pub struct ProxyStatus {
 /// The HTTPS tool proxy. Cheap to clone.
 #[derive(Clone)]
 pub struct ToolProxy {
-    shared: Arc<Shared>,
+    pub(crate) shared: Arc<Shared>,
 }
 
 impl std::fmt::Debug for ToolProxy {
@@ -420,7 +422,7 @@ impl ToolProxy {
 
     /// Terminates TLS inside a CONNECT tunnel with a leaf for the CONNECT host and serves HTTP/1.1
     /// or HTTP/2 over it. Every request in the tunnel carries the CONNECT's [`ClientInfo`].
-    async fn tunnel<IO>(&self, dest: Destination, io: IO, client: ClientInfo)
+    pub(crate) async fn tunnel<IO>(&self, dest: Destination, io: IO, client: ClientInfo)
     where
         IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
@@ -446,9 +448,18 @@ impl ToolProxy {
             }
         };
         let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let mut cfg = match rustls::ServerConfig::builder_with_provider(provider)
+        // Toward a host a client certificate credential is bound to, ask the agent for its
+        // (placeholder) certificate; nowhere else, so other clients never see the request.
+        let ask_cert = self
+            .shared
+            .current()
+            .is_some_and(|e| e.credentials.client_certificate_bound_to(&dest));
+        let mut cfg = match rustls::ServerConfig::builder_with_provider(Arc::clone(&provider))
             .with_safe_default_protocol_versions()
         {
+            Ok(b) if ask_cert => b
+                .with_client_cert_verifier(Arc::new(OptionalClientCert::new(provider)))
+                .with_cert_resolver(Arc::new(FixedCert(leaf))),
             Ok(b) => b
                 .with_no_client_auth()
                 .with_cert_resolver(Arc::new(FixedCert(leaf))),
@@ -469,11 +480,21 @@ impl ToolProxy {
                 return;
             }
         };
+        let presented = tls
+            .get_ref()
+            .1
+            .peer_certificates()
+            .and_then(|c| c.first())
+            .and_then(presented_key)
+            .map(PresentedCertificate);
         let this = self.clone();
         let svc = service_fn(move |mut req: Request<Incoming>| {
             let this = this.clone();
             let dest = dest.clone();
             req.extensions_mut().insert(client.clone());
+            if let Some(p) = presented {
+                req.extensions_mut().insert(p);
+            }
             async move { Ok::<_, Infallible>(this.route(dest, req, misdirected).await) }
         });
         if let Err(e) = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
@@ -484,7 +505,7 @@ impl ToolProxy {
         }
     }
 
-    fn interception_refused(
+    pub(crate) fn interception_refused(
         &self,
         dest: &Destination,
         reason: String,
@@ -503,7 +524,7 @@ impl ToolProxy {
         });
     }
 
-    async fn route<B>(
+    pub(crate) async fn route<B>(
         &self,
         dest: Destination,
         req: Request<B>,
@@ -546,7 +567,28 @@ impl ToolProxy {
             Ok(p) => p,
             Err(r) => return refusal_response(&r),
         };
-        let sent = shared.client.request(prepared.req).await;
+        let client = match &prepared.client_identity {
+            None => shared.upstreams.default_client().clone(),
+            Some(v) => match shared.upstreams.with_identity(v) {
+                Ok(c) => c,
+                Err(e) => {
+                    let r = Refusal::new(
+                        ErrorCode::CredentialUnavailable,
+                        format!("the client certificate for {dest} is not usable: {e}"),
+                    );
+                    shared.audit.record(AuditEvent::RequestRefused {
+                        code: r.code,
+                        credentials: Vec::new(),
+                        destination: dest.to_string(),
+                        method: String::new(),
+                        path: String::new(),
+                        message: r.message.clone(),
+                    });
+                    return refusal_response(&r);
+                }
+            },
+        };
+        let sent = client.request(prepared.req).await;
         if prepared
             .meta
             .aborted

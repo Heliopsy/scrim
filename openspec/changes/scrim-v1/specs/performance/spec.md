@@ -90,6 +90,49 @@ meet a configured minimum.
 - **WHEN** the benchmark suite runs
 - **THEN** it reports MB/s per core for each body size and fails if below the configured minimum
 
+### Requirement: Proxy-level load test
+
+scrim SHALL be load tested at proxy level with at least three replicas sharing PostgreSQL state and
+Valkey or NATS events, driven by at least 1,000 concurrent agent streams against a fake provider and
+a fake tool API. The traffic SHALL carry seeded secrets to redact, placeholders to restore,
+placeholders to inject through the forward proxy, and approvals held on one replica, decided on
+another and their grants revoked on a third.
+
+#### Scenario: Full run
+
+- **WHEN** the full profile runs
+- **THEN** 1,000 concurrent streams pass through three replicas sharing PostgreSQL and Valkey or NATS events
+
+### Requirement: Load test correctness
+
+The load test SHALL fail when any seeded value reaches the provider, the tool API, the agent or a
+replica's log; when a placeholder is not restored where policy allows it or is restored where it
+does not; when an injection fails; when a held request is not released by a decision made on
+another replica, or a revoked grant is honoured; and when the replicas disagree on the event outbox.
+
+#### Scenario: Redaction broken under load
+
+- **WHEN** the load test runs with part of the seeded values left out of the redaction set
+- **THEN** the run fails and reports the leaks seen at the provider
+
+#### Scenario: Replicas without shared events
+
+- **WHEN** the load test runs with replicas that do not share events
+- **THEN** requests held on one replica are not released by decisions made on another and the run fails
+
+### Requirement: Load test thresholds and results
+
+The load test SHALL fail when a configured threshold is missed: scrim's own p99 added latency per
+request and per streamed chunk (never looser than the budgets above), client-observed added latency,
+approval release lag, error rate, throughput, mean concurrent streams, and memory per replica and per
+stream. Run sizes and thresholds SHALL be configuration. Each run SHALL write a machine-readable
+result and a report that state the conditions, the machine and every measurement.
+
+#### Scenario: Result of a run
+
+- **WHEN** a load test run ends
+- **THEN** its result file and report record throughput, p50, p95 and p99 added latency, error rate, approval release lag and CPU and memory per replica, each threshold and whether it held
+
 ### Requirement: Regression gate
 
 A release SHALL fail when any budgeted measurement regresses beyond a configured threshold against the

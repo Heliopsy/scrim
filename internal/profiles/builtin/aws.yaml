@@ -14,6 +14,10 @@ credentials:
     hosts: ["*.amazonaws.com"]
 params:
   region: ""
+  # scrim: the config's credential_process runs scrim's helper, which prints
+  # the placeholder keys, and the credentials file holds none. "" writes the
+  # placeholder keys into the credentials file.
+  helper: ""
 env:
   AWS_SHARED_CREDENTIALS_FILE: '{{ path "credentials" }}'
   AWS_CONFIG_FILE: '{{ path "config" }}'
@@ -36,16 +40,21 @@ files:
   - path: credentials
     content: |
       [default]
+      {{- if not (param "helper") }}
       aws_access_key_id = {{ placeholder "access-key-id" }}
       aws_secret_access_key = {{ placeholder "secret-access-key" }}
       {{- with placeholder "session-token" }}
       aws_session_token = {{ . }}
+      {{- end }}
       {{- end }}
   - path: config
     content: |
       [default]
       {{- with param "region" }}
       region = {{ . }}
+      {{- end }}
+      {{- if param "helper" }}
+      credential_process = {{ shquote scrim }} credential-helper aws --access-key-id {{ shquote (placeholder "access-key-id") }} --secret-access-key {{ shquote (placeholder "secret-access-key") }}{{ with placeholder "session-token" }} --session-token {{ shquote . }}{{ end }}
       {{- end }}
 paths:
   - home: .aws/credentials

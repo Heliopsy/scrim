@@ -8,6 +8,10 @@ credentials:
     required: true
 params:
   username: x-access-token
+  # scrim: scrim's git credential helper answers from the generated
+  # git-credentials file and never stores what git hands it; "" uses git's
+  # own store helper on that file.
+  helper: scrim
 env:
   # An empty credential.helper resets the helpers from every git config
   # file, so a keychain or store holding the real password is never asked.
@@ -15,7 +19,7 @@ env:
   GIT_CONFIG_KEY_0: credential.helper
   GIT_CONFIG_VALUE_0: ""
   GIT_CONFIG_KEY_1: credential.helper
-  GIT_CONFIG_VALUE_1: 'store --file={{ path "git-credentials" }}'
+  GIT_CONFIG_VALUE_1: '{{ if param "helper" }}!{{ shquote scrim }} credential-helper git --file {{ shquote (path "git-credentials") }}{{ else }}store --file={{ path "git-credentials" }}{{ end }}'
   GIT_TERMINAL_PROMPT: "0"
 files:
   - path: git-credentials
@@ -31,4 +35,5 @@ test:
   expect: 'password={{ placeholder "password" }}'
 notes:
   - The session sets GIT_CONFIG_COUNT; an inherited GIT_CONFIG_COUNT is replaced.
+  - git asks scrim's credential helper (scrim credential-helper git), which returns the placeholder for the host and ignores store and erase.
   - git over SSH goes through the ssh agent, not this profile.

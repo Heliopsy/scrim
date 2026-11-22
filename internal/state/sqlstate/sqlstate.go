@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/audit"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/state/migrate"
 )
@@ -67,6 +68,33 @@ type DB struct {
 
 	hookMu sync.Mutex
 	hooks  []func()
+	tap    state.AuditTapFunc
+}
+
+var _ state.AuditTap = (*DB)(nil)
+
+// SetAuditTap implements [state.AuditTap].
+func (d *DB) SetAuditTap(fn state.AuditTapFunc) {
+	d.hookMu.Lock()
+	defer d.hookMu.Unlock()
+	d.tap = fn
+}
+
+func (d *DB) tapped() bool {
+	d.hookMu.Lock()
+	defer d.hookMu.Unlock()
+	return d.tap != nil
+}
+
+// runTap hands the transaction's audit entries to the tap before commit.
+func (d *DB) runTap(ctx context.Context, entries []audit.Entry) (func(bool), error) {
+	d.hookMu.Lock()
+	tap := d.tap
+	d.hookMu.Unlock()
+	if tap == nil || len(entries) == 0 {
+		return nil, nil
+	}
+	return tap(ctx, entries)
 }
 
 var _ state.CommitHook = (*DB)(nil)
@@ -141,12 +169,21 @@ func (d *DB) Update(ctx context.Context, fn func(state.Tx) error) error {
 	if err := fn(t); err != nil {
 		return err
 	}
+	done, err := d.runTap(ctx, t.audited)
+	if err != nil {
+		return err
+	}
+	committed := false
+	if done != nil {
+		defer func() { done(committed) }()
+	}
 	if err := d.fault("commit"); err != nil {
 		return err
 	}
 	if err := d.mapErr(tx.Commit(), "commit"); err != nil {
 		return err
 	}
+	committed = true
 	if t.emitted {
 		d.committed()
 	}

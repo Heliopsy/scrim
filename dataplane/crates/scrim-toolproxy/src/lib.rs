@@ -54,6 +54,7 @@ mod audit;
 mod body;
 mod ca;
 mod capture;
+mod clientcert;
 mod codec;
 mod credential;
 mod decide;
@@ -69,6 +70,8 @@ mod redactor;
 mod request;
 mod response;
 mod secret;
+mod sigv4;
+mod transparent;
 mod unresolved;
 mod upstream;
 
@@ -79,11 +82,12 @@ pub use capture::{
     CaptureError, CaptureFuture, CaptureRequest, CaptureRule, CaptureRuleSpec, CaptureSink,
     CaptureSource, RefusingCaptureSink, WITHHELD_MARKER,
 };
+pub use clientcert::{placeholder_certificate, placeholder_public_key};
 pub use codec::Coding;
 pub use credential::{
-    Binding, BindingSpec, Credential, CredentialSet, CredentialSetBuilder, CredentialSpec,
-    Location, Locations, MIN_DECLARED_PLACEHOLDER_LEN, Placeholder, PlaceholderKind,
-    ValidationError,
+    AwsSigV4Spec, Binding, BindingSpec, Credential, CredentialSet, CredentialSetBuilder,
+    CredentialSpec, Location, Locations, MIN_DECLARED_PLACEHOLDER_LEN, Placeholder,
+    PlaceholderKind, ValidationError,
 };
 pub use decide::{
     ClientInfo, InjectionDecision, InjectionPolicy, InjectionRequest, KUBERNETES_USER,
@@ -101,4 +105,9 @@ pub use redactor::{
     redact_all,
 };
 pub use secret::SecretValue;
+pub use transparent::TransparentConn;
 pub use upstream::{UpstreamSettings, UpstreamSetupError};
+
+/// AWS `SigV4` signing helpers for integration tests and fuzz targets. Not a stable API.
+#[doc(hidden)]
+pub use sigv4::testing as sigv4_testing;

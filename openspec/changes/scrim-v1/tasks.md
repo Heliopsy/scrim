@@ -106,15 +106,19 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 ## 10a. Command-line tools
 
 - [x] 10a.1 Tool profiles with generated placeholder env and config files, removed at session end; verify: gh, git over HTTPS, kubectl, helm, npm and docker login work through `scrim run` with no real value in the session
-- [ ] 10a.2 AWS SigV4 re-signing toward bound endpoints; verify: `aws s3 ls` and `aws sts get-caller-identity` succeed against LocalStack with placeholder keys, unbound region refused
-- [ ] 10a.3 Format-preserving placeholders; verify: a client that checks the token prefix sends the placeholder and the guard still catches it
-- [ ] 10a.4 Upstream client certificates; verify: kubectl with certificate auth in kind
+- [x] 10a.2 AWS SigV4 re-signing toward bound endpoints; verify: `aws s3 ls` and `aws sts get-caller-identity` succeed against LocalStack with placeholder keys, unbound region refused
+- [x] 10a.3 Format-preserving placeholders; verify: a client that checks the token prefix sends the placeholder and the guard still catches it
+- [x] 10a.4 Upstream client certificates; verify: kubectl with certificate auth in kind
 - [x] 10a.6 Environment override mapping per profile; verify: each built-in profile's tool reads only the generated placeholder config in a session test
-- [ ] 10a.7 Linux session filesystem view (mount namespace, placeholder or hidden credential paths); verify: a tool reading `~/.aws/credentials` via the password-database home sees the placeholder and `cat` of a real key file fails
-- [ ] 10a.8 macOS and no-namespace fallback with gaps reported; verify: status lists the fallback on macOS CI
-- [ ] 10a.9 Credential helpers for git, docker, AWS `credential_process` and kubectl exec; verify: each tool authenticates through its helper and only placeholders are returned
+- [x] 10a.7 Linux session filesystem view (mount namespace, placeholder or hidden credential paths); verify: a tool reading `~/.aws/credentials` via the password-database home sees the placeholder and `cat` of a real key file fails
+  - done: `internal/fsview`, `run.fs-view` (auto, namespace, home, off) and `run.fs-view-hide`. `TestFSViewPasswdHome` mounts a temporary directory over the password-database home in a namespace of the test's own and reads `~/.aws/credentials` through it under `scrim run`: placeholder, never the decoy. `TestFSViewNamespace` checks `cat ~/.ssh/id_ed25519` fails, unmounting fails (also from a nested user namespace), the session still identifies the agent, and `/bin/true` as helper refuses the start. `e2e-profiles` "filesystem view": the real aws CLI with `AWS_SHARED_CREDENTIALS_FILE` removed reads the placeholder over a decoy. CI runs the namespace tests in `e2e-profiles` with `SCRIM_TEST_REQUIRE_USERNS=1`
+- [x] 10a.8 macOS and no-namespace fallback with gaps reported; verify: status lists the fallback on macOS CI
+  - done: home mirror (`HOME` and XDG base directories moved to `<session-dir>/fsview/home`), fallback and gaps printed by `scrim run`, listed by `scrim status` ("Filesystem view (scrim run)") and checked by `scrim doctor` (`run-fs-view`). The macOS CI job runs `TestStatusRunFSViewOnThisHost` (requires the home fallback with gaps on darwin), `TestFSViewHomeMirror` and the fsview unit tests; `TestStatusRunFSViewFallbackAndRefusal` covers a Linux host without namespaces and `run.fs-view: namespace`
+- [x] 10a.9 Credential helpers for git, docker, AWS `credential_process` and kubectl exec; verify: each tool authenticates through its helper and only placeholders are returned
+  - progress: `scrim credential-helper git|docker|aws|kubectl` (internal/credhelper; `docker-credential-scrim` by argv[0], linked into `<session-dir>/bin` first on PATH through the profile field `bin`). git and docker use it by default, aws and kubectl with `tool-profiles.<name>.params.helper: scrim`. `just e2e-profiles`: git clones through the helper and `git credential fill` returns the placeholder; skopeo logs in through credHelpers on DOCKER_CONFIG and `docker-credential-scrim store` refuses a typed password; kubectl reaches the API server through the exec plugin with no token in the kubeconfig; `aws configure export-credentials` gets the placeholder keys from credential_process (aws requests themselves need the SigV4 re-signing of 10a.2). Short-lived scoped credentials from a helper are not implemented. TestCredentialHelpers runs the git, docker, kubectl and aws helpers inside the namespace filesystem view (decoys planted at the fixed paths, never read)
 - [x] 10a.10 Credential-printing commands show placeholders; verify: `gh auth token`, `aws configure get`, `kubectl config view --raw` print no real value in a session
-- [ ] 10a.11 Project file scan, registration, watch and move-to-store offer; verify: a fixture `.env` key is redacted from the first request and moved only after confirmation
+- [x] 10a.11 Project file scan, registration, watch and move-to-store offer; verify: a fixture `.env` key is redacted from the first request and moved only after confirmation
+  - progress: internal/projectscan; `scrim run` registers the values over `PUT /v1/sessions/self/values` (applied to the data plane before the agent starts, refused start on failure, wiped when the session ends) and rescans every `run.scan-interval`; `scrim project scan|move`, a `scrim doctor` check. `just e2e-profiles` TestProjectFileValues: a `.env` key in no store and a value appended during the run never reach the fake provider; `TestProjectMoveOnlyAfterConfirmation` over the real local API: "n" leaves store and file unchanged, "y" writes the store and leaves `{{scrim:<ref>}}`
 - [x] 10a.5 Profiles for terraform and OpenTofu, gcloud, az, pip and twine, cargo, hcloud, doctl; verify: one end-to-end command per profile against a fake or test endpoint
   - progress: `just e2e-profiles` (CI job e2e-profiles, CLIs pinned in scripts/cli-tools/tools.env) runs gh, git, kubectl, helm, skopeo on REGISTRY_AUTH_FILE and DOCKER_CONFIG, npm, terraform, tofu, gcloud, az, pip, twine, cargo, hcloud, doctl and aws against fakes on their default hosts; `docker login` itself runs in dockerd outside the session, so the docker profile is verified through containers/image reading DOCKER_CONFIG; psql, mysql and ssh go through the database proxy and ssh agent, not profiles
 
@@ -154,23 +158,25 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 13.1 systemd unit and Quadlet with a dedicated user, `scrim install` and `scrim uninstall`; verify: uninstall leaves no trace in a VM test (`test/service/vm-test.sh`: system and user units in a systemd container; Quadlet in unit tests)
 - [x] 13.2 Forward proxy listener; verify: an agent with HTTPS_PROXY set is redacted
 - [x] 13.2a `chatgpt.com` and `ab.chatgpt.com` routed to the LLM proxy (Responses codec for `/responses`, generic JSON elsewhere); verify: CONNECT to either through the forward proxy reaches the fake provider with placeholders only
-- [ ] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
+- [x] 13.3 Transparent mode with nftables per UID or cgroup and SNI routing; verify: an unconfigured agent is redacted and cannot reach providers directly
 - [x] 13.4 Managed agent settings mode; verify: Claude Code refuses any endpoint but scrim
   - done: `scrim install --managed-settings` (Claude Code drop-in `managed-settings.d/90-scrim.json`, Codex `requirements.toml`), manifest and uninstall, status and doctor; `just e2e-managed-settings` runs Claude Code 2.1.330 in a podman container: shell, user settings and `--settings` overrides all go to scrim, Bedrock refused. Codex unit-tested only
-- [ ] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
+- [x] 13.5 System trust store and Java truststore installation for the modes that need them; verify: a Java client and a system-store client trust scrim in transparent mode, and uninstall reverts both
   - progress: the system trust store (`update-ca-certificates`, `update-ca-trust`) is installed and reverted by `scrim install --system`, and a system-store client trusts scrim through the forward proxy in the VM test; Java truststore and transparent mode open
 - [x] 13.6 Deployment guides with tested examples for every target and GitOps tool (docs/deploy, deploy/examples); verify: `just deploy-examples-check` and `just deploy-examples-smoke` pass in CI
 
 ## 14. Large deployments
 
-- [ ] 14.1 Valkey and NATS event backends, Valkey rate limits; verify: contract suites and a multi-replica load test
-- [ ] 14.2 Audit sinks OTLP, Loki and Kafka with backpressure policy; verify: a slow sink never drops silently
-- [ ] 14.3 Proxy-level load test at 1,000 concurrent streams; verify: published numbers meet the performance spec
+- [x] 14.1 Valkey and NATS event backends, Valkey rate limits; verify: contract suites and a multi-replica load test
+- [x] 14.2 Audit sinks OTLP, Loki and Kafka with backpressure policy; verify: a slow sink never drops silently
+- [x] 14.3 Proxy-level load test at 1,000 concurrent streams; verify: published numbers meet the performance spec
+  - done: `test/load` (`just load-test`, workflow `load.yaml`: smoke on pull requests, full weekly, on demand and with the `load-test:full` label). The full run on GitHub-hosted ubuntu-24.04 passed with Valkey and with NATS events: 1,000 streams through three replicas, zero leaks, restore, injection and cross-replica approval failures, scrim's p99 2.5 to 4.3 ms per request (budget 5 ms) and 22 to 24 µs per chunk (budget 50 µs); numbers and thresholds in docs/state-and-observability.md, Load test. Watched failing with `--sabotage leak` and `--sabotage events`
 
 ## 15. Remaining edge modes
 
-- [ ] 15.1 eBPF cgroup interception with a privileged loader; verify: per-cgroup redirect and direct-egress denial on a test kernel
-- [ ] 15.2 DNS override mode; verify: an agent resolving the provider host reaches scrim
+- [x] 15.1 eBPF cgroup interception with a privileged loader; verify: per-cgroup redirect and direct-egress denial on a test kernel (`scrim ebpf attach|detach|status`, internal/bpfredirect; `just ebpf-vm-test` boots a kernel in qemu and runs the kernel tests as root there, CI job `ebpf`; covered connections land on the 13.3 transparent listener, `proxy.transparent-listen`, whose routing is tested there; no end-to-end run of scrim under eBPF yet)
+- [ ] 15.1a `scrim install --ebpf`: attach at boot from a oneshot unit and detach on uninstall, with the 13.3 transparent listener drop-in; verify: the VM test covers install and uninstall
+- [x] 15.2 DNS override mode; verify: an agent resolving the provider host reaches scrim
 - [x] 15.3 Agent hooks mode reported as partial; verify: status shows partial protection
   - done: `scrim install --hooks`, `scrim hooks run`, local API `POST /v1/redact` over the data plane's new `Redact` call; `just e2e-agentmodes` runs Claude Code 2.1.330 against the fake provider with hooks only: `Bash` and `Read` results of a seeded `.env` reach it with placeholders, a prompt with the value is blocked, status reports partial. Codex hook unit-tested only
 - [ ] 15.4 ssh-agent with keys from stores and per-signature approval; verify: git over SSH works and a denied signature fails

@@ -6,7 +6,8 @@
 // podman, npm, terraform, tofu, gcloud, az, pip, twine, cargo, hcloud,
 // doctl, aws) under `scrim run` with their tool profiles applied, against
 // a fake of each tool's API on the tool's default host inside the sandbox
-// (tasks 10a.1, 10a.5, 10a.6, 10a.10). Run it with `just e2e-profiles`.
+// (tasks 10a.1, 10a.5, 10a.6, 10a.10), and the session filesystem view
+// (10a.7). Run it with `just e2e-profiles`.
 //
 // Each tool sees only placeholders: its credentials come from the
 // variables and files the profile generates in the session directory, the
@@ -63,7 +64,10 @@ type env struct {
 	repo    string
 }
 
-func setup(t *testing.T) *env {
+func setup(t *testing.T) *env { return setupWith(t, "") }
+
+// setupWith starts the daemon with extra configuration appended.
+func setupWith(t *testing.T, extra string) *env {
 	bin := harness.Require(t)
 	e := &env{seeds: map[string]leak.Seed{}}
 	vals := map[string]string{}
@@ -81,6 +85,7 @@ func setup(t *testing.T) *env {
 		Upstream:   "http://" + harness.FreePort(t), // no model traffic in this test
 		Catalog:    catalogYAML,
 		UpstreamCA: pki.CAPEM,
+		Extra:      extra,
 	})
 
 	// A bare repository served as https://github.com/acme/repo.git.
@@ -207,9 +212,14 @@ find "$d" -type f -print -exec cat {} \;`,
 		harness.LookPath(t, "git")
 		r := e.sh(t, "", `set -e
 git clone -q https://github.com/acme/repo.git work
-git -C work log --format=%s -1`)
+git -C work log --format=%s -1
+git config --get-all credential.helper
+printf 'protocol=https\nhost=github.com\n\n' | git credential fill`)
 		must(t, r, "git clone")
 		contains(t, r, "initial")
+		// git authenticates through scrim's credential helper (10a.9).
+		contains(t, r, " credential-helper git --file ")
+		contains(t, r, "password=SCRIM_GITHUB\n")
 		e.authenticated(t, "github.com")
 	})
 
@@ -241,9 +251,25 @@ kubectl config view --raw`, path("kubectl"))
 		r := e.sh(t, "", `set -e
 skopeo login registry.scrim.test
 skopeo login --authfile "$DOCKER_CONFIG/config.json" registry.scrim.test
-skopeo login --get-login registry.scrim.test`, path("skopeo"))
+skopeo login --get-login registry.scrim.test
+cat "$DOCKER_CONFIG/config.json"
+echo registry.scrim.test | docker-credential-scrim get
+docker-credential-scrim list
+if printf '{"ServerURL":"registry.scrim.test","Username":"me","Secret":"typed-registry-password"}' | docker-credential-scrim store; then
+  echo STORE-ACCEPTED
+fi`, path("skopeo"))
 		must(t, r, "skopeo login")
 		contains(t, r, "scrim")
+		// DOCKER_CONFIG names docker-credential-scrim in credHelpers, so
+		// containers/image asks only it for registry.scrim.test; it is on the
+		// session's PATH and returns the placeholder (10a.9).
+		contains(t, r, `"credHelpers": {`)
+		contains(t, r, `"Secret":"SCRIM_REGISTRY"`)
+		contains(t, r, `"registry.scrim.test":"scrim"`)
+		contains(t, r, "does not store credentials")
+		if strings.Contains(r.Output(), "STORE-ACCEPTED") {
+			t.Error("docker-credential-scrim stored a credential it was handed")
+		}
 		if n := e.fake.count("registry.scrim.test") - before; n < 2 {
 			t.Errorf("%d authenticated registry logins, want 2 (REGISTRY_AUTH_FILE and DOCKER_CONFIG)", n)
 		}
@@ -348,6 +374,43 @@ az account list --query '[].name' -o tsv`, path("az"))
 		must(t, r, "aws configure get")
 		contains(t, r, "SCRIM_AWS_ID")
 		contains(t, r, "SCRIM_AWS_SECRET")
+	})
+
+	// The session filesystem view (tasks.md 10a.7): with the override
+	// variable removed, aws reads ~/.aws/credentials from the home
+	// directory and finds the generated placeholder file mounted there; the
+	// ssh key and doctl's config are hidden, so cat fails.
+	t.Run("filesystem view", func(t *testing.T) {
+		harness.LookPath(t, "aws")
+		home := t.TempDir()
+		decoy := leak.Generate(leak.KindAWSSecret).Value()
+		for rel, data := range map[string]string{
+			".aws/credentials":          "[default]\naws_access_key_id = AKIADECOY\naws_secret_access_key = " + decoy + "\n",
+			".ssh/id_ed25519":           "-----BEGIN OPENSSH PRIVATE KEY-----\n" + decoy + "\n",
+			".config/doctl/config.yaml": "access-token: " + decoy + "\n",
+		} {
+			p := filepath.Join(home, rel)
+			if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := e.sh(t, "", `env -u AWS_SHARED_CREDENTIALS_FILE -u AWS_SECRET_ACCESS_KEY aws configure get aws_secret_access_key
+cat "$HOME/.ssh/id_ed25519" && echo SSH-KEY-READ
+cat "$HOME/.config/doctl/config.yaml" && echo DOCTL-READ
+true`, path("aws"), "HOME="+home)
+		must(t, r, "filesystem view")
+		contains(t, r, "SCRIM_AWS_SECRET")
+		for _, bad := range []string{decoy, "SSH-KEY-READ", "DOCTL-READ"} {
+			if strings.Contains(r.Output(), bad) {
+				t.Errorf("the session read a real file (%s):\n%s", strings.TrimSuffix(bad, decoy), r.Output())
+			}
+		}
+		if b, err := os.ReadFile(filepath.Join(home, ".aws/credentials")); err != nil || !strings.Contains(string(b), decoy) {
+			t.Errorf("the real file changed: %v", err)
+		}
 	})
 }
 

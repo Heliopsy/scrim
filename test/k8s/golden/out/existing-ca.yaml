@@ -154,7 +154,7 @@ data:
           version: 1
           key: file:/etc/scrim/placeholder/placeholder-01
     deployment:
-      # Replicas sharing this state; more than one needs postgres for state and events.
+      # Replicas sharing this state; more than one needs postgres for state (and postgres, valkey or nats for events).
       replicas: 1
     state:
       backend: memory
@@ -266,7 +266,7 @@ spec:
         app.kubernetes.io/name: scrim-proxy
         app.kubernetes.io/component: proxy
       annotations:
-        checksum/config: 4800609473943eb81bde7f3173d0bb2abc4e8f67a856c4ad4cbae2730be443ac
+        checksum/config: 5685afc1989d32aa2489da11987e4e3383e9d9782b89839442d83554fec9b400
     spec:
       serviceAccountName: scrim-proxy
       automountServiceAccountToken: true
@@ -316,10 +316,10 @@ spec:
             timeoutSeconds: 3
           resources:
             limits:
-              memory: 512Mi
+              memory: 1Gi
             requests:
-              cpu: 100m
-              memory: 128Mi
+              cpu: 250m
+              memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

@@ -1,0 +1,8 @@
+# expect: events.backend nats needs nats.servers
+postgres:
+  enabled: true
+events:
+  backend: nats
+secrets:
+  existing:
+    postgres: scrim-pg

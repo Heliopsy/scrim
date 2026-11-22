@@ -327,11 +327,11 @@ suite against your setup, see [docs/leak-assurance.md](docs/leak-assurance.md).
 | Wrapper | `scrim run -- <agent>` sets everything for one process | v0.1.0 |
 | Base URL | the agent's provider base URL points at scrim | v0.1.0 |
 | Forward proxy | `HTTPS_PROXY` with TLS interception, provider and tool traffic on one listener | v0.1.0 |
-| Transparent (nftables) | redirect per UID or cgroup, direct egress denied | planned, M2 |
+| Transparent (nftables) | redirect per UID or cgroup, direct egress denied (`scrim install --transparent`) | on `main` |
 | Managed agent settings | the agent's managed settings pin the endpoint to scrim | planned, M2 |
 | Kubernetes injection | injection by label, with a NetworkPolicy | planned, M2 |
-| Transparent (eBPF) | cgroup connect hooks, privileged loader | planned, M3 |
-| DNS override | provider hostnames resolve to scrim | planned, M3 |
+| Transparent (eBPF) | cgroup connect hooks, privileged loader (`scrim ebpf attach`) | on `main` |
+| DNS override | provider hostnames resolve to scrim (`scrim install --dns`) | on `main` |
 | Agent hooks | the agent's hooks call scrim; reported as partial protection | planned, M3 |
 
 The wrapper, base URL and forward proxy modes rely on the agent using the settings it is given. The

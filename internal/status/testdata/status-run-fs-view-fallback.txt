@@ -1,0 +1,33 @@
+scrim 0.1.0
+overall: ok
+
+Interception
+  none active
+
+Filesystem view (scrim run)
+  home (fallback: darwin has no user or mount namespaces)
+    not covered: tools that find the home directory through the password database instead of HOME (ssh) read the real files
+
+Protections
+  none
+
+Providers
+  none
+
+Stores
+  none
+
+State
+  memory, schema 0, healthy
+
+Audit sinks
+  none
+
+Data plane
+  running, pid 7, version unknown, up 0s, healthy
+
+Degraded
+  none
+
+Weakened protections
+  none

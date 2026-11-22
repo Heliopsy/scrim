@@ -197,24 +197,35 @@ async fn asks_round_trip_and_deny_on_disconnect() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn tool_proxy_listener_ca_and_captures() {
     let (mut c, shared, _server) = connect().await;
     let mut snap = snapshot(1);
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     snap.listeners = vec![
+        v1::Listener {
+            name: "transparent".into(),
+            kind: v1::ListenerKind::Transparent.into(),
+            address: "127.0.0.1:0".into(),
+            ..Default::default()
+        },
         v1::Listener {
             name: "tools".into(),
             kind: v1::ListenerKind::ToolProxy.into(),
             address: "127.0.0.1:0".into(),
+            ..Default::default()
         },
         v1::Listener {
             name: "llm".into(),
             kind: v1::ListenerKind::BaseUrl.into(),
             address: "127.0.0.1:0".into(),
+            ..Default::default()
         },
         v1::Listener {
             name: "sni".into(),
-            kind: v1::ListenerKind::Transparent.into(),
-            address: "127.0.0.1:0".into(),
+            kind: v1::ListenerKind::Sni.into(),
+            address: taken.local_addr().unwrap().to_string(),
+            ..Default::default()
         },
     ];
     c.apply_snapshot(snap).await.unwrap();
@@ -239,8 +250,14 @@ async fn tool_proxy_listener_ca_and_captures() {
         llm.bound && llm.kind() == v1::ListenerKind::BaseUrl,
         "{llm:?}"
     );
+    let transparent = status
+        .listeners
+        .iter()
+        .find(|l| l.name == "transparent")
+        .unwrap();
+    assert!(transparent.bound, "{transparent:?}");
     let sni = status.listeners.iter().find(|l| l.name == "sni").unwrap();
-    assert!(!sni.bound && sni.error.contains("not implemented"));
+    assert!(!sni.bound && sni.error.contains("cannot bind"), "{sni:?}");
     assert!(
         !status.ready,
         "an unbound listener keeps the data plane not ready"

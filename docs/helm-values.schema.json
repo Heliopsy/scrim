@@ -497,7 +497,7 @@
     },
     "secrets": {
       "type": "object",
-      "description": "Secret slots (templates/_helpers.tpl, \"Secrets\"): each credential the chart mounts is a slot whose Secret is a Secret you manage (existing), an ExternalSecret the chart renders (externalSecrets.data), or a Secret the chart generates (only the metrics token). Slots: admin (key token, for admin.tcp), metrics (key token, generated), postgres (key dsn). There is no way to put a credential value into values.",
+      "description": "Secret slots (templates/_helpers.tpl, \"Secrets\"): each credential the chart mounts is a slot whose Secret is a Secret you manage (existing), an ExternalSecret the chart renders (externalSecrets.data), or a Secret the chart generates (only the metrics token). Slots: admin (key token, for admin.tcp), metrics (key token, generated), postgres (key dsn), valkey (key password), nats (key token or password), otlp (key token), loki (key password), kafka (key password). There is no way to put a credential value into values.",
       "properties": {
         "existing": {
           "type": "object",
@@ -550,7 +550,7 @@
     },
     "postgres": {
       "type": "object",
-      "description": "Shared state and events. Several replicas (the HPA, global.ha) need PostgreSQL: it renders state.backend postgres and events.backend postgres together. The DSN is the Secret slot postgres (key dsn).",
+      "description": "Shared state and events. Several replicas (the HPA, global.ha) need PostgreSQL: it renders state.backend postgres and events.backend from the events values (postgres by default). The DSN is the Secret slot postgres (key dsn).",
       "properties": {
         "enabled": {
           "type": "boolean",
@@ -560,6 +560,249 @@
           "type": "integer",
           "description": "Connection pool size per replica.",
           "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "events": {
+      "type": "object",
+      "description": "How replicas wake each other after a change (events.backend). Every backend delivers from the outbox in PostgreSQL, so a lost wake-up costs latency, never an event. Only read with postgres.enabled; without it events stay local to the one replica.",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "description": "postgres (LISTEN/NOTIFY on the state database), valkey (pub/sub, the valkey values) or nats (core pub/sub, the nats values).",
+          "enum": [
+            "postgres",
+            "valkey",
+            "nats"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "valkey": {
+      "type": "object",
+      "description": "Valkey (or a Redis-compatible server) for events.backend valkey and rateLimit.backend valkey (valkey.*). The password, when auth is on, is the Secret slot valkey (key password).",
+      "properties": {
+        "addresses": {
+          "type": "array",
+          "description": "Servers as host:port; several are seeds of one cluster.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "username": {
+          "type": "string",
+          "description": "ACL user; empty for the default user."
+        },
+        "auth": {
+          "type": "boolean",
+          "description": "Send the password from the Secret slot valkey (key password)."
+        },
+        "db": {
+          "type": "integer",
+          "description": "Logical database (standalone servers only).",
+          "minimum": 0
+        },
+        "tls": {
+          "type": "boolean",
+          "description": "Connect over TLS, verified against the system roots."
+        }
+      },
+      "additionalProperties": false
+    },
+    "nats": {
+      "type": "object",
+      "description": "NATS for events.backend nats (nats.*). Credentials come from the Secret slot nats.",
+      "properties": {
+        "servers": {
+          "type": "array",
+          "description": "Server URLs (nats://host:4222, tls://host:4222).",
+          "items": {
+            "type": "string"
+          }
+        },
+        "auth": {
+          "type": "string",
+          "description": "none, token (the Secret slot nats, key token) or password (nats.username and the Secret slot nats, key password).",
+          "enum": [
+            "none",
+            "token",
+            "password"
+          ]
+        },
+        "username": {
+          "type": "string",
+          "description": "User for auth password."
+        }
+      },
+      "additionalProperties": false
+    },
+    "rateLimit": {
+      "type": "object",
+      "description": "Where per-agent rate limits are counted (ratelimit.backend). local counts per replica (with N replicas an agent can get up to N times a limit); valkey shares one exact limit through the valkey values. The limits themselves are in config.ratelimit (agent-api, approvals, asks).",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "description": "local or valkey.",
+          "enum": [
+            "local",
+            "valkey"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "auditSinks": {
+      "type": "object",
+      "description": "External audit sinks (audit.sinks), each additive to the database audit log and fed from its own bounded queue. policy drop never slows a request and counts what does not fit in scrim_audit_sink_dropped_total; block makes the audited operation wait up to timeout and then refuses it. Credentials come from the Secret slots otlp (key token), loki (key password) and kafka (key password).",
+      "properties": {
+        "otlp": {
+          "type": "object",
+          "description": "OTLP logs to a collector or backend.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Send audit entries as OTLP log records."
+            },
+            "endpoint": {
+              "type": "string",
+              "description": "OTLP/HTTP endpoint, http(s)://host:4318."
+            },
+            "auth": {
+              "type": "boolean",
+              "description": "Send a bearer token from the Secret slot otlp (key token)."
+            },
+            "policy": {
+              "type": "string",
+              "description": "block or drop.",
+              "enum": [
+                "block",
+                "drop"
+              ]
+            },
+            "timeout": {
+              "type": "string",
+              "description": "With block, how long an audited operation waits for queue room.",
+              "pattern": "^[0-9]+(ms|s|m)$"
+            },
+            "queueSize": {
+              "type": "integer",
+              "description": "Entries waiting for the sink at most.",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "loki": {
+          "type": "object",
+          "description": "Loki push API.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Push audit entries to Loki."
+            },
+            "url": {
+              "type": "string",
+              "description": "Base URL; entries go to <url>/loki/api/v1/push."
+            },
+            "tenant": {
+              "type": "string",
+              "description": "Tenant (X-Scope-OrgID); empty for single-tenant Loki."
+            },
+            "username": {
+              "type": "string",
+              "description": "Basic auth user; with auth and no user the password is sent as a bearer token."
+            },
+            "auth": {
+              "type": "boolean",
+              "description": "Send the password from the Secret slot loki (key password)."
+            },
+            "labels": {
+              "type": "object",
+              "description": "Extra static stream labels, low-cardinality.",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "policy": {
+              "type": "string",
+              "description": "block or drop.",
+              "enum": [
+                "block",
+                "drop"
+              ]
+            },
+            "timeout": {
+              "type": "string",
+              "description": "With block, how long an audited operation waits for queue room.",
+              "pattern": "^[0-9]+(ms|s|m)$"
+            },
+            "queueSize": {
+              "type": "integer",
+              "description": "Entries waiting for the sink at most.",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "kafka": {
+          "type": "object",
+          "description": "Kafka or Redpanda.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Produce audit entries to Kafka."
+            },
+            "brokers": {
+              "type": "array",
+              "description": "Seed brokers as host:port.",
+              "items": {
+                "type": "string"
+              }
+            },
+            "topic": {
+              "type": "string",
+              "description": "Topic, created beforehand."
+            },
+            "tls": {
+              "type": "boolean",
+              "description": "Connect over TLS, verified against the system roots."
+            },
+            "saslMechanism": {
+              "type": "string",
+              "description": "none, plain (needs tls), scram-sha-256 or scram-sha-512; the password is the Secret slot kafka (key password).",
+              "enum": [
+                "none",
+                "plain",
+                "scram-sha-256",
+                "scram-sha-512"
+              ]
+            },
+            "username": {
+              "type": "string",
+              "description": "SASL user."
+            },
+            "policy": {
+              "type": "string",
+              "description": "block or drop.",
+              "enum": [
+                "block",
+                "drop"
+              ]
+            },
+            "timeout": {
+              "type": "string",
+              "description": "With block, how long an audited operation waits for queue room.",
+              "pattern": "^[0-9]+(ms|s|m)$"
+            },
+            "queueSize": {
+              "type": "integer",
+              "description": "Entries waiting for the sink at most.",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -682,7 +925,7 @@
         },
         "resources": {
           "type": "object",
-          "description": "Resources of the scrim container.",
+          "description": "Resources of the scrim container. The requests match one replica at about 330 concurrent streams in the load test (docs/state-and-observability.md, \"Load test\"): 0.25 cores and about 150 MiB. Raise them for more streams per replica.",
           "properties": {
             "requests": {
               "type": "object",

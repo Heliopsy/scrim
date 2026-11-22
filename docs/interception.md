@@ -10,8 +10,8 @@ of their own: they are an add-on that keeps methods 1 and 2 from being skipped.
 | --- | --- | --- | --- | --- |
 | 1 | [Wrapper (`scrim run`)](#1-wrapper-scrim-run), with base URL underneath | v0.1.0 | full | yes, by ignoring or clearing its environment |
 | 2 | [Forward proxy](#2-forward-proxy) (`HTTPS_PROXY` and CA) | v0.1.0 | full | yes, by ignoring the proxy variables |
-| 3 | [Transparent, machine-wide](#3-transparent-machine-wide) (nftables; eBPF variant) | planned, M2 (eBPF M3) | full | no, inside the covered users or cgroups |
-| 4 | [DNS override](#4-dns-override) | planned, M3 | full for connections by name | yes, by connecting to an IP address |
+| 3 | [Transparent, machine-wide](#3-transparent-machine-wide) (nftables; eBPF variant) | on `main` (`scrim install --transparent`; eBPF variant: `scrim ebpf attach`) | full | no, inside the covered users or cgroups |
+| 4 | [DNS override](#4-dns-override) | on `main` (`scrim install --dns`) | full for connections by name | yes, by connecting to an IP address |
 | 5 | [Kubernetes transparent](#5-kubernetes-transparent) | on `main` (Helm chart, Kyverno injection, NetworkPolicy) | full | no, while NetworkPolicy is enforced |
 | 6 | [Hooks only](#6-hooks-only) | on `main` (`scrim install --hooks`) | partial: tool results and prompts only | yes; model traffic never passes scrim |
 | 7 | [MCP only](#7-mcp-only) | v0.1.0 (`scrim mcp` is on `main`) | requests only: nothing is intercepted | not applicable |
@@ -332,12 +332,12 @@ With scrim down, `CONNECT` to the proxy address fails and nothing goes direct.
 
 ## 3. Transparent, machine-wide
 
-Planned for M2 (tasks.md 13.3). On Linux, `scrim install` adds nftables rules that match outgoing
-connections from selected users or control groups to provider hosts and redirect them to a
-`TRANSPARENT` listener. That listener recovers the original destination, reads the TLS server name
-(SNI), terminates TLS with scrim's CA and hands the request to the route for that host. The same
-rules reject any direct connection from those users or cgroups to the provider. The agent needs no
-configuration at all.
+On `main` (tasks.md 13.3). On Linux, `scrim install --system --transparent` adds nftables rules that
+match outgoing TCP connections to ports 80 and 443 from selected users or control groups and
+redirect them to a `TRANSPARENT` listener. That listener recovers the original destination, reads
+the TLS server name (SNI), terminates TLS with scrim's CA and hands the request to the route for
+that host. The same rules reject any of those connections that was not redirected, and QUIC (UDP
+443), from those users or cgroups. The agent needs no configuration at all.
 
 ```mermaid
 flowchart LR
@@ -358,32 +358,77 @@ flowchart LR
 
 ### Setup
 
-There are no commands yet: the `TRANSPARENT` listener kind exists in the boundary schema and the
-data plane on `main` reports it unbound. The deployment spec requires `scrim install` to show every
-rule before adding it and `scrim uninstall` to remove each one.
+```sh
+sudo scrim install --system --transparent --cover-user agent1 --cover-cgroup agents.slice
+```
 
-Covering by UID means running each agent under its own Unix user. scrim's own user has to be left
-out of the rules, or its upstream connections would be redirected back to itself. Covering by cgroup
-lets agents run as your user, as long as they start inside the cgroup, for example a systemd scope.
+It installs the system service ([service.md](service.md)) if it is not there yet, then:
+
+- a drop-in, `/etc/systemd/system/scrim.service.d/interception.conf`, that turns on the
+  transparent listener (`proxy.transparent-listen`, `127.0.0.1:9792` and `[::1]:9792`; the port
+  is `--transparent-port`);
+- the CA in the system trust store and in every Java truststore it finds (below);
+- the rule set `/etc/scrim/transparent.nft`, one table `inet scrim`, loaded by
+  `scrim-transparent.service`. That unit is separate from `scrim.service`, starts before the
+  network, and removes the table only when it is stopped itself.
+
+Every change is printed first and recorded in the install manifest; `--dry-run` prints them and
+changes nothing; `scrim uninstall --system` deletes the table, disables the unit and removes every
+file again. `nft list table inet scrim` shows the rules in force.
+
+How the listener routes each redirected connection:
+
+| What arrives | Where it goes |
+| --- | --- |
+| TLS whose server name is a provider host (`api.anthropic.com`, `api.openai.com`, `chatgpt.com`, `ab.chatgpt.com`) | the LLM proxy, redacted as through the forward proxy |
+| TLS whose server name a credential binding or capture rule names | the tool proxy: credential injection and response redaction |
+| TLS for any other name | relayed untouched to that name, resolved by scrim, never to the address the client dialled; with `--block-unrouted` (`proxy.transparent-unrouted: block`) closed |
+| TLS without a server name (a connection by address) | closed, and an `interception_refused` audit event |
+| Plain HTTP | routed by its `Host` header the same way; a request without a host name is refused |
+
+Relaying to the name instead of the dialled address matters: a client that connects to a
+provider's address with some other server name reaches that other host, never the provider.
+
+Covering by UID means running each agent under its own Unix user. scrim's own user is always left
+out of the rules, so its upstream connections are never redirected back to it, and install refuses
+`--cover-user scrim`. Loopback destinations are left out too, so a local chained upstream such as
+a compression proxy on `127.0.0.1` is reached directly. Covering by cgroup lets agents run as your
+user, as long as they start inside the cgroup, for example
+`systemd-run --user --slice=agents.slice` or a unit with `Slice=agents.slice`. nftables resolves a
+cgroup path when the rules load: for a systemd slice the rules unit pulls the slice in at boot;
+any other path must exist when install runs.
 
 ### What it protects against
 
 An agent that ignores every setting, subprocesses with a clean environment, and clients that
 hard-code the provider's address. Inside the covered UID or cgroup there is no path to the provider
-that skips scrim.
+over TCP 80 or 443 that skips scrim, and QUIC is rejected so clients fall back to TCP.
 
 ### What it does not
 
-A process outside the covered users or cgroups. A process that moves itself out of a covered cgroup
-(that needs write access to another cgroup's `cgroup.procs`). Hosts that are not in the rule set,
-such as a provider endpoint scrim has no route for, are not redirected; whether they are blocked
-depends on the rules you choose. A pinning client fails.
+- A process outside the covered users or cgroups, or one that moves itself out of a covered cgroup
+  (that needs write access to another cgroup's `cgroup.procs`).
+- Ports other than 80 and 443: the model providers serve only those, but a covered agent can still
+  reach other services on other ports.
+- Hosts scrim has no route for are relayed untouched by default; `--block-unrouted` closes them.
+- A pinning client fails, and so does a client that sends no server name.
+- Encrypted Client Hello hides the real server name; the listener routes by the outer name it sees.
+- IPv6 redirection needs `::1`; without it redirected IPv6 connections are refused (never sent
+  direct) and clients fall back to IPv4.
 
 ### TLS and CA
 
 Required, as for the forward proxy: the agent connects to what it thinks is the provider and sees
-scrim's certificate. The interception spec requires the CA to be installed for the system store and
-for Node.js, Python, OpenSSL-based tools and Java when this method is installed.
+scrim's certificate. Install adds the CA to the system trust store (`update-ca-certificates` or
+`update-ca-trust`), which OpenSSL-based tools, curl, Python with the system bundle and Go read. For
+Java it checks every truststore it finds: the ones the system tool rebuilds (Debian's
+`/etc/ssl/certs/java/cacerts` through ca-certificates-java, Fedora's extracted Java store) must hold
+the CA afterwards, and the `cacerts` of any other JDK under `/usr/lib/jvm`, or named with
+`--java-home` (a vendor JDK in `/opt`), get it imported with `keytool` under the alias `scrim-ca`.
+Uninstall removes it from each, including from a store the system tool left it in. Node.js reads
+its own bundle: set `NODE_EXTRA_CA_CERTS` to the anchor file
+(`/usr/local/share/ca-certificates/scrim-ca.crt`) or use `NODE_USE_SYSTEM_CA=1` on Node 23.8 and
+later.
 
 ### Suits
 
@@ -392,22 +437,44 @@ you control the host, and any agent you cannot configure.
 
 ### Fails closed
 
-The redirect and the deny are kernel rules and stay in place when scrim stops. The agent's
-connections are redirected to a port nobody listens on and fail; they never go direct.
+The redirect and the deny are kernel rules loaded by their own unit and stay in place when scrim
+stops. The agent's connections are redirected to a port nobody listens on and fail; they never go
+direct.
+
+### Verified
+
+`test/service/transparent-test.sh` (`just service-transparent-test`) runs the real install in a
+disposable systemd host under rootless podman, in its own network namespace with a stand-in
+provider address: a covered user and a client in a covered slice are redacted with no
+configuration, every connection by address (TLS without a server name, plain HTTP to 80 and 443,
+a borrowed server name) never reaches the provider, an uncovered user is untouched, a Java client
+trusts scrim through the distribution's store and through a `--java-home` store, connections fail
+while scrim is stopped, and after `scrim uninstall --system --purge` the file system, the Java
+truststores and `nft list ruleset` match the snapshot taken before.
 
 ### Variant: eBPF cgroup hooks
 
-Planned for M3 (tasks.md 15.1). Instead of packet filter rules, a privileged loader attaches eBPF
-programs to the `cgroup/connect4` and `cgroup/connect6` hooks of selected control groups. When a
-process in the cgroup calls `connect()` to a provider address, the program rewrites the destination
-to scrim's transparent listener; a direct connection to the provider is denied. This gives
-per-cgroup redirect and deny without separate Unix users or nftables rule sets.
+On `main` (tasks.md 15.1): `scrim ebpf attach`, `detach` and `status`. Instead of packet filter
+rules, a privileged loader attaches eBPF programs to selected cgroup v2 control groups. They do per
+control group what the nftables rules do per user:
+
+| Hook | What it does in a covered control group |
+| --- | --- |
+| `cgroup/connect4`, `cgroup/connect6` | a TCP connection to port 80 or 443 of any address that is not loopback is rewritten to the transparent listener, `127.0.0.1:<port>` or `[::1]:<port>` (an IPv4-mapped destination to `::ffff:127.0.0.1`); a datagram socket connecting to port 443 is refused |
+| `cgroup/sendmsg4`, `cgroup/sendmsg6` | an unconnected datagram to port 443 (QUIC) is refused |
+| `cgroup_skb/egress` | a second check on the packets themselves: TCP to port 80 or 443, or UDP to 443, leaving for an address that is not loopback is dropped, whatever path it took |
+
+Loopback destinations (`127.0.0.0/8`, `::1`, the unspecified address and their IPv4-mapped forms)
+are never touched, so local listeners, chained upstreams on loopback and the DNS override keep
+working. A child control group inherits the programs of its parent. Processes outside the covered
+control groups are not affected at all.
 
 ```mermaid
 flowchart LR
-  loader["privileged loader"] -. "attach connect4/connect6" .-> cg["agent cgroup"]
-  agent["agent in cgroup"] -- "connect()" --> hook["eBPF hook<br>rewrite destination"]
-  hook --> tl["transparent listener"] --> prov["provider"]
+  loader["scrim ebpf attach<br>(root)"] -. "attach and pin" .-> cg["agent cgroup"]
+  agent["agent in cgroup"] -- "connect()" --> hook["connect4/6<br>rewrite to loopback"]
+  hook --> tl["transparent listener<br>routed by SNI"] --> prov["provider"]
+  agent -. "UDP 443, or any packet<br>to 80/443 not redirected" .-x prov
   classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
   classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
   classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
@@ -416,26 +483,86 @@ flowchart LR
   class agent agent
   class tl dplane
   class prov ext
+  linkStyle 3 stroke:#dc2626,stroke-width:2px
 ```
 
-It is Linux only and needs cgroup v2. The loader needs `CAP_BPF` and `CAP_NET_ADMIN`, or root;
-agents run unprivileged. If the loader is not installed or lacks the rights, scrim does not report
-the method as active and `scrim status` names the missing privilege (spec, "Loader not available").
-eBPF only moves the traffic (design D8): TLS interception still happens in scrim's listener, so the
-CA is still required and a pinning client still fails. The programs stay attached when scrim stops,
-so redirected connections fail. It suits hosts that already manage agents per cgroup, such as
-systemd units, container runtimes or one `scrim run` scope per agent.
+The programs only move traffic (design D8). The rewritten connection lands on the transparent
+listener (`proxy.transparent-listen`, task 13.3), which reads the TLS server name, terminates TLS
+with scrim's CA and routes the request, so no original-destination lookup is needed and the CA is
+still required. A pinning client fails.
+
+#### Setup
+
+Linux with the unified cgroup v2 hierarchy and BPF links for control groups (5.7 or later). The
+loader needs root, or `CAP_BPF` and `CAP_NET_ADMIN` with write access to `/sys/fs/bpf`; agents run
+unprivileged. A rootless container cannot load the programs: its capabilities only count inside its
+user namespace, and the loader says so.
+
+```yaml
+# /etc/scrim/config.yaml: the control groups to cover, here a system slice for agents
+interception:
+  ebpf:
+    cgroups: [agents.slice]
+```
+
+```sh
+sudo systemctl start agents.slice    # a slice's control group exists once it is started
+sudo scrim ebpf attach               # or: sudo scrim ebpf attach --cgroup agents.slice --port 9792
+sudo systemd-run --slice=agents.slice --uid=agent1 --pty -- claude   # started in the slice: covered
+sudo scrim ebpf detach --cgroup agents.slice                         # or --all
+```
+
+`attach` prints what it attaches before doing it. It loads the programs with the listener port
+(`interception.ebpf.port`, default 9792, the port `scrim install --transparent` gives the
+transparent listener), attaches one link per hook and pins the links under
+`/sys/fs/bpf/scrim/cg-<id>-<time>/`, then records the attachment in
+`/run/scrim-ebpf/attachments.json` (paths, IDs and times, readable by every user). Attaching again
+replaces the attachment in place: the new links go in first and the old ones are removed after, so
+the control group is never uncovered in between. `detach` removes the pins and waits until the
+kernel confirms the programs are gone. The control group has to exist when you attach.
+
+The attachment lasts until `scrim ebpf detach`, the control group's removal, or a reboot. `scrim
+install` does not set it up at boot yet (tasks.md 15.1a); until then run `scrim ebpf attach` from a
+oneshot unit ordered before the agents' units, or after each boot.
+
+#### Status
+
+`scrim status`, `scrim doctor` and `scrim ebpf status` read the loader's record and check each
+control group in `interception.ebpf.cgroups` or in the record:
+
+| State | Meaning |
+| --- | --- |
+| `active` | the kernel lists every program the loader attached on the control group (needs `CAP_NET_ADMIN`, so `sudo scrim status`) |
+| `unverified` | the record says it is attached, but this process may not ask the kernel; status does not count it |
+| `not-attached` | configured but never attached, or attached for another port; the detail names the privilege the loader needs and whether this process has it |
+| `lost` | the control group was removed or recreated since, or a program is no longer attached |
+
+Only an `active` control group appears under Interception and turns on the "direct egress blocked"
+protection for that group. Every other state is listed as degraded, `doctor` fails on
+`not-attached` and `lost` and warns on `unverified`, and both check that something accepts
+connections on `127.0.0.1:<port>`.
+
+#### Verifying
+
+`just ebpf-vm-test` boots a kernel in qemu (the host's `/boot/vmlinuz`, or `SCRIM_VM_KERNEL`) with
+only the test binary as root inside it, and checks per-cgroup redirect over IPv4, IPv6 and
+IPv4-mapped addresses, that child control groups inherit it and other control groups are untouched,
+the QUIC refusal, the egress drop on its own, that the programs survive the loader, fail closed
+with no listener, replace in place and detach cleanly, and what status reports with and without
+the privilege to query. CI runs it on every change. On a real host, from inside the control group,
+`curl -v https://api.anthropic.com` should show scrim's certificate, and `curl --http3-only` should
+fail.
 
 ## 4. DNS override
 
-Planned for M3 (tasks.md 15.2). Provider host names resolve to scrim, through `/etc/hosts` or a
-local resolver. The agent connects to scrim on port 443 believing it is the provider, scrim reads
-the server name from the TLS handshake (SNI), serves a certificate for that name from its CA, picks
-the route by host and forwards the redacted request. Design D8 calls this the SNI listener on 443.
+On `main` (tasks.md 15.2). Provider host names resolve to scrim through a block in `/etc/hosts`.
+The agent connects to scrim on port 443 believing it is the provider, scrim reads the server name
+from the TLS handshake (SNI), serves a certificate for that name from its CA, picks the route by
+host and forwards the redacted request. This is the `SNI` listener of design D8.
 
 ```mermaid
 flowchart LR
-  agent["agent"] -- "resolve api.anthropic.com" --> dns["/etc/hosts or local DNS<br>answers scrim's address"]
+  agent["agent"] -- "resolve api.anthropic.com" --> dns["/etc/hosts<br>answers scrim's address"]
   agent -- "TLS to scrim, SNI api.anthropic.com" --> tl["SNI listener :443"]
   tl --> prov["provider"]
   classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
@@ -450,20 +577,37 @@ flowchart LR
 
 ### Setup
 
-No commands yet. scrim itself must resolve the real provider addresses, so the override cannot
-apply to scrim's own resolver.
+```sh
+sudo scrim install --system --dns
+```
+
+It installs the system service if needed, adds the CA to the system and Java trust stores as for
+the transparent mode, writes a drop-in that turns on the SNI listener on `127.0.83.1:443`
+(`proxy.sni-listen`; the address is `--dns-address`, any 127.0.0.0/8 address works on Linux without
+configuration) and lets the unit bind port 443 (`CAP_NET_BIND_SERVICE`, nothing else), and appends
+one marked block to `/etc/hosts` that resolves the provider hosts of the configured routes to that
+address (`--dns-host` names others). The block is written in place, so a bind-mounted hosts file
+works. Uninstall removes exactly that block, and leaves an edited block in place with the manual
+step. systemd-resolved serves `/etc/hosts` too, so its clients see the override.
+
+scrim itself must still reach the real providers. Its upstream connections resolve names through
+the system resolver first; when the answer is scrim's own SNI listener, it asks the upstream name
+servers directly (from `/run/systemd/resolve/resolv.conf` when systemd-resolved runs, else
+`/etc/resolv.conf`, skipping loopback stubs that would answer from `/etc/hosts` again), and never
+connects to itself.
 
 ### What it protects against and what it does not
 
 Agents that use the system resolver and connect by name, with no change to the agent. It does not
 stop a connection made by IP address, a hard-coded IP, a client with its own DNS (DNS over HTTPS, a
-hard-coded resolver), or a cached answer from before the override. `scrim status` will report that
-this method does not stop connections made by address (spec, "DNS override mode"). Combine it with
-transparent mode if that matters.
+hard-coded resolver), or a cached answer from before the override. `scrim status` lists the mode as
+`dns-override ... (does not stop connections made by address)`. Combine it with transparent mode if
+that matters.
 
 ### TLS and CA
 
-Required: the agent validates scrim's certificate for the provider's name.
+Required: the agent validates scrim's certificate for the provider's name. Install trusts the CA
+system-wide and in the Java truststores, as for the transparent mode.
 
 ### Suits
 
@@ -474,6 +618,13 @@ method follows.
 
 The name still resolves to scrim when scrim is stopped, so connections by name fail. Connections by
 address were never covered.
+
+### Verified
+
+The same test as the transparent mode installs `--dns` in the disposable host: a user with no
+configuration resolves the provider name to scrim and is redacted, scrim reaches its upstream by
+that same name through the stand-in name server rather than through the override, a connection by
+address goes around scrim as documented, and uninstall leaves no trace.
 
 ## 5. Kubernetes transparent
 
@@ -944,7 +1095,9 @@ when one fails. The spec asks both to show, per agent or scope, the active metho
 egress is blocked, CA trust, chained upstreams and every known gap; a wrapper with no enforcement
 should read as redaction active, direct egress not blocked. The Interception section lists the
 listeners a running daemon serves and the agent-side modes `scrim install` recorded (hooks and
-managed settings), each with the files it changed, what it covers and what it does not.
+managed settings), each with the files it changed, what it covers and what it does not. The eBPF variant
+of method 3 is read from the host and counts only once confirmed with the kernel (see
+[its status](#status)).
 
 Inside a wrapped session, `scrim api whoami` shows that the agent is identified by its session.
 
@@ -978,6 +1131,8 @@ its cgroup or pod, and confirm it fails.
 | Forward proxy mode | 2 |
 | Transparent mode with packet filtering | 3 |
 | Transparent mode with eBPF | 3, eBPF variant |
+| eBPF egress denial | 3, eBPF variant |
+| eBPF loader and status | 3, eBPF variant, "Setup" and "Status" |
 | DNS override mode | 4 |
 | Kubernetes injection | 5 |
 | Hooks-only mode is reported as partial | 6 |

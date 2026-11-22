@@ -1,0 +1,54 @@
+{
+  "version": "0.1.0",
+  "interception_modes": [],
+  "protections": [],
+  "providers": [],
+  "stores": [],
+  "state": {
+    "backend": "memory",
+    "schema_version": 0,
+    "healthy": true
+  },
+  "audit_sinks": [],
+  "data_plane": {
+    "running": true,
+    "pid": 7,
+    "healthy": true
+  },
+  "degraded": [
+    {
+      "name": "ebpf:agents.slice",
+      "reason": "not attached: run `sudo scrim ebpf attach`; attaching needs root, or CAP_BPF and CAP_NET_ADMIN, and this process lacks CAP_BPF and CAP_NET_ADMIN"
+    },
+    {
+      "name": "ebpf:ci.slice",
+      "reason": "attached according to the loader's record (/run/scrim-ebpf/attachments.json); confirming it with the kernel needs CAP_NET_ADMIN: run `sudo scrim status`"
+    },
+    {
+      "name": "ebpf-listener",
+      "reason": "nothing accepts connections on 127.0.0.1:9792: redirected connections fail (they never go direct)"
+    }
+  ],
+  "weakened_protections": [],
+  "ebpf": {
+    "configured": [
+      "agents.slice"
+    ],
+    "port": 9792,
+    "cgroups": [
+      {
+        "cgroup": "agents.slice",
+        "state": "not-attached",
+        "detail": "not attached: run `sudo scrim ebpf attach`; attaching needs root, or CAP_BPF and CAP_NET_ADMIN, and this process lacks CAP_BPF and CAP_NET_ADMIN"
+      },
+      {
+        "cgroup": "ci.slice",
+        "state": "unverified",
+        "detail": "attached according to the loader's record (/run/scrim-ebpf/attachments.json); confirming it with the kernel needs CAP_NET_ADMIN: run `sudo scrim status`",
+        "attached_at": "2026-11-20T09:30:00Z"
+      }
+    ],
+    "listener": "nothing accepts connections on 127.0.0.1:9792: redirected connections fail (they never go direct)",
+    "listener_up": false
+  }
+}

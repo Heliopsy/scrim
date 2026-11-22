@@ -14,6 +14,7 @@ package status
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -116,13 +117,38 @@ type Report struct {
 	Config *config.Status `json:"config,omitempty"`
 	// Service is the service `scrim install` set up, when there is one.
 	Service *Service `json:"service,omitempty"`
+	// EBPF is the eBPF transparent mode, when it is configured or attached.
+	EBPF *EBPF `json:"ebpf,omitempty"`
 	// AgentModes are the agent-side modes `scrim install` set up: agent
 	// hooks and managed agent settings.
 	AgentModes []AgentMode `json:"agent_modes,omitempty"`
 	// Coverage is "partial" when agent hooks are the only interception: no
 	// listener of scrim's carries the agent's traffic.
 	Coverage string `json:"coverage,omitempty"`
+	// RunView is the filesystem view `scrim run` gives its sessions on
+	// this host.
+	RunView *RunView `json:"run_fs_view,omitempty"`
 }
+
+// RunView is the session filesystem view of `scrim run` on this host
+// (specs/credential-injection, "Filesystem view fallback without
+// namespaces").
+type RunView struct {
+	// Requested is run.fs-view.
+	Requested string `json:"requested"`
+	// Mode is the view sessions get: namespace, home or off; "refused"
+	// when run.fs-view is namespace and the host has none, so scrim run
+	// refuses to start agents.
+	Mode string `json:"mode"`
+	// Fallback is why the namespace view is unavailable, when auto falls
+	// back to the home mirror (or namespace refuses).
+	Fallback string `json:"fallback,omitempty"`
+	// Gaps are what the view does not cover.
+	Gaps []string `json:"gaps,omitempty"`
+}
+
+// RunViewRefused is RunView.Mode when scrim run refuses to start agents.
+const RunViewRefused = "refused"
 
 // Agent-side modes and their coverage.
 const (
@@ -148,6 +174,45 @@ type AgentMode struct {
 	// wrote; the mode is then not in force as installed.
 	Changed  []string `json:"changed,omitempty"`
 	Manifest string   `json:"manifest"`
+}
+
+// EBPF is the eBPF transparent mode on this host
+// (specs/interception "Transparent mode with eBPF").
+type EBPF struct {
+	// Configured is interception.ebpf.cgroups.
+	Configured []string `json:"configured"`
+	Port       int      `json:"port"`
+	// Problem is why the mode cannot work on this host at all.
+	Problem string       `json:"problem,omitempty"`
+	Cgroups []EBPFCgroup `json:"cgroups"`
+	// Listener says whether anything accepts on 127.0.0.1:Port.
+	Listener   string `json:"listener"`
+	ListenerUp bool   `json:"listener_up"`
+}
+
+// EBPFCgroup is one covered control group. Only State "active" was
+// confirmed with the kernel; "unverified" rests on the loader's record.
+type EBPFCgroup struct {
+	Cgroup     string    `json:"cgroup"`
+	State      string    `json:"state"`
+	Detail     string    `json:"detail"`
+	AttachedAt time.Time `json:"attached_at,omitzero"`
+}
+
+// ActiveCgroups lists the control groups confirmed active.
+func (e *EBPF) ActiveCgroups() []string {
+	var out []string
+	for _, c := range e.Cgroups {
+		if c.State == "active" {
+			out = append(out, c.Cgroup)
+		}
+	}
+	return out
+}
+
+// EBPFSource reports the eBPF transparent mode; nil when it is off.
+type EBPFSource interface {
+	EBPFStatus() *EBPF
 }
 
 // Service describes an installed scrim service.
@@ -221,8 +286,12 @@ type Sources struct {
 	Config ConfigSource
 	// Service is the installed service, if any.
 	Service *Service
+	// EBPF is the eBPF transparent mode, read from this host.
+	EBPF EBPFSource
 	// AgentModes are the installed agent-side modes.
 	AgentModes []AgentMode
+	// RunView is scrim run's filesystem view on this host, if checked.
+	RunView *RunView
 }
 
 // Collect gathers a report and derives the degraded list.
@@ -292,6 +361,11 @@ func Collect(ctx context.Context, src Sources) Report {
 	sort.Slice(r.Weakened, func(i, j int) bool { return r.Weakened[i].Key < r.Weakened[j].Key })
 
 	r.Service = src.Service
+	if src.EBPF != nil {
+		r.EBPF = src.EBPF.EBPFStatus()
+	}
+	addEBPF(&r)
+	r.RunView = src.RunView
 	r.Degraded = derive(r)
 	return r
 }
@@ -338,6 +412,9 @@ func derive(r Report) []Component {
 			out = append(out, Component{Name: "agent-mode:" + m.Mode, Reason: "changed or removed since install: " + strings.Join(m.Changed, ", ")})
 		}
 	}
+	if v := r.RunView; v != nil && v.Mode == RunViewRefused {
+		out = append(out, Component{Name: "run-fs-view", Reason: "run.fs-view is namespace and this host has none, so scrim run refuses to start agents: " + v.Fallback})
+	}
 	if !r.DataPlane.Running || !r.DataPlane.Healthy {
 		out = append(out, Component{Name: "data-plane", Reason: orDefault(r.DataPlane.Detail, "not running or unhealthy")})
 	}
@@ -362,7 +439,51 @@ func derive(r Report) []Component {
 			out = append(out, Component{Name: "protection:" + p.Name, Reason: "inactive"})
 		}
 	}
+	if e := r.EBPF; e != nil {
+		if e.Problem != "" {
+			out = append(out, Component{Name: "ebpf", Reason: e.Problem})
+		}
+		for _, c := range e.Cgroups {
+			if c.State != "active" {
+				out = append(out, Component{Name: "ebpf:" + c.Cgroup, Reason: c.Detail})
+			}
+		}
+		if len(e.Cgroups) > 0 && !e.ListenerUp {
+			out = append(out, Component{Name: "ebpf-listener", Reason: e.Listener})
+		}
+	}
 	return out
+}
+
+// egressProtection is the protection the eBPF mode turns on.
+const egressProtection = "direct egress blocked"
+
+// addEBPF lists the control groups confirmed active as an interception mode
+// and as the direct egress protection. Ones only the loader's record names
+// are not: status never claims what it could not check.
+func addEBPF(r *Report) {
+	if r.EBPF == nil {
+		return
+	}
+	active := r.EBPF.ActiveCgroups()
+	if len(active) == 0 {
+		return
+	}
+	r.Interception = append(r.Interception, fmt.Sprintf("ebpf cgroup %s (TCP 80 and 443 to 127.0.0.1:%d and [::1]:%d)",
+		strings.Join(active, ", "), r.EBPF.Port, r.EBPF.Port))
+	sort.Strings(r.Interception)
+	p := Protection{Name: egressProtection, Active: true,
+		Detail: "for the control groups " + strings.Join(active, ", ") + " (eBPF cgroup hooks); other processes can still reach providers directly"}
+	for i := range r.Protections {
+		if r.Protections[i].Name == egressProtection {
+			if !r.Protections[i].Active {
+				r.Protections[i] = p
+			}
+			return
+		}
+	}
+	r.Protections = append(r.Protections, p)
+	sort.Slice(r.Protections, func(i, j int) bool { return r.Protections[i].Name < r.Protections[j].Name })
 }
 
 func orDefault(s, d string) string {

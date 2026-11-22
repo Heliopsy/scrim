@@ -233,6 +233,7 @@ func (b *SnapshotBuilder) values(cat *catalog.Catalog) []*pb.ValueEntry {
 			if !s.Retained && !s.Pending {
 				e.BoundHosts = slices.Clone(bd.Hosts)
 				e.InjectLocations = slices.Clone(bd.Inject)
+				bindExtras(e, cat, bd)
 				if bd.Placeholder != "" && !declared[bd.Placeholder] {
 					declared[bd.Placeholder] = true
 					e.DeclaredPlaceholders = []string{bd.Placeholder}
@@ -242,6 +243,26 @@ func (b *SnapshotBuilder) values(cat *catalog.Catalog) []*pb.ValueEntry {
 		})
 	}
 	return uniqueNames(out)
+}
+
+// bindExtras copies the placeholder format, the client certificate flag and
+// the AWS SigV4 link of a catalog binding into an entry. The SigV4 link names
+// the access key id entry by its reference; one that does not resolve is
+// left out, so the data plane never re-signs with a half-configured pair.
+func bindExtras(e *pb.ValueEntry, cat *catalog.Catalog, bd catalog.Binding) {
+	if bd.Class != catalog.ClassDisplay {
+		e.PlaceholderFormat = bd.PlaceholderFormat
+	}
+	e.ClientCertificate = bd.ClientCertificate
+	if a := bd.AWSSigV4; a != nil && cat != nil {
+		if ak, err := cat.Name(a.AccessKeyID); err == nil && !ak.Ref.IsZero() {
+			e.AwsSigv4 = &pb.AwsSigV4{
+				AccessKeyIdRef: ak.Ref.String(),
+				Regions:        slices.Clone(a.Regions),
+				Services:       slices.Clone(a.Services),
+			}
+		}
+	}
 }
 
 // uniqueNames drops repeated values and gives every credential entry a name no
@@ -326,6 +347,7 @@ func unavailable(cat *catalog.Catalog, values []*pb.ValueEntry) []*pb.ValueEntry
 			declared[bd.Placeholder] = true
 			u.DeclaredPlaceholders = []string{bd.Placeholder}
 		}
+		bindExtras(u, cat, bd)
 		out = append(out, u)
 	}
 	return out
@@ -404,6 +426,17 @@ func ListenersFrom(cfg *config.Config) []*pb.Listener {
 	if a := ToolProxyListen.Get(cfg); a != "" {
 		out = append(out, &pb.Listener{Name: "tool-proxy", Kind: pb.ListenerKind_LISTENER_KIND_TOOL_PROXY, Address: a})
 	}
+	block := TransparentUnrouted.Get(cfg) == "block"
+	for i, a := range TransparentListen.Get(cfg) {
+		name := "transparent"
+		if i > 0 {
+			name = fmt.Sprintf("transparent-%d", i+1)
+		}
+		out = append(out, &pb.Listener{Name: name, Kind: pb.ListenerKind_LISTENER_KIND_TRANSPARENT, Address: a, BlockUnrouted: block})
+	}
+	if a := SNIListen.Get(cfg); a != "" {
+		out = append(out, &pb.Listener{Name: "sni", Kind: pb.ListenerKind_LISTENER_KIND_SNI, Address: a, BlockUnrouted: block})
+	}
 	return out
 }
 
@@ -440,4 +473,18 @@ func askTimeoutMillis(global time.Duration, cfg policy.Config) uint64 {
 		t = max(t, r.Approval.Timeout.D())
 	}
 	return uint64(max(t.Milliseconds(), 1)) // #nosec G115 -- positive
+}
+
+// ProviderHosts are the host names the provider routes claim: the names DNS
+// override mode (scrim install --dns) resolves to scrim.
+func ProviderHosts(cfg *config.Config) []string {
+	var out []string
+	for _, r := range routes(cfg) {
+		for _, h := range r.GetHosts() {
+			if !slices.Contains(out, h) {
+				out = append(out, h)
+			}
+		}
+	}
+	return out
 }

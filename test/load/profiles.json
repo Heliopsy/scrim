@@ -1,0 +1,89 @@
+{
+  "comment": "Run sizes and pass/fail thresholds of the proxy-level load test (test/load, tasks.md 14.3, performance spec). Thresholds are configuration: change them here with a recorded reason, never in code. Correctness limits are zero and never loosen. Why each number is what it is: docs/state-and-observability.md, Load test.",
+  "profiles": {
+    "smoke": {
+      "comment": "Every pull request that touches the request path: small enough for one GitHub-hosted runner in a few minutes, large enough that every replica holds, decides and revokes approvals for the others.",
+      "run": {
+        "replicas": 3,
+        "streams": 60,
+        "sessions": 12,
+        "approval_workers": 3,
+        "duration": "30s",
+        "warmup": "5s",
+        "body_kb": 16,
+        "bulk_secrets": 1000,
+        "notes": 20,
+        "creds": 20,
+        "secrets_per_request": 8,
+        "chunk_runes": 8,
+        "reply_runes": 400,
+        "chunk_interval": "20ms",
+        "think_time": "50ms",
+        "approval_interval": "250ms",
+        "replica_cpus": "1",
+        "replica_memory": "768m",
+        "driver_cpus": "1",
+        "driver_memory": "1g",
+        "postgres_cpus": "1",
+        "postgres_memory": "512m"
+      },
+      "thresholds": {
+        "max_leaks": 0,
+        "max_restore_failures": 0,
+        "max_injection_failures": 0,
+        "max_approval_failures": 0,
+        "max_error_rate": 0.001,
+        "min_mean_streams_fraction": 0.8,
+        "min_llm_requests_per_second": 20,
+        "scrim_request_added_p99_ms": 5,
+        "scrim_chunk_p99_us": 50,
+        "client_added_p99_ms": 50,
+        "approval_release_p99_ms": 1000,
+        "max_replica_memory_fraction": 0.9,
+        "max_memory_per_stream_kib": 4096
+      }
+    },
+    "full": {
+      "comment": "tasks.md 14.3: 1,000 concurrent streams through three replicas. Scheduled weekly, on demand, and on a pull request labelled load-test:full.",
+      "run": {
+        "replicas": 3,
+        "streams": 1000,
+        "sessions": 100,
+        "approval_workers": 24,
+        "duration": "180s",
+        "warmup": "20s",
+        "body_kb": 32,
+        "bulk_secrets": 1000,
+        "notes": 50,
+        "creds": 50,
+        "secrets_per_request": 8,
+        "chunk_runes": 8,
+        "reply_runes": 1200,
+        "chunk_interval": "80ms",
+        "think_time": "1s",
+        "approval_interval": "2s",
+        "replica_cpus": "1",
+        "replica_memory": "1g",
+        "driver_cpus": "1.5",
+        "driver_memory": "3g",
+        "postgres_cpus": "1",
+        "postgres_memory": "512m"
+      },
+      "thresholds": {
+        "max_leaks": 0,
+        "max_restore_failures": 0,
+        "max_injection_failures": 0,
+        "max_approval_failures": 0,
+        "max_error_rate": 0.001,
+        "min_mean_streams_fraction": 0.8,
+        "min_llm_requests_per_second": 50,
+        "scrim_request_added_p99_ms": 5,
+        "scrim_chunk_p99_us": 50,
+        "client_added_p99_ms": 50,
+        "approval_release_p99_ms": 1000,
+        "max_replica_memory_fraction": 0.9,
+        "max_memory_per_stream_kib": 512
+      }
+    }
+  }
+}
