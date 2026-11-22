@@ -203,8 +203,13 @@ func (c *capped) Write(p []byte) (int, error) {
 		p = p[:max(room, 0)]
 	}
 	if len(c.b)+len(p) > cap(c.b) {
-		// Never beyond the limit: len(c.b)+len(p) is at most limit here.
-		grown := make([]byte, len(c.b), min(max(2*cap(c.b), len(c.b)+len(p), 4096), c.limit))
+		// Never beyond the limit: len(c.b)+len(p) is at most limit here, and
+		// the buffer only doubles while it is below half the limit.
+		size := c.limit
+		if cap(c.b) < c.limit/2 {
+			size = min(max(2*cap(c.b), len(c.b)+len(p), 4096), c.limit)
+		}
+		grown := make([]byte, len(c.b), size)
 		copy(grown, c.b)
 		secret.WipeBytes(c.b[:cap(c.b)])
 		c.b = grown
