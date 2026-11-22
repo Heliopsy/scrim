@@ -11,10 +11,10 @@
 //
 // The adapter authenticates with a token, an AppRole role and secret ID, or
 // the pod's Kubernetes service account token, renewing login tokens before
-// they expire (see auth.go). It reads, lists and writes KV v2 secrets, and
-// watches a prefix by polling its version metadata (one LIST of
-// detailed-metadata per folder per interval on OpenBao, falling back to
-// per-secret metadata reads on Vault). Paths listed
+// they expire (package vaultapi, shared with the vault adapter). It reads,
+// lists and writes KV v2 secrets, and watches a prefix by polling its
+// version metadata (one LIST of detailed-metadata per folder per interval on
+// OpenBao, falling back to per-secret metadata reads on Vault). Paths listed
 // in write-only-paths are written but never read back: scrim keeps only the
 // value it wrote, and a policy without read on those paths is enough.
 //
@@ -33,16 +33,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/internal/vaultapi"
 	"github.com/heliopsy/scrim/internal/stores/internal/wire"
 )
 
@@ -63,7 +64,10 @@ var _ stores.MetadataReader = (*Adapter)(nil)
 
 // Adapter is one OpenBao instance.
 type Adapter struct {
-	c *client
+	c    *client
+	opts Options
+	// legacyWarned holds the legacy paths already warned about.
+	legacyWarned sync.Map
 	// detailed is false once the server has refused detailed-metadata
 	// (Vault), so List stops trying it.
 	detailed atomicBool
@@ -71,7 +75,7 @@ type Adapter struct {
 	// agents caches Kubernetes passthrough logins (agent.go).
 	agents agentLogins
 	// mounts caches mount information for labels (labels.go).
-	mounts mountCache
+	mounts vaultapi.MountCache
 }
 
 // New builds an adapter for inst without contacting the store.
@@ -80,45 +84,35 @@ func New(inst stores.Instance) (*Adapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	if inst.Resolve == nil {
-		return nil, fmt.Errorf("store %s: no credential resolver", inst.Name)
-	}
-	hc, err := newHTTPClient(opts)
+	c, err := vaultapi.New(inst.Name, opts.Options, inst.Resolve, inst.Log)
 	if err != nil {
-		return nil, fmt.Errorf("store %s: %w", inst.Name, err)
+		return nil, err
 	}
-	log := inst.Log
-	if log == nil {
-		log = slog.New(slog.DiscardHandler)
-	}
-	a := &Adapter{
-		c:      &client{name: inst.Name, opts: opts, http: hc, resolve: inst.Resolve, now: time.Now, log: log},
-		jitter: defaultJitter,
-	}
+	a := &Adapter{c: c, opts: opts, jitter: defaultJitter}
 	a.detailed.Store(true)
 	return a, nil
 }
 
 // Name implements stores.Adapter.
-func (a *Adapter) Name() string { return a.c.name }
+func (a *Adapter) Name() string { return a.c.Name() }
 
 // Capabilities implements stores.Adapter.
 func (a *Adapter) Capabilities() stores.Capabilities { return Caps }
 
 // Credentials implements stores.CredentialHolder.
-func (a *Adapter) Credentials() []secret.Value { return a.c.credentials() }
+func (a *Adapter) Credentials() []secret.Value { return a.c.Credentials() }
 
 // Close implements stores.Adapter.
 func (a *Adapter) Close() error {
 	a.agents.close()
-	a.c.close()
+	a.c.Close()
 	return nil
 }
 
 // split separates a reference path into its mount and the path inside it.
 func (a *Adapter) split(p string) (mount, rest string) {
 	best := ""
-	for _, m := range a.c.opts.Mounts {
+	for _, m := range a.opts.Mounts {
 		if (p == m || strings.HasPrefix(p, m+"/")) && len(m) > len(best) {
 			best = m
 		}
@@ -131,7 +125,7 @@ func (a *Adapter) split(p string) (mount, rest string) {
 
 // writeOnly reports whether p is under a configured write-only prefix.
 func (a *Adapter) writeOnly(p string) bool {
-	for _, w := range a.c.opts.WriteOnly {
+	for _, w := range a.opts.WriteOnly {
 		if p == w || strings.HasPrefix(p, w+"/") {
 			return true
 		}
@@ -140,7 +134,7 @@ func (a *Adapter) writeOnly(p string) bool {
 }
 
 func (a *Adapter) err(op stores.Op, ref stores.Ref, kind error, detail string) *stores.Error {
-	e := stores.NewError(a.c.name, op, ref, kind, nil)
+	e := stores.NewError(a.c.Name(), op, ref, kind, nil)
 	e.Detail = detail
 	return e
 }
@@ -202,13 +196,13 @@ func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, erro
 	if version > 0 {
 		q = url.Values{"version": {strconv.Itoa(version)}}
 	}
-	resp, at, err := a.get(ctx, request{op: stores.OpRead, ref: ref, query: q}, mount, "data", rest)
-	defer resp.wipe()
+	resp, at, err := a.get(ctx, request{Op: stores.OpRead, Ref: ref, Query: q}, mount, "data", rest)
+	defer resp.Wipe()
 	if err != nil {
 		return stores.Secret{}, err
 	}
 	var rr readResponse
-	if err := json.Unmarshal(resp.body, &rr); err != nil {
+	if err := json.Unmarshal(resp.Body, &rr); err != nil {
 		return stores.Secret{}, a.err(stores.OpRead, ref, stores.ErrUnavailable, "malformed response")
 	}
 	if rr.Data == nil || rr.Data.Data == nil {
@@ -224,16 +218,16 @@ func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, erro
 	}
 	destroyed := md.Destroyed
 	in := labelInput{
-		mount: mount, path: rest, version: md.Version, custom: md.CustomMetadata,
-		versionCreated: md.CreatedTime, deletion: md.DeletionTime, destroyed: &destroyed,
+		Mount: mount, Path: rest, Version: md.Version, Custom: md.CustomMetadata,
+		VersionCreated: md.CreatedTime, Deletion: md.DeletionTime, Destroyed: &destroyed,
 	}
 	var createdAt time.Time
-	if a.c.opts.LabelLookups {
+	if a.opts.LabelLookups {
 		if m, err := a.optionalMetadata(ctx, ref, mount, at); err == nil {
-			in.meta = &m
+			in.Meta = &m
 			createdAt = parseTime(m.CreatedTime)
 		}
-		in.mountInfo = a.mount(ctx, ref, mount)
+		in.MountInfo = a.mount(ctx, ref, mount)
 	}
 	out := stores.Secret{
 		Meta: stores.Metadata{
@@ -276,24 +270,24 @@ func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, erro
 // it. A secret that exists at rest, even with its current version deleted,
 // is never shadowed by a legacy one.
 func (a *Adapter) get(ctx context.Context, r request, mount, kind, rest string) (resp *response, at string, err error) {
-	r.method = http.MethodGet
-	r.path = escapePath(mount) + "/" + kind + "/" + escapePath(rest)
-	resp, err = a.c.do(ctx, r)
+	r.Method = http.MethodGet
+	r.Path = escapePath(mount) + "/" + kind + "/" + escapePath(rest)
+	resp, err = a.c.Do(ctx, r)
 	legacy := escapePath(rest)
 	if !errorsIsNotFound(err) || legacy == rest || !noSecret(resp) {
 		return resp, rest, err
 	}
-	r.path = escapePath(mount) + "/" + kind + "/" + escapePath(legacy)
-	lresp, lerr := a.c.do(ctx, r)
+	r.Path = escapePath(mount) + "/" + kind + "/" + escapePath(legacy)
+	lresp, lerr := a.c.Do(ctx, r)
 	if lerr != nil {
-		lresp.wipe()
+		lresp.Wipe()
 		return resp, rest, err
 	}
-	resp.wipe()
-	if _, warned := a.c.legacyWarned.LoadOrStore(mount+"/"+legacy, true); !warned {
-		a.c.log.Warn("OpenBao secret found only under its legacy double-escaped name; "+
+	resp.Wipe()
+	if _, warned := a.legacyWarned.LoadOrStore(mount+"/"+legacy, true); !warned {
+		a.c.Log.Warn("OpenBao secret found only under its legacy double-escaped name; "+
 			"move it to the reference's name, the legacy lookup will be removed",
-			"store", a.c.name, "path", mount+"/"+rest, "legacy_path", mount+"/"+legacy)
+			"store", a.c.Name(), "path", mount+"/"+rest, "legacy_path", mount+"/"+legacy)
 	}
 	return lresp, legacy, nil
 }
@@ -307,7 +301,7 @@ func noSecret(resp *response) bool {
 	var b struct {
 		Data json.RawMessage `json:"data"`
 	}
-	_ = json.Unmarshal(resp.body, &b)
+	_ = json.Unmarshal(resp.Body, &b)
 	return len(b.Data) == 0 || string(b.Data) == "null"
 }
 
@@ -334,8 +328,8 @@ func (a *Adapter) ReadMetadata(ctx context.Context, ref stores.Ref) (stores.Meta
 	if rest == "" {
 		return stores.Metadata{}, a.err(stores.OpRead, ref, stores.ErrInvalidRef, "reference names a mount, not a secret")
 	}
-	resp, _, err := a.get(ctx, request{op: stores.OpRead, ref: ref}, mount, "metadata", rest)
-	defer resp.wipe()
+	resp, _, err := a.get(ctx, request{Op: stores.OpRead, Ref: ref}, mount, "metadata", rest)
+	defer resp.Wipe()
 	if errors.Is(err, stores.ErrPermission) {
 		s, rerr := a.Read(ctx, ref)
 		s.Wipe()
@@ -350,7 +344,7 @@ func (a *Adapter) ReadMetadata(ctx context.Context, ref stores.Ref) (stores.Meta
 	var mr struct {
 		Data *secretMeta `json:"data"`
 	}
-	if err := json.Unmarshal(resp.body, &mr); err != nil || mr.Data == nil {
+	if err := json.Unmarshal(resp.Body, &mr); err != nil || mr.Data == nil {
 		return stores.Metadata{}, a.err(stores.OpRead, ref, stores.ErrUnavailable, "malformed response")
 	}
 	m := *mr.Data
@@ -366,16 +360,16 @@ func (a *Adapter) ReadMetadata(ctx context.Context, ref stores.Ref) (stores.Meta
 	}
 	destroyed := v.Destroyed
 	in := labelInput{
-		mount: mount, path: rest, version: version, custom: m.CustomMetadata,
-		versionCreated: v.CreatedTime, deletion: v.DeletionTime, destroyed: &destroyed,
+		Mount: mount, Path: rest, Version: version, Custom: m.CustomMetadata,
+		VersionCreated: v.CreatedTime, Deletion: v.DeletionTime, Destroyed: &destroyed,
 	}
 	var createdAt time.Time
-	if a.c.opts.LabelLookups {
+	if a.opts.LabelLookups {
 		// Read gets these from optional lookups; here the metadata is at
 		// hand already.
-		in.meta = &m
+		in.Meta = &m
 		createdAt = parseTime(m.CreatedTime)
-		in.mountInfo = a.mount(ctx, ref, mount)
+		in.MountInfo = a.mount(ctx, ref, mount)
 	}
 	return stores.Metadata{
 		Ref:       ref,
@@ -384,22 +378,6 @@ func (a *Adapter) ReadMetadata(ctx context.Context, ref stores.Ref) (stores.Meta
 		UpdatedAt: parseTime(v.CreatedTime),
 		Labels:    a.labels(in),
 	}, nil
-}
-
-type secretMeta struct {
-	CreatedTime        string            `json:"created_time"`
-	UpdatedTime        string            `json:"updated_time"`
-	CurrentVersion     int               `json:"current_version"`
-	OldestVersion      int               `json:"oldest_version"`
-	MaxVersions        int               `json:"max_versions"`
-	CASRequired        bool              `json:"cas_required"`
-	DeleteVersionAfter string            `json:"delete_version_after"`
-	CustomMetadata     map[string]string `json:"custom_metadata"`
-	Versions           map[string]struct {
-		CreatedTime  string `json:"created_time"`
-		DeletionTime string `json:"deletion_time"`
-		Destroyed    bool   `json:"destroyed"`
-	} `json:"versions"`
 }
 
 // live reports whether the current version can be read.
@@ -417,7 +395,7 @@ func (a *Adapter) metadata(ref stores.Ref, mount, p string, m secretMeta, mi *mo
 		Version:   strconv.Itoa(m.CurrentVersion),
 		CreatedAt: parseTime(m.CreatedTime),
 		UpdatedAt: parseTime(m.UpdatedTime),
-		Labels:    a.labels(labelInput{mount: mount, path: p, meta: &m, mountInfo: mi}),
+		Labels:    a.labels(labelInput{Mount: mount, Path: p, Meta: &m, MountInfo: mi}),
 		WriteOnly: a.writeOnly(ref.Path),
 	}
 }
@@ -454,7 +432,7 @@ func (a *Adapter) listFolder(ctx context.Context, prefix stores.Ref, mount, fold
 		return a.err(stores.OpList, prefix, stores.ErrInvalidRef, "folders nested too deeply")
 	}
 	if err := ctx.Err(); err != nil {
-		return stores.NewError(a.c.name, stores.OpList, prefix, stores.ErrUnavailable, err)
+		return stores.NewError(a.c.Name(), stores.OpList, prefix, stores.ErrUnavailable, err)
 	}
 	keys, info, err := a.listKeys(ctx, prefix, mount, folder)
 	if err != nil {
@@ -497,20 +475,20 @@ func (a *Adapter) listKeys(ctx context.Context, prefix stores.Ref, mount, folder
 		p += "/"
 	}
 	try := func(kind string) (*response, error) {
-		return a.c.do(ctx, request{
-			op: stores.OpList, ref: prefix, method: "LIST",
-			path: escapePath(mount) + "/" + kind + "/" + p,
+		return a.c.Do(ctx, request{
+			Op: stores.OpList, Ref: prefix, Method: "LIST",
+			Path: escapePath(mount) + "/" + kind + "/" + p,
 		})
 	}
 	if a.detailed.Load() {
 		resp, err := try("detailed-metadata")
 		if err == nil || errorsIsNotFound(err) {
-			defer resp.wipe()
+			defer resp.Wipe()
 			if err != nil {
 				return nil, nil, nil
 			}
 			var lr listResponse
-			if err := json.Unmarshal(resp.body, &lr); err != nil {
+			if err := json.Unmarshal(resp.Body, &lr); err != nil {
 				return nil, nil, a.err(stores.OpList, prefix, stores.ErrUnavailable, "malformed response")
 			}
 			if lr.Data.KeyInfo == nil {
@@ -526,7 +504,7 @@ func (a *Adapter) listKeys(ctx context.Context, prefix stores.Ref, mount, folder
 		a.detailed.Store(false)
 	}
 	resp, err := try("metadata")
-	defer resp.wipe()
+	defer resp.Wipe()
 	if errorsIsNotFound(err) {
 		return nil, nil, nil
 	}
@@ -534,7 +512,7 @@ func (a *Adapter) listKeys(ctx context.Context, prefix stores.Ref, mount, folder
 		return nil, nil, err
 	}
 	var lr listResponse
-	if err := json.Unmarshal(resp.body, &lr); err != nil {
+	if err := json.Unmarshal(resp.Body, &lr); err != nil {
 		return nil, nil, a.err(stores.OpList, prefix, stores.ErrUnavailable, "malformed response")
 	}
 	return lr.Data.Keys, map[string]secretMeta{}, nil
@@ -551,19 +529,19 @@ func (a *Adapter) optionalMetadata(ctx context.Context, ref stores.Ref, mount, p
 }
 
 func (a *Adapter) getMetadata(ctx context.Context, ref stores.Ref, mount, p string, optional bool) (secretMeta, error) {
-	resp, err := a.c.do(ctx, request{
-		op: stores.OpList, ref: ref, method: http.MethodGet,
-		path:     escapePath(mount) + "/metadata/" + escapePath(p),
-		optional: optional,
+	resp, err := a.c.Do(ctx, request{
+		Op: stores.OpList, Ref: ref, Method: http.MethodGet,
+		Path:     escapePath(mount) + "/metadata/" + escapePath(p),
+		Optional: optional,
 	})
-	defer resp.wipe()
+	defer resp.Wipe()
 	if err != nil {
 		return secretMeta{}, err
 	}
 	var mr struct {
 		Data secretMeta `json:"data"`
 	}
-	if err := json.Unmarshal(resp.body, &mr); err != nil {
+	if err := json.Unmarshal(resp.Body, &mr); err != nil {
 		return secretMeta{}, a.err(stores.OpList, ref, stores.ErrUnavailable, "malformed response")
 	}
 	return mr.Data, nil
@@ -619,17 +597,17 @@ func (a *Adapter) Write(ctx context.Context, ref stores.Ref, fields map[string]s
 	}
 	body := wire.NewBody(append(buf, '}', '}'))
 	defer body.Wipe()
-	resp, err := a.c.do(ctx, request{
-		op: stores.OpWrite, ref: ref, method: http.MethodPost,
-		path: escapePath(mount) + "/data/" + escapePath(rest),
-		body: body, involved: involved,
+	resp, err := a.c.Do(ctx, request{
+		Op: stores.OpWrite, Ref: ref, Method: http.MethodPost,
+		Path: escapePath(mount) + "/data/" + escapePath(rest),
+		Body: body, Involved: involved,
 	})
-	defer resp.wipe()
+	defer resp.Wipe()
 	if err != nil {
 		return stores.Metadata{}, err
 	}
 	var wr writeResponse
-	if err := json.Unmarshal(resp.body, &wr); err != nil || wr.Data == nil {
+	if err := json.Unmarshal(resp.Body, &wr); err != nil || wr.Data == nil {
 		return stores.Metadata{}, a.err(stores.OpWrite, ref, stores.ErrUnavailable, "write accepted but the response was malformed")
 	}
 	m := stores.Metadata{
@@ -645,8 +623,8 @@ func (a *Adapter) Write(ctx context.Context, ref stores.Ref, fields map[string]s
 	// Labels describe what is known without another request: the custom
 	// metadata only once it is stored.
 	in := labelInput{
-		mount: mount, path: rest, version: wr.Data.Version,
-		versionCreated: wr.Data.CreatedTime, mountInfo: a.cachedMount(mount),
+		Mount: mount, Path: rest, Version: wr.Data.Version,
+		VersionCreated: wr.Data.CreatedTime, MountInfo: a.cachedMount(mount),
 	}
 	if len(opts.Labels) > 0 {
 		if err := a.writeLabels(ctx, ref, mount, rest, opts.Labels); err != nil {
@@ -656,7 +634,7 @@ func (a *Adapter) Write(ctx context.Context, ref stores.Ref, fields map[string]s
 			m.Labels = a.labels(in)
 			return m, err
 		}
-		in.custom = opts.Labels
+		in.Custom = opts.Labels
 	}
 	m.Labels = a.labels(in)
 	return m, nil
@@ -667,23 +645,23 @@ func (a *Adapter) writeLabels(ctx context.Context, ref stores.Ref, mount, rest s
 	if err != nil {
 		return a.err(stores.OpWrite, ref, stores.ErrInvalidRef, "labels cannot be encoded")
 	}
-	resp, err := a.c.do(ctx, request{
-		op: stores.OpWrite, ref: ref, method: http.MethodPost,
-		path: escapePath(mount) + "/metadata/" + escapePath(rest),
-		body: wire.NewBody(b),
+	resp, err := a.c.Do(ctx, request{
+		Op: stores.OpWrite, Ref: ref, Method: http.MethodPost,
+		Path: escapePath(mount) + "/metadata/" + escapePath(rest),
+		Body: wire.NewBody(b),
 	})
-	resp.wipe()
+	resp.Wipe()
 	return err
 }
 
 // Health implements stores.Adapter: the server is initialised and unsealed,
 // and scrim's token is accepted.
 func (a *Adapter) Health(ctx context.Context) error {
-	resp, err := a.c.do(ctx, request{
-		op: stores.OpHealth, method: http.MethodGet, noAuth: true, path: "sys/health",
-		query: url.Values{"standbyok": {"true"}, "perfstandbyok": {"true"}},
+	resp, err := a.c.Do(ctx, request{
+		Op: stores.OpHealth, Method: http.MethodGet, NoAuth: true, Path: "sys/health",
+		Query: url.Values{"standbyok": {"true"}, "perfstandbyok": {"true"}},
 	})
-	resp.wipe()
+	resp.Wipe()
 	if err != nil {
 		// sys/health answers 501 when uninitialised and 503 when sealed,
 		// both classified as unavailable. A 404 or 400 means the address
@@ -694,8 +672,8 @@ func (a *Adapter) Health(ctx context.Context) error {
 		}
 		return err
 	}
-	resp, err = a.c.do(ctx, request{op: stores.OpHealth, method: http.MethodGet, path: "auth/token/lookup-self"})
-	resp.wipe()
+	resp, err = a.c.Do(ctx, request{Op: stores.OpHealth, Method: http.MethodGet, Path: "auth/token/lookup-self"})
+	resp.Wipe()
 	return err
 }
 
