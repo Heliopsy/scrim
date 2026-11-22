@@ -75,6 +75,14 @@ type session struct {
 // model.
 func newSession(t *testing.T, bin harness.Binaries, responder fp.Responder) *session {
 	t.Helper()
+	return newSessionWith(t, bin, responder, nil)
+}
+
+// newSessionWith is newSession with extra configuration: extra may add
+// secrets and returns YAML appended to the configuration file.
+func newSessionWith(t *testing.T, bin harness.Binaries, responder fp.Responder,
+	extra func(secrets map[string]string, fake *fp.Server) string) *session {
+	t.Helper()
 	s := &session{}
 	harness.LookPath(t, "git")
 	harness.LookPath(t, "curl")
@@ -103,6 +111,10 @@ func newSession(t *testing.T, bin harness.Binaries, responder fp.Responder) *ses
 	fake := fp.New(fp.Options{Responder: responder})
 	provider := httptest.NewServer(fake)
 	t.Cleanup(provider.Close)
+	var cfgExtra string
+	if extra != nil {
+		cfgExtra = extra(secrets, fake)
+	}
 
 	d := harness.Start(t, bin, harness.Options{
 		Secrets:  secrets,
@@ -122,6 +134,7 @@ rules:
     decision: allow
     when: op == "mcp.tool" && tool.name == "secrets_list" && agent.kind == "session"
 `,
+		Extra: cfgExtra,
 	})
 
 	// A project with secrets where agents find them.
