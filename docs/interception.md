@@ -365,7 +365,7 @@ sudo scrim install --system --transparent --cover-user agent1 --cover-cgroup age
 It installs the system service ([service.md](service.md)) if it is not there yet, then:
 
 - a drop-in, `/etc/systemd/system/scrim.service.d/interception.conf`, that turns on the
-  transparent listener (`proxy.transparent-listen`, `127.0.0.1:9792` and `[::1]:9792`; the port
+  transparent listener (`proxy.transparent-listen`, `127.0.0.1:9793` and `[::1]:9793`; the port
   is `--transparent-port`);
 - the CA in the system trust store and in every Java truststore it finds (below);
 - the rule set `/etc/scrim/transparent.nft`, one table `inet scrim`, loaded by
@@ -507,13 +507,13 @@ interception:
 
 ```sh
 sudo systemctl start agents.slice    # a slice's control group exists once it is started
-sudo scrim ebpf attach               # or: sudo scrim ebpf attach --cgroup agents.slice --port 9792
+sudo scrim ebpf attach               # or: sudo scrim ebpf attach --cgroup agents.slice --port 9793
 sudo systemd-run --slice=agents.slice --uid=agent1 --pty -- claude   # started in the slice: covered
 sudo scrim ebpf detach --cgroup agents.slice                         # or --all
 ```
 
 `attach` prints what it attaches before doing it. It loads the programs with the listener port
-(`interception.ebpf.port`, default 9792, the port `scrim install --transparent` gives the
+(`interception.ebpf.port`, default 9793, the port `scrim install --transparent` gives the
 transparent listener), attaches one link per hook and pins the links under
 `/sys/fs/bpf/scrim/cg-<id>-<time>/`, then records the attachment in
 `/run/scrim-ebpf/attachments.json` (paths, IDs and times, readable by every user). Attaching again

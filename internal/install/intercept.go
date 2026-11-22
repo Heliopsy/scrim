@@ -42,7 +42,7 @@ const (
 	HostsPath = "/etc/hosts"
 	// DefaultTransparentPort is the port nftables redirects covered
 	// connections to, on 127.0.0.1 and ::1.
-	DefaultTransparentPort = 9792
+	DefaultTransparentPort = 9793
 	// DefaultDNSAddress is the loopback address provider names resolve to
 	// in DNS override mode; the SNI listener binds port 443 on it.
 	DefaultDNSAddress = "127.0.83.1"

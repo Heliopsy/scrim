@@ -257,20 +257,47 @@ func randHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-func freePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
+// Listen ports come from below the kernel's ephemeral range (Linux default
+// 32768-60999). A port the kernel hands out for 127.0.0.1:0 is an ephemeral
+// one, and under load the generator's thousands of outbound connections can
+// take it as a source port before the replica binds it ("address already in
+// use"). Outbound connections never use ports below the ephemeral range.
+const (
+	portLow  = 20000
+	portHigh = 32000
+)
+
+// freePort returns a port in [portLow, portHigh) that binds now and is not in
+// used, starting from a random offset so concurrent runs rarely collide.
+func freePort(used map[int]bool) (int, error) {
+	var r [2]byte
+	_, _ = rand.Read(r[:])
+	span := portHigh - portLow
+	start := int(r[0])<<8 | int(r[1])
+	for i := 0; i < span; i++ {
+		p := portLow + (start+i)%span
+		if used[p] {
+			continue
+		}
+		l, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p)))
+		if err != nil {
+			continue
+		}
+		_ = l.Close()
+		return p, nil
 	}
-	defer func() { _ = l.Close() }()
-	return l.Addr().(*net.TCPAddr).Port, nil
+	return 0, fmt.Errorf("no free port in %d-%d", portLow, portHigh-1)
 }
 
 func (w *world) port(name string) int {
 	if p, ok := w.ports[name]; ok {
 		return p
 	}
-	p, err := freePort()
+	used := make(map[int]bool, len(w.ports))
+	for _, p := range w.ports {
+		used[p] = true
+	}
+	p, err := freePort(used)
 	if err != nil {
 		panic(err)
 	}

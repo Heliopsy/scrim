@@ -119,7 +119,7 @@ func TestInspectStates(t *testing.T) {
 	})
 	t.Run("another port is not this attachment", func(t *testing.T) {
 		h := newFakeHost(t)
-		if c := h.one(t, []string{"agents.slice"}, 9999); c.State != NotAttached || !strings.Contains(c.Detail, "port 9792") {
+		if c := h.one(t, []string{"agents.slice"}, 9999); c.State != NotAttached || !strings.Contains(c.Detail, "port 9793") {
 			t.Fatalf("%+v", c)
 		}
 	})
