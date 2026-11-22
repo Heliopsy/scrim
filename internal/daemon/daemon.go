@@ -111,6 +111,9 @@ type Addrs struct {
 	Decision string `json:"decision,omitempty"`
 	// Metrics is the metrics and health listener, host:port.
 	Metrics string `json:"metrics,omitempty"`
+	// Databases are the database proxies' listeners by database name
+	// (unix:/path or host:port).
+	Databases map[string]string `json:"databases,omitempty"`
 }
 
 // Info describes a running daemon. It holds no secret.
@@ -309,7 +312,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	for _, r := range a.Refreshers {
 		values = append(values, r)
 	}
-	values = append(values, d.tokens, d.kubeTokens, d.project)
+	values = append(values, d.tokens, d.kubeTokens, d.project, databasePasswords{cfg: a.Config.Current})
 	pp := a.PolicyParts
 	// Per-agent store identity: the gate checks it on every use of a
 	// governed store's secrets, and the snapshot sends those uses to the
@@ -398,6 +401,10 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	pp.Gate.Callers = d.runtime.Resolver
 
 	if err := d.listenControl(cfg); err != nil {
+		d.runtime.Close()
+		return nil, err
+	}
+	if err := d.startDatabases(runCtx, cfg); err != nil {
 		d.runtime.Close()
 		return nil, err
 	}

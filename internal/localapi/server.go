@@ -74,6 +74,9 @@ type Server struct {
 	// SessionEnded, when set, is called with the ID of every session this
 	// API revokes or sweeps.
 	SessionEnded func(id string)
+	// Databases, when set, serves GET /v1/databases and POST
+	// /v1/databases/query, the read-only database tool.
+	Databases Databases
 }
 
 // NamedValue is one value registered for redaction. Name says where it was
@@ -244,6 +247,8 @@ func (s *Server) Handler() http.Handler {
 	authed("GET "+v+"/status/{id}", s.status)
 	authed("GET "+v+"/grants", s.grants)
 	authed("POST "+v+"/redact", s.redact)
+	authed("GET "+v+"/databases", s.databaseList)
+	authed("POST "+v+"/databases/query", s.databaseQuery)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, agenttools.Errorf(agenttools.CodeNotFound, "no such route in API %s", Version))
 	})

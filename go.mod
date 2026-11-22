@@ -7,6 +7,7 @@ require (
 	filippo.io/age v1.3.2
 	github.com/cilium/ebpf v0.22.0
 	github.com/fsnotify/fsnotify v1.10.1
+	github.com/go-sql-driver/mysql v1.10.2
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/nats-io/nats.go v1.56.0
@@ -35,6 +36,7 @@ require (
 
 require (
 	cel.dev/expr v0.25.3 // indirect
+	filippo.io/edwards25519 v1.2.0 // indirect
 	filippo.io/hpke v0.4.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect

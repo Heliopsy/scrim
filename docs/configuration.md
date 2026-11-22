@@ -385,6 +385,7 @@ is out of date.
 | [`valkey.tls-ca-file`](#valkeytls-ca-file) | string | `""` | restart required |
 | [`valkey.username`](#valkeyusername) | string | `""` | restart required |
 | [`catalog.entries.<name>.*`](#catalogentriesname) | collection | empty | hot |
+| [`databases.<name>.*`](#databasesname) | collection | empty | restart required |
 | [`providers.<name>.*`](#providersname) | collection | empty | hot |
 | [`redaction.placeholder-keys.<name>.*`](#redactionplaceholder-keysname) | collection | empty | hot |
 | [`restore.tools.<name>.*`](#restoretoolsname) | collection | empty | hot |
@@ -401,6 +402,18 @@ Catalog entries by logical name: ref, profiles, variants, prefix, template, host
 | Type | collection of named instances (names: lower-case words with dashes) |
 | Environment | `SCRIM_CATALOG_ENTRIES` (JSON object of instances, replaces the collection); `SCRIM_CATALOG_ENTRIES_<NAME>_<FIELD>` for one field |
 | Reload | hot |
+
+### `databases.<name>`
+
+Databases the auth proxies and the read-only database tool reach, by name: `kind` (postgres or mysql), `address` (host:port of the server), `user` and `password` (a reference) scrim logs in with, optional `database` (the only database the agent gets; default the one its client asks for), `listen` (unix:/path or host:port; default a Unix socket under $XDG_RUNTIME_DIR/scrim/db/<name>), `listen-permissions` (octal, default 0600), `tls` (verify-full, the default, or insecure-plaintext, which weakens the protection of the session and the server's identity), `tls-ca` (PEM file; default the system roots), `tls-server-name`, `connect-timeout`, `tool` (false turns the read-only database tool off for this database), `query-timeout` (default 10s) and `query-max-rows` (default 1000).
+
+| | |
+|---|---|
+| Type | collection of named instances (names: lower-case words with dashes) |
+| Environment | `SCRIM_DATABASES` (JSON object of instances, replaces the collection); `SCRIM_DATABASES_<NAME>_<FIELD>` for one field |
+| Required fields | `kind`, `address`, `user`, `password` |
+| Secret fields | `password` (references; a literal is warned about) |
+| Reload | restart required |
 
 ### `providers.<name>`
 

@@ -269,6 +269,23 @@ scrim secret grants
 {"grants": [{"id": "grt_77b0...", "ref": "bao://kv/agents/hetzner", "expires_at": "2026-11-20T12:30:00Z"}]}
 ```
 
+### database_list and database_query
+
+`database_query` runs one read-only statement on a database configured under `databases`, with
+placeholders bound as query parameters and the result redacted; `database_list` names the databases
+and their local proxy endpoints. The CLI forms are `scrim database ls` and
+`scrim database query DATABASE SQL [--param ...]`. Details, policy and limits:
+[databases.md](databases.md).
+
+```json
+{"name": "database_query", "arguments": {"database": "app",
+  "sql": "SELECT id FROM api_keys WHERE key = '⟦scrim:stripe:01a1b2c3d4e5f60718⟧'"}}
+```
+
+```json
+{"database": "app", "columns": ["id"], "rows": [["42"]]}
+```
+
 ### scrim secret put --stdin
 
 The CLI-only way to store a value that is already in a pipe. It has no MCP tool, because an MCP
@@ -323,6 +340,8 @@ HTTP/1.1 with JSON on the Unix socket, every route under `/v1`, every response c
 | `GET /v1/status/{id}` | `approval_status` |
 | `GET /v1/grants` | `grants_list` |
 | `POST /v1/redact` | redact text for an agent hook: raw body in, `{"text", "replacements"}` out |
+| `GET /v1/databases` | `database_list` |
+| `POST /v1/databases/query` | `database_query` |
 
 The caller is identified from the socket's peer credentials and, when present, the
 `Authorization: Bearer` session token. Unmapped users are refused. JSON bodies with unknown fields

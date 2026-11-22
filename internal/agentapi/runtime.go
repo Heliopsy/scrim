@@ -183,6 +183,10 @@ func (r *Runtime) SetSessionValues(fn func(ctx context.Context, sessionID string
 	r.api.SessionEnded = ended
 }
 
+// SetDatabases serves the read-only database tool with d. Call it before
+// Serve.
+func (r *Runtime) SetDatabases(d localapi.Databases) { r.api.Databases = d }
+
 // lookupGroup resolves api.group to a group ID; empty is 0 (unchanged).
 func lookupGroup(name string) (int, error) {
 	if name == "" {
