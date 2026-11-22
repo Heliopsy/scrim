@@ -124,7 +124,8 @@ func banner(addr string) bool {
 
 func (g *gitServer) log(t *testing.T) string {
 	t.Helper()
-	out, err := exec.Command("podman", "exec", g.name, "git", "--git-dir=/srv/repo.git", "log", "--format=%s", "main").CombinedOutput()
+	// Output only: podman warns on standard error on some hosts.
+	out, err := exec.Command("podman", "exec", g.name, "git", "--git-dir=/srv/repo.git", "log", "--format=%s", "main").Output()
 	if err != nil {
 		return ""
 	}
