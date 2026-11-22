@@ -11,3 +11,5 @@ type fileLock struct{}
 func acquireLock(string) (*fileLock, error) { return &fileLock{}, nil }
 
 func (*fileLock) release() {}
+
+func lockHolder(string) int { return 0 }

@@ -283,8 +283,9 @@ both before changing anything and names what is missing. `--dry-run` needs neith
 unit and the drop-in it would write. It refuses `--cover-user` (use `--transparent`) and a control
 group that holds `scrim.service` (`system.slice` or below): the programs cannot exempt scrim's own
 user the way the nftables rules do, so scrim's upstream connections would come back to itself.
-With a `--transparent-port` other than 9793, also set `interception.ebpf.port` in
-`/etc/scrim/conf.d/` so `scrim status` checks the attachment against the right port.
+With a `--transparent-port` other than 9793 there is nothing else to set: while
+`interception.ebpf.port` is unset, `scrim status`, `scrim doctor` and `scrim ebpf attach` use the
+port the installed unit attaches with. A value you set yourself takes precedence.
 
 Uninstall detaches each recorded control group first and waits until the kernel confirms it, then
 stops and disables the unit and removes it and the drop-in, reloading systemd after each. Running

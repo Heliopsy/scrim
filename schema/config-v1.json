@@ -897,7 +897,7 @@
             },
             "port": {
               "default": 9793,
-              "description": "Port of the transparent listener on 127.0.0.1 and ::1 that the eBPF transparent mode redirects to. It must match the port of proxy.transparent-listen; nothing listening there means covered connections fail, never go direct.",
+              "description": "Port of the transparent listener on 127.0.0.1 and ::1 that the eBPF transparent mode redirects to. It must match the port of proxy.transparent-listen; nothing listening there means covered connections fail, never go direct. Unset, status and `scrim ebpf attach` use the port of the boot unit `scrim install --ebpf` installed, if any.",
               "maximum": 9223372036854775807,
               "minimum": -9223372036854775808,
               "type": "integer",

@@ -111,6 +111,8 @@ type Store struct {
 	reader *sql.DB
 	writer *sql.DB
 	lock   *fileLock
+	// readOnly is set by OpenReadOnly: no lock, no writer, no migration.
+	readOnly bool
 }
 
 var _ state.Store = (*Store)(nil)
@@ -239,6 +241,63 @@ func Open(ctx context.Context, path string, o Options) (*Store, error) {
 	return s, nil
 }
 
+// ErrReadOnly is returned by Migrate on a store opened with OpenReadOnly.
+var ErrReadOnly = errors.New("state: SQLite file opened read-only")
+
+// OpenReadOnly opens an existing database for inspection, as scrim status
+// does. It takes no process lock, creates no file and never writes, so a
+// scrim process starting at the same time still gets the database. A
+// missing file is an error wrapping [fs.ErrNotExist]. Writes through the
+// returned store fail, and Migrate returns [ErrReadOnly].
+func OpenReadOnly(ctx context.Context, path string) (*Store, error) {
+	if path == "" {
+		var err error
+		if path, err = DefaultPath(); err != nil {
+			return nil, err
+		}
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("state: resolving %q: %w", path, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("state: %w", err)
+	}
+	s := &Store{path: path, fs: detectFS(filepath.Dir(path)), readOnly: true}
+	if s.reader, err = sql.Open("sqlite", readOnlyDSN(path)); err != nil {
+		return nil, fmt.Errorf("state: opening %s: %w", path, err)
+	}
+	s.reader.SetMaxOpenConns(1)
+	if err := s.reader.PingContext(ctx); err != nil {
+		_ = s.reader.Close()
+		return nil, fmt.Errorf("state: opening %s read-only: %w", path, err)
+	}
+	s.DB = sqlstate.New(sqlstate.Config{
+		Backend:  Name,
+		Dialect:  migrate.SQLite,
+		Reader:   s.reader,
+		Writer:   s.reader,
+		IsUnique: isUnique,
+	})
+	return s, nil
+}
+
+// Holder is the process that holds the database at path, read from its lock
+// file without taking the lock; zero when none is recorded or the recorded
+// process is gone.
+func Holder(path string) int { return lockHolder(path) }
+
+// readOnlyDSN opens connections with mode=ro. It sets no journal mode: the
+// file is already in WAL mode if a scrim process created it.
+func readOnlyDSN(path string) string {
+	q := url.Values{}
+	q.Set("mode", "ro")
+	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", BusyTimeoutMillis))
+	q.Add("_pragma", "query_only(1)")
+	q.Add("_time_format", "sqlite")
+	return "file:" + (&url.URL{Path: path}).EscapedPath() + "?" + q.Encode()
+}
+
 // dsn applies the pragmas to every connection the pool opens. The writer's
 // transactions begin IMMEDIATE.
 func dsn(path string, writer bool) string {
@@ -262,6 +321,9 @@ func (s *Store) Filesystem() FSKind { return s.fs }
 
 // Migrate implements [state.Store].
 func (s *Store) Migrate(ctx context.Context) error {
+	if s.readOnly {
+		return fmt.Errorf("%w: %s", ErrReadOnly, s.path)
+	}
 	all, err := Migrations()
 	if err != nil {
 		return err
@@ -284,7 +346,7 @@ func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 // and releases the process lock.
 func (s *Store) Close() error {
 	var errs []error
-	if s.writer != nil {
+	if s.writer != nil && !s.readOnly {
 		_, _ = s.writer.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 		errs = append(errs, s.writer.Close())
 	}

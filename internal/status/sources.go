@@ -20,9 +20,11 @@ type Locator interface{ Location() string }
 // opened.
 type StateOf struct {
 	Store state.Store
-	// Name is the configured backend, used when Store is nil.
-	Name string
-	Err  error
+	// Name is the configured backend, and Location where it would be, used
+	// when Store is nil.
+	Name     string
+	Location string
+	Err      error
 	// Info, when set, replaces the detail of a healthy report, for example
 	// "held by the running scrim process 4242".
 	Info string
@@ -31,7 +33,7 @@ type StateOf struct {
 // StateStatus implements [StateSource].
 func (s StateOf) StateStatus(ctx context.Context) State {
 	if s.Store == nil {
-		st := State{Backend: s.Name, Healthy: s.Err == nil && s.Info != "", Detail: s.Info}
+		st := State{Backend: s.Name, Location: s.Location, Healthy: s.Err == nil && s.Info != "", Detail: s.Info}
 		if s.Err != nil {
 			st.Detail = s.Err.Error()
 		}

@@ -422,6 +422,17 @@ contacting Infisical, so `store.write` rules can match on them.
 - **WHEN** a rule asks for writes under `/db` and an agent creates `inf://payments/dev/db/NEW`
 - **THEN** the write is decided on `infisical.folder.db = true` before the secret exists, and asks
 
+### Requirement: Infisical hidden values are refused
+
+A read of an Infisical secret SHALL fail as a permission error when Infisical marks the value hidden
+(`secretValueHidden: true`), and SHALL wipe the mask unread. The mask SHALL NOT be used as the value.
+
+#### Scenario: Identity may describe but not read
+
+- **WHEN** Infisical answers a read with `secretValueHidden: true` and its mask in the value field
+- **THEN** the read fails with permission denied naming the store and reference, and nothing is
+  loaded into a redaction set
+
 ### Requirement: Infisical labels read without values
 
 The Infisical adapter SHALL return an existing secret's metadata and labels through a request that

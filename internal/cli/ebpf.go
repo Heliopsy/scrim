@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/heliopsy/scrim/internal/bpfredirect"
+	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/install"
 	"github.com/heliopsy/scrim/internal/status"
 )
 
@@ -101,7 +103,7 @@ func ebpfAttach(e *Env) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				port = bpfredirect.PortSetting.Get(cfg)
+				port = ebpfPort(cfg)
 			}
 			w := cmd.OutOrStdout()
 			for _, cg := range cgs {
@@ -209,13 +211,26 @@ func recordPath() string {
 	return bpfredirect.RecordPath
 }
 
+// ebpfPort is the listener port the eBPF mode redirects to: an explicit
+// interception.ebpf.port, else the port the boot unit of `scrim install
+// --ebpf` attaches with (its --transparent-port), else the default.
+func ebpfPort(cfg *config.Config) int {
+	if e, ok := cfg.Entry(bpfredirect.PortSetting.Name()); ok && e.Source.Kind != config.SourceDefault {
+		return bpfredirect.PortSetting.Get(cfg)
+	}
+	if p, ok := install.EBPFUnitPort(installRoot); ok {
+		return p
+	}
+	return bpfredirect.PortSetting.Get(cfg)
+}
+
 // ebpfReport is the eBPF mode as status shows it, nil when it is neither
 // configured nor attached.
 func ebpfReport(e *Env) *status.EBPF {
 	var cgs []string
 	port := bpfredirect.DefaultPort
 	if cfg, err := e.Config(); err == nil {
-		cgs, port = bpfredirect.CgroupsSetting.Get(cfg), bpfredirect.PortSetting.Get(cfg)
+		cgs, port = bpfredirect.CgroupsSetting.Get(cfg), ebpfPort(cfg)
 	}
 	r := bpfredirect.Inspect(ebpfInspector, cgs, port)
 	if r == nil {
