@@ -1441,6 +1441,7 @@ dependencies = [
  "memchr",
  "proptest",
  "rcgen",
+ "ring",
  "rustls",
  "rustls-native-certs",
  "rustls-pemfile",

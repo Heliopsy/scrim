@@ -57,7 +57,7 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 | --- | --- |
 | [cli-tools.md](cli-tools.md) | Tool profiles: gh, git, kubectl, aws, terraform and other CLIs with placeholder credentials |
 | [run.md](run.md) | `scrim run`: what it sets for Claude Code, Codex and other agents, failing closed, signals |
-| [providers/README.md](providers/README.md) | Cloud provider routes: Bedrock, Claude Platform on AWS and Foundry, signed by scrim after redaction |
+| [providers/README.md](providers/README.md) | Cloud provider routes: Bedrock, Claude Platform on AWS, Foundry and Vertex, authenticated by scrim after redaction |
 | [agent-tools.md](agent-tools.md) | The MCP server, `scrim secret` commands and the human entry page |
 | [identity.md](identity.md) | How scrim knows which agent is calling: peer credentials and session tokens |
 

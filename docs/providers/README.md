@@ -19,9 +19,11 @@ provider.
 | `bedrock` | Amazon Bedrock runtime | InvokeModel (Anthropic body), Converse, event stream | SigV4 (`bedrock`) or Bedrock API key | [bedrock.md](bedrock.md) |
 | `bedrock-mantle` | Bedrock Mantle endpoint | Anthropic Messages | SigV4 (`bedrock-mantle`) or Bedrock API key | [bedrock.md](bedrock.md#mantle) |
 | `anthropic-aws` | Claude Platform on AWS | Anthropic Messages | SigV4 (`aws-external-anthropic`) or workspace API key | [claude-platform-aws.md](claude-platform-aws.md) |
-| `foundry` | Microsoft Foundry | Anthropic Messages under `/anthropic` | `api-key` header | [foundry.md](foundry.md) |
+| `foundry` | Microsoft Foundry | Anthropic Messages under `/anthropic` | `api-key` header or Entra ID token | [foundry.md](foundry.md) |
+| `vertex` | Google Vertex AI | Anthropic Messages on `rawPredict`/`streamRawPredict`, Gemini `generateContent` | Google access token (service account key or metadata server) | [vertex.md](vertex.md) |
 
-Google Vertex AI is not served yet; `scrim run` refuses Claude Code with `CLAUDE_CODE_USE_VERTEX`.
+Claude on Google Cloud operated by Anthropic (`CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD`) is not
+served; `scrim run` refuses Claude Code in that mode.
 
 ## Configuration
 
@@ -41,15 +43,19 @@ providers:
 
 | Field | Meaning |
 | --- | --- |
-| `kind` | `bedrock`, `bedrock-mantle`, `anthropic-aws` or `foundry` |
-| `region` | AWS kinds: the region of the endpoint and of the signature |
+| `kind` | `bedrock`, `bedrock-mantle`, `anthropic-aws`, `foundry` or `vertex` |
+| `region` | AWS kinds: the region of the endpoint and of the signature; `vertex`: the location (`global`, `us`, `eu` or a region) |
 | `resource` | `foundry`: the Foundry resource name alone, not a URL |
 | `upstream` | An origin (`https://host[:port]`, no path) that replaces the default endpoint, for a VPC endpoint or a test |
 | `access-key-id`, `secret-access-key`, `session-token` | AWS kinds: store references to the keys scrim signs with |
 | `api-key` | Store reference to an API key (Bedrock API key and Claude Platform on AWS key as a bearer token, Foundry key as `api-key`) |
+| `service-account` | `vertex`: store reference to a service account key (the JSON key file) |
+| `metadata-server` | `vertex`: `true` takes tokens from the metadata server (GKE workload identity, Compute Engine) |
+| `tenant-id`, `client-id`, `client-secret` | `foundry`: Entra ID application; the secret is a store reference |
+| `token-url` | Replaces the token endpoint (Google, Entra ID or the metadata server), for private endpoints and tests |
 
 Credential fields are store references, never values; a literal is rejected when the
-configuration loads. The values must be in the store's redaction set (they are when the store
+configuration loads. A reference without a field names the secret's default field. The values must be in the store's redaction set (they are when the store
 loads every secret, the default). A route whose credentials are not loaded refuses every request
 with `503` and the code `credential_unavailable`, naming the missing reference, and sends nothing.
 
@@ -79,6 +85,7 @@ Code's own authentication off and removes inherited keys that would take precede
 | `CLAUDE_CODE_USE_MANTLE` | `ANTHROPIC_BEDROCK_MANTLE_BASE_URL` | `CLAUDE_CODE_SKIP_MANTLE_AUTH=1` | `AWS_BEARER_TOKEN_BEDROCK` |
 | `CLAUDE_CODE_USE_ANTHROPIC_AWS` | `ANTHROPIC_AWS_BASE_URL` | `CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH=1` | `ANTHROPIC_AWS_API_KEY` |
 | `CLAUDE_CODE_USE_FOUNDRY` | `ANTHROPIC_FOUNDRY_BASE_URL` (route + `/anthropic`) | `CLAUDE_CODE_SKIP_FOUNDRY_AUTH=1` | `ANTHROPIC_FOUNDRY_API_KEY`, `ANTHROPIC_FOUNDRY_AUTH_TOKEN`, `ANTHROPIC_FOUNDRY_RESOURCE` |
+| `CLAUDE_CODE_USE_VERTEX` | `ANTHROPIC_VERTEX_BASE_URL` (route + `/v1`) | `CLAUDE_CODE_SKIP_VERTEX_AUTH=1` | |
 
 When the mode is on and no route of that kind is configured, `scrim run` refuses to start the
 agent, because Claude Code would reach the provider directly. The first route of each kind is
@@ -86,4 +93,14 @@ used. `scrim run` reads the routes from its own configuration; with a system ser
 two configurations in step.
 
 Other agents point their SDK's base URL at `http://127.0.0.1:9790/<name>` (plus `/anthropic` for
-Foundry) and turn their own signing off.
+Foundry, `/v1` for Vertex) and turn their own signing off.
+
+## Minted tokens
+
+Vertex and Foundry with Entra ID authenticate with short-lived OAuth 2.0 access tokens. The data
+plane mints them from the stored credential when a request needs one, caches each until five
+minutes before it expires (shared across snapshot updates), and sends it as
+`Authorization: Bearer`. A token endpoint that refuses, times out or answers without a token
+makes the request fail with `credential_unavailable`, naming the endpoint's host and the status;
+the response body is never shown. Token requests go out through the same upstream client as
+provider requests, with the same trust roots.

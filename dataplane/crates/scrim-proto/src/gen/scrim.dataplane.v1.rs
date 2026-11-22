@@ -447,7 +447,7 @@ pub struct Route {
 /// never values.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RouteAuth {
-    #[prost(oneof = "route_auth::Kind", tags = "1, 2")]
+    #[prost(oneof = "route_auth::Kind", tags = "1, 2, 3, 4, 5")]
     pub kind: ::core::option::Option<route_auth::Kind>,
 }
 /// Nested message and enum types in `RouteAuth`.
@@ -458,6 +458,12 @@ pub mod route_auth {
         AwsSigv4(super::AwsSigV4Auth),
         #[prost(message, tag = "2")]
         Header(super::HeaderAuth),
+        #[prost(message, tag = "3")]
+        GoogleServiceAccount(super::GoogleServiceAccountAuth),
+        #[prost(message, tag = "4")]
+        GoogleMetadata(super::GoogleMetadataAuth),
+        #[prost(message, tag = "5")]
+        EntraClientSecret(super::EntraClientSecretAuth),
     }
 }
 /// AwsSigV4Auth signs requests with AWS Signature Version 4.
@@ -486,6 +492,43 @@ pub struct HeaderAuth {
     pub prefix: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub value_ref: ::prost::alloc::string::String,
+}
+/// GoogleServiceAccountAuth mints Google access tokens with a service account
+/// key (the JSON key file) and sends them as a bearer token.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GoogleServiceAccountAuth {
+    #[prost(string, tag = "1")]
+    pub key_ref: ::prost::alloc::string::String,
+    /// token_url is empty for <https://oauth2.googleapis.com/token.>
+    #[prost(string, tag = "2")]
+    pub token_url: ::prost::alloc::string::String,
+    /// scope is empty for <https://www.googleapis.com/auth/cloud-platform.>
+    #[prost(string, tag = "3")]
+    pub scope: ::prost::alloc::string::String,
+}
+/// GoogleMetadataAuth takes Google access tokens from the metadata server
+/// (workload identity).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GoogleMetadataAuth {
+    /// url is empty for the metadata server's token URL.
+    #[prost(string, tag = "1")]
+    pub url: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub scope: ::prost::alloc::string::String,
+}
+/// EntraClientSecretAuth mints Microsoft Entra ID access tokens with client
+/// credentials.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EntraClientSecretAuth {
+    #[prost(string, tag = "1")]
+    pub token_url: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub client_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub client_secret_ref: ::prost::alloc::string::String,
+    /// scope is empty for <https://ai.azure.com/.default.>
+    #[prost(string, tag = "4")]
+    pub scope: ::prost::alloc::string::String,
 }
 /// RouteChain is a chained upstream that receives requests after redaction.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
