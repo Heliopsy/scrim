@@ -265,6 +265,18 @@ group before removing the unit.
 - **THEN** the install changes nothing and names the missing privilege
 - **AND** with `--dry-run` it prints the unit and the drop-in it would write
 
+### Requirement: eBPF install port is the listener port
+
+Where `interception.ebpf.port` is not set, `scrim status`, `scrim doctor` and `scrim ebpf attach`
+SHALL use the port the unit installed by `scrim install --ebpf` attaches with.
+
+#### Scenario: eBPF install with a non-default port
+
+- **WHEN** a user runs `scrim install --system --ebpf --cover-cgroup agents.slice --transparent-port 9800`
+  and sets no `interception.ebpf.port`
+- **THEN** `scrim status` checks the attachment and the listener on port 9800
+- **AND** with `interception.ebpf.port` set, status uses the setting instead
+
 ### Requirement: Install upgrades in place
 
 Running `scrim install` again in the mode already installed SHALL keep the recorded changes,

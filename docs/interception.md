@@ -521,7 +521,8 @@ sudo scrim ebpf detach --cgroup agents.slice                         # or --all
 
 `attach` prints what it attaches before doing it. It loads the programs with the listener port
 (`interception.ebpf.port`, default 9793, the port `scrim install --transparent` gives the
-transparent listener), attaches one link per hook and pins the links under
+transparent listener; unset, the port of the unit `scrim install --ebpf` installed), attaches one
+link per hook and pins the links under
 `/sys/fs/bpf/scrim/cg-<id>-<time>/`, then records the attachment in
 `/run/scrim-ebpf/attachments.json` (paths, IDs and times, readable by every user). Attaching again
 replaces the attachment in place: the new links go in first and the old ones are removed after, so
