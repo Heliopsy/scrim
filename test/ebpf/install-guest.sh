@@ -7,12 +7,14 @@
 # the VM off. Its own files live in /opt/scrim-test, outside the snapshot.
 #
 # The stand-in provider is a fake provider on 10.99.0.1 (on lo), ports 443
-# and 80 in plain HTTP: whatever reaches it went around scrim. To see where
-# redirected connections land, scrim.service is stopped for a moment and a
-# second fake provider takes its transparent listener's port, 127.0.0.1:9793.
-# scrim's own listener cannot serve them yet: it routes by the original
-# destination nftables leaves (SO_ORIGINAL_DST), which a connect redirect
-# does not set (tasks.md 15.1b).
+# and 80 in plain HTTP, which api.anthropic.com resolves to: whatever reaches
+# it went around scrim. scrim's own upstream is a second fake provider on
+# 127.0.0.1:18089 (as in test/service/transparent-test.sh), and a generated
+# secret in a file store is what must not reach it. An agent in agents.slice
+# runs curl against https://api.anthropic.com with no scrim configuration:
+# the eBPF programs redirect it to scrim's transparent listener, which reads
+# the original destination through the getsockopt program (tasks.md 15.1b),
+# intercepts TLS and forwards the request redacted.
 set -euo pipefail
 
 t=/opt/scrim-test
@@ -45,6 +47,11 @@ setup() {
   ip addr add 10.99.0.1/32 dev lo
   fake direct443 10.99.0.1:443
   fake direct80 10.99.0.1:80
+  fake upstream 127.0.0.1:18089
+  # In the file system snapshot, so written once, before it.
+  grep -q ' api.anthropic.com$' /etc/hosts || echo '10.99.0.1 api.anthropic.com' >>/etc/hosts
+  [ -s "$st/secret" ] || echo "vm-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')" >"$st/secret"
+  secret="$(cat "$st/secret")"
 }
 
 exchanges() { curl -fsS "http://$1/_fake/exchanges" | jq length; }
@@ -61,12 +68,36 @@ check_direct() {
   check 10.99.0.1:80 0 "stand-in provider, port 80"
 }
 
+# check_redacted WANT: scrim's upstream saw WANT requests, none with the
+# secret, each with a placeholder.
+check_redacted() {
+  local ex n
+  ex="$(curl -fsS http://127.0.0.1:18089/_fake/exchanges)"
+  n="$(jq length <<<"$ex")"
+  [ "$n" = "$1" ] || fail "scrim's upstream saw $n request(s), want $1"
+  if grep -qF "$secret" <<<"$ex"; then fail "the secret reached the provider"; fi
+  reset 127.0.0.1:18089
+  if [ "$n" = 0 ]; then
+    echo "scrim's upstream: no request"
+    return
+  fi
+  grep -q '⟦scrim:' <<<"$ex" || fail "no placeholder reached the provider"
+  echo "scrim's upstream: $n request(s), secret absent, placeholder present"
+}
+
 # in_slice CMD...: CMD as bob in agents.slice, a user with no scrim configuration.
 in_slice() { systemd-run --quiet --wait --pipe --slice=agents.slice -p User=bob "$@"; }
-post() { # post URL: one provider request in plain HTTP
-  curl -fsS -o /dev/null --max-time 10 "$1" -H 'content-type: application/json' -H 'x-api-key: test' \
-    -H 'anthropic-version: 2023-06-01' -d '{"model":"m","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}'
+post() { # post URL [curl args...]: one provider request carrying the secret
+  local url="$1"
+  shift
+  curl -fsS -o /dev/null --max-time 15 "$url" -H 'content-type: application/json' -H 'x-api-key: test' \
+    -H 'anthropic-version: 2023-06-01' \
+    -d "{\"model\":\"m\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"hi $secret\"}]}" "$@"
 }
+# agent URL [curl args...] and outside URL [curl args...]: post as bob, from
+# agents.slice or from outside it.
+agent() { in_slice /bin/bash -c "secret=$secret; $(declare -f post); post $(printf '%q ' "$@")"; }
+outside() { runuser -u bob -- /bin/bash -c "secret=$secret; $(declare -f post); post $(printf '%q ' "$@")"; }
 
 ebpf_state() {
   "$1" ebpf status --json | jq -r '.cgroups[] | select(.cgroup == "agents.slice") | .state'
@@ -86,23 +117,64 @@ wait_scrim() {
   fail "scrim's transparent listener did not come up"
 }
 
-# redirected: with scrim stopped and a fake provider on its port, connections
-# of agents.slice to ports 80 and 443 of the stand-in provider land on
-# 127.0.0.1:9793; with nothing there they fail; nothing reaches the
-# stand-in; the programs stay attached throughout.
+# configure gives scrim the test store and upstream (removed before the
+# uninstall, so outside the snapshot comparison).
+configure() {
+  install -d -m 0700 -o scrim -g scrim /var/lib/scrim-test/vm
+  printf %s "$secret" >/var/lib/scrim-test/vm/token
+  chown scrim:scrim /var/lib/scrim-test/vm/token
+  chmod 0600 /var/lib/scrim-test/vm/token
+  mkdir -p /etc/scrim/conf.d
+  printf '%s\n' 'apiVersion: scrim.dev/v1' 'kind: Config' 'stores:' \
+    "  vm: {kind: file, root: /var/lib/scrim-test, format: raw, redact: ['vm://vm/*']}" 'proxy:' \
+    "  upstream: {anthropic: 'http://127.0.0.1:18089', openai: 'http://127.0.0.1:18089'}" >/etc/scrim/conf.d/test.yaml
+  systemctl restart scrim.service
+  wait_scrim
+}
+
+wait_healthy() {
+  for _ in $(seq 60); do
+    /usr/local/bin/scrim status --json 2>/dev/null | jq -e '.data_plane.healthy' >/dev/null && return 0
+    sleep 0.5
+  done
+  fail "scrim's data plane did not become healthy"
+}
+
+# redirected: an agent in agents.slice reaches the provider by name through
+# scrim's own transparent listener, redacted; by address (no route) it is
+# refused; a connection to the listener that the programs did not redirect
+# has no original destination and is closed; while scrim is stopped the
+# agent fails. Nothing ever reaches the stand-in provider directly, and the
+# programs stay attached throughout.
 redirected() {
-  systemctl stop scrim.service
-  fake listener 127.0.0.1:9793
-  in_slice /bin/sh -c "$(declare -f post); post http://10.99.0.1/v1/messages && post http://10.99.0.1:443/v1/messages"
-  check 127.0.0.1:9793 2 "transparent listener port 127.0.0.1:9793"
+  wait_healthy
+  agent https://api.anthropic.com/v1/messages
+  check_redacted 1
   check_direct 0
-  systemctl stop scrim-vmtest-listener.service
-  if in_slice /bin/sh -c "$(declare -f post); post http://10.99.0.1:443/v1/messages"; then
-    fail "a connection got through with nothing listening on 9793"
-  fi
+  echo "agents.slice: redirected through scrim, redacted"
+
+  agent http://10.99.0.1:443/v1/messages && fail "plain HTTP to 443 by address got through"
+  agent http://10.99.0.1/v1/messages && fail "plain HTTP to 80 by address got through"
+  check_redacted 0
+  check_direct 0
+  echo "agents.slice by address: refused"
+
+  # bob outside the slice dials the listener itself: not redirected, so the
+  # programs hold no original destination for the connection.
+  outside https://api.anthropic.com:9793/v1/messages --resolve api.anthropic.com:9793:127.0.0.1 &&
+    fail "an IPv4 connection to the listener that was not redirected got through"
+  outside https://api.anthropic.com:9793/v1/messages --resolve 'api.anthropic.com:9793:[::1]' &&
+    fail "an IPv6 connection to the listener that was not redirected got through"
+  check_redacted 0
+  check_direct 0
+  echo "connections to the listener without an original destination: closed"
+
+  systemctl stop scrim.service
+  agent https://api.anthropic.com/v1/messages && fail "a connection got through with scrim stopped"
+  check_redacted 0
   check_direct 0
   [ "$(ebpf_state /usr/local/bin/scrim)" = active ] || fail "the programs went away while scrim was stopped"
-  echo "nothing on 9793: the connection failed, nothing went direct, the programs stayed attached"
+  echo "scrim stopped: the connection failed, nothing went direct, the programs stayed attached"
   systemctl start scrim.service
   wait_scrim
 }
@@ -140,12 +212,14 @@ phase1() {
   ss -Hltn 'sport = :9793' | grep -q '\[::1\]:9793' || fail "the drop-in did not turn on the transparent listener on ::1"
   /usr/local/bin/scrim status | sed -n '/^Interception/,/^$/p'
 
-  log "agents.slice is redirected to the transparent listener's port"
+  log "agents.slice is redirected through scrim"
+  configure
   redirected
 
   log "a process outside agents.slice is untouched"
-  runuser -u bob -- /bin/sh -c "$(declare -f post); post http://10.99.0.1:443/v1/messages"
+  outside http://10.99.0.1:443/v1/messages
   check_direct 1
+  check_redacted 0
 
   echo 2 >"$st/phase"
 }
@@ -162,10 +236,11 @@ phase2() {
   [ "$attached" -gt 0 ] && [ "$attached" -le "$started" ] || fail "the programs were not attached before scrim started"
   wait_scrim
 
-  log "agents.slice is still redirected"
+  log "agents.slice is still redirected through scrim"
   redirected
 
-  log "uninstall --purge"
+  log "test configuration removed, uninstall --purge"
+  rm -rf /etc/scrim/conf.d /var/lib/scrim-test
   "$t/scrim" uninstall --system --purge
   [ "$(systemctl show -p LoadState --value scrim-ebpf.service)" = not-found ] || fail "scrim-ebpf.service is still loaded"
   [ -z "$(ls -A /sys/fs/bpf/scrim 2>/dev/null)" ] || fail "pins left in /sys/fs/bpf/scrim: $(ls /sys/fs/bpf/scrim)"
@@ -173,7 +248,7 @@ phase2() {
   echo "detached: no unit, no pins, nothing recorded"
 
   log "after uninstall agents.slice reaches the stand-in provider directly"
-  in_slice /bin/sh -c "$(declare -f post); post http://10.99.0.1:443/v1/messages"
+  agent http://10.99.0.1:443/v1/messages
   check_direct 1
 
   log "file system identical to the snapshot taken before install"

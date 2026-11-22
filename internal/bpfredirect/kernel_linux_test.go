@@ -5,17 +5,22 @@
 package bpfredirect
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -194,6 +199,155 @@ func (e *kernelEnv) expect(cgroup, kind, addr, want string) {
 	}
 }
 
+// serveListener answers every TCP connection on addr as scrim's
+// transparent listener sees it: name, then the original destination the
+// listener reads with SO_ORIGINAL_DST, or "none". Before reading it, the
+// listener calls before (when set). With clientCloses it waits for the
+// client to close first, otherwise it closes first.
+func (e *kernelEnv) serveListener(network, addr, name string, clientCloses bool, before func()) net.Listener {
+	e.t.Helper()
+	ln, err := net.Listen(network, addr)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			if before != nil {
+				before()
+			}
+			orig := "none"
+			if o, err := originalDst(c.(*net.TCPConn)); err == nil {
+				orig = o.String()
+			}
+			_, _ = c.Write([]byte(name + " " + orig + "\n"))
+			if clientCloses {
+				_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+				_, _ = io.Copy(io.Discard, c)
+			}
+			_ = c.Close()
+		}
+	}()
+	return ln
+}
+
+// originalDst is what the data plane's original_dst does
+// (dataplane/crates/scrim-dataplane/src/listeners.rs): SO_ORIGINAL_DST at
+// SOL_IP for an IPv4 or IPv4-mapped local address, IP6T_SO_ORIGINAL_DST at
+// SOL_IPV6 otherwise. The getsockopt wrappers are borrowed for their buffer
+// sizes: IPv6Mreq (20 bytes) holds a sockaddr_in, IPv6MTUInfo (32 bytes)
+// starts with a sockaddr_in6.
+func originalDst(c *net.TCPConn) (netip.AddrPort, error) {
+	const soOriginalDst = 80
+	rc, err := c.SyscallConn()
+	if err != nil {
+		return netip.AddrPort{}, err
+	}
+	local := c.LocalAddr().(*net.TCPAddr).AddrPort()
+	var (
+		orig netip.AddrPort
+		gerr error
+	)
+	err = rc.Control(func(fd uintptr) {
+		if local.Addr().Unmap().Is4() {
+			m, err := unix.GetsockoptIPv6Mreq(int(fd), unix.SOL_IP, soOriginalDst) // #nosec G115 -- an fd
+			if err != nil {
+				gerr = err
+				return
+			}
+			b := m.Multiaddr
+			if f := binary.NativeEndian.Uint16(b[0:2]); f != unix.AF_INET {
+				gerr = fmt.Errorf("family %d", f)
+				return
+			}
+			orig = netip.AddrPortFrom(netip.AddrFrom4([4]byte(b[4:8])), binary.BigEndian.Uint16(b[2:4]))
+			return
+		}
+		m, err := unix.GetsockoptIPv6MTUInfo(int(fd), unix.SOL_IPV6, soOriginalDst) // #nosec G115 -- an fd
+		if err != nil {
+			gerr = err
+			return
+		}
+		if m.Addr.Family != unix.AF_INET6 {
+			gerr = fmt.Errorf("family %d", m.Addr.Family)
+			return
+		}
+		port := binary.BigEndian.Uint16(binary.NativeEndian.AppendUint16(nil, m.Addr.Port))
+		orig = netip.AddrPortFrom(netip.AddrFrom16(m.Addr.Addr), port)
+	})
+	if err != nil {
+		return netip.AddrPort{}, err
+	}
+	return orig, gerr
+}
+
+// connMaps opens the maps of an attachment's sockops program.
+func connMaps(t *testing.T, a Attachment) (pending, conns *ebpf.Map) {
+	t.Helper()
+	prog, err := ebpf.NewProgramFromID(ebpf.ProgramID(a.Programs["sockops"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = prog.Close() }()
+	info, err := prog.Info()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, _ := info.MapIDs()
+	for _, id := range ids {
+		m, err := ebpf.NewMapFromID(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mi, err := m.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch mi.Name {
+		case "scrim_pending":
+			pending = m
+		case "scrim_origdst":
+			conns = m
+		default:
+			_ = m.Close()
+		}
+	}
+	if pending == nil || conns == nil {
+		t.Fatalf("maps of program %d: %v", a.Programs["sockops"], ids)
+	}
+	t.Cleanup(func() { _ = pending.Close(); _ = conns.Close() })
+	return pending, conns
+}
+
+func countEntries(m *ebpf.Map) int {
+	n := 0
+	var k, v []byte
+	it := m.Iterate()
+	for it.Next(&k, &v) {
+		n++
+	}
+	return n
+}
+
+// expectNoEntries waits for an attachment's maps to empty once its
+// connections closed.
+func expectNoEntries(t *testing.T, a Attachment) {
+	t.Helper()
+	pending, conns := connMaps(t, a)
+	var np, nc int
+	for range 100 {
+		if np, nc = countEntries(pending), countEntries(conns); np == 0 && nc == 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("%d pending and %d connection entries left after every connection closed", np, nc)
+}
+
 func hp(h string, p int) string { return net.JoinHostPort(h, strconv.Itoa(p)) }
 
 // TestKernelRedirectAndDeny is tasks.md 15.1's verify: per-cgroup redirect
@@ -208,9 +362,20 @@ func TestKernelRedirectAndDeny(t *testing.T) {
 		e.serve("tcp4", hp(t4, p), "provider")
 		e.serve("tcp6", hp(t6, p), "provider")
 	}
-	scrim4 := e.serve("tcp4", hp("127.0.0.1", port), "scrim")
-	e.serve("tcp6", hp("::1", port), "scrim")
-	e.serve("tcp4", hp("127.0.0.1", port2), "scrim2")
+	// wipe, when set, empties the connection map before the listener reads
+	// the original destination: a missing entry.
+	var wipe atomic.Pointer[ebpf.Map]
+	before := func() {
+		if m := wipe.Load(); m != nil {
+			var k, v []byte
+			for it := m.Iterate(); it.Next(&k, &v); {
+				_ = m.Delete(k)
+			}
+		}
+	}
+	scrim4 := e.serveListener("tcp4", hp("127.0.0.1", port), "scrim", true, before)
+	e.serveListener("tcp6", hp("::1", port), "scrim", true, before)
+	e.serveListener("tcp4", hp("127.0.0.1", port2), "scrim2", false, nil)
 	udp, err := net.ListenPacket("udp4", hp(t4, 443))
 	if err != nil {
 		t.Fatal(err)
@@ -235,16 +400,35 @@ func TestKernelRedirectAndDeny(t *testing.T) {
 	}
 	// Attach closed every descriptor: only the pins keep the links.
 
-	t.Run("redirect", func(t *testing.T) {
+	t.Run("redirect with the original destination", func(t *testing.T) {
 		e.t = t
 		for _, cg := range []string{in, nested} {
-			e.expect(cg, "tcp4", hp(t4, 443), "ok scrim")
-			e.expect(cg, "tcp4", hp(t4, 80), "ok scrim")
-			e.expect(cg, "tcp6", hp(t6, 443), "ok scrim")
-			e.expect(cg, "tcp6", hp(mapped, 443), "ok scrim")
+			e.expect(cg, "tcp4", hp(t4, 443), "ok scrim "+hp(t4, 443))
+			e.expect(cg, "tcp4", hp(t4, 80), "ok scrim "+hp(t4, 80))
+			e.expect(cg, "tcp6", hp(t6, 443), "ok scrim "+hp(t6, 443))
+			// The dual-stack socket lands on the IPv4 listener, which
+			// reads an IPv4 destination.
+			e.expect(cg, "tcp6", hp(mapped, 443), "ok scrim "+hp(t4, 443))
 			e.expect(cg, "tcp4", hp(t4, 8443), "ok provider")
-			e.expect(cg, "tcp4", hp("127.0.0.1", port), "ok scrim")
+			// Not redirected: no original destination.
+			e.expect(cg, "tcp4", hp("127.0.0.1", port), "ok scrim none")
 		}
+		// A connection to the listener from outside the covered control
+		// groups has none either.
+		e.expect(out, "tcp4", hp("127.0.0.1", port), "ok scrim none")
+		e.expect(out, "tcp6", hp("::1", port), "ok scrim none")
+	})
+	t.Run("entries go when the client closes first", func(t *testing.T) {
+		e.t = t
+		expectNoEntries(t, a)
+	})
+	t.Run("a missing entry fails closed", func(t *testing.T) {
+		e.t = t
+		_, conns := connMaps(t, a)
+		wipe.Store(conns)
+		defer wipe.Store(nil)
+		e.expect(in, "tcp4", hp(t4, 443), "ok scrim none")
+		e.expect(in, "tcp6", hp(t6, 443), "ok scrim none")
 	})
 	t.Run("deny", func(t *testing.T) {
 		e.t = t
@@ -273,8 +457,13 @@ func TestKernelRedirectAndDeny(t *testing.T) {
 		}
 		// The kernel lists the very programs the record names.
 		got, err := queryKernel(filepath.Join(CgroupRoot, in))
-		if err != nil || len(got["egress"]) != 1 || got["egress"][0] != a.Programs["egress"] {
+		if err != nil || len(got["egress"]) != 1 || got["egress"][0] != a.Programs["egress"] ||
+			!slices.Contains(got["sockops"], a.Programs["sockops"]) {
 			t.Fatalf("query: %v %v", got, err)
+		}
+		got, err = queryKernel(CgroupRoot)
+		if err != nil || !slices.Contains(got["getsockopt"], a.Programs["getsockopt"]) {
+			t.Fatalf("query %s: %v %v", CgroupRoot, got, err)
 		}
 	})
 	t.Run("fails closed without a listener", func(t *testing.T) {
@@ -291,7 +480,13 @@ func TestKernelRedirectAndDeny(t *testing.T) {
 		if _, err := os.Stat(a.PinDir); !os.IsNotExist(err) {
 			t.Errorf("old pins %s still there: %v", a.PinDir, err)
 		}
-		e.expect(in, "tcp4", hp(t4, 443), "ok scrim2")
+		e.expect(in, "tcp4", hp(t4, 443), "ok scrim2 "+hp(t4, 443))
+		e.expect(in, "tcp6", hp(mapped, 80), "ok scrim2 "+hp(t4, 80))
+		// This listener closes first.
+		expectNoEntries(t, b)
+		if got, _ := queryKernel(CgroupRoot); slices.Contains(got["getsockopt"], a.Programs["getsockopt"]) {
+			t.Errorf("the old getsockopt program %d is still attached to %s", a.Programs["getsockopt"], CgroupRoot)
+		}
 		a = b
 	})
 	t.Run("detach", func(t *testing.T) {
@@ -303,6 +498,9 @@ func TestKernelRedirectAndDeny(t *testing.T) {
 		e.expect(in, "udp4-send", hp(t4, 443), "ok sent")
 		if _, err := os.Stat(a.PinDir); !os.IsNotExist(err) {
 			t.Errorf("pins %s still there: %v", a.PinDir, err)
+		}
+		if got, _ := queryKernel(CgroupRoot); slices.Contains(got["getsockopt"], a.Programs["getsockopt"]) {
+			t.Errorf("getsockopt program %d still attached to %s", a.Programs["getsockopt"], CgroupRoot)
 		}
 		rec, err := ReadRecord(l.RecordPath)
 		if err != nil || len(rec.Attachments) != 0 {

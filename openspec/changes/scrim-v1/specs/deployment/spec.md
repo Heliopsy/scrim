@@ -256,6 +256,7 @@ group before removing the unit.
 
 - **WHEN** a user runs `scrim install --system --ebpf --cover-cgroup agents.slice`, reboots, then `scrim uninstall --system --purge`
 - **THEN** the hooks were attached to agents.slice after install and again at boot before the scrim service started
+- **AND** after each boot an agent in agents.slice with no scrim configuration reaches the provider's host name through scrim, redacted
 - **AND** after uninstall no hook is attached or pinned and the file system is identical to before the install
 - **AND** running `scrim uninstall` again changes nothing
 

@@ -62,7 +62,8 @@ func TestEBPFAttachUsesSettings(t *testing.T) {
 	if !slices.Equal(l.attached, []string{"agents.slice", "ci.slice"}) || l.port != 9800 {
 		t.Fatalf("attached %v on %d", l.attached, l.port)
 	}
-	for _, want := range []string{"+ attach connect4, connect6, sendmsg4, sendmsg6, egress to /sys/fs/cgroup/agents.slice",
+	for _, want := range []string{"+ attach connect4, connect6, sendmsg4, sendmsg6, sockops, egress to /sys/fs/cgroup/agents.slice",
+		"getsockopt to /sys/fs/cgroup: the listener's SO_ORIGINAL_DST",
 		"127.0.0.1:9800 and [::1]:9800", "pinned in /sys/fs/bpf/scrim/cg-42-1"} {
 		if !strings.Contains(r.stdout, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, r.stdout)
