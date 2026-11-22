@@ -580,7 +580,10 @@ mod tests {
         assert_eq!(h["x-api-key"].as_bytes(), V.as_bytes());
         assert_eq!(head.report.replacements, 2);
         assert_eq!(head.guard_repaired, [] as [SecretRef; 0]);
-        assert_eq!(PASSTHROUGH, ["authorization", "x-api-key"]);
+        assert_eq!(
+            PASSTHROUGH,
+            ["authorization", "x-api-key", "x-goog-api-key"]
+        );
     }
 
     /// RFC 9110 `field-value` without obs-text: visible ASCII, space and tab.
