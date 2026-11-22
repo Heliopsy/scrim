@@ -58,3 +58,21 @@ func (l *fileLock) release() {
 	_ = l.f.Close()
 	l.f = nil
 }
+
+// lockHolder reads the PID a holder wrote into dbPath+".lock" without
+// locking the file, and checks the process still exists.
+func lockHolder(dbPath string) int {
+	f, err := os.Open(dbPath + ".lock") // #nosec G304 -- path is the configured state file
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = f.Close() }()
+	pid := readHolder(f)
+	if pid <= 0 {
+		return 0
+	}
+	if err := unix.Kill(pid, 0); err != nil && !errors.Is(err, unix.EPERM) {
+		return 0
+	}
+	return pid
+}

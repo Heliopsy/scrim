@@ -53,7 +53,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 5.1 Memory, SQLite and PostgreSQL state backends behind one interface, migrations; verify: the same contract suite passes on all three, PostgreSQL in podman
 - [x] 5.2 Audit log (metadata only) written with the state change it records; verify: a failure between the two writes leaves neither
 - [x] 5.3 Structured logs, metrics, traces and health endpoints with a secret-free type for values; verify: a test that seeds known values and greps every log, metric and trace output for them
-- [x] 5.4 `scrim status` and `scrim doctor`; verify: reports active protections, interception mode, degraded stores and weakened settings in fixture setups
+- [x] 5.4 `scrim status` and `scrim doctor`; verify: reports active protections, interception mode, degraded stores and weakened settings in fixture setups; status opens SQLite state read-only without the process lock, so a daemon starting meanwhile still opens it (TestStatusDoesNotBlockStartingDaemon)
 - [x] 5.5 Prometheus monitoring behind `metrics.enabled`: control-plane metrics, data plane metrics over the `Metrics` call, bearer token for non-loopback listeners; verify: daemon end-to-end test scrapes the expected series after traffic through the real data plane and greps the page for every seeded value and encoding
 - [x] 5.6 Monitoring assets (alert rules with promtool tests, Grafana dashboard, scrape config) and runbooks in `docs/monitoring.md`; verify: `scripts/monitoring-check.sh` in CI
 
@@ -61,7 +61,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 - [x] 6.1 Store adapter contract, capability declaration, reference scheme parser and the shared conformance suite; verify: the suite runs against a fake adapter and fails on a deliberately broken one
 - [x] 6.2 OpenBao adapter (AppRole, KV v2 read, list, watch, write without read); verify: contract suite against OpenBao dev mode in podman
-- [x] 6.3 Infisical adapter (Universal Auth, read, list, watch, write); verify: contract suite against a local Infisical in podman
+- [x] 6.3 Infisical adapter (Universal Auth, read, list, watch, write); verify: contract suite against a local Infisical in podman; a read Infisical answers with `secretValueHidden` fails as permission denied (TestReadRefusesHiddenValue)
 - [x] 6.3a Secret catalog: logical names, bindings, declared placeholders, reference placeholders without a catalog; verify: rules, profiles and MCP tools accept catalog names and a literal value in a catalog fails validation
 - [x] 6.3b Per-environment and bulk prefix mapping with collision checks; verify: one placeholder resolves to different references per profile and colliding templates fail
 - [x] 6.3c Catalog from store metadata, catalog files, environment and hot reload, with `scrim catalog show` and `scrim catalog suggest`; verify: OpenBao custom metadata binds a host and suggestions are printed, never applied
