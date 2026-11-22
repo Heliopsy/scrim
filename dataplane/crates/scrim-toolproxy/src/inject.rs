@@ -356,6 +356,8 @@ mod tests {
                     ..Default::default()
                 }),
                 inject: vec!["anywhere".into()],
+                aws_sigv4: None,
+                client_certificate: false,
             },
             Some(SecretValue::new("real\"&val")),
             vec!["⟦scrim:acme:0123abcd⟧".into()],

@@ -25,15 +25,22 @@ func TestDecodeOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if o.MetaLabels {
+		t.Fatal("meta-labels is on by default")
+	}
 	if o.PollInterval == 0 || o.URL.Host != "vault.example.com" {
 		t.Fatalf("defaults not applied: %+v", o)
 	}
 	m := base()
 	m[OptScope] = []any{"/Agents/", "Shared/CI"}
 	m[OptPollInterval] = "5s"
+	m[OptMetaLabels] = true
 	o, err = decodeOptions("vw", m)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !o.MetaLabels {
+		t.Fatal("meta-labels: true ignored")
 	}
 	if strings.Join(o.Scope, ",") != "Agents,Shared/CI" {
 		t.Fatalf("scope: %v", o.Scope)
@@ -166,7 +173,7 @@ func TestVaultIndex(t *testing.T) {
 	// Garbage metadata: skipped and reported by id only.
 	f.sync.Ciphers = append(f.sync.Ciphers, cipherJSON{ID: "bad", Type: cipherLogin, Name: "2.AAAA|AAAA|AAAA"})
 
-	v := buildVault(f.sync, f.keys, 1, []string{"Agents", "Loose"})
+	v := buildVault(f.sync, f.keys, 1, []string{"Agents", "Loose"}, true)
 	if len(v.warnings) != 1 || !strings.Contains(v.warnings[0], "item bad") {
 		t.Fatalf("warnings: %v", v.warnings)
 	}

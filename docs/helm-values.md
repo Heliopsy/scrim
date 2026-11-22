@@ -120,7 +120,7 @@ kubernetes-replicator (`global.replication`).
 | placeholderKeys.create | bool | `true` | Generate a 64-byte key on first install and keep it (reused on upgrade through lookup). Ignored when existingSecret is set. |
 | placeholderKeys.existingSecret | string | `""` | Existing Secret holding the keys. |
 | placeholderKeys.keys | list | `[{"key":"k1","name":"k1","version":1}]` | Keys of existingSecret: list of {name, version, key} (key = data key in the Secret). The highest version is current. |
-| secrets | object | See the keys below. | Secret slots (templates/_helpers.tpl, "Secrets"): each credential the chart mounts is a slot whose Secret is a Secret you manage (existing), an ExternalSecret the chart renders (externalSecrets.data), or a Secret the chart generates (only the metrics token). Slots: admin (key token, for admin.tcp), metrics (key token, generated), postgres (key dsn). There is no way to put a credential value into values. |
+| secrets | object | See the keys below. | Secret slots (templates/_helpers.tpl, "Secrets"): each credential the chart mounts is a slot whose Secret is a Secret you manage (existing), an ExternalSecret the chart renders (externalSecrets.data), or a Secret the chart generates (only the metrics token). Slots: admin (key token, for admin.tcp), metrics (key token, generated), postgres (key dsn), valkey (key password), nats (key token or password), otlp (key token), loki (key password), kafka (key password). There is no way to put a credential value into values. |
 | secrets.existing | object | `{}` | Existing Secrets by slot (slot -> Secret name, tpl). Nothing is rendered for those slots. |
 | secrets.keys | object | `{}` | Key names by slot (slot -> logical key -> key in the Secret), for an existing Secret with other key names. |
 | secrets.externalSecrets.enabled | bool | `false` | Render an ExternalSecret (external-secrets.io) for every slot listed in data. |
@@ -128,9 +128,51 @@ kubernetes-replicator (`global.replication`).
 | secrets.externalSecrets.refreshInterval | string | `"1h"` | refreshInterval. |
 | secrets.externalSecrets.secretStoreRef | object | See the keys below. | SecretStore or ClusterSecretStore the ExternalSecrets read from. |
 | secrets.externalSecrets.data | object | `{}` | Remote references by slot and key (slot -> key -> remote key string, or a remoteRef object). |
-| postgres | object | See the keys below. | Shared state and events. Several replicas (the HPA, global.ha) need PostgreSQL: it renders state.backend postgres and events.backend postgres together. The DSN is the Secret slot postgres (key dsn). |
+| postgres | object | See the keys below. | Shared state and events. Several replicas (the HPA, global.ha) need PostgreSQL: it renders state.backend postgres and events.backend from the events values (postgres by default). The DSN is the Secret slot postgres (key dsn). |
 | postgres.enabled | bool | `false` | Use PostgreSQL for state (approvals, grants, sessions) and for events between replicas (LISTEN/NOTIFY). Off: in-memory state in one replica; a restart loses approvals and grants. |
 | postgres.maxConns | int | `16` | Connection pool size per replica. |
+| events | object | See the keys below. | How replicas wake each other after a change (events.backend). Every backend delivers from the outbox in PostgreSQL, so a lost wake-up costs latency, never an event. Only read with postgres.enabled; without it events stay local to the one replica. |
+| events.backend | string | `"postgres"` | postgres (LISTEN/NOTIFY on the state database), valkey (pub/sub, the valkey values) or nats (core pub/sub, the nats values). |
+| valkey | object | See the keys below. | Valkey (or a Redis-compatible server) for events.backend valkey and rateLimit.backend valkey (valkey.*). The password, when auth is on, is the Secret slot valkey (key password). |
+| valkey.addresses | list | `[]` | Servers as host:port; several are seeds of one cluster. |
+| valkey.username | string | `""` | ACL user; empty for the default user. |
+| valkey.auth | bool | `false` | Send the password from the Secret slot valkey (key password). |
+| valkey.db | int | `0` | Logical database (standalone servers only). |
+| valkey.tls | bool | `false` | Connect over TLS, verified against the system roots. |
+| nats | object | See the keys below. | NATS for events.backend nats (nats.*). Credentials come from the Secret slot nats. |
+| nats.servers | list | `[]` | Server URLs (nats://host:4222, tls://host:4222). |
+| nats.auth | string | `"none"` | none, token (the Secret slot nats, key token) or password (nats.username and the Secret slot nats, key password). |
+| nats.username | string | `""` | User for auth password. |
+| rateLimit | object | See the keys below. | Where per-agent rate limits are counted (ratelimit.backend). local counts per replica (with N replicas an agent can get up to N times a limit); valkey shares one exact limit through the valkey values. The limits themselves are in config.ratelimit (agent-api, approvals, asks). |
+| rateLimit.backend | string | `"local"` | local or valkey. |
+| auditSinks | object | See the keys below. | External audit sinks (audit.sinks), each additive to the database audit log and fed from its own bounded queue. policy drop never slows a request and counts what does not fit in scrim_audit_sink_dropped_total; block makes the audited operation wait up to timeout and then refuses it. Credentials come from the Secret slots otlp (key token), loki (key password) and kafka (key password). |
+| auditSinks.otlp | object | See the keys below. | OTLP logs to a collector or backend. |
+| auditSinks.otlp.enabled | bool | `false` | Send audit entries as OTLP log records. |
+| auditSinks.otlp.endpoint | string | `""` | OTLP/HTTP endpoint, http(s)://host:4318. |
+| auditSinks.otlp.auth | bool | `false` | Send a bearer token from the Secret slot otlp (key token). |
+| auditSinks.otlp.policy | string | `"drop"` | block or drop. |
+| auditSinks.otlp.timeout | string | `"5s"` | With block, how long an audited operation waits for queue room. |
+| auditSinks.otlp.queueSize | int | `10000` | Entries waiting for the sink at most. |
+| auditSinks.loki | object | See the keys below. | Loki push API. |
+| auditSinks.loki.enabled | bool | `false` | Push audit entries to Loki. |
+| auditSinks.loki.url | string | `""` | Base URL; entries go to <url>/loki/api/v1/push. |
+| auditSinks.loki.tenant | string | `""` | Tenant (X-Scope-OrgID); empty for single-tenant Loki. |
+| auditSinks.loki.username | string | `""` | Basic auth user; with auth and no user the password is sent as a bearer token. |
+| auditSinks.loki.auth | bool | `false` | Send the password from the Secret slot loki (key password). |
+| auditSinks.loki.labels | object | `{}` | Extra static stream labels, low-cardinality. |
+| auditSinks.loki.policy | string | `"drop"` | block or drop. |
+| auditSinks.loki.timeout | string | `"5s"` | With block, how long an audited operation waits for queue room. |
+| auditSinks.loki.queueSize | int | `10000` | Entries waiting for the sink at most. |
+| auditSinks.kafka | object | See the keys below. | Kafka or Redpanda. |
+| auditSinks.kafka.enabled | bool | `false` | Produce audit entries to Kafka. |
+| auditSinks.kafka.brokers | list | `[]` | Seed brokers as host:port. |
+| auditSinks.kafka.topic | string | `"scrim-audit"` | Topic, created beforehand. |
+| auditSinks.kafka.tls | bool | `false` | Connect over TLS, verified against the system roots. |
+| auditSinks.kafka.saslMechanism | string | `"none"` | none, plain (needs tls), scram-sha-256 or scram-sha-512; the password is the Secret slot kafka (key password). |
+| auditSinks.kafka.username | string | `""` | SASL user. |
+| auditSinks.kafka.policy | string | `"drop"` | block or drop. |
+| auditSinks.kafka.timeout | string | `"5s"` | With block, how long an audited operation waits for queue room. |
+| auditSinks.kafka.queueSize | int | `10000` | Entries waiting for the sink at most. |
 | identity | object | See the keys below. | Kubernetes identity (identity.kubernetes.*): agent pods present a projected service account token for `audience`, which scrim verifies with TokenReview. Per-agent store login (identity.store-login) goes in `config.identity`. |
 | identity.kubernetes.enabled | bool | `true` | Identify agent pods by their projected token. Renders the TokenReview RBAC, mounts scrim's own API token and gives agent pods the token, SCRIM_K8S_TOKEN_FILE and the scrim-exec launcher. Off: every agent pod is an unknown caller, which the built-in rules do not inject credentials for. |
 | identity.kubernetes.audience | string | `"scrim"` | Audience of the projected agent token (identity.kubernetes.audience); tokens with another audience, such as the pod's default API token, are refused. |
@@ -148,7 +190,7 @@ kubernetes-replicator (`global.replication`).
 | central.enabled | bool | `true` | Deploy the central scrim. |
 | central.replicaCount | int | `1` | Replicas when autoscaling is off. More than one needs postgres.enabled. |
 | central.strategy | object | See the keys below. | Deployment strategy. |
-| central.resources | object | See the keys below. | Resources of the scrim container. |
+| central.resources | object | See the keys below. | Resources of the scrim container. The requests match one replica at about 330 concurrent streams in the load test (docs/state-and-observability.md, "Load test"): 0.25 cores and about 150 MiB. Raise them for more streams per replica. |
 | central.nodeSelector | object | `{}` | nodeSelector (empty: global.nodeSelector). |
 | central.tolerations | list | `[]` | tolerations (empty: global.tolerations). |
 | central.affinity | object | `{}` | affinity (empty: global.affinity; tpl). |

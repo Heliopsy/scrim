@@ -27,6 +27,11 @@ type Binding struct {
 	// Derived names the fields the entry left empty and its tool profiles
 	// filled in: "hosts", "inject", "placeholder".
 	Derived []string `json:"derived,omitempty"`
+	// PlaceholderFormat, AWSSigV4 and ClientCertificate are copied from
+	// the entry.
+	PlaceholderFormat string    `json:"placeholder_format,omitempty"`
+	AWSSigV4          *AWSSigV4 `json:"aws_sigv4,omitempty"`
+	ClientCertificate bool      `json:"client_certificate,omitempty"`
 	// Selected says which variant applied: "default" or the variant's
 	// selection, for example "profile=dev".
 	Selected string `json:"selected"`
@@ -71,6 +76,7 @@ type Catalog struct {
 	resolved      map[string]*Resolved
 	byPlaceholder map[string]string     // placeholder -> name
 	byRef         map[stores.Ref]string // secret ref (no field) -> name
+	byExact       map[stores.Ref]string // resolved ref with its field -> name
 	warnings      []string
 }
 
@@ -156,6 +162,7 @@ func Compile(in Input, sel Selection) (*Catalog, error) {
 		resolved:      map[string]*Resolved{},
 		byPlaceholder: map[string]string{},
 		byRef:         map[stores.Ref]string{},
+		byExact:       map[stores.Ref]string{},
 	}
 	var errs []error
 
@@ -300,6 +307,15 @@ func Compile(in Input, sel Selection) (*Catalog, error) {
 	for r, name := range refOwner {
 		c.byRef[r] = name
 	}
+	// Two entries may map two fields of one secret (an AWS access key id and
+	// its secret key): the exact reference picks the right one.
+	for _, name := range slices.Sorted(maps.Keys(c.resolved)) {
+		if r := c.resolved[name]; r.OK && r.Binding.Ref.Field != "" {
+			if _, taken := c.byExact[r.Binding.Ref]; !taken {
+				c.byExact[r.Binding.Ref] = name
+			}
+		}
+	}
 	return c, nil
 }
 
@@ -396,6 +412,10 @@ func resolveEntry(e Entry, sel Selection) (Binding, string, bool, error) {
 		Inject:      slices.Clone(e.Inject),
 		Tools:       slices.Clone(e.Tools),
 		Source:      e.Source,
+
+		PlaceholderFormat: e.PlaceholderFormat,
+		AWSSigV4:          e.AWSSigV4,
+		ClientCertificate: e.ClientCertificate,
 	}, selected, true, nil
 }
 
@@ -489,6 +509,9 @@ func (c *Catalog) Placeholders() []string {
 // the current selection, so a reference to another profile's secret is not
 // bound. Otherwise the binding has no hosts and is not injectable.
 func (c *Catalog) Ref(ref stores.Ref) Binding {
+	if name, ok := c.byExact[ref]; ok {
+		return c.resolved[name].Binding
+	}
 	if name, ok := c.byRef[ref.Secret()]; ok {
 		if r := c.resolved[name]; r.OK && r.Binding.Ref.Secret() == ref.Secret() {
 			b := r.Binding

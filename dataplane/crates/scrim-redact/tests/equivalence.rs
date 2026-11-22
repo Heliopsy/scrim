@@ -127,10 +127,10 @@ proptest! {
         let s = snapshot_with(&refs, ValueClass::Display, &no_detectors());
         let mut ws = Workspace::new();
         let out = s.protect(&hay, &mut ws);
-        // Either refused, or no value remains verbatim.
+        // Either refused, or no value remains verbatim outside the placeholders.
         if let Ok(p) = out {
             for v in &values {
-                prop_assert!(!contains(p.bytes, v));
+                prop_assert!(!exposed(&refs, p.bytes, v));
             }
         }
     }
@@ -217,4 +217,33 @@ fn parallel_protect_matches_sequential_on_fixtures() {
             assert_eq!(protect_owned(&s4, &body), protect_owned(&s1, &body));
         }
     }
+}
+
+/// Regression: `whole_values_never_survive` failed on this pair (seed in
+/// `equivalence.proptest-regressions`). The first value is replaced whole and the guard is clean;
+/// the tag of its placeholder happens to start with `bbbb`, the second value. That occurrence is
+/// inside a genuine placeholder, not a surviving value.
+#[test]
+fn value_bytes_inside_a_placeholder_tag_are_not_a_leak() {
+    let values: [&[u8]; 2] = [b"%=\"\"//c+cc\\%", b"bbbb"];
+    let mut outs = Vec::new();
+    for kind in [EngineKind::AhoCorasick, EngineKind::HashWindow] {
+        let s = snapshot_with(&values, ValueClass::Display, &engine(kind));
+        let mut ws = Workspace::new();
+        let p = s.protect(values[0], &mut ws).unwrap();
+        assert_eq!(p.guard, GuardOutcome::Clean, "{kind:?}");
+        assert_eq!(p.bytes, ph(&s, values[0]).as_slice(), "{kind:?}");
+        assert_eq!(p.stats.display, 1, "{kind:?}");
+        // The coincidence the property tripped on: the tag carries the second value's bytes.
+        assert!(contains(p.bytes, values[1]), "{kind:?}");
+        for v in values {
+            assert!(!exposed(&values, p.bytes, v), "{kind:?}");
+        }
+        // The same bytes outside a placeholder are still a surviving value.
+        let mut bare = p.bytes.to_vec();
+        bare.extend_from_slice(b" bbbb");
+        assert!(exposed(&values, &bare, values[1]), "{kind:?}");
+        outs.push(p.bytes.to_vec());
+    }
+    assert_eq!(outs[0], outs[1]);
 }

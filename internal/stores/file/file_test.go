@@ -524,3 +524,27 @@ func TestGlobListsByPathPrefix(t *testing.T) {
 		t.Errorf("glob outside the root: %v", err)
 	}
 }
+
+func TestNativeLabels(t *testing.T) {
+	a, root := newAdapter(t, Config{})
+	if err := os.MkdirAll(filepath.Join(root, "app"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app", "db.json"), []byte(`{"password":"`+gen(t)+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := a.Read(t.Context(), stores.Ref{Scheme: "file", Path: "app/db.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Wipe()
+	ms, err := a.List(t.Context(), stores.Ref{Scheme: "file", Path: "app"})
+	if err != nil || len(ms) != 1 {
+		t.Fatalf("List: %v %v", ms, err)
+	}
+	for _, l := range []map[string]string{s.Meta.Labels, ms[0].Labels} {
+		if l["file.root"] != root || l["file.path"] != filepath.Join(root, "app", "db.json") || l["file.format"] != "json" {
+			t.Errorf("labels = %v", l)
+		}
+	}
+}

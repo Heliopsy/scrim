@@ -8,15 +8,13 @@
 // It has no field that can hold a value. The `db` sink is the state backend
 // itself (the entry is written in the same transaction as the change it
 // records); other sinks (OTLP, Loki, Kafka) implement [Sink] and are fed by
-// a [Fanout] with a per-sink backpressure [Policy].
+// a [Fanout] with a per-sink backpressure [Policy] (fanout.go).
 package audit
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"maps"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/heliopsy/scrim/internal/policy"
@@ -68,85 +66,19 @@ const (
 	OutcomePending = "pending"
 )
 
+// Clone returns a deep copy of e.
+func Clone(e Entry) Entry {
+	e.Agent.Labels = maps.Clone(e.Agent.Labels)
+	e.Attrs = maps.Clone(e.Attrs)
+	return e
+}
+
 // Sink receives audit entries.
 type Sink interface {
 	Name() string
 	// Write delivers a batch. It returns an error if the batch was not
 	// accepted; the Fanout then applies the sink's Policy.
 	Write(ctx context.Context, batch []Entry) error
-}
-
-// Policy is a sink's backpressure behaviour.
-type Policy uint8
-
-// Policies.
-const (
-	// Block makes the caller wait up to the sink's timeout, then fail,
-	// so the audited operation is refused rather than done unaudited.
-	Block Policy = iota
-	// Drop counts and discards entries the sink cannot take.
-	Drop
-)
-
-// ErrNotAudited is returned by [Fanout.Write] when a Block sink failed; the
-// caller must refuse the operation the entries record.
-var ErrNotAudited = errors.New("audit: entry not recorded by a blocking sink")
-
-// Target is a sink with its policy.
-type Target struct {
-	Sink    Sink
-	Policy  Policy
-	Timeout time.Duration
-	dropped atomic.Uint64
-}
-
-// Dropped is how many entries this target has dropped.
-func (t *Target) Dropped() uint64 { return t.dropped.Load() }
-
-// Fanout delivers every entry to every target.
-type Fanout struct {
-	Targets []*Target
-	// OnDrop, if set, is called after entries are dropped, for metrics.
-	OnDrop func(sink string, n int)
-}
-
-// Write delivers batch to every target concurrently. It returns
-// [ErrNotAudited] (joined with the causes) if any Block target failed.
-func (f *Fanout) Write(ctx context.Context, batch []Entry) error {
-	var (
-		wg   sync.WaitGroup
-		mu   sync.Mutex
-		errs []error
-	)
-	for _, t := range f.Targets {
-		wg.Go(func() {
-			cctx := ctx
-			if t.Timeout > 0 {
-				var cancel context.CancelFunc
-				cctx, cancel = context.WithTimeout(ctx, t.Timeout)
-				defer cancel()
-			}
-			err := t.Sink.Write(cctx, batch)
-			if err == nil {
-				return
-			}
-			if t.Policy == Drop {
-				t.dropped.Add(uint64(len(batch)))
-				if f.OnDrop != nil {
-					f.OnDrop(t.Sink.Name(), len(batch))
-				}
-				return
-			}
-			mu.Lock()
-			errs = append(errs, fmt.Errorf("sink %s: %w", t.Sink.Name(), err))
-			mu.Unlock()
-		})
-	}
-	wg.Wait()
-	if len(errs) > 0 {
-		return errors.Join(append([]error{ErrNotAudited}, errs...)...)
-	}
-	return nil
 }
 
 // Memory is an in-memory sink for tests.

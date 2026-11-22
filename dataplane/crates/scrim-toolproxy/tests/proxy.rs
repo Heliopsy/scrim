@@ -910,6 +910,7 @@ async fn client_rejecting_the_certificate_fails_closed_and_is_reported() {
         trust: vec![other.cert_der().clone()],
         h2: false,
         direct: false,
+        identity: None,
     };
     let r = req("GET", "api.acme.test", w.port(), "/")
         .body(body(Bytes::new()))
@@ -950,6 +951,7 @@ async fn ca_rotation_keeps_old_trust_working_during_overlap() {
         trust: vec![new_der],
         h2: false,
         direct: false,
+        identity: None,
     };
     let mk = || {
         req("GET", "api.acme.test", w.port(), "/")

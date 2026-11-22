@@ -83,7 +83,7 @@ var (
 	})
 	Entries = config.RegisterCollection(config.CollectionSpec{
 		Key:         entriesKey,
-		Description: "Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools. References only, never values.",
+		Description: "Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools, placeholder_format, aws_sigv4, client_certificate. References only, never values.",
 		Validate: func(inst config.Instance) error {
 			_, err := entryFromInstance(inst)
 			return err

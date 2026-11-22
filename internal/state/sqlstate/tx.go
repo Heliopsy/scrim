@@ -23,6 +23,8 @@ type Tx struct {
 	tx       *sql.Tx
 	readOnly bool
 	emitted  bool
+	// audited holds copies of the entries appended, for the audit tap.
+	audited []audit.Entry
 }
 
 var _ state.Tx = (*Tx)(nil)
@@ -522,6 +524,9 @@ func (t *Tx) AppendAudit(ctx context.Context, e *audit.Entry) error {
 		return err
 	}
 	e.ID = id
+	if t.db.tapped() {
+		t.audited = append(t.audited, audit.Clone(*e))
+	}
 	return nil
 }
 

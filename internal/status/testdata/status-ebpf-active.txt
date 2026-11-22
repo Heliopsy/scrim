@@ -1,0 +1,34 @@
+scrim 0.1.0
+overall: ok
+
+Interception
+  ebpf cgroup agents.slice (TCP 80 and 443 to 127.0.0.1:9792 and [::1]:9792)
+  transparent 127.0.0.1:9792
+
+eBPF transparent mode
+  agents.slice  active  TCP 80 and 443 redirected to 127.0.0.1:9792 and [::1]:9792, direct and QUIC egress denied (verified with the kernel)
+  listener: 127.0.0.1:9792 accepts connections
+
+Protections
+  direct egress blocked  active  for the control groups agents.slice (eBPF cgroup hooks); other processes can still reach providers directly
+
+Providers
+  none
+
+Stores
+  none
+
+State
+  memory, schema 0, healthy
+
+Audit sinks
+  none
+
+Data plane
+  running, pid 7, version unknown, up 0s, healthy
+
+Degraded
+  none
+
+Weakened protections
+  none

@@ -19,6 +19,17 @@
 //     seen, so a notification lost while the listener was down costs
 //     nothing. While the listener is down the bus polls at
 //     events.poll-interval.
+//   - valkey and nats: every replica publishes a hint on a Valkey channel or
+//     a NATS subject after each of its own commits that emitted an event
+//     (state.CommitHook), and subscribes to it. A hint carries nothing; the
+//     subscription works like the postgres listener: each hint, each
+//     (re)subscription and the start read the outbox, and while the
+//     subscription is down the bus polls. A hint that could not be published
+//     is published once the connection is back, and every connected bus
+//     also reads the outbox every minute, which bounds a hint lost with a
+//     replica that died between its commit and the publish.
+//
+// The shared contract every backend passes is in package eventstest.
 package events
 
 import (
@@ -26,6 +37,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -42,6 +54,8 @@ import (
 const (
 	Local    = "local"
 	Postgres = "postgres"
+	Valkey   = "valkey"
+	NATS     = "nats"
 )
 
 // Settings owned by this package.
@@ -49,10 +63,11 @@ var (
 	BackendSetting = config.Register(config.Spec[string]{
 		Key:     "events.backend",
 		Default: Local,
-		Enum:    []string{Local, Postgres},
+		Enum:    []string{Local, Postgres, Valkey, NATS},
 		Description: "How replicas learn about state changes made elsewhere (approval decisions, grant and session changes, break-glass, configuration reloads). " +
 			"local reads the outbox every events.poll-interval and serves one process; postgres adds LISTEN/NOTIFY on the state database " +
-			"(needs state.backend postgres) and is required when deployment.replicas is more than 1.",
+			"(needs state.backend postgres); valkey and nats publish a wake-up on a Valkey channel (valkey.*) or a NATS subject (nats.*). " +
+			"Every backend delivers from the outbox, so a lost wake-up costs latency, never an event. One of postgres, valkey or nats is required when deployment.replicas is more than 1.",
 		Flag:            true,
 		RestartRequired: true,
 	})
@@ -60,7 +75,7 @@ var (
 		Key:     "events.poll-interval",
 		Default: time.Second,
 		Description: "How often the outbox is read when nothing announces new events: always with events.backend local, and while the postgres " +
-			"listener is disconnected. It bounds how long a change made on another replica takes to arrive then.",
+			"listener or the valkey or nats subscription is disconnected. It bounds how long a change made on another replica takes to arrive then.",
 		Validate:        between(10*time.Millisecond, time.Minute),
 		RestartRequired: true,
 	})
@@ -68,7 +83,7 @@ var (
 		Key:     "deployment.replicas",
 		Default: 1,
 		Description: "How many control plane replicas share this configuration and state. More than 1 needs a shared state backend " +
-			"(state.backend postgres) and a shared events backend (events.backend postgres); start-up fails otherwise.",
+			"(state.backend postgres) and a shared events backend (events.backend postgres, valkey or nats); start-up fails otherwise.",
 		Validate: func(n int) error {
 			if n < 1 {
 				return errors.New("must be at least 1")
@@ -97,7 +112,7 @@ func CheckReplicas(cfg *config.Config) error {
 		return nil
 	}
 	if b := BackendSetting.Get(cfg); b == Local {
-		return fmt.Errorf("events.backend is %s, which reaches one process only, but deployment.replicas is %d: set events.backend to %s", b, n, Postgres)
+		return fmt.Errorf("events.backend is %s, which reaches one process only, but deployment.replicas is %d: set events.backend to %s, %s or %s", b, n, Postgres, Valkey, NATS)
 	}
 	if b := state.BackendSetting.Get(cfg); b != "postgres" {
 		return fmt.Errorf("state.backend is %s, which is not shared between processes, but deployment.replicas is %d: set state.backend to postgres", b, n)
@@ -229,7 +244,7 @@ func New(ctx context.Context, o Options) (*Bus, error) {
 	}
 	if o.Metrics != nil {
 		b.delivered = o.Metrics.Counter("events", "delivered_total", "Outbox events delivered to this replica's subscribers, by kind.", "kind")
-		b.up = o.Metrics.Gauge("events", "listener_up", "1 while the events backend's listener is connected (postgres), 0 while the outbox is polled.").WithLabelValues()
+		b.up = o.Metrics.Gauge("events", "listener_up", "1 while the events backend's listener or subscription is connected (postgres, valkey, nats), 0 while the outbox is polled.").WithLabelValues()
 		b.lastID = o.Metrics.Gauge("events", "last_id", "The newest outbox event ID this replica has delivered.").WithLabelValues()
 		b.lastID.Set(float64(last))
 	}
@@ -362,5 +377,49 @@ func (b *Bus) dispatch(e state.Event) {
 	}
 	if b.delivered != nil {
 		b.delivered.WithLabelValues(e.Kind).Inc()
+	}
+}
+
+// OnLocalCommit registers fn to run after every commit made through st that
+// emitted an event, the trigger a backend that announces commits itself
+// (valkey, nats) publishes on. fn runs on the committing goroutine and must
+// not block. It fails for a state backend that does not report its commits.
+func OnLocalCommit(st state.Store, fn func()) error {
+	h, ok := st.(state.CommitHook)
+	if !ok {
+		return fmt.Errorf("events: state backend %s does not report its commits", st.Backend())
+	}
+	h.OnEventCommit(fn)
+	return nil
+}
+
+// Signal is a coalescing, non-blocking wake-up: any number of Raise calls
+// before the receiver runs leave one pending signal.
+type Signal chan struct{}
+
+// NewSignal returns a Signal.
+func NewSignal() Signal { return make(Signal, 1) }
+
+// Raise sets the signal. It never blocks.
+func (s Signal) Raise() {
+	select {
+	case s <- struct{}{}:
+	default:
+	}
+}
+
+// Jitter returns a duration between d/2 and d, so replicas that lost a
+// connection together do not reconnect together.
+func Jitter(d time.Duration) time.Duration {
+	return d/2 + rand.N(d/2+1) //nolint:gosec // jitter, not a secret
+}
+
+// Sleep waits d or until ctx ends.
+func Sleep(ctx context.Context, d time.Duration) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+	case <-t.C:
 	}
 }

@@ -49,6 +49,9 @@ type CollectionSpec struct {
 	// Validate, if set, checks one instance. It must not include secret
 	// values in its errors.
 	Validate func(Instance) error
+	// FieldSchemas are JSON schemas of further instance fields, for the
+	// generated schema.
+	FieldSchemas map[string]map[string]any
 }
 
 // Collection is a handle to a registered collection.

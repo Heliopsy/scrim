@@ -4,8 +4,9 @@
 // bootstraps test accounts on it through the public API, deriving every key
 // client-side exactly as a Bitwarden client does. It is for tests only.
 //
-// The container is named scrim-vw-<random>, uses volatile storage and is
-// removed, with its anonymous volumes, when the test ends. Tests skip with a
+// The container is named scrim-vw-<random> (the prefix can be changed with
+// SCRIM_VW_CONTAINER_PREFIX), uses volatile storage and is removed, with its
+// anonymous volumes, when the test ends. Tests skip with a
 // reason when podman is not available or SCRIM_TEST_PODMAN=0.
 package vwtest
 
@@ -78,7 +79,11 @@ func Start(t testing.TB) *Server {
 			t.Skipf("cannot pull %s (%v); set SCRIM_TEST_PODMAN=1 to make this a failure", image, err)
 		}
 	}
-	name := "scrim-vw-" + RandHex(t, 4)
+	prefix := os.Getenv("SCRIM_VW_CONTAINER_PREFIX")
+	if prefix == "" {
+		prefix = "scrim-vw-"
+	}
+	name := prefix + RandHex(t, 4)
 	args := []string{"run", "-d", "--rm", "--name", name, "-p", "127.0.0.1::80",
 		"-e", "SIGNUPS_ALLOWED=true", "-e", "I_REALLY_WANT_VOLATILE_STORAGE=true",
 		"-e", "LOGIN_RATELIMIT_MAX_BURST=1000", "-e", "LOGIN_RATELIMIT_SECONDS=1",
@@ -296,6 +301,22 @@ func (a *Account) CreateOrg(t testing.TB, name, collection string) *Org {
 	return &Org{ID: out.ID, Name: name, Key: orgKey, CollectionID: colls.Data[0].ID}
 }
 
+// CreateCollection adds a collection to an organisation owned by a and
+// returns its id.
+func (a *Account) CreateCollection(t testing.TB, org *Org, name string) string {
+	t.Helper()
+	e, err := org.Key.EncryptMetadata(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	post(t, a.server.URL+"/api/organizations/"+org.ID+"/collections", a.token,
+		map[string]any{"name": e.String(), "groups": []any{}, "users": []any{}}, &out)
+	return out.ID
+}
+
 // Item is a cipher to create directly through the API, bypassing the adapter.
 type Item struct {
 	Folder     string // personal folder name; created if missing
@@ -308,6 +329,12 @@ type Item struct {
 	Labels     map[string]string       // text custom fields, names used as given
 	ItemKey    bool                    // encrypt with a per-item key, as current clients do
 	SecureNote bool
+	// Collections adds the item to these collection ids of Org besides
+	// the organisation's first collection.
+	Collections []string
+	URIs        []string // login URIs
+	Favorite    bool
+	Reprompt    bool
 }
 
 // CreateItem creates an item the way a Bitwarden client would, so the
@@ -319,7 +346,11 @@ func (a *Account) CreateItem(t testing.TB, it Item) string {
 		base = it.Org.Key
 	}
 	key := base
-	cipher := map[string]any{"type": 1, "favorite": false, "reprompt": 0, "encryptedFor": a.UserID}
+	reprompt := 0
+	if it.Reprompt {
+		reprompt = 1
+	}
+	cipher := map[string]any{"type": 1, "favorite": it.Favorite, "reprompt": reprompt, "encryptedFor": a.UserID}
 	if it.ItemKey {
 		ik, err := bwcrypto.GenerateSymmetricKey()
 		if err != nil {
@@ -355,7 +386,11 @@ func (a *Account) CreateItem(t testing.TB, it Item) string {
 		cipher["type"] = 2
 		cipher["secureNote"] = map[string]int{"type": 0}
 	} else {
-		cipher["login"] = map[string]any{"username": encv(it.Username), "password": encv(it.Password), "uris": []any{}}
+		uris := []any{}
+		for _, u := range it.URIs {
+			uris = append(uris, map[string]any{"uri": encm(u), "match": nil})
+		}
+		cipher["login"] = map[string]any{"username": encv(it.Username), "password": encv(it.Password), "uris": uris}
 	}
 	var fields []map[string]any
 	for n, v := range it.Fields {
@@ -373,7 +408,8 @@ func (a *Account) CreateItem(t testing.TB, it Item) string {
 	}
 	if it.Org != nil {
 		cipher["organizationId"] = it.Org.ID
-		post(t, a.server.URL+"/api/ciphers/create", a.token, map[string]any{"cipher": cipher, "collectionIds": []string{it.Org.CollectionID}}, &out)
+		colls := append([]string{it.Org.CollectionID}, it.Collections...)
+		post(t, a.server.URL+"/api/ciphers/create", a.token, map[string]any{"cipher": cipher, "collectionIds": colls}, &out)
 	} else {
 		post(t, a.server.URL+"/api/ciphers", a.token, cipher, &out)
 	}

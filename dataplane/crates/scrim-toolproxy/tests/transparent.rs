@@ -87,6 +87,7 @@ impl World {
             trust: pem_certs(&self.proxy.proxy.ca().trust_bundle_pem()),
             h2: false,
             direct: true,
+            identity: None,
         }
     }
 

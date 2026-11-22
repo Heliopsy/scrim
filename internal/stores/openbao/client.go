@@ -115,6 +115,9 @@ type request struct {
 	// The caller owns it. It is for acting with a token scrim obtained on
 	// someone else's behalf, and for renewing a token.
 	token secret.Value
+	// optional marks a lookup whose failure the caller ignores (labels): a
+	// refusal is returned as is, without logging in again.
+	optional bool
 }
 
 func (c *client) storeErr(r request, kind error, detail string, cause error) *stores.Error {
@@ -136,7 +139,7 @@ func (c *client) do(ctx context.Context, r request) (*response, error) {
 		return nil, err
 	}
 	resp, err := c.attempt(ctx, r, tok)
-	if err == nil || c.opts.AuthMethod == AuthToken || !errors.Is(err, stores.ErrPermission) {
+	if err == nil || c.opts.AuthMethod == AuthToken || r.optional || !errors.Is(err, stores.ErrPermission) {
 		tok.Wipe()
 		return resp, err
 	}

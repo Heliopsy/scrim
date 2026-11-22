@@ -461,3 +461,123 @@ func TestSnapshotListsUnavailableCredentials(t *testing.T) {
 		t.Fatalf("unavailable entry = %v", u[0])
 	}
 }
+
+// Catalog entries asking for a format-preserving placeholder, AWS SigV4
+// re-signing and a client certificate carry those settings into the
+// snapshot; the SigV4 link names the access key id entry by reference.
+func TestSnapshotCarriesSigV4ShapeAndClientCertificate(t *testing.T) {
+	akid, sk, cert := seed(t, "akid-"), seed(t, "sk-"), seed(t, "cert-")
+	src := &fakeValues{store: "bao", vals: []fakeValue{
+		{refresh.Source{Ref: stores.MustParseRef("bao://kv/agents/aws#access_key_id")}, secret.FromString(akid)},
+		{refresh.Source{Ref: stores.MustParseRef("bao://kv/agents/aws#secret_access_key")}, secret.FromString(sk)},
+		{refresh.Source{Ref: stores.MustParseRef("bao://kv/agents/kind#client")}, secret.FromString(cert)},
+	}}
+	cfg := buildConfig(t, `catalog:
+  entries:
+    aws-akid:
+      ref: bao://kv/agents/aws#access_key_id
+      hosts: [sts.amazonaws.com]
+      placeholder_format: shape
+      inject: ["header:Authorization", query]
+    aws-secret:
+      ref: bao://kv/agents/aws#secret_access_key
+      hosts: [sts.amazonaws.com]
+      placeholder_format: shape
+      aws_sigv4: {access_key_id: aws-akid, regions: [us-east-1], services: [sts]}
+    kind-admin:
+      ref: bao://kv/agents/kind#client
+      hosts: [kind.test]
+      client_certificate: true
+`)
+	cat, err := catalog.Load(context.Background(), cfg, nil, catalog.SelectionFrom(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &SnapshotBuilder{Config: func() *config.Config { return cfg }, Values: []ValueSource{src},
+		Catalog: func() *catalog.Catalog { return cat }}
+	b.SetKeys(testRing(t))
+	s, err := b.Build(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]*pb.ValueEntry{}
+	for _, v := range s.GetValues() {
+		byName[v.GetName()] = v
+	}
+	if a := byName["aws-akid"]; a.GetPlaceholderFormat() != "shape" || a.GetAwsSigv4() != nil {
+		t.Fatalf("aws-akid = %v", a)
+	}
+	sig := byName["aws-secret"].GetAwsSigv4()
+	if sig.GetAccessKeyIdRef() != "bao://kv/agents/aws#access_key_id" ||
+		strings.Join(sig.GetRegions(), ",") != "us-east-1" || strings.Join(sig.GetServices(), ",") != "sts" {
+		t.Fatalf("aws-secret sigv4 = %v", sig)
+	}
+	if c := byName["kind-admin"]; !c.GetClientCertificate() || c.GetPlaceholderFormat() != "" {
+		t.Fatalf("kind-admin = %v", c)
+	}
+}
+
+// TestSnapshotSendsOnlyLabelsRulesRead: a rule on
+// vaultwarden.collection.Prod sends that key and nothing else of each
+// value's labels; a policy change re-sends them on the next build.
+func TestSnapshotSendsOnlyLabelsRulesRead(t *testing.T) {
+	ref := stores.MustParseRef("vw://Prod/db#password")
+	src := &fakeValues{store: "vw", vals: []fakeValue{
+		{refresh.Source{Ref: ref, Labels: map[string]string{
+			"vaultwarden.collection": "Prod,Shared", "vaultwarden.collection.Prod": "true",
+			"vaultwarden.collection.Shared": "true", "vaultwarden.org": "Acme",
+		}}, secret.FromString(seed(t, "prod-"))},
+		{refresh.Source{Ref: stores.MustParseRef("vw://Dev/db#password"), Labels: map[string]string{
+			"vaultwarden.collection": "Dev", "vaultwarden.org": "Acme",
+		}}, secret.FromString(seed(t, "dev-"))},
+	}}
+	cfg := buildConfig(t, "")
+	rules := []string{}
+	set := stores.NewSet()
+	set.SetLabeling("vw", "vaultwarden", nil)
+	b := &SnapshotBuilder{
+		Config: func() *config.Config { return cfg }, Values: []ValueSource{src},
+		Labels: set.Labels,
+		Policy: func() *pb.Policy {
+			c := policy.Config{Default: "allow"}
+			for i, w := range rules {
+				c.Rules = append(c.Rules, policy.RuleSpec{Name: fmt.Sprintf("r%d", i), Decision: "deny", When: w})
+			}
+			rs, err := policy.Compile(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snap := rs.Snapshot(1, false)
+			return snap.Proto()
+		},
+	}
+	b.SetKeys(testRing(t))
+	build := func() map[string]map[string]string {
+		t.Helper()
+		s, err := b.Build(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !s.GetValueLabels() {
+			t.Fatal("value_labels not set")
+		}
+		out := map[string]map[string]string{}
+		for _, v := range s.GetValues() {
+			out[v.GetRef()] = v.GetLabels()
+		}
+		return out
+	}
+	for r, l := range build() {
+		if len(l) != 0 {
+			t.Fatalf("no label rule, yet %s carries %v", r, l)
+		}
+	}
+	rules = []string{`op == "restore" && "vaultwarden.collection.Prod" in secret.labels`}
+	got := build()
+	if l := got["vw://Prod/db#password"]; len(l) != 1 || l["vaultwarden.collection.Prod"] != "true" {
+		t.Fatalf("Prod value labels = %v", l)
+	}
+	if l := got["vw://Dev/db#password"]; len(l) != 0 {
+		t.Fatalf("Dev value labels = %v", l)
+	}
+}

@@ -5,8 +5,11 @@ package storeconfig_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v4"
 
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/stores"
@@ -176,6 +179,73 @@ func TestEmptyTargetNeedsTheWeakeningSetting(t *testing.T) {
 		}
 		if err == nil || !strings.Contains(err.Error(), "local://SCRIM_SECRET_NOTHING_HERE_*") {
 			t.Fatalf("not allowed: %v", err)
+		}
+	}
+}
+
+func TestLabelMapping(t *testing.T) {
+	cfg, err := build(t, `
+stores:
+  mem:
+    kind: memory
+    aliases: [m]
+    labels:
+      area: memory.top
+      env: {value: prod}
+      app: {from: store.path, regex: "^apps/([^/]+)/", value: "$1"}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := storeconfig.Open(t.Context(), cfg, stores.DefaultRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = o.Close() }()
+	got := o.Set.WriteLabels(stores.MustParseRef("m://apps/web/db#password"))
+	for k, want := range map[string]string{
+		"store.name": "mem", "store.kind": "memory", "store.path": "apps/web/db", "store.container": "apps/web",
+		"store.field": "password", "memory.top": "apps", "area": "apps", "env": "prod", "app": "web",
+	} {
+		if got[k] != want {
+			t.Errorf("%s = %q, want %q (all: %v)", k, got[k], want, got)
+		}
+	}
+	for name, yaml := range map[string]string{
+		"reserved store":  "stores:\n  mem:\n    kind: memory\n    labels: {store.kind: memory.top}\n",
+		"reserved native": "stores:\n  mem:\n    kind: memory\n    labels: {memory.top: store.path}\n",
+		"reserved other":  "stores:\n  mem:\n    kind: memory\n    labels: {env.prefix: store.path}\n",
+		"bad regex":       "stores:\n  mem:\n    kind: memory\n    labels: {x: {from: store.path, regex: \"(\"}}\n",
+	} {
+		if _, err := build(t, yaml); err == nil {
+			t.Errorf("%s: accepted", name)
+		} else if !strings.Contains(err.Error(), "labels.") {
+			t.Errorf("%s: error does not name the label: %v", name, err)
+		}
+	}
+}
+
+// TestDocsLabelMapping keeps the labels example in docs/policy.md valid.
+func TestDocsLabelMapping(t *testing.T) {
+	data, err := os.ReadFile("../../../docs/policy.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile("(?s)```yaml\n(# scrim.yaml.*?)```").FindSubmatch(data)
+	if m == nil {
+		t.Fatal("no configuration example in docs/policy.md")
+	}
+	var doc struct {
+		Stores map[string]map[string]any `yaml:"stores"`
+	}
+	if err := yaml.Unmarshal(m[1], &doc); err != nil {
+		t.Fatal(err)
+	}
+	for name, inst := range doc.Stores {
+		kind, _ := inst["kind"].(string)
+		lm, err := stores.ParseLabelMapping(kind, inst["labels"])
+		if err != nil || len(lm) == 0 {
+			t.Errorf("%s: %v (%d labels)", name, err, len(lm))
 		}
 	}
 }

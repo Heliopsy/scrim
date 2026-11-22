@@ -1,0 +1,54 @@
+# A large deployment: replicas on PostgreSQL state woken through Valkey, rate limits shared in
+# Valkey, and every external audit sink with credentials from Secret slots.
+postgres:
+  enabled: true
+events:
+  backend: valkey
+valkey:
+  addresses: ["valkey-0.valkey:6379", "valkey-1.valkey:6379"]
+  username: scrim
+  auth: true
+  tls: true
+rateLimit:
+  backend: valkey
+auditSinks:
+  otlp:
+    enabled: true
+    endpoint: http://otel-collector.observability:4318
+  loki:
+    enabled: true
+    url: http://loki-gateway.observability
+    tenant: platform
+    username: scrim
+    auth: true
+    labels: {cluster: prod}
+    policy: block
+    timeout: 2s
+  kafka:
+    enabled: true
+    brokers: ["kafka-0.kafka:9093", "kafka-1.kafka:9093"]
+    tls: true
+    saslMechanism: scram-sha-512
+    username: scrim
+    queueSize: 50000
+secrets:
+  existing:
+    postgres: scrim-pg
+    valkey: scrim-valkey
+    loki: scrim-loki
+    kafka: scrim-kafka
+central:
+  replicaCount: 3
+config:
+  ratelimit:
+    agent-api: {rate: 1200, burst: 200}
+  stores:
+    bao:
+      kind: openbao
+      address: https://bao.example.com:8200
+      auth: {method: approle}
+      role-id: file:/run/secrets/scrim/bao/role-id
+      secret-id: file:/run/secrets/scrim/bao/secret-id
+      redact: ["bao://kv/agents/*"]
+secretMounts:
+  - {name: bao, secretName: scrim-bao-approle}

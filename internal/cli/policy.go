@@ -109,6 +109,8 @@ func (Commands) Policy(e *Env) *cobra.Command {
 	f.StringVar(&r.name, "name", "", "catalog name")
 	f.StringVar(&r.class, "class", "", "secret class")
 	f.StringToStringVar(&r.slabels, "secret-label", nil, "secret labels, key=value")
+	f.StringArrayVar(&r.label, "label", nil, "one secret label, key=value (repeatable; a value may contain commas, "+
+		"as multi-valued store labels do); `scrim catalog labels` lists a secret's labels")
 	f.StringVar(&r.provider, "provider", "", "model provider")
 	f.StringVar(&r.host, "host", "", "destination host")
 	f.StringVar(&r.method, "method", "", "HTTP method")
@@ -137,6 +139,7 @@ func (Commands) Policy(e *Env) *cobra.Command {
 type evalFlags struct {
 	op, agent, kind, ref, name, class, provider, host, method, path, tool, command string
 	labels, slabels                                                                map[string]string
+	label                                                                          []string
 }
 
 // vectorFile is the JSON request format of `policy eval --request`, the same
@@ -164,6 +167,16 @@ func (r *evalFlags) request(file string) (policy.Request, error) {
 		r.ref, r.name, r.class, r.slabels = v.Secret.Ref, v.Secret.Name, v.Secret.Class, v.Secret.Labels
 		r.provider, r.host, r.method, r.path = v.Provider, v.Dest.Host, v.Dest.Method, v.Dest.Path
 		r.tool, r.command = v.Tool.Name, v.Tool.Command
+	}
+	for _, kv := range r.label {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || k == "" {
+			return policy.Request{}, fmt.Errorf("--label %q: want key=value", kv)
+		}
+		if r.slabels == nil {
+			r.slabels = map[string]string{}
+		}
+		r.slabels[k] = v
 	}
 	req := policy.Request{
 		Action: policy.Action(r.op),

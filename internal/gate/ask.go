@@ -56,6 +56,11 @@ func (g *Gate) Answer(ctx context.Context, a *pb.AskRequest) *pb.AskAnswer {
 	defer secret.WipeBytes(kubeToken)
 	who, attrs := g.caller(ctx, a)
 	req.Agent = who.PolicyAgent()
+	if g.Labels != nil {
+		// Like the caller, the secret's labels are the control plane's own
+		// view, not what the request says.
+		req.SecretLabels = nil
+	}
 	o := Options{Wait: true, RequestID: "dp-" + strconv.FormatUint(a.GetId(), 10), Attrs: attrs}
 	if g.StoreAccess != nil && usesValue(req.Action) && req.Ref.Scheme != "" {
 		o.Confirm = func(ctx context.Context) error {

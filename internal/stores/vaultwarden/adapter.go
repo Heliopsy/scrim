@@ -18,7 +18,9 @@
 // Field selectors are username, password, totp and notes on login items,
 // private-key and public-key on SSH key items, notes on every item, and any
 // custom field by name. Custom fields whose names start with "scrim." are
-// catalog labels, never values.
+// catalog labels, never values. Every item also carries native
+// "vaultwarden.*" labels describing its organisation, collections, folder
+// and attributes (labels.go), which policy rules see as secret.labels.
 package vaultwarden
 
 import (
@@ -26,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strconv"
@@ -322,7 +325,7 @@ func (a *Adapter) refresh(ctx context.Context, op stores.Op) (*vault, error) {
 	if err := a.unlock(ctx, op, s); err != nil {
 		return nil, err
 	}
-	a.v = buildVault(s, a.keys, rev, a.opts.Scope)
+	a.v = buildVault(s, a.keys, rev, a.opts.Scope, a.opts.MetaLabels)
 	for _, o := range a.orgWarnings {
 		a.v.warnings = append(a.v.warnings, "organisation key does not unwrap: "+o)
 	}
@@ -366,11 +369,8 @@ func (a *Adapter) metadata(ref stores.Ref, path string, it *item) stores.Metadat
 		CreatedAt: it.created,
 		UpdatedAt: it.updated,
 	}
-	if len(it.labels) > 0 {
-		m.Labels = make(map[string]string, len(it.labels))
-		for k, v := range it.labels {
-			m.Labels[k] = v
-		}
+	if len(it.all) > 0 {
+		m.Labels = maps.Clone(it.all)
 	}
 	return m
 }
@@ -549,7 +549,8 @@ func (a *Adapter) Lock() {
 }
 
 // Advice returns doctor findings for this instance: the dedicated-account
-// recommendation (design D6) and items that could not be decrypted.
+// recommendation (design D6), whether meta labels are on, and items that
+// could not be decrypted.
 func (a *Adapter) Advice(ctx context.Context) ([]string, error) {
 	v, err := a.current(ctx, stores.OpHealth)
 	if err != nil {
@@ -567,6 +568,9 @@ func (a *Adapter) Advice(ctx context.Context) ([]string, error) {
 		out = append(out, fmt.Sprintf("vaultwarden %s: no %s is configured, so scrim can read all %d items of the account; a dedicated agent account or organisation is recommended", a.name, OptScope, len(v.items)))
 	case outside > 0:
 		out = append(out, fmt.Sprintf("vaultwarden %s: the account holds %d items outside the configured scope; a dedicated agent account or organisation is recommended", a.name, outside))
+	}
+	if a.opts.MetaLabels {
+		out = append(out, fmt.Sprintf("vaultwarden %s: %s is on, so text custom fields are reported as vaultwarden.meta.* labels, visible in policy views and audit; keep secrets in hidden fields", a.name, OptMetaLabels))
 	}
 	out = append(out, v.warnings...)
 	return out, nil

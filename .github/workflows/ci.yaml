@@ -89,6 +89,42 @@ jobs:
           podman pod ps -q --filter name=scrim-stores- | xargs -r podman pod rm -f
           podman volume prune -f
 
+  # GitHub-hosted, like the stores job: the events backends, rate limits and
+  # audit sinks against real Valkey, NATS, PostgreSQL, Loki, an OpenTelemetry
+  # collector and Redpanda, each in a memory-limited rootless container, then
+  # the three-daemon load test. Containers are named scrim-scale-* (and
+  # scrim-test-pg-* for PostgreSQL).
+  scale:
+    name: Scale backends and audit sinks (podman)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - run: podman version
+      - name: Contract suites and audit sinks
+        run: go test -race -count=1 -timeout 20m ./internal/events/... ./internal/ratelimit/... ./internal/audit/... ./internal/state/...
+        env:
+          SCRIM_TEST_PODMAN: "1"
+          SCRIM_TEST_CONTAINER_PREFIX: scrim-scale
+      - name: Multi-replica load test
+        run: go test -race -count=1 -timeout 10m -run 'TestReplicasLoad|TestReplicasShareChangesThroughPostgresEvents' -v ./internal/daemon/
+        env:
+          SCRIM_TEST_PODMAN: "1"
+          SCRIM_TEST_CONTAINER_PREFIX: scrim-scale
+      - name: Remove leftover containers
+        if: always()
+        run: |
+          podman ps -a --filter name=scrim-scale- --filter name=scrim-test-pg- --format '{{.Names}}'
+          podman ps -aq --filter name=scrim-scale- | xargs -r podman rm -f -v
+          podman ps -aq --filter name=scrim-test-pg- | xargs -r podman rm -f -v
+
   rust:
     name: Rust
     runs-on: ho-z10
@@ -135,6 +171,10 @@ jobs:
         run: cargo check --locked --workspace --all-targets
       - name: Control plane build and vet
         run: go build ./... && go vet ./...
+      # tasks.md 10a.8: macOS has no mount namespaces, so status lists the
+      # home mirror fallback and its gaps, and scrim run uses the mirror.
+      - name: Filesystem view fallback
+        run: go test -count=1 -run 'TestStatusRunFSView|TestFSViewHomeMirror|TestFSViewNamespaceRequiredRefuses|TestGapsAndProbe|TestHomeMirror' ./internal/cli/ ./internal/run/ ./internal/fsview/
 
   ntfy-e2e:
     name: ntfy end-to-end
@@ -358,7 +398,8 @@ jobs:
   # helm, skopeo, npm, terraform, tofu, gcloud, az, pip, twine, cargo, hcloud,
   # doctl and aws under `scrim run` with their tool profiles, against fakes of
   # their APIs on their default hosts inside the sandbox (tasks 10a.1, 10a.5,
-  # 10a.6, 10a.10). The CLIs are pinned in scripts/cli-tools/tools.env.
+  # 10a.6, 10a.10), and the session filesystem view (10a.7). The CLIs are
+  # pinned in scripts/cli-tools/tools.env.
   e2e-profiles:
     name: Tool profiles end-to-end
     runs-on: ubuntu-24.04
@@ -396,6 +437,12 @@ jobs:
         run: go test -count=1 -run TestCheckBuiltins ./internal/profiles/
         env:
           SCRIM_E2E_REQUIRE_TOOLS: "1"
+      # tasks.md 10a.7: the namespace view, which the ho-z10 pods of the Go
+      # job cannot create; a missing user namespace fails here.
+      - name: Session filesystem view in a user namespace
+        run: go test -count=1 -run 'TestFSView|TestGapsAndProbe' -v ./internal/run/ ./internal/fsview/
+        env:
+          SCRIM_TEST_REQUIRE_USERNS: "1"
 
   # GitHub-hosted for the same reason as e2e-tools. Real Claude Code and
   # Codex CLIs, installed at pinned versions into the runner's temporary
@@ -514,6 +561,41 @@ jobs:
       - run: rustup toolchain install && cargo --version
         working-directory: dataplane
       - run: just proto-check
+
+  # GitHub-hosted: regenerating the objects runs clang in podman, and the
+  # kernel test boots the runner's own kernel in qemu with KVM, which the
+  # ho-z10 pods have neither of. The test binary is root only inside that
+  # throwaway VM (tasks.md 15.1).
+  ebpf:
+    name: eBPF objects and kernel test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/setup-just
+      - run: just ebpf-check
+      - name: Install qemu and give the runner user KVM and a readable kernel
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 cpio
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo install -m 0644 "/boot/vmlinuz-$(uname -r)" "$RUNNER_TEMP/vmlinuz"
+      - run: just ebpf-vm-test
+        env:
+          SCRIM_VM_KERNEL: ${{ runner.temp }}/vmlinuz
+      - name: Remove the toolchain image
+        if: always()
+        run: podman images -q --filter reference=localhost/scrim-bpf-toolchain | xargs -r podman rmi -f
 
   security:
     name: Vulnerabilities, licences and secrets

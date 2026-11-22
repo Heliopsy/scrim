@@ -127,6 +127,9 @@ func collectionSchema(col *CollectionSpec) obj {
 		}
 		fields[f] = fs
 	}
+	for f, fs := range col.FieldSchemas {
+		fields[f] = fs
+	}
 	inst := obj{"type": "object", "properties": fields}
 	if len(col.RequiredFields) > 0 {
 		inst["required"] = col.RequiredFields

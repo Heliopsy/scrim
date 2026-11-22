@@ -34,6 +34,25 @@ Spec: `openspec/changes/scrim-v1/specs/credential-injection` and the forward-pro
 - **Responses.** Headers, trailers and bodies are redacted, buffered (known small length, digests,
   capture rules) or streamed chunk by chunk through decoder, redactor and encoder. An injected
   value echoed back shows the exact placeholder the agent sent.
+- **AWS SigV4 re-signing.** A credential with `aws_sigv4` holds a secret access key and names the
+  credential holding its access key id. A request whose SigV4 access key id is a placeholder of
+  that credential must be signed with a placeholder of the secret (`signature_invalid`
+  otherwise); its credential scope's region and service must be allowed (`unbound_destination`
+  otherwise); then the session token placeholder is substituted as usual and the request is
+  signed again with the real keys. Header and presigned (query) forms, body hashes,
+  `UNSIGNED-PAYLOAD`, chunk-signed bodies (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, with or without
+  a signed trailer, buffered or streamed) and `aws-chunked` uploads. Signed headers the proxy
+  drops (hop-by-hop, `Expect`) leave the signed header list. The secret is never sent as text.
+  Checked against AWS's signing test suite (`testdata/aws-sigv4-test-suite`, Apache-2.0).
+- **Client certificates.** A credential with `client_certificate` holds a PEM chain and key.
+  Toward its bound hosts the proxy asks the agent for a client certificate; when the agent
+  presents the credential's placeholder certificate (Ed25519, key seeded by
+  `SHA-256("scrim-placeholder-cert-v1\0" || placeholder)`, see `placeholder_certificate`), the
+  request goes through the binding and policy checks like any injection and the real certificate
+  is presented in the upstream handshake, on a connection pool of its own. The certificate is
+  never sent as text, and no other host is asked for a certificate.
+- **Format-preserving placeholders.** Generated placeholders can also be shaped like the token
+  (`placeholder_format: shape`, from `scrim-redact`); they are matched exactly like any other.
 - **Capture.** A rule names a JSON pointer or response header; the value goes to the
   `CaptureSink` (the control plane stores it) and the agent gets the returned placeholder. If
   storing fails the field becomes `⟦scrim:withheld:capture-failed⟧`.
@@ -58,13 +77,14 @@ alias and never contain a value.
 | `unsupported_encoding` | 415 | body coding scrim cannot rewrite, toward a bound host |
 | `malformed_body` | 400 | body could not be decoded or parsed |
 | `body_too_large` | 413 | body over the buffering limit needs rewriting |
-| `resigning_unsupported` | 422 | signed request (SigV4, HTTP signatures, OAuth 1) or unknown digest |
+| `resigning_unsupported` | 422 | signed request scrim cannot re-sign (SigV4 not signed with a scrim access key id placeholder, HTTP signatures, OAuth 1) or unknown digest |
 | `upgrade_unsupported` | 501 | WebSocket and other upgrades |
 | `misdirected_request` | 421 | Host or SNI differs from the CONNECT target |
 | `upstream_unavailable` | 502 | upstream unreachable or failed TLS verification |
 | `response_withheld` | 502 | response could not be scanned |
 | `redaction_failed` | 502 | the redactor failed |
 | `policy_denied` | 403 | the injection policy refused a credential (a rule, a denied or expired approval) |
+| `signature_invalid` | 403 | a SigV4 request names a placeholder access key id but is not signed with the placeholder secret, or a chunk or trailer signature does not chain |
 
 ## Use
 
@@ -80,7 +100,8 @@ proxy.serve(listener, shutdown).await?;
 ```
 
 Seams for other work: `Redactor` (the `scrim-redact` matcher; `ValueRedactor` is a small exact
-stand-in), `RequestSigner` (AWS SigV4, task 10a.2), `ToolProxy::handle` (transparent listeners),
+stand-in), `RequestSigner` (signature schemes other than AWS SigV4, which is built in),
+`ToolProxy::handle` (transparent listeners),
 `InjectionPolicy` (`Snapshot::injection`): once per credential a request uses, after every binding
 and location check and before anything is substituted, it decides allow or deny and may wait for
 an approval. Every request carries a `ClientInfo` extension: the client's address and the session
@@ -103,6 +124,15 @@ Settings (`ToolProxySettings`): `toolproxy.max_buffered_body_bytes` (32 MiB),
 ## Tests
 
 `cargo test -p scrim-toolproxy`: unit tests per module, `tests/proxy.rs` against in-process fake
-upstreams (HTTP/1.1, HTTP/2, every coding, capture, rotation, pinning), and `tests/clients.rs`
-with curl, git clone and push over HTTPS (`git http-backend`), Python `requests` and Node `fetch`,
-each skipped when the tool is missing.
+upstreams (HTTP/1.1, HTTP/2, every coding, capture, rotation, pinning), `tests/sigv4.rs` (an
+upstream that checks every SigV4 signature with the real secret), `tests/clientcert.rs` (an
+upstream that requires a client certificate), and `tests/clients.rs` with curl, git clone and push
+over HTTPS (`git http-backend`), Python `requests` and Node `fetch`, each skipped when the tool is
+missing.
+
+End to end, ignored by default: `test/e2e/toolproxy-aws.sh` (the aws CLI against LocalStack in
+rootless podman: `sts get-caller-identity`, `s3 cp`, `s3 ls`, a presigned URL, an unbound region)
+and `test/e2e/toolproxy-kube.sh` (kubectl with certificate authentication against a kind cluster).
+
+Fuzzing (`fuzz/`, nightly): `cargo +nightly fuzz run sigv4` (parsers, chunk re-signer, and the
+sign, verify, re-sign round trip on arbitrary requests).
