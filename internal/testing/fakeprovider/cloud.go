@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -404,16 +405,27 @@ func (c *Cloud) bedrock(w http.ResponseWriter, r *http.Request, rawPath string, 
 			continue
 		}
 		payload, _ := json.Marshal(map[string]string{"bytes": base64.StdEncoding.EncodeToString([]byte(data)), "p": "abcdefghijklmnopqrstuvwxyzABCDEF"[:len(data)%32]})
-		_, _ = w.Write(EventStreamFrame(map[string]string{":event-type": "chunk", ":content-type": "application/json", ":message-type": "event"}, payload))
+		frame, err := EventStreamFrame(map[string]string{":event-type": "chunk", ":content-type": "application/json", ":message-type": "event"}, payload)
+		if err != nil {
+			// Bedrock ends the stream with an exception the client sees.
+			frame, _ = EventStreamFrame(map[string]string{":exception-type": "internalServerException", ":content-type": "application/json",
+				":message-type": "exception"}, []byte(`{"message":"event too large"}`))
+		}
+		_, _ = w.Write(frame)
 		if f != nil {
 			f.Flush()
 		}
 	}
 }
 
+// MaxEventStreamFrame is the largest message Amazon's event stream allows
+// (16 MiB of payload plus 128 KiB of headers).
+const MaxEventStreamFrame = 16<<20 + 128<<10 + 16
+
 // EventStreamFrame encodes one Amazon event stream message with string
-// headers, in name order.
-func EventStreamFrame(headers map[string]string, payload []byte) []byte {
+// headers, in name order. It fails on a header name over 255 bytes, a value
+// over 65535 bytes or a message over [MaxEventStreamFrame].
+func EventStreamFrame(headers map[string]string, payload []byte) ([]byte, error) {
 	names := make([]string, 0, len(headers))
 	for n := range headers {
 		names = append(names, n)
@@ -421,20 +433,27 @@ func EventStreamFrame(headers map[string]string, payload []byte) []byte {
 	sort.Strings(names)
 	var hb bytes.Buffer
 	for _, n := range names {
+		v := headers[n]
+		if len(n) > math.MaxUint8 || len(v) > math.MaxUint16 {
+			return nil, fmt.Errorf("event stream: header %.32q too long", n)
+		}
 		hb.WriteByte(byte(len(n)))
 		hb.WriteString(n)
 		hb.WriteByte(7)
-		_ = binary.Write(&hb, binary.BigEndian, uint16(len(headers[n]))) //nolint:gosec // test headers are short
-		hb.WriteString(headers[n])
+		hb.Write(binary.BigEndian.AppendUint16(nil, uint16(len(v))))
+		hb.WriteString(v)
+	}
+	if len(payload) > MaxEventStreamFrame || hb.Len() > MaxEventStreamFrame-16-len(payload) {
+		return nil, errors.New("event stream: message too large")
 	}
 	total := 12 + hb.Len() + len(payload) + 4
 	out := make([]byte, 0, total)
-	out = binary.BigEndian.AppendUint32(out, uint32(total))    //nolint:gosec // frames are small
-	out = binary.BigEndian.AppendUint32(out, uint32(hb.Len())) //nolint:gosec // frames are small
+	out = binary.BigEndian.AppendUint32(out, uint32(total))
+	out = binary.BigEndian.AppendUint32(out, uint32(hb.Len()))
 	out = binary.BigEndian.AppendUint32(out, crc32.ChecksumIEEE(out))
 	out = append(out, hb.Bytes()...)
 	out = append(out, payload...)
-	return binary.BigEndian.AppendUint32(out, crc32.ChecksumIEEE(out))
+	return binary.BigEndian.AppendUint32(out, crc32.ChecksumIEEE(out)), nil
 }
 
 // EventStreamMessage is one decoded event stream message with its string
