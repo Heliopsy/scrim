@@ -205,6 +205,13 @@ the organisation from `?org=`, the collection (with `?org=`) or the folder (with
 prefix. A `store.write` rule therefore sees `vaultwarden.collection.Prod` for
 `vw://Prod/New?org=Acme` before the item exists.
 
+For an existing item that is not in a redaction set (a write to it, or `scrim catalog labels`),
+scrim looks its labels up without reading it: they come from the index of the last sync, after the
+same revision date check a read makes, and no field value is decrypted. The labels are the ones a
+read reports, and a lookup fails the way a read would (locked, unreachable, outside the scope,
+ambiguous), so the rule is decided as if its labels were unknown. With `meta-labels: true` the meta
+label guard below still decrypts the values of in-scope items once per sync.
+
 ## Writes
 
 scrim creates and updates login items. On an existing item it replaces only the fields it was given

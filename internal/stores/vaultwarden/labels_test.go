@@ -21,8 +21,18 @@ func TestLabelKey(t *testing.T) {
 		"Café":            "caf_",
 		"":                "",
 	} {
-		if got := labelKey(in); got != want {
-			t.Errorf("labelKey(%q) = %q, want %q", in, got, want)
+		if got := stores.LabelKey(in); got != want {
+			t.Errorf("stores.LabelKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, a := range multiAttrs {
+		if !stores.IsMulti(Kind, a) {
+			t.Errorf("%s.%s is not declared multi-valued", Kind, a)
+		}
+	}
+	for _, a := range []string{"folder", "org", "name"} {
+		if stores.IsMulti(Kind, a) {
+			t.Errorf("%s.%s is declared multi-valued", Kind, a)
 		}
 	}
 	if got := strings.Join(ancestors("Agents/CI Jobs/x"), "|"); got != "Agents|Agents/CI Jobs|Agents/CI Jobs/x" {
