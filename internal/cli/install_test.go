@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/heliopsy/scrim/internal/bpfredirect"
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/daemon"
 	"github.com/heliopsy/scrim/internal/install"
@@ -60,10 +61,10 @@ func newInstallFixture(t *testing.T, euid int) *installFixture {
 	roots := filepath.Join(t.TempDir(), "roots.pem")
 	_ = os.WriteFile(roots, []byte("# roots\n"), 0o644)
 
-	oRunner, oProbe, oRoot, oExe, oEUID := installRunner, installProbe, installRoot, installExecutable, installEUID
+	oRunner, oProbe, oRoot, oExe, oEUID, oEBPF := installRunner, installProbe, installRoot, installExecutable, installEUID, installEBPF
 	oGOOS, oMemlock, oChown, oCARunner, oCAGOOS, oCARoots := installGOOS, installMemlock, installChown, caRunner, caGOOS, caSysRoots
 	t.Cleanup(func() {
-		installRunner, installProbe, installRoot, installExecutable, installEUID = oRunner, oProbe, oRoot, oExe, oEUID
+		installRunner, installProbe, installRoot, installExecutable, installEUID, installEBPF = oRunner, oProbe, oRoot, oExe, oEUID, oEBPF
 		installGOOS, installMemlock, installChown, caRunner, caGOOS, caSysRoots = oGOOS, oMemlock, oChown, oCARunner, oCAGOOS, oCARoots
 	})
 	installRunner, installProbe, installRoot = f.runner, okProbe{}, f.root
@@ -250,5 +251,52 @@ func TestInterceptionDropInNamesTheDaemonSettings(t *testing.T) {
 		if got := config.EnvVar(s); got != env {
 			t.Errorf("%s: variable %s, the drop-in sets %s", s, got, env)
 		}
+	}
+}
+
+type checkLoader struct{ err error }
+
+func (l checkLoader) Check() error        { return l.err }
+func (l checkLoader) Detach(string) error { return nil }
+
+func TestEBPFInstallDryRunAndRefusals(t *testing.T) {
+	f := newInstallFixture(t, 1000)
+	unprivileged := &bpfredirect.PrivilegeError{Op: "attaching eBPF programs", Missing: []string{"CAP_BPF", "CAP_NET_ADMIN"}}
+	installEBPF = checkLoader{err: unprivileged}
+	before := treeOf(t, f.root)
+	code, out, errb := f.run(t, "install", "--system", "--ebpf", "--cover-cgroup", "agents.slice", "--dry-run")
+	if code != 0 {
+		t.Fatalf("dry run: exit %d: %s", code, errb)
+	}
+	for _, w := range []string{"lacks CAP_BPF and CAP_NET_ADMIN", "would write " + filepath.Join(f.root, install.EBPFUnitPath),
+		"    ExecStart=/usr/local/bin/scrim ebpf attach --cgroup agents.slice --port 9793 --no-listener-check",
+		"    Environment=SCRIM_PROXY_TRANSPARENT_LISTEN=", "would enable and start scrim-ebpf.service"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("dry run lacks %q:\n%s", w, out)
+		}
+	}
+	if !sameTree(before, treeOf(t, f.root)) || len(f.runner.calls) > 0 {
+		t.Errorf("dry run changed something: calls %q", f.runner.calls)
+	}
+
+	// As root without the capabilities (a user namespace): refused before any change.
+	f = newInstallFixture(t, 0)
+	installEBPF = checkLoader{err: unprivileged}
+	before = treeOf(t, f.root)
+	code, _, errb = f.run(t, "install", "--system", "--ebpf", "--cover-cgroup", "agents.slice")
+	if code == 0 || !strings.Contains(errb, "--ebpf: attaching eBPF programs needs root, or CAP_BPF and CAP_NET_ADMIN") {
+		t.Fatalf("unprivileged: exit %d: %s", code, errb)
+	}
+	if !sameTree(before, treeOf(t, f.root)) || len(f.runner.calls) > 0 {
+		t.Errorf("refused install changed something: calls %q", f.runner.calls)
+	}
+
+	installEBPF = checkLoader{}
+	if code, _, errb := f.run(t, "install", "--user", "--ebpf", "--cover-cgroup", "agents.slice"); code == 0 || !strings.Contains(errb, "--system") {
+		t.Fatalf("user unit: exit %d: %s", code, errb)
+	}
+	installGOOS = "darwin"
+	if code, _, errb := f.run(t, "install", "--system", "--ebpf", "--cover-cgroup", "agents.slice", "--dry-run"); code == 0 || !strings.Contains(errb, "Linux") {
+		t.Fatalf("darwin: exit %d: %s", code, errb)
 	}
 }

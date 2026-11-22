@@ -30,7 +30,9 @@ approvals, grants and audit history. Pending requests SHALL then be denied, neve
 ### Requirement: SQLite backend is local and single-process
 
 The `sqlite` backend SHALL store state in one file, by default under `$XDG_STATE_HOME/scrim/`, and
-SHALL refuse to run when another scrim process holds the same file.
+SHALL refuse to run when another scrim process holds the same file. `scrim status` and `scrim
+doctor` SHALL open the file read-only, without taking the process lock and without creating or
+migrating it, so they never stop a scrim process from starting.
 
 #### Scenario: Second process on the same file
 
@@ -41,6 +43,16 @@ SHALL refuse to run when another scrim process holds the same file.
 
 - **WHEN** `scrim status` runs while a scrim process holds the SQLite file
 - **THEN** it reports the state backend as in use by that process instead of failing
+
+#### Scenario: Status while the daemon is starting
+
+- **WHEN** `scrim status` has the SQLite file open and the daemon starts at that moment
+- **THEN** the daemon takes the lock and opens the file, and status still reports the schema version
+
+#### Scenario: Status before the first start
+
+- **WHEN** `scrim status` runs and the SQLite file does not exist yet
+- **THEN** it reports the file as not created yet and creates nothing
 
 ### Requirement: SQLite on a network filesystem
 

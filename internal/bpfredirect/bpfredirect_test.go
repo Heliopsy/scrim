@@ -151,3 +151,26 @@ func TestLoaderNeedsPrivilege(t *testing.T) {
 		t.Fatalf("a refused attach wrote the record: %v", err)
 	}
 }
+
+func TestLoaderCheck(t *testing.T) {
+	root := t.TempDir()
+	l := Loader{CgroupRoot: root, Caps: func() Caps { return 1 << capBPF }}
+	err := l.Check()
+	if err == ErrUnsupported { //nolint:errorlint // the unwrapped error is the non-Linux stub
+		t.Skip("not Linux")
+	}
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Check without cgroup v2: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cgroup.controllers"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var pe *PrivilegeError
+	if err := l.Check(); !errors.As(err, &pe) || !slices.Equal(pe.Missing, []string{"CAP_NET_ADMIN"}) {
+		t.Fatalf("Check with CAP_BPF only: %v", err)
+	}
+	l.Caps = func() Caps { return 1 << capSysAdmin }
+	if err := l.Check(); err != nil {
+		t.Fatalf("Check with CAP_SYS_ADMIN: %v", err)
+	}
+}
