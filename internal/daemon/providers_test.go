@@ -3,9 +3,6 @@
 package daemon
 
 import (
-	"github.com/heliopsy/scrim/internal/secret"
-	"github.com/heliopsy/scrim/internal/stores"
-	"github.com/heliopsy/scrim/internal/stores/refresh"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,6 +11,9 @@ import (
 
 	"github.com/heliopsy/scrim/internal/config"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
+	"github.com/heliopsy/scrim/internal/secret"
+	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/refresh"
 )
 
 func TestProviderRoutes(t *testing.T) {
