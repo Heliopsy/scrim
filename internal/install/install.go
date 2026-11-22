@@ -115,6 +115,9 @@ type Installer struct {
 	// Intercept selects the host-level interception modes (transparent,
 	// DNS override) of a system install.
 	Intercept Interception
+	// EBPF is the loader the eBPF mode checks with before installing and
+	// detaches with on uninstall.
+	EBPF EBPFLoader
 
 	// The user scope: home, the scrim state directory (holds the manifest),
 	// the scrim config directory and $XDG_RUNTIME_DIR.

@@ -56,6 +56,20 @@ func (l Loader) withDefaults() Loader {
 	return l
 }
 
+// Check reports why this process cannot attach on this host: no cgroup v2
+// hierarchy, or missing capabilities. `scrim install --ebpf` runs it before
+// changing anything.
+func (l Loader) Check() error {
+	l = l.withDefaults()
+	if err := supported(l.CgroupRoot); err != nil {
+		return err
+	}
+	if m := l.Caps().MissingToLoad(); len(m) > 0 {
+		return &PrivilegeError{Op: "attaching eBPF programs", Missing: m}
+	}
+	return nil
+}
+
 // Attach loads the programs with the listener port and attaches them to a
 // control group, pinning each link so it stays after this process exits.
 // An existing attachment of the same control group is replaced only after

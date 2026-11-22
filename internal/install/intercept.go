@@ -92,6 +92,9 @@ type Interception struct {
 	// Port is the transparent listener's port; zero is
 	// DefaultTransparentPort.
 	Port int
+	// EBPF attaches the eBPF programs to CoverCgroups from a boot unit
+	// instead of loading nftables rules.
+	EBPF bool
 	// BlockUnrouted closes connections to hosts scrim has no route for.
 	BlockUnrouted bool
 	// DNS adds DNSHosts to the hosts file, resolving to DNSAddress.
@@ -104,7 +107,10 @@ type Interception struct {
 }
 
 // Active reports whether any host-level mode is selected.
-func (i Interception) Active() bool { return i.Transparent || i.DNS }
+func (i Interception) Active() bool { return i.Transparent || i.EBPF || i.DNS }
+
+// listener reports whether a mode needs the transparent listener.
+func (i Interception) listener() bool { return i.Transparent || i.EBPF }
 
 func (i Interception) port() int {
 	if i.Port == 0 {
@@ -126,7 +132,12 @@ func (in *Installer) checkInterception() error {
 		return nil
 	}
 	if in.Mode != ModeSystem {
-		return errors.New("install: --transparent and --dns need the system service (--system), not a user unit or Quadlet container")
+		return errors.New("install: --transparent, --ebpf and --dns need the system service (--system), not a user unit or Quadlet container")
+	}
+	if ic.EBPF {
+		if err := in.checkEBPF(); err != nil {
+			return err
+		}
 	}
 	if ic.Transparent && len(ic.CoverUsers) == 0 && len(ic.CoverCgroups) == 0 {
 		return errors.New("install: --transparent needs at least one --cover-user or --cover-cgroup")
@@ -185,7 +196,7 @@ func validHostName(h string) bool {
 // cgroupPath normalises a control group path relative to /sys/fs/cgroup.
 func cgroupPath(c string) (string, error) {
 	c = strings.Trim(strings.TrimPrefix(c, "/sys/fs/cgroup"), "/")
-	if c == "" || strings.Contains(c, "..") || strings.ContainsAny(c, "\"\\ \t\n") {
+	if c == "" || strings.Contains(c, "..") || strings.ContainsAny(c, "\"\\ \t\n%$") {
 		return "", fmt.Errorf("install: --cover-cgroup %q must be a control group path such as agents.slice or user.slice/agents.slice", c)
 	}
 	return c, nil
@@ -196,7 +207,7 @@ func (in *Installer) dropIn() string {
 	ic := in.Intercept
 	var b strings.Builder
 	b.WriteString("# Written by scrim install; scrim uninstall --system removes it.\n[Service]\n")
-	if ic.Transparent {
+	if ic.listener() {
 		addrs := []string{"127.0.0.1:" + strconv.Itoa(ic.port())}
 		if in.ipv6Loopback() {
 			addrs = append(addrs, "[::1]:"+strconv.Itoa(ic.port()))
@@ -231,7 +242,11 @@ func (in *Installer) writeDropIn() error {
 	if err := in.ensureDir(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	_, err := in.unitFile(p, []byte(in.dropIn()), ScopeSystem)
+	drop := in.dropIn()
+	changed, err := in.unitFile(p, []byte(drop), ScopeSystem)
+	if changed {
+		in.show(drop)
+	}
 	return err
 }
 
@@ -247,6 +262,11 @@ func (in *Installer) installInterception(ctx context.Context, caPEM string) erro
 	}
 	if ic.Transparent {
 		if err := in.transparentRules(ctx); err != nil {
+			return err
+		}
+	}
+	if ic.EBPF {
+		if err := in.ebpfAttach(ctx); err != nil {
 			return err
 		}
 	}

@@ -10,7 +10,7 @@ of their own: they are an add-on that keeps methods 1 and 2 from being skipped.
 | --- | --- | --- | --- | --- |
 | 1 | [Wrapper (`scrim run`)](#1-wrapper-scrim-run), with base URL underneath | v0.1.0 | full | yes, by ignoring or clearing its environment |
 | 2 | [Forward proxy](#2-forward-proxy) (`HTTPS_PROXY` and CA) | v0.1.0 | full | yes, by ignoring the proxy variables |
-| 3 | [Transparent, machine-wide](#3-transparent-machine-wide) (nftables; eBPF variant) | on `main` (`scrim install --transparent`; eBPF variant: `scrim ebpf attach`) | full | no, inside the covered users or cgroups |
+| 3 | [Transparent, machine-wide](#3-transparent-machine-wide) (nftables; eBPF variant) | on `main` (`scrim install --transparent`; eBPF variant: `scrim install --ebpf` or `scrim ebpf attach`) | full | no, inside the covered users or cgroups |
 | 4 | [DNS override](#4-dns-override) | on `main` (`scrim install --dns`) | full for connections by name | yes, by connecting to an IP address |
 | 5 | [Kubernetes transparent](#5-kubernetes-transparent) | on `main` (Helm chart, Kyverno injection, NetworkPolicy) | full | no, while NetworkPolicy is enforced |
 | 6 | [Hooks only](#6-hooks-only) | on `main` (`scrim install --hooks`) | partial: tool results and prompts only | yes; model traffic never passes scrim |
@@ -487,9 +487,16 @@ flowchart LR
 ```
 
 The programs only move traffic (design D8). The rewritten connection lands on the transparent
-listener (`proxy.transparent-listen`, task 13.3), which reads the TLS server name, terminates TLS
-with scrim's CA and routes the request, so no original-destination lookup is needed and the CA is
-still required. A pinning client fails.
+listener's port (`proxy.transparent-listen`, task 13.3), which is meant to read the TLS server
+name, terminate TLS with scrim's CA and route the request, so the CA is still required and a
+pinning client fails.
+
+Known gap (tasks.md 15.1b): the transparent listener today serves only connections nftables
+redirected. It reads the original destination port the kernel's NAT keeps (`SO_ORIGINAL_DST`) and
+closes a connection that has none, which is every connection a connect hook rewrote. A covered
+control group therefore fails closed: its provider connections reach scrim's port and are closed,
+nothing goes direct, nothing is redacted. The install, the boot unit and the uninstall below work
+and are tested; serving the redirected connections needs the listener change first.
 
 #### Setup
 
@@ -521,9 +528,24 @@ replaces the attachment in place: the new links go in first and the old ones are
 the control group is never uncovered in between. `detach` removes the pins and waits until the
 kernel confirms the programs are gone. The control group has to exist when you attach.
 
-The attachment lasts until `scrim ebpf detach`, the control group's removal, or a reboot. `scrim
-install` does not set it up at boot yet (tasks.md 15.1a); until then run `scrim ebpf attach` from a
-oneshot unit ordered before the agents' units, or after each boot.
+The attachment lasts until `scrim ebpf detach`, the control group's removal, or a reboot.
+
+#### At boot: `scrim install --ebpf`
+
+```sh
+sudo scrim install --system --ebpf --cover-cgroup agents.slice --dry-run   # prints the unit and drop-in
+sudo scrim install --system --ebpf --cover-cgroup agents.slice
+sudo scrim uninstall --system                                              # detaches, removes both
+```
+
+With the system service, `--ebpf` writes `scrim-ebpf.service`, a oneshot unit (`RemainAfterExit`)
+that runs `scrim ebpf attach --cgroup ... --port 9793` at every boot, before `network-pre.target`
+and `scrim.service`, and `scrim ebpf detach` when it stops. It also writes the drop-in that turns
+on the transparent listener on `127.0.0.1:9793` and `[::1]:9793` (`--transparent-port` changes
+both). The links stay pinned after the oneshot exits. Uninstall detaches each control group and
+waits for the kernel to confirm it before it removes the unit and the drop-in. It needs root or
+`CAP_BPF` and `CAP_NET_ADMIN`, refuses a control group that holds `scrim.service`, and covers
+control groups only; [service.md](service.md#ebpf-at-boot) has the details.
 
 #### Status
 
@@ -549,9 +571,11 @@ only the test binary as root inside it, and checks per-cgroup redirect over IPv4
 IPv4-mapped addresses, that child control groups inherit it and other control groups are untouched,
 the QUIC refusal, the egress drop on its own, that the programs survive the loader, fail closed
 with no listener, replace in place and detach cleanly, and what status reports with and without
-the privilege to query. CI runs it on every change. On a real host, from inside the control group,
-`curl -v https://api.anthropic.com` should show scrim's certificate, and `curl --http3-only` should
-fail.
+the privilege to query. CI runs it on every change. `just ebpf-install-vm-test` boots a Debian root
+file system with systemd in qemu twice and covers `scrim install --ebpf` and `scrim uninstall`
+(see [service.md](service.md#verified-in-a-vm-test)). On a real host, from inside the control
+group, `curl --http3-only https://api.anthropic.com` should fail, and so, until 15.1b, does
+`curl -v https://api.anthropic.com`: the connection reaches scrim's port and is closed.
 
 ## 4. DNS override
 

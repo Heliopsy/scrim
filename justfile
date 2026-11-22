@@ -145,6 +145,12 @@ ebpf-check: ebpf
 ebpf-vm-test *args:
     SCRIM_VM_TEST_ARGS="{{args}}" test/ebpf/vm-test.sh
 
+# `scrim install --system --ebpf` and `scrim uninstall` as root in a qemu VM with systemd, booted twice
+# (tasks.md 15.1a, test/ebpf/install-test.sh). SCRIM_VM_KERNEL as for ebpf-vm-test; SCRIM_SVC_BIN names
+# a binary with the data plane embedded, without it `just build` runs first.
+ebpf-install-vm-test:
+    test/ebpf/install-test.sh
+
 # Regenerate the config JSON Schema and the settings reference from the registry.
 config-docs:
     go run . config schema > schema/config-v1.json
