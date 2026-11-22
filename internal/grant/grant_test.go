@@ -147,6 +147,9 @@ func TestScopes(t *testing.T) {
 			t.Errorf("scope %s covers another reference", tt.scope)
 		}
 	}
+	if _, err := Build(req(agentA, "h", ""), policy.ScopeOnce, 0, time.Hour, "r", "", t0); !errors.Is(err, ErrOnce) {
+		t.Errorf("scope once built a grant: %v", err)
+	}
 	if _, err := Build(req(policy.Agent{}, "h", ""), "", 0, time.Hour, "r", "", t0); !errors.Is(err, ErrNoIdentity) {
 		t.Fatal("grant without identity built")
 	}

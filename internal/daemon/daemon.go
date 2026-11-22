@@ -396,6 +396,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	// Asks name their caller by transport; the gate verifies sessions and
 	// maps peers with the agent API's resolver. Set before anything runs.
 	pp.Gate.Callers = d.runtime.Resolver
+	d.runtime.SetSSHAgent(d.sshKeyring())
 
 	if err := d.listenControl(cfg); err != nil {
 		d.runtime.Close()

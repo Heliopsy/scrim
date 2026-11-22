@@ -16,6 +16,7 @@ import (
 	"github.com/heliopsy/scrim/internal/approval"
 	"github.com/heliopsy/scrim/internal/breakglass"
 	"github.com/heliopsy/scrim/internal/daemon"
+	"github.com/heliopsy/scrim/internal/policy"
 )
 
 // Operator commands for approvals, grants and break-glass. They talk to the
@@ -183,12 +184,31 @@ func (Commands) Approvals(e *Env) *cobra.Command {
 
 func destination(a approval.ApprovalView) string {
 	switch {
+	case a.SSH != nil:
+		return sshDestination(a)
 	case a.Host != "":
 		return strings.TrimSpace(a.Method + " " + a.Host + a.Path)
 	case a.Tool != "":
 		return strings.TrimSpace(a.Tool + " " + a.Command)
 	}
 	return a.Provider
+}
+
+// sshDestination describes an ssh-agent signature: what is signed, as whom
+// and for which host.
+func sshDestination(a approval.ApprovalView) string {
+	s := a.SSH
+	if s.Kind == policy.SSHKindSSHSig {
+		return "ssh signature, namespace " + s.Namespace
+	}
+	host := a.Host
+	if host == "" {
+		host = s.HostKey
+	}
+	if host == "" {
+		host = "unbound host"
+	}
+	return "ssh login " + s.User + "@" + host
 }
 
 // Grants lists and revokes just-in-time grants.

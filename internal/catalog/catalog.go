@@ -32,6 +32,10 @@ type Binding struct {
 	PlaceholderFormat string    `json:"placeholder_format,omitempty"`
 	AWSSigV4          *AWSSigV4 `json:"aws_sigv4,omitempty"`
 	ClientCertificate bool      `json:"client_certificate,omitempty"`
+	// SSHKey marks a key scrim's ssh-agent offers; SSHCertificate is its
+	// certificate's reference, zero without one.
+	SSHKey         bool       `json:"ssh_key,omitempty"`
+	SSHCertificate stores.Ref `json:"ssh_certificate,omitzero"`
 	// Selected says which variant applied: "default" or the variant's
 	// selection, for example "profile=dev".
 	Selected string `json:"selected"`
@@ -403,6 +407,12 @@ func resolveEntry(e Entry, sel Selection) (Binding, string, bool, error) {
 	if err != nil {
 		return Binding{}, "", false, fmt.Errorf("%w: entry %q: %w", ErrInvalid, e.Name, err)
 	}
+	var cert stores.Ref
+	if e.SSHCertificate != "" {
+		if cert, err = stores.ParseRef(e.SSHCertificate); err != nil {
+			return Binding{}, "", false, fmt.Errorf("%w: entry %q: %w", ErrInvalid, e.Name, err)
+		}
+	}
 	return Binding{
 		Name:        e.Name,
 		Ref:         ref,
@@ -416,6 +426,8 @@ func resolveEntry(e Entry, sel Selection) (Binding, string, bool, error) {
 		PlaceholderFormat: e.PlaceholderFormat,
 		AWSSigV4:          e.AWSSigV4,
 		ClientCertificate: e.ClientCertificate,
+		SSHKey:            e.SSHKey,
+		SSHCertificate:    cert,
 	}, selected, true, nil
 }
 

@@ -357,8 +357,10 @@ is out of date.
 | [`run.profiles`](#runprofiles) | list | `["auto"]` | hot |
 | [`run.scan-interval`](#runscan-interval) | duration | `10s` | hot |
 | [`run.scan-project`](#runscan-project) | bool | `true` | hot |
+| [`run.ssh-agent`](#runssh-agent) | bool | `true` | hot |
 | [`session.max-ttl`](#sessionmax-ttl) | duration | `168h0m0s` | restart required |
 | [`session.ttl`](#sessionttl) | duration | `12h0m0s` | restart required |
+| [`ssh-agent.known-hosts`](#ssh-agentknown-hosts) | list | `[]` | hot |
 | [`state.backend`](#statebackend) | string | `memory` | restart required |
 | [`state.postgres.connect-timeout`](#statepostgresconnect-timeout) | duration | `15s` | restart required |
 | [`state.postgres.dsn`](#statepostgresdsn) | secret-ref | empty | restart required |
@@ -393,7 +395,7 @@ is out of date.
 
 ### `catalog.entries.<name>`
 
-Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools, placeholder_format, aws_sigv4, client_certificate. References only, never values.
+Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools, placeholder_format, aws_sigv4, client_certificate, ssh_key, ssh_certificate. References only, never values.
 
 | | |
 |---|---|
@@ -2269,6 +2271,18 @@ Scan the agent's working directory for secret values in project files (.env*, *.
 | Flag | `--run-scan-project` |
 | Reload | hot |
 
+#### `run.ssh-agent`
+
+Point SSH_AUTH_SOCK at scrim's ssh-agent for the session: ssh and git over ssh sign with the catalog's ssh_key entries, decided and audited by scrim, and an inherited agent with your own keys is not reachable through it.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `true` |
+| Environment | `SCRIM_RUN_SSH_AGENT` |
+| Flag | `--run-ssh-agent` |
+| Reload | hot |
+
 ### session
 
 #### `session.max-ttl`
@@ -2294,6 +2308,20 @@ Default lifetime of a session token minted by scrim run. The token is revoked ea
 | Environment | `SCRIM_SESSION_TTL` |
 | Flag | none |
 | Reload | restart required |
+
+### ssh-agent
+
+#### `ssh-agent.known-hosts`
+
+known_hosts files (OpenSSH format) that name the hosts scrim's ssh-agent signs logins for: a login whose session binding verifies a host key listed here sees that line's first plain host name as dest.host. Use files the agent cannot write; hashed and wildcard entries are not used.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_SSH_AGENT_KNOWN_HOSTS` |
+| Flag | none |
+| Reload | hot |
 
 ### state
 

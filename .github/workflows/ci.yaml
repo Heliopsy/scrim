@@ -146,6 +146,30 @@ jobs:
           podman ps -aq --filter name=scrim-scale- | xargs -r podman rm -f -v
           podman ps -aq --filter name=scrim-test-pg- | xargs -r podman rm -f -v
 
+  # GitHub-hosted: git and OpenSSH sign through scrim's ssh-agent against a
+  # throwaway sshd in rootless podman (scrim-sshagent-*).
+  ssh-agent:
+    name: ssh-agent git over SSH (podman)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - run: podman version && ssh -V && git --version
+      - run: go test -race -count=1 -timeout 10m -v -run 'TestSSHAgentGitOverSSH' ./internal/daemon/
+        env:
+          SCRIM_TEST_PODMAN: "1"
+          SCRIM_TEST_CONTAINER_PREFIX: scrim-sshagent
+      - name: Remove leftover containers
+        if: always()
+        run: podman ps -aq --filter name=scrim-sshagent- | xargs -r podman rm -f -v
+
   rust:
     name: Rust
     runs-on: ho-z10

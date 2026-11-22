@@ -441,7 +441,7 @@
             "properties": {},
             "type": "object"
           },
-          "description": "Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools, placeholder_format, aws_sigv4, client_certificate. References only, never values.",
+          "description": "Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools, placeholder_format, aws_sigv4, client_certificate, ssh_key, ssh_certificate. References only, never values.",
           "propertyNames": {
             "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
           },
@@ -1767,6 +1767,15 @@
           "x-scrim-flag": "--run-scan-project",
           "x-scrim-restart-required": false,
           "x-scrim-weakening": false
+        },
+        "ssh-agent": {
+          "default": true,
+          "description": "Point SSH_AUTH_SOCK at scrim's ssh-agent for the session: ssh and git over ssh sign with the catalog's ssh_key entries, decided and audited by scrim, and an inherited agent with your own keys is not reachable through it.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_RUN_SSH_AGENT",
+          "x-scrim-flag": "--run-ssh-agent",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
         }
       },
       "type": "object"
@@ -1790,6 +1799,23 @@
           "type": "string",
           "x-scrim-env": "SCRIM_SESSION_TTL",
           "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "ssh-agent": {
+      "additionalProperties": false,
+      "properties": {
+        "known-hosts": {
+          "default": [],
+          "description": "known_hosts files (OpenSSH format) that name the hosts scrim's ssh-agent signs logins for: a login whose session binding verifies a host key listed here sees that line's first plain host name as dest.host. Use files the agent cannot write; hashed and wildcard entries are not used.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_SSH_AGENT_KNOWN_HOSTS",
+          "x-scrim-restart-required": false,
           "x-scrim-weakening": false
         }
       },

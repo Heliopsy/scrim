@@ -432,7 +432,7 @@ func (s *Service) Decide(ctx context.Context, id string, d Decision) (Outcome, e
 				if capped {
 					attrs["ttl_capped"] = "true"
 				}
-			case errors.Is(err, grant.ErrNoIdentity), errors.Is(err, grant.ErrNoRef):
+			case errors.Is(err, grant.ErrNoIdentity), errors.Is(err, grant.ErrNoRef), errors.Is(err, grant.ErrOnce):
 				// Approves the held operation only.
 			default:
 				return state.Change{}, err

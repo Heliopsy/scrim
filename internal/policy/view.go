@@ -51,6 +51,25 @@ type RuleTool struct {
 	Command string `cel:"command" json:"command,omitempty"`
 }
 
+// RuleSSH is `ssh` in a rule: what scrim's ssh-agent parsed from a
+// signature request (op ssh.sign). Every field is empty for other
+// operations.
+type RuleSSH struct {
+	// Kind is what is being signed: userauth (an SSH login), sshsig (an
+	// SSHSIG file or commit signature), or list when scrim decides which
+	// keys to offer.
+	Kind string `cel:"kind" json:"kind,omitempty"`
+	// User is the user name of an SSH login.
+	User string `cel:"user" json:"user,omitempty"`
+	// Namespace is the SSHSIG namespace, for example git or file.
+	Namespace string `cel:"namespace" json:"namespace,omitempty"`
+	// Key is the SHA256 fingerprint of the signing key.
+	Key string `cel:"key" json:"key,omitempty"`
+	// HostKey is the SHA256 fingerprint of the server's host key, from a
+	// verified session binding; empty when the client sent none.
+	HostKey string `cel:"host_key" json:"host_key,omitempty"`
+}
+
 // view is the rule-facing form of a request.
 type view struct {
 	op       string
@@ -59,6 +78,7 @@ type view struct {
 	provider string
 	dest     RuleDest
 	tool     RuleTool
+	ssh      RuleSSH
 	now      time.Time
 	// unknownAgent: the agent fields are unknown (data-plane reference
 	// evaluation only; CEL never sees it).
@@ -78,6 +98,7 @@ func newView(r *Request) view {
 		provider: r.Provider,
 		dest:     RuleDest{Host: r.Host, Method: r.Method, Path: r.Path},
 		tool:     RuleTool{Name: r.Tool, Command: r.Command},
+		ssh:      RuleSSH(r.SSH),
 		now:      r.Time,
 	}
 	if !r.Ref.IsZero() {
@@ -97,6 +118,7 @@ func (v *view) activation() map[string]any {
 		"provider": v.provider,
 		"dest":     v.dest,
 		"tool":     v.tool,
+		"ssh":      v.ssh,
 		"now":      v.now,
 	}
 }

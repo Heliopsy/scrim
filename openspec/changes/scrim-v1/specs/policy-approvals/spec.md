@@ -329,6 +329,12 @@ use count, and SHALL let matching operations through without a new approval unti
 - **WHEN** a grant with one use has been used
 - **THEN** the next matching operation is evaluated as if no grant existed
 
+#### Scenario: Approval for one operation only
+
+- **WHEN** an ask rule with grant scope `once` is approved
+- **THEN** the held operation proceeds, no grant is created, and the next matching operation asks
+  again
+
 ### Requirement: Grant limits and revocation
 
 The system SHALL enforce a configurable maximum grant duration per rule, SHALL let an operator revoke
