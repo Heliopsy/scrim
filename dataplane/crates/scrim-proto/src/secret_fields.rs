@@ -36,6 +36,10 @@ impl fmt::Debug for ValueEntry {
             .field("bound_paths", &self.bound_paths)
             .field("inject_locations", &self.inject_locations)
             .field("allow_plaintext_http", &self.allow_plaintext_http)
+            .field("aws_sigv4", &self.aws_sigv4)
+            .field("placeholder_format", &self.placeholder_format)
+            .field("client_certificate", &self.client_certificate)
+            .field("labels", &self.labels)
             .finish()
     }
 }

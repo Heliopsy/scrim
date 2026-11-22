@@ -68,6 +68,10 @@ type fakeState State
 
 func (f fakeState) StateStatus(context.Context) State { return State(f) }
 
+type fakeEBPF EBPF
+
+func (f fakeEBPF) EBPFStatus() *EBPF { e := EBPF(f); return &e }
+
 type fakeAudit []AuditSink
 
 func (f fakeAudit) AuditSinks(context.Context) []AuditSink { return f }
@@ -139,6 +143,31 @@ func fixtures() map[string]Sources {
 			},
 		},
 		"empty": {Version: "0.1.0"},
+		// The eBPF mode confirmed on one control group, the daemon's own
+		// egress protection inactive: status turns it on for that group.
+		"ebpf-active": {
+			Version: "0.1.0",
+			Runtime: fakeRuntime{modes: []string{"transparent 127.0.0.1:9792"},
+				prot: []Protection{{Name: "direct egress blocked", Active: false, Detail: "no enforcing interception mode"}}},
+			DataPlane: fakeDP{Running: true, PID: 7, Healthy: true},
+			State:     fakeState{Backend: "memory", Healthy: true},
+			EBPF: fakeEBPF{Configured: []string{"agents.slice"}, Port: 9792, ListenerUp: true, Listener: "127.0.0.1:9792 accepts connections",
+				Cgroups: []EBPFCgroup{{Cgroup: "agents.slice", State: "active", AttachedAt: refreshed,
+					Detail: "TCP 80 and 443 redirected to 127.0.0.1:9792 and [::1]:9792, direct and QUIC egress denied (verified with the kernel)"}}},
+		},
+		// Configured but never attached, a recorded group this process
+		// cannot confirm, and nothing listening.
+		"ebpf-missing": {
+			Version:   "0.1.0",
+			DataPlane: fakeDP{Running: true, PID: 7, Healthy: true},
+			State:     fakeState{Backend: "memory", Healthy: true},
+			EBPF: fakeEBPF{Configured: []string{"agents.slice"}, Port: 9792,
+				Listener: "nothing accepts connections on 127.0.0.1:9792: redirected connections fail (they never go direct)",
+				Cgroups: []EBPFCgroup{
+					{Cgroup: "agents.slice", State: "not-attached", Detail: "not attached: run `sudo scrim ebpf attach`; attaching needs root, or CAP_BPF and CAP_NET_ADMIN, and this process lacks CAP_BPF and CAP_NET_ADMIN"},
+					{Cgroup: "ci.slice", State: "unverified", AttachedAt: refreshed, Detail: "attached according to the loader's record (/run/scrim-ebpf/attachments.json); confirming it with the kernel needs CAP_NET_ADMIN: run `sudo scrim status`"},
+				}},
+		},
 		// Agent hooks as the only interception, next to managed settings
 		// whose Codex file was edited since install.
 		"hooks-only": {
@@ -158,6 +187,21 @@ func fixtures() map[string]Sources {
 					Changed:    []string{"/etc/codex/requirements.toml"},
 					Manifest:   "/etc/scrim/managed-settings.json"},
 			},
+		},
+		// scrim run on a host without user namespaces: the home mirror.
+		"run-fs-view-fallback": {
+			Version:   "0.1.0",
+			DataPlane: fakeDP{Running: true, PID: 7, Healthy: true},
+			State:     fakeState{Backend: "memory", Healthy: true},
+			RunView: &RunView{Requested: "auto", Mode: "home", Fallback: "darwin has no user or mount namespaces",
+				Gaps: []string{"tools that find the home directory through the password database instead of HOME (ssh) read the real files"}},
+		},
+		// run.fs-view: namespace on a host without user namespaces.
+		"run-fs-view-refused": {
+			Version:   "0.1.0",
+			DataPlane: fakeDP{Running: true, PID: 7, Healthy: true},
+			State:     fakeState{Backend: "memory", Healthy: true},
+			RunView:   &RunView{Requested: "namespace", Mode: RunViewRefused, Fallback: "creating a user namespace is not allowed: operation not permitted"},
 		},
 		// Weakened settings taken from the configuration manager.
 		"config-weakened": {

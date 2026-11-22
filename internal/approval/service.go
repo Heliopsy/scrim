@@ -39,6 +39,7 @@ import (
 	"github.com/heliopsy/scrim/internal/notify"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/policy"
+	"github.com/heliopsy/scrim/internal/ratelimit"
 	"github.com/heliopsy/scrim/internal/state"
 )
 
@@ -129,6 +130,9 @@ type Options struct {
 	Grants  GrantPolicy
 	Log     *slog.Logger
 	Metrics *obs.Metrics
+	// Limits rate-limits approval requests per agent (ratelimit.approvals.*);
+	// nil means unlimited.
+	Limits *ratelimit.Set
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }
@@ -199,6 +203,9 @@ type Request struct {
 func (s *Service) Create(ctx context.Context, r Request) (*state.Approval, error) {
 	if err := s.breakGlass(); err != nil {
 		return nil, err
+	}
+	if err := s.o.Limits.Check(ctx, ratelimit.ClassApprovals, r.Policy.Agent.ID); err != nil {
+		return nil, fmt.Errorf("approval: %w", err)
 	}
 	timeout := r.Timeout
 	if timeout <= 0 {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -151,6 +152,27 @@ func ReportChecks(r Report) []Check {
 				Fix: "check state.backend and its location or DSN with `scrim config show --effective`"}}
 		}},
 	}
+	if v := r.RunView; v != nil {
+		checks = append(checks, Check{Name: "run-fs-view", Run: func(context.Context) []Finding {
+			fix := "allow unprivileged user namespaces (on Ubuntu: sysctl kernel.apparmor_restrict_unprivileged_userns=0, " +
+				"or an AppArmor profile for scrim that allows userns), or accept the gaps listed in `scrim status`"
+			switch {
+			case v.Mode == RunViewRefused:
+				return []Finding{{Outcome: Fail, Message: "run.fs-view is namespace, but this host has no unprivileged user namespaces: " + v.Fallback,
+					Fix: fix + "; or set run.fs-view: auto to fall back to the home mirror"}}
+			case v.Fallback != "":
+				return []Finding{{Outcome: Warn, Message: "scrim run falls back to the home mirror: " + v.Fallback +
+					"; tools that bypass HOME still read the real credential files", Fix: fix}}
+			case v.Mode == "home":
+				return []Finding{{Outcome: Warn, Message: "run.fs-view is home: tools that bypass HOME still read the real credential files",
+					Fix: "set run.fs-view: auto where the host allows user namespaces"}}
+			case v.Mode == "off":
+				return []Finding{{Outcome: Warn, Message: "run.fs-view is off: real credential files in the home directory are readable from scrim run sessions",
+					Fix: "set run.fs-view: auto"}}
+			}
+			return nil
+		}})
+	}
 	for _, s := range r.Stores {
 		checks = append(checks, Check{Name: "store:" + s.Name, Run: func(context.Context) []Finding {
 			if !s.Reachable {
@@ -187,6 +209,9 @@ func ReportChecks(r Report) []Check {
 				fmt.Sprintf(" (%d dropped)", a.Dropped), Fix: "check the sink's endpoint in audit.sinks"}}
 		}})
 	}
+	if e := r.EBPF; e != nil {
+		checks = append(checks, Check{Name: "ebpf", Run: func(context.Context) []Finding { return ebpfFindings(e) }})
+	}
 	for _, m := range r.AgentModes {
 		checks = append(checks, Check{Name: "agent-mode:" + m.Mode, Run: func(context.Context) []Finding {
 			var fs []Finding
@@ -216,6 +241,35 @@ func ReportChecks(r Report) []Check {
 		}})
 	}
 	return checks
+}
+
+// ebpfFindings checks the eBPF mode: every covered control group attached
+// and confirmed, and something listening where the programs redirect to.
+func ebpfFindings(e *EBPF) []Finding {
+	if e.Problem != "" {
+		return []Finding{{Outcome: Fail, Message: e.Problem,
+			Fix: "use a Linux host with the unified cgroup v2 hierarchy, or the nftables transparent mode"}}
+	}
+	var fs []Finding
+	for _, c := range e.Cgroups {
+		switch c.State {
+		case "active":
+		case "unverified":
+			fs = append(fs, Finding{Outcome: Warn, Message: c.Cgroup + ": " + c.Detail,
+				Fix: "run `sudo scrim doctor` to confirm the attachment with the kernel"})
+		default:
+			fix := "run `sudo scrim ebpf attach`"
+			if !slices.Contains(e.Configured, c.Cgroup) {
+				fix += ", or `sudo scrim ebpf detach --cgroup " + c.Cgroup + "` if it is no longer wanted"
+			}
+			fs = append(fs, Finding{Outcome: Fail, Message: c.Cgroup + ": " + c.Detail, Fix: fix})
+		}
+	}
+	if len(e.Cgroups) > 0 && !e.ListenerUp {
+		fs = append(fs, Finding{Outcome: Fail, Message: e.Listener,
+			Fix: fmt.Sprintf("start scrim with proxy.transparent-listen on port %d, or set interception.ebpf.port to its port and attach again", e.Port)})
+	}
+	return fs
 }
 
 // StateLocationCheck checks a SQLite state path: its directory exists or

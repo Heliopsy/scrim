@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ func TestKubeTokensAreRedactedUntilTheyExpire(t *testing.T) {
 	if !k.prune() {
 		t.Fatal("nothing expired")
 	}
-	if h := held(); len(h) != 1 || h[forever] != (refresh.Source{}) {
+	if h := held(); len(h) != 1 || !reflect.DeepEqual(h[forever], refresh.Source{}) {
 		t.Fatalf("after expiry held %d values", len(h))
 	}
 	now = now.Add(kubeTokenTTL)

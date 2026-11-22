@@ -114,13 +114,14 @@ func New(a *app.App, o Options) (*Runtime, error) {
 	gv.Engine = a.Policy
 	g := &gv
 	svc, err := agenttools.New(agenttools.Deps{
-		Policy:    Policy{Engine: a.Policy},
+		Policy:    Policy{Engine: a.Policy, Labels: a.SecretLabels},
 		Approvals: Approvals{Gate: g, DefaultTTL: GrantDefaultTTL.Get(cfg), MaxTTL: GrantMaxTTL.Get(cfg)},
 		Catalog:   Stores{Set: a.Stores, Placeholders: o.Placeholders},
 		Store:     Stores{Set: a.Stores, Placeholders: o.Placeholders, Refreshers: a.Refreshers},
 		Auditor:   auditor,
 		Notifier:  notifier,
 		Links:     links,
+		Limits:    a.RateLimits,
 		Logger:    a.Log,
 	})
 	if err != nil {
@@ -172,6 +173,14 @@ func (r *Runtime) SetEndpoints(fn func() localapi.Endpoints) { r.api.Endpoints =
 // guard, for agent hooks (hooks-only interception). Call it before Serve.
 func (r *Runtime) SetRedactor(fn func(ctx context.Context, text []byte) (localapi.Redacted, error)) {
 	r.api.Redactor = fn
+}
+
+// SetSessionValues serves PUT /v1/sessions/self/values with fn, which adds a
+// session's project values to the redaction set, and calls ended for every
+// session the API revokes or sweeps. Call it before Serve.
+func (r *Runtime) SetSessionValues(fn func(ctx context.Context, sessionID string, values []localapi.NamedValue) error, ended func(id string)) {
+	r.api.SessionValues = fn
+	r.api.SessionEnded = ended
 }
 
 // lookupGroup resolves api.group to a group ID; empty is 0 (unchanged).

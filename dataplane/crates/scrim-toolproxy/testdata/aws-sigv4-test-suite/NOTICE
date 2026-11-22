@@ -1,0 +1,8 @@
+AWS SigV4 signing test suite, v4 cases (context.json, *-signed-request.txt,
+*-canonical-request.txt), copied unchanged from the aws-sigv4 1.6.6 crate
+(aws-signing-test-suite/v4), which takes them from the AWS CRT suite:
+https://github.com/awslabs/aws-c-auth/tree/v0.9.0/tests/aws-signing-test-suite
+
+Copyright Amazon.com, Inc. or its affiliates. Licensed under the Apache
+License, Version 2.0 (LICENSE in this directory). The credentials in these
+files are AWS's published examples, not real keys.

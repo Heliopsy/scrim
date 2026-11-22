@@ -423,10 +423,13 @@ pod ([identity.md](identity.md#store-identity-per-agent)). The agent token's aud
 ## Secrets the chart mounts
 
 The credentials the chart itself wires in are Secret slots (the shared helpers of
-`templates/_helpers.tpl`): `postgres` (key `dsn`), `admin` (key `token`, for `admin.tcp`) and
-`metrics` (key `token`). A slot's Secret is the one named in `secrets.existing.<slot>`, or an
-ExternalSecret the chart renders from `secrets.externalSecrets.data.<slot>`, or, for `metrics`
-only, a Secret the chart generates on first install and keeps (`helm.sh/resource-policy: keep`).
+`templates/_helpers.tpl`): `postgres` (key `dsn`), `admin` (key `token`, for `admin.tcp`),
+`metrics` (key `token`), `valkey` (key `password`, with `valkey.auth`), `nats` (key `token` or
+`password`, with `nats.auth`), `otlp` (key `token`, with `auditSinks.otlp.auth`), `loki` (key
+`password`, with `auditSinks.loki.auth`) and `kafka` (key `password`, with a SASL mechanism).
+A slot's Secret is the one named in `secrets.existing.<slot>`, or an ExternalSecret the chart
+renders from `secrets.externalSecrets.data.<slot>`, or, for `metrics` only, a Secret the chart
+generates on first install and keeps (`helm.sh/resource-policy: keep`).
 `secrets.keys.<slot>` renames the keys of an existing Secret. No value ever comes from values.yaml.
 Store credentials are scrim settings and take `file:` references to `secretMounts`, or better none
 at all with [store login](#store-identity).
@@ -461,6 +464,64 @@ refuses more than one replica, the HPA or `global.ha` without `postgres.enabled`
 `minReplicas` below 2. Replicas share the
 CA and the placeholder keys through their Secrets, so any replica produces and resolves the same
 placeholders.
+
+### Large deployments
+
+Past a handful of replicas, three more choices scale separately (design D9):
+
+- `events.backend: valkey` or `nats` moves the wake-ups between replicas off PostgreSQL. State stays
+  in PostgreSQL, so `postgres.enabled` is still required; the events values are only read with it.
+- `rateLimit.backend: valkey` shares one exact per-agent limit between replicas instead of one per
+  replica. The limits themselves are scrim settings in `config.ratelimit` (`agent-api`, `approvals`,
+  `asks`). It works without PostgreSQL too.
+- `auditSinks` copies the audit log to an OpenTelemetry collector, Loki or Kafka, each with its own
+  queue and backpressure policy ([state-and-observability.md](state-and-observability.md#external-audit-sinks)).
+
+What three replicas on PostgreSQL with Valkey or NATS events sustain at 1,000 concurrent streams,
+and the CPU and memory each replica used doing it, is measured by the proxy-level load test
+([state-and-observability.md](state-and-observability.md#load-test)); size `resources` and the HPA
+from those numbers and your own traffic.
+
+```yaml
+postgres:
+  enabled: true
+events:
+  backend: valkey                 # or nats, with nats.servers
+valkey:
+  addresses: ["valkey-0.valkey:6379", "valkey-1.valkey:6379"]
+  username: scrim
+  auth: true                      # password from the Secret slot valkey
+  tls: true
+rateLimit:
+  backend: valkey
+config:
+  ratelimit:
+    agent-api: {rate: 1200, burst: 200}
+auditSinks:
+  loki:
+    enabled: true
+    url: http://loki-gateway.observability
+    policy: drop                  # block refuses audited operations Loki cannot take in time
+  kafka:
+    enabled: true
+    brokers: ["kafka-0.kafka:9093"]
+    tls: true
+    saslMechanism: scram-sha-512
+    username: scrim               # password from the Secret slot kafka
+secrets:
+  existing:
+    postgres: scrim-pg
+    valkey: scrim-valkey
+    kafka: scrim-kafka
+```
+
+The chart refuses `config.valkey`, `config.nats`, `config.ratelimit.backend` and `config.audit`
+sinks (it sets them from these values), a Valkey or NATS backend without addresses, a sink without
+its endpoint, and a credential whose Secret slot is not supplied. Valkey and NATS hold nothing but
+empty wake-ups and hashed counters, so they need no persistence; Kafka should have the topic
+created beforehand with the retention the audit trail needs. With `policy: block`, size
+`queueSize` and `timeout` so that a sink restart fits in them, or audited operations are refused
+during it: that is the point of `block`, and `ScrimAuditSinkRefusing` fires when it happens.
 
 `central.autoscaling.connections` adds a Pods metric of open data plane connections per replica,
 `scrim_dataplane_connections_active` summed over its `listener` label

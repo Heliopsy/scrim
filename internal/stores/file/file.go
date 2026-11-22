@@ -211,6 +211,17 @@ func (a *Adapter) format(p string) Format {
 	return a.cfg.Format
 }
 
+// labels are a file secret's native labels: file.root (the configured
+// root), file.path (the absolute path of the file) and file.format (how its
+// content maps to fields).
+func (a *Adapter) labels(p string) map[string]string {
+	l := map[string]string{}
+	stores.SetNative(l, Kind, "root", a.cfg.Root)
+	stores.SetNative(l, Kind, "path", filepath.Join(a.cfg.Root, filepath.FromSlash(p)))
+	stores.SetNative(l, Kind, "format", string(a.format(p)))
+	return l
+}
+
 func version(fi fs.FileInfo) string {
 	return fmt.Sprintf("%d-%d", fi.ModTime().UnixNano(), fi.Size())
 }
@@ -306,6 +317,7 @@ func (a *Adapter) Read(_ context.Context, ref stores.Ref) (stores.Secret, error)
 			Fields:    names,
 			Version:   version(fi),
 			UpdatedAt: fi.ModTime().UTC(),
+			Labels:    a.labels(ref.Path),
 		},
 		Fields: fields,
 	}, nil
@@ -411,6 +423,7 @@ func (a *Adapter) List(_ context.Context, prefix stores.Ref) ([]stores.Metadata,
 			Ref:       stores.Ref{Scheme: prefix.Scheme, Path: e.path},
 			Version:   version(e.fi),
 			UpdatedAt: e.fi.ModTime().UTC(),
+			Labels:    a.labels(e.path),
 		})
 	}
 	return out, nil

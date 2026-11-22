@@ -11,7 +11,8 @@ import (
 
 // TestDocsExamplesCompile keeps the rule examples in docs/policy.md valid:
 // every YAML block is loaded and compiled, and every CEL block compiles as a
-// rule condition.
+// rule condition. A YAML block starting with "# scrim.yaml" is configuration
+// and is skipped.
 func TestDocsExamplesCompile(t *testing.T) {
 	data, err := os.ReadFile("../../docs/policy.md")
 	if err != nil {
@@ -33,6 +34,10 @@ func TestDocsExamplesCompile(t *testing.T) {
 					t.Errorf("block %d: %s: %v", i, expr, err)
 				}
 			}
+			continue
+		}
+		if strings.HasPrefix(body, "# scrim.yaml") {
+			// A configuration example, not rules.
 			continue
 		}
 		if strings.HasPrefix(strings.TrimSpace(body), "- ") {

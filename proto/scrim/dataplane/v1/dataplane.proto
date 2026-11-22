@@ -149,6 +149,12 @@ message Snapshot {
   // forwarding it as text. The redaction core ignores them. An entry whose
   // reference or name also has a value in `values` is ignored.
   repeated ValueEntry unavailable = 12;
+  // value_labels says every entry's `labels` holds each label of that value
+  // a condition of `policy` reads (docs/policy.md "Labels from stores"), and
+  // only those: a key missing from an entry is missing on the value, and an
+  // empty map is a value without such labels. False (an older control
+  // plane) means no labels were sent, and `secret.labels` is unknown.
+  bool value_labels = 13;
 }
 
 // CaCertificate is one generation of the tool-proxy CA.
@@ -277,6 +283,42 @@ message ValueEntry {
   repeated string inject_locations = 11;
   // allow_plaintext_http also injects over plain `http://`. Weakening.
   bool allow_plaintext_http = 12;
+  // aws_sigv4 marks a credential holding an AWS secret access key: the tool
+  // proxy re-signs requests whose SigV4 access key id is a placeholder of
+  // the credential named by `access_key_id_ref`, after checking they were
+  // signed with this credential's placeholder (credential-injection spec,
+  // "Re-signing for signed request protocols"). Absent, no re-signing.
+  AwsSigV4 aws_sigv4 = 13;
+  // placeholder_format selects the placeholder form: empty for the bracket
+  // form, `shape` for a format-preserving placeholder that keeps the
+  // value's known prefix, length and alphabet (redaction spec
+  // "Format-preserving placeholders"). Credentials only; a value whose shape
+  // cannot be derived keeps the bracket form.
+  string placeholder_format = 14;
+  // client_certificate marks a credential whose value is a PEM client
+  // certificate chain and private key. The tool proxy presents it in the
+  // upstream TLS handshake toward the bound hosts when the agent presents
+  // the credential's placeholder certificate (credential-injection spec,
+  // "Client certificates toward upstreams").
+  bool client_certificate = 15;
+  // labels are the value's labels (docs/policy.md "Labels from stores": the
+  // store's native labels, the generic `store.*` labels and the instance's
+  // derived labels) that a condition of the snapshot's policy reads, so a
+  // policy without label conditions sends none. Metadata only, never a
+  // value. Meaningful only with `Snapshot.value_labels`.
+  map<string, string> labels = 16;
+}
+
+// AwsSigV4 binds an AWS secret access key to its access key id and to the
+// regions and services a request's credential scope may name.
+message AwsSigV4 {
+  // access_key_id_ref is the reference of the entry holding the access key
+  // id that goes with this secret.
+  string access_key_id_ref = 1;
+  // regions the credential scope may name. Empty allows every region.
+  repeated string regions = 2;
+  // services the credential scope may name (`s3`, `sts`). Empty allows all.
+  repeated string services = 3;
 }
 
 // CaptureRule stores a value an API returns (a newly created token) under

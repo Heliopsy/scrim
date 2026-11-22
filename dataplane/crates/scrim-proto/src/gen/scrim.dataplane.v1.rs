@@ -84,6 +84,13 @@ pub struct Snapshot {
     /// reference or name also has a value in `values` is ignored.
     #[prost(message, repeated, tag = "12")]
     pub unavailable: ::prost::alloc::vec::Vec<ValueEntry>,
+    /// value_labels says every entry's `labels` holds each label of that value
+    /// a condition of `policy` reads (docs/policy.md "Labels from stores"), and
+    /// only those: a key missing from an entry is missing on the value, and an
+    /// empty map is a value without such labels. False (an older control
+    /// plane) means no labels were sent, and `secret.labels` is unknown.
+    #[prost(bool, tag = "13")]
+    pub value_labels: bool,
 }
 /// CaCertificate is one generation of the tool-proxy CA.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -149,7 +156,7 @@ pub struct RestoreSettings {
     #[prost(string, repeated, tag = "5")]
     pub reveal_credential_refs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 #[prost(skip_debug)]
 pub struct ValueEntry {
     /// ref is the store reference the value was read from, for example
@@ -194,6 +201,52 @@ pub struct ValueEntry {
     /// allow_plaintext_http also injects over plain `<http://`.> Weakening.
     #[prost(bool, tag = "12")]
     pub allow_plaintext_http: bool,
+    /// aws_sigv4 marks a credential holding an AWS secret access key: the tool
+    /// proxy re-signs requests whose SigV4 access key id is a placeholder of
+    /// the credential named by `access_key_id_ref`, after checking they were
+    /// signed with this credential's placeholder (credential-injection spec,
+    /// "Re-signing for signed request protocols"). Absent, no re-signing.
+    #[prost(message, optional, tag = "13")]
+    pub aws_sigv4: ::core::option::Option<AwsSigV4>,
+    /// placeholder_format selects the placeholder form: empty for the bracket
+    /// form, `shape` for a format-preserving placeholder that keeps the
+    /// value's known prefix, length and alphabet (redaction spec
+    /// "Format-preserving placeholders"). Credentials only; a value whose shape
+    /// cannot be derived keeps the bracket form.
+    #[prost(string, tag = "14")]
+    pub placeholder_format: ::prost::alloc::string::String,
+    /// client_certificate marks a credential whose value is a PEM client
+    /// certificate chain and private key. The tool proxy presents it in the
+    /// upstream TLS handshake toward the bound hosts when the agent presents
+    /// the credential's placeholder certificate (credential-injection spec,
+    /// "Client certificates toward upstreams").
+    #[prost(bool, tag = "15")]
+    pub client_certificate: bool,
+    /// labels are the value's labels (docs/policy.md "Labels from stores": the
+    /// store's native labels, the generic `store.*` labels and the instance's
+    /// derived labels) that a condition of the snapshot's policy reads, so a
+    /// policy without label conditions sends none. Metadata only, never a
+    /// value. Meaningful only with `Snapshot.value_labels`.
+    #[prost(map = "string, string", tag = "16")]
+    pub labels: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+/// AwsSigV4 binds an AWS secret access key to its access key id and to the
+/// regions and services a request's credential scope may name.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AwsSigV4 {
+    /// access_key_id_ref is the reference of the entry holding the access key
+    /// id that goes with this secret.
+    #[prost(string, tag = "1")]
+    pub access_key_id_ref: ::prost::alloc::string::String,
+    /// regions the credential scope may name. Empty allows every region.
+    #[prost(string, repeated, tag = "2")]
+    pub regions: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// services the credential scope may name (`s3`, `sts`). Empty allows all.
+    #[prost(string, repeated, tag = "3")]
+    pub services: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 /// CaptureRule stores a value an API returns (a newly created token) under
 /// `store_ref` and hands the agent its placeholder instead.

@@ -7,6 +7,10 @@ credentials:
     required: true
 params:
   namespace: default
+  # scrim: each user is an exec credential plugin (scrim credential-helper
+  # kubectl) printing the placeholder token, and the kubeconfig holds no
+  # token. "" writes the placeholder token into the kubeconfig.
+  helper: ""
 env:
   KUBECONFIG: '{{ path "kubeconfig" }}'
 files:
@@ -26,7 +30,16 @@ files:
       {{- range $cs }}{{ if .Host }}
       - name: {{ .Name }}
         user:
+          {{- if param "helper" }}
+          exec:
+            apiVersion: client.authentication.k8s.io/v1
+            command: {{ json scrim }}
+            args: [credential-helper, kubectl, --token, {{ json .Placeholder }}]
+            interactiveMode: Never
+            provideClusterInfo: false
+          {{- else }}
           token: {{ .Placeholder }}
+          {{- end }}
       {{- end }}{{ end }}
       contexts:
       {{- range $cs }}{{ if .Host }}
