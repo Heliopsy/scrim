@@ -18,9 +18,10 @@
 //! That form resolves like the placeholder and the guard reads through it. In the request target
 //! the same bytes come out of the target's own percent-encoding.
 //!
-//! Only the agent's own provider credentials ([`PASSTHROUGH`]) are forwarded untouched: they
-//! skip both checks, as the spec requires, and capture masks them. Every other header is
-//! redacted, known or not (design D4 applied to headers).
+//! Only the agent's own provider credentials ([`PASSTHROUGH`], and on a Gemini route the `key`
+//! query parameter, [`crate::Provider::query_credentials`]) are forwarded untouched: they skip
+//! both checks, as the spec requires, and capture masks them. Every other header and query
+//! parameter is redacted, known or not (design D4 applied to headers).
 
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 
@@ -31,7 +32,7 @@ use crate::error::Refusal;
 /// Request headers forwarded byte for byte, never redacted or guarded: the agent's own provider
 /// authentication. Capture masks them (they are not in [`crate::capture::RECORDED_HEADERS`])
 /// and nothing logs header values.
-pub const PASSTHROUGH: &[&str] = &["authorization", "x-api-key"];
+pub const PASSTHROUGH: &[&str] = &["authorization", "x-api-key", "x-goog-api-key"];
 
 /// What the head checks did.
 #[derive(Debug, Default)]
@@ -74,6 +75,20 @@ pub fn prepare(
     query: Option<&str>,
     headers: &mut HeaderMap,
 ) -> Result<Head, Refusal> {
+    prepare_with(snap, method, path, query, headers, &[])
+}
+
+/// [`prepare`], forwarding the values of the query parameters named in `query_credentials`
+/// (the agent's own provider credential, matched on the raw key) untouched: they are neither
+/// redacted nor guarded.
+pub fn prepare_with(
+    snap: &Snapshot,
+    method: &http::Method,
+    path: &str,
+    query: Option<&str>,
+    headers: &mut HeaderMap,
+    query_credentials: &[&str],
+) -> Result<Head, Refusal> {
     let mut head = Head::default();
 
     // Request target: redact each component, raw then decoded.
@@ -82,35 +97,25 @@ pub fn prepare(
         .split(|&b| b == b'/')
         .map(|s| redact_component(snap, s, Syntax::Path, &mut head.report))
         .collect::<Result<_, _>>()?;
-    let mut pairs: Vec<(Vec<u8>, Option<Vec<u8>>)> = match query {
+    let mut pairs = match query {
         None => Vec::new(),
-        Some(q) => q
-            .as_bytes()
-            .split(|&b| b == b'&')
-            .map(|p| {
-                let (k, v) = match memchr::memchr(b'=', p) {
-                    Some(i) => (&p[..i], Some(&p[i + 1..])),
-                    None => (p, None),
-                };
-                let k = redact_component(snap, k, Syntax::Query, &mut head.report)?;
-                let v = v
-                    .map(|v| redact_component(snap, v, Syntax::Query, &mut head.report))
-                    .transpose()?;
-                Ok((k, v))
-            })
-            .collect::<Result<_, Refusal>>()?,
+        Some(q) => redact_query(snap, q, query_credentials, &mut head.report)?,
     };
-    if !target_clean(snap, method, &segs, query.is_some(), &pairs)? {
+    let creds = query_credentials;
+    if !target_clean(snap, method, &segs, query.is_some(), &pairs, creds)? {
         for s in &mut segs {
             guard_component(snap, s, Syntax::Path, &mut head)?;
         }
         for (k, v) in &mut pairs {
+            if is_credential(k, creds) {
+                continue;
+            }
             guard_component(snap, k, Syntax::Query, &mut head)?;
             if let Some(v) = v {
                 guard_component(snap, v, Syntax::Query, &mut head)?;
             }
         }
-        if !target_clean(snap, method, &segs, query.is_some(), &pairs)? {
+        if !target_clean(snap, method, &segs, query.is_some(), &pairs, creds)? {
             return Err(guard_refused(Vec::new()));
         }
     }
@@ -302,14 +307,68 @@ fn readings(cur: &[u8], syn: Syntax) -> &'static [bool] {
     }
 }
 
-/// One guard pass over the exact request line and over the decoded query and path.
+/// A query key and its value, if it has one.
+type QueryPair = (Vec<u8>, Option<Vec<u8>>);
+
+/// Splits `query` into pairs and redacts each key and value, credential values excepted.
+fn redact_query(
+    snap: &Snapshot,
+    query: &str,
+    creds: &[&str],
+    report: &mut RedactReport,
+) -> Result<Vec<QueryPair>, Refusal> {
+    query
+        .as_bytes()
+        .split(|&b| b == b'&')
+        .map(|p| {
+            let (k, v) = match memchr::memchr(b'=', p) {
+                Some(i) => (&p[..i], Some(&p[i + 1..])),
+                None => (p, None),
+            };
+            if is_credential(k, creds) {
+                return Ok((k.to_vec(), v.map(<[u8]>::to_vec)));
+            }
+            let k = redact_component(snap, k, Syntax::Query, report)?;
+            let v = v
+                .map(|v| redact_component(snap, v, Syntax::Query, report))
+                .transpose()?;
+            Ok((k, v))
+        })
+        .collect()
+}
+
+/// Whether the raw query key `k` names a credential parameter.
+fn is_credential(k: &[u8], creds: &[&str]) -> bool {
+    creds.iter().any(|c| c.as_bytes() == k)
+}
+
+/// One guard pass over the exact request line and over the decoded query and path, the values
+/// of credential parameters excepted.
 fn target_clean(
     snap: &Snapshot,
     method: &http::Method,
     segs: &[Vec<u8>],
     has_query: bool,
     pairs: &[(Vec<u8>, Option<Vec<u8>>)],
+    creds: &[&str],
 ) -> Result<bool, Refusal> {
+    let masked;
+    let pairs = if pairs.iter().any(|(k, _)| is_credential(k, creds)) {
+        masked = pairs
+            .iter()
+            .map(|(k, v)| {
+                let v = if is_credential(k, creds) {
+                    v.as_ref().map(|_| Vec::new())
+                } else {
+                    v.clone()
+                };
+                (k.clone(), v)
+            })
+            .collect::<Vec<_>>();
+        &masked[..]
+    } else {
+        pairs
+    };
     let path = segs.join(&b'/');
     let mut line = Vec::with_capacity(path.len() + 64);
     line.extend_from_slice(method.as_str().as_bytes());
@@ -691,5 +750,45 @@ mod tests {
         assert_eq!(encode(b"a b/+~"), b"a%20b%2F%2B~");
         assert_eq!(escape("x\u{27e6}#".as_bytes()), b"x%E2%9F%A6%23");
         assert_eq!(escape(b"%41&b=c"), b"%41&b=c");
+    }
+
+    #[test]
+    fn gemini_query_key_and_header_pass_through() {
+        let fx = fx();
+        let enc = encode(V.as_bytes());
+        let enc = std::str::from_utf8(&enc).unwrap();
+        let q = format!("alt=sse&key={enc}&trace={enc}");
+        let mut h = headers(&[("x-goog-api-key", V)]);
+        let head = prepare_with(
+            &fx.snapshot(),
+            &http::Method::POST,
+            "/v1beta/models/m:streamGenerateContent",
+            Some(&q),
+            &mut h,
+            &["key"],
+        )
+        .unwrap();
+        let fq = head.query.unwrap();
+        assert!(fq.starts_with(&format!("alt=sse&key={enc}&trace=")), "{fq}");
+        assert!(!fq[fq.find("trace=").unwrap()..].contains(enc));
+        assert_eq!(h["x-goog-api-key"].as_bytes(), V.as_bytes());
+
+        // Without the route's credential list the key is ordinary content.
+        let mut h = HeaderMap::new();
+        let head = run(&fx, "/v1beta/models/m:generateContent", Some(&q), &mut h).unwrap();
+        assert!(!head.query.unwrap().contains(enc));
+
+        // Only the exact key: `KEY` or `key2` are redacted.
+        let q = format!("KEY={enc}&key2={enc}");
+        let head = prepare_with(
+            &fx.snapshot(),
+            &http::Method::POST,
+            "/x",
+            Some(&q),
+            &mut HeaderMap::new(),
+            &["key"],
+        )
+        .unwrap();
+        assert!(!head.query.unwrap().contains(enc));
     }
 }

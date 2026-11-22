@@ -23,14 +23,28 @@ pub enum Provider {
     /// `OpenAI`: Chat Completions on `/chat/completions`, Responses on `/responses` and
     /// `/responses/compact`.
     Openai,
+    /// Google Gemini API: `generateContent`, `streamGenerateContent` and `countTokens` on
+    /// paths ending in `:<method>`.
+    Gemini,
 }
 
 impl Provider {
-    /// The provider's name in policy rules (`provider`): `anthropic` or `openai`.
+    /// The provider's name in policy rules (`provider`): `anthropic`, `openai` or `gemini`.
     pub fn name(self) -> &'static str {
         match self {
             Provider::Anthropic => "anthropic",
             Provider::Openai => "openai",
+            Provider::Gemini => "gemini",
+        }
+    }
+
+    /// Query parameters that carry the agent's own provider credential (the Gemini API's
+    /// `key`). They are forwarded untouched, like the credential headers in
+    /// [`crate::head::PASSTHROUGH`], and masked in captures.
+    pub fn query_credentials(self) -> &'static [&'static str] {
+        match self {
+            Provider::Gemini => &["key"],
+            Provider::Anthropic | Provider::Openai => &[],
         }
     }
 
@@ -52,6 +66,7 @@ impl Provider {
             {
                 Api::OpenAiResponses
             }
+            Provider::Gemini if crate::codec::gemini::is_gemini_method(path) => Api::Gemini,
             _ => Api::Generic,
         }
     }
@@ -219,10 +234,12 @@ impl ProxyConfig {
     }
 }
 
-/// `/anthropic` to `https://api.anthropic.com` and `/openai` to `https://api.openai.com`.
+/// `/anthropic` to `https://api.anthropic.com`, `/openai` to `https://api.openai.com` and
+/// `/gemini` to `https://generativelanguage.googleapis.com`.
 ///
-/// Agents use base URLs such as `ANTHROPIC_BASE_URL=http://127.0.0.1:9790/anthropic` and
-/// `OPENAI_BASE_URL=http://127.0.0.1:9790/openai/v1`.
+/// Agents use base URLs such as `ANTHROPIC_BASE_URL=http://127.0.0.1:9790/anthropic`,
+/// `OPENAI_BASE_URL=http://127.0.0.1:9790/openai/v1` and
+/// `GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:9790/gemini`.
 pub fn default_routes() -> Vec<RouteConfig> {
     vec![
         RouteConfig {
@@ -242,6 +259,15 @@ pub fn default_routes() -> Vec<RouteConfig> {
             strip_prefix: true,
             chain: None,
             hosts: vec!["api.openai.com".into()],
+        },
+        RouteConfig {
+            name: "gemini".into(),
+            prefix: "/gemini".into(),
+            upstream: "https://generativelanguage.googleapis.com".into(),
+            provider: Provider::Gemini,
+            strip_prefix: true,
+            chain: None,
+            hosts: vec!["generativelanguage.googleapis.com".into()],
         },
         // Codex signed in with a ChatGPT account: the Responses API at
         // /backend-api/codex/responses, other backend paths redacted as generic JSON.
@@ -304,6 +330,33 @@ mod tests {
             Api::OpenAiResponses
         );
         assert_eq!(Provider::Openai.api_for(&p, "/v1/embeddings"), Api::Generic);
+        assert_eq!(
+            Provider::Gemini.api_for(&p, "/v1beta/models/gemini-2.5-pro:generateContent"),
+            Api::Gemini
+        );
+        assert_eq!(
+            Provider::Gemini.api_for(&p, "/v1beta/models/gemini-2.5-pro:streamGenerateContent"),
+            Api::Gemini
+        );
+        assert_eq!(
+            Provider::Gemini.api_for(&p, "/v1beta/models/gemini-2.5-pro:countTokens"),
+            Api::Gemini
+        );
+        assert_eq!(
+            Provider::Gemini.api_for(&p, "/v1beta/models/text-embedding-004:embedContent"),
+            Api::Generic
+        );
+        assert_eq!(
+            Provider::Gemini.api_for(
+                &http::Method::GET,
+                "/v1beta/models/gemini-2.5-pro:generateContent"
+            ),
+            Api::Generic
+        );
+        assert_eq!(
+            Provider::Openai.api_for(&p, "/v1beta/models/gemini-2.5-pro:generateContent"),
+            Api::Generic
+        );
         // ChatGPT backend (Codex signed in with ChatGPT).
         assert_eq!(
             Provider::Openai.api_for(&p, "/backend-api/codex/responses"),

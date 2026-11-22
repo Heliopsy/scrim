@@ -25,9 +25,9 @@
 //! [`Snapshot`] that is swapped atomically. Start with [`Proxy::new`] and one of the `serve_*`
 //! functions in [`server`].
 //!
-//! Supported APIs: Anthropic Messages, `OpenAI` Chat Completions and `OpenAI` Responses, streaming
-//! and not. Other paths on a provider route are forwarded with the whole body redacted and the
-//! response passed through.
+//! Supported APIs: Anthropic Messages, `OpenAI` Chat Completions, `OpenAI` Responses and Gemini
+//! `generateContent`, streaming and not. Other paths on a provider route are forwarded with the
+//! whole body redacted and the response passed through.
 
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
@@ -45,6 +45,7 @@ pub mod head;
 #[cfg(feature = "intercept")]
 pub mod intercept;
 pub mod json;
+mod jsonarray;
 pub mod metrics;
 pub mod outgoing;
 pub mod proxy;
