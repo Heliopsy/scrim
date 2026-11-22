@@ -45,7 +45,7 @@ const (
 	RecordPath = "/run/scrim-ebpf/attachments.json"
 	// DefaultPort is the transparent listener's default port (the one
 	// scrim install --transparent sets on 127.0.0.1 and ::1).
-	DefaultPort = 9792
+	DefaultPort = 9793
 )
 
 // Hooks are the program names in bpf/redirect.c, in attach order.
