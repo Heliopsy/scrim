@@ -154,8 +154,11 @@ func TestMetricsEnabledControlPlane(t *testing.T) {
 	var page string
 	eventually(t, "the ask counted", func() bool {
 		_, page = scrapeMetrics(t, addr, "/scrape", scrapeToken)
+		// The counter and the histogram are updated one after the other, so
+		// wait for both before checking the page.
 		v, ok := sample(page, "scrim_asks_total", map[string]string{"outcome": "deny"})
-		return ok && v >= 1
+		n, hok := sample(page, "scrim_ask_duration_seconds_count", map[string]string{"outcome": "deny"})
+		return ok && v >= 1 && hok && n >= 1
 	})
 	for _, c := range []struct {
 		name   string
