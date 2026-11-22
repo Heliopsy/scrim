@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -215,18 +216,17 @@ func installedAgentModes(cfg *config.Config) []status.AgentMode {
 	return out
 }
 
+// openStateForStatus opens the state backend for a report. A SQLite file is
+// opened read-only, without the process lock, so status never stops a scrim
+// starting at the same moment from opening it, and a missing file is
+// reported, not created.
 func openStateForStatus(ctx context.Context, cfg *config.Config) (status.StateOf, func()) {
 	name := state.BackendSetting.Get(cfg)
+	if name == sqlite.Name {
+		return openSQLiteForStatus(ctx, cfg)
+	}
 	s, err := state.Open(ctx, cfg)
-	var locked *sqlite.LockedError
-	switch {
-	case errors.As(err, &locked):
-		holder := "another process"
-		if locked.PID > 0 {
-			holder = fmt.Sprintf("scrim process %d", locked.PID)
-		}
-		return status.StateOf{Name: name, Info: locked.Path + " is in use by " + holder}, func() {}
-	case err != nil:
+	if err != nil {
 		return status.StateOf{Name: name, Err: err}, func() {}
 	}
 	if err := s.Migrate(ctx); err != nil {
@@ -234,6 +234,25 @@ func openStateForStatus(ctx context.Context, cfg *config.Config) (status.StateOf
 		return status.StateOf{Name: name, Err: err}, func() {}
 	}
 	return status.StateOf{Store: s}, func() { _ = s.Close() }
+}
+
+func openSQLiteForStatus(ctx context.Context, cfg *config.Config) (status.StateOf, func()) {
+	path, err := sqlite.PathFor(cfg)
+	if err != nil {
+		return status.StateOf{Name: sqlite.Name, Err: err}, func() {}
+	}
+	s, err := sqlite.OpenReadOnly(ctx, path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return status.StateOf{Name: sqlite.Name, Location: path, Info: "not created yet; scrim creates it when it first starts"}, func() {}
+	case err != nil:
+		return status.StateOf{Name: sqlite.Name, Location: path, Err: err}, func() {}
+	}
+	var info string
+	if pid := sqlite.Holder(s.Path()); pid > 0 {
+		info = fmt.Sprintf("%s is in use by scrim process %d", s.Path(), pid)
+	}
+	return status.StateOf{Store: s, Info: info}, func() { _ = s.Close() }
 }
 
 // staticStores is store health already collected by the daemon.
