@@ -7,6 +7,7 @@ value back.
 | Store | Kind | Guide |
 | ------- | ------ | ------- |
 | OpenBao (and Vault-compatible KV v2) | `openbao` | [openbao.md](openbao.md) |
+| HashiCorp Vault (KV v1 and v2, dynamic secrets) | `vault` | [vault.md](vault.md) |
 | Infisical | `infisical` | [infisical.md](infisical.md) |
 | Bitwarden Secrets Manager | `bws` | [bws.md](bws.md) |
 | Google Secret Manager | `gcpsm` | [gcp.md](gcp.md) |
@@ -23,6 +24,7 @@ support is refused before anything is attempted.
 | Kind        | read | list | watch | write | generate | dynamic |
 |-------------|------|------|-------|-------|----------|---------|
 | `openbao`   | yes  | yes  | yes   | yes   | no       | no      |
+| `vault`     | yes  | yes  | yes   | yes   | no       | yes     |
 | `infisical` | yes  | yes  | yes   | yes   | no       | no      |
 | `bws`       | yes  | yes  | yes   | yes   | no       | no      |
 | `gcpsm`     | yes  | yes  | yes   | yes   | no       | no      |

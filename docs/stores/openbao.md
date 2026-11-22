@@ -1,10 +1,10 @@
 # OpenBao
 
 The `openbao` adapter reads, lists, watches and writes secrets in an OpenBao KV version 2 secrets
-engine. It also works with HashiCorp Vault's KV v2 engine, though Vault's own features
-(namespaces aside) get a separate `vault` adapter later. Authentication is by token, by AppRole, or
-in a Kubernetes cluster by the scrim pod's own service account
-([Kubernetes auth](#kubernetes-auth)), so no static store credential exists in the cluster.
+engine. It also works with HashiCorp Vault's KV v2 engine; for Vault's own features (KV v1, JWT
+auth, dynamic secrets) use the [`vault` adapter](vault.md), which shares this one's client.
+Authentication is by token, by AppRole, or in a Kubernetes cluster by the scrim pod's own service
+account ([Kubernetes auth](#kubernetes-auth)), so no static store credential exists in the cluster.
 
 ## References
 

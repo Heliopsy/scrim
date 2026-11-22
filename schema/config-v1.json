@@ -1950,6 +1950,10 @@
             "type": "string",
             "x-scrim-secret-ref": true
           },
+          "jwt": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          },
           "labels": {
             "additionalProperties": {
               "anyOf": [
