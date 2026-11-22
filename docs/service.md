@@ -319,9 +319,14 @@ kernel in qemu with a Debian root file system built by podman and systemd as PID
 same disk twice. First boot: snapshot, a dry run as an unprivileged user (prints the unit, changes
 nothing), an unprivileged install (refused), the install, the unit active and enabled, the control
 group verified attached with the kernel, the drop-in's listener on `127.0.0.1:9793` and
-`[::1]:9793`, connections of `agents.slice` to ports 80 and 443 of a stand-in provider landing on
-port 9793 and failing when nothing listens there, a process outside the slice untouched. Second
-boot: the unit attached again before `scrim.service` started, the redirect still in place, then
+`[::1]:9793`. An agent in `agents.slice` with no scrim configuration then runs curl against
+`https://api.anthropic.com`, which resolves to a stand-in provider: scrim's transparent listener
+gets the connection with its original destination, and scrim's upstream receives the request with
+a placeholder where the generated secret was. Plain HTTP by address to ports 80 and 443 is
+refused, connections made straight to the listener's port from outside the slice (no original
+destination) are closed, the agent fails while scrim is stopped, the stand-in provider is never
+reached directly, and a process outside the slice is untouched. Second boot: the unit attached
+again before `scrim.service` started, the agent still redacted through scrim, then
 `uninstall --purge` (no unit, no pins, nothing recorded, the slice reaches the stand-in directly
 again), the file system identical to the snapshot, and a second uninstall that does nothing.
 
@@ -330,8 +335,5 @@ again), the file system identical to the snapshot, and a second uninstall that d
 - Firefox profiles; Firefox uses its own store unless `security.enterprise_roots.enabled` is set.
 - Managed agent settings (task 13.4); install will record those the same way.
 - Transparent mode, eBPF and the DNS override on a Quadlet install: they need the system unit.
-- An eBPF-redirected connection is closed by scrim's transparent listener until tasks.md 15.1b:
-  covered control groups fail closed rather than being redacted (see
-  [interception.md](interception.md), "Variant: eBPF cgroup hooks").
 - A launch agent on macOS.
 - Quadlet runs in the unit tests only; the VM test covers the system and user units.

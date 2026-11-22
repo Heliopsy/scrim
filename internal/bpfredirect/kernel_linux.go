@@ -20,11 +20,13 @@ import (
 
 // attachTypes maps each hook to its cgroup attach type.
 var attachTypes = map[string]ebpf.AttachType{
-	"connect4": ebpf.AttachCGroupInet4Connect,
-	"connect6": ebpf.AttachCGroupInet6Connect,
-	"sendmsg4": ebpf.AttachCGroupUDP4Sendmsg,
-	"sendmsg6": ebpf.AttachCGroupUDP6Sendmsg,
-	"egress":   ebpf.AttachCGroupInetEgress,
+	"connect4":   ebpf.AttachCGroupInet4Connect,
+	"connect6":   ebpf.AttachCGroupInet6Connect,
+	"sendmsg4":   ebpf.AttachCGroupUDP4Sendmsg,
+	"sendmsg6":   ebpf.AttachCGroupUDP6Sendmsg,
+	"sockops":    ebpf.AttachCGroupSockOps,
+	"egress":     ebpf.AttachCGroupInetEgress,
+	"getsockopt": ebpf.AttachCGroupGetsockopt,
 }
 
 // Loader attaches and detaches the programs. The zero value works on the
@@ -142,16 +144,26 @@ func (l Loader) Attach(cgroup string, port int) (Attachment, error) {
 			return a, refused("removing the previous attachment "+old.PinDir, err)
 		}
 		if old.CgroupID == id {
-			if err := waitDetached(dir, old.Programs); err != nil {
+			if err := waitDetached(dir, Hooks, old.Programs); err != nil {
 				return a, err
 			}
+		}
+		if err := waitDetached(l.CgroupRoot, ListenerHooks, old.Programs); err != nil {
+			return a, err
 		}
 	}
 	return a, nil
 }
 
 func (l Loader) attachAll(coll *ebpf.Collection, dir string, a *Attachment) error {
-	for _, h := range Hooks {
+	if err := attachHooks(coll, dir, Hooks, a); err != nil {
+		return err
+	}
+	return attachHooks(coll, l.CgroupRoot, ListenerHooks, a)
+}
+
+func attachHooks(coll *ebpf.Collection, dir string, hooks []string, a *Attachment) error {
+	for _, h := range hooks {
 		prog := coll.Programs["scrim_"+h]
 		if prog == nil {
 			return fmt.Errorf("program scrim_%s missing from the embedded object", h)
@@ -208,9 +220,12 @@ func (l Loader) Detach(cgroup string) error {
 			return refused("removing "+a.PinDir, err)
 		}
 		if id, err := cgroupID(dir); err == nil && id == a.CgroupID {
-			if err := waitDetached(dir, a.Programs); err != nil {
+			if err := waitDetached(dir, Hooks, a.Programs); err != nil {
 				return err
 			}
+		}
+		if err := waitDetached(l.CgroupRoot, ListenerHooks, a.Programs); err != nil {
+			return err
 		}
 	}
 	// Pins of this control group the record lost track of.
@@ -257,9 +272,10 @@ func unpinDir(dir string) error {
 // is removed after an RCU grace period, not during the unlink.
 const detachTimeout = 10 * time.Second
 
-// waitDetached waits until none of programs is attached to the control
-// group any more, so Detach returning means the programs no longer apply.
-func waitDetached(dir string, programs map[string]uint32) error {
+// waitDetached waits until none of the programs of hooks is attached to the
+// control group any more, so Detach returning means the programs no longer
+// apply.
+func waitDetached(dir string, hooks []string, programs map[string]uint32) error {
 	deadline := time.Now().Add(detachTimeout)
 	for {
 		got, err := queryKernel(dir)
@@ -267,8 +283,8 @@ func waitDetached(dir string, programs map[string]uint32) error {
 			return fmt.Errorf("confirming the detach of %s: %w", dir, err)
 		}
 		left := ""
-		for _, h := range Hooks {
-			if slices.Contains(got[h], programs[h]) {
+		for _, h := range hooks {
+			if id, ok := programs[h]; ok && slices.Contains(got[h], id) {
 				left = h
 				break
 			}
@@ -303,7 +319,8 @@ func cgroupID(dir string) (uint64, error) {
 	return st.Ino, nil
 }
 
-// queryKernel lists the programs attached directly to a control group.
+// queryKernel lists the programs attached directly to a control group, for
+// every hook the loader uses.
 func queryKernel(dir string) (map[string][]uint32, error) {
 	f, err := os.Open(dir) // #nosec G304 -- a control group directory
 	if err != nil {
@@ -311,7 +328,7 @@ func queryKernel(dir string) (map[string][]uint32, error) {
 	}
 	defer func() { _ = f.Close() }()
 	out := map[string][]uint32{}
-	for _, h := range Hooks {
+	for _, h := range slices.Concat(Hooks, ListenerHooks) {
 		res, err := link.QueryPrograms(link.QueryOptions{Target: int(f.Fd()), Attach: attachTypes[h]}) // #nosec G115 -- an fd
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", h, err)

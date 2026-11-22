@@ -252,6 +252,28 @@ be affected.
 - **WHEN** a process in a covered control group sends a UDP datagram to port 443 of a provider
 - **THEN** the send fails and nothing reaches the provider
 
+### Requirement: eBPF original destination
+
+The transparent listener SHALL read the original destination of an eBPF-redirected connection
+through `SO_ORIGINAL_DST`, as after an nftables redirect. Only the eBPF programs SHALL write the
+per-connection record, which SHALL be bounded and removed when the connection closes. A connection
+without a record SHALL be closed.
+
+#### Scenario: Covered agent redacted through the transparent listener
+
+- **WHEN** an agent in a covered control group sends a provider request carrying a secret value to the provider's host name
+- **THEN** the transparent listener reads the provider address as the original destination and the provider receives the request with a placeholder instead of the value
+
+#### Scenario: Connection to the listener that was not redirected
+
+- **WHEN** a process outside the covered control groups connects straight to the transparent listener's port, or a redirected connection's record is missing
+- **THEN** the listener gets no original destination, closes the connection, and nothing reaches the provider
+
+#### Scenario: Records go with their connections
+
+- **WHEN** redirected connections close, whichever side closes first
+- **THEN** no record of them is left
+
 ### Requirement: eBPF egress denial
 
 Independently of the redirect, any TCP packet to port 80 or 443 or UDP packet to port 443 that

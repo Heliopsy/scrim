@@ -108,8 +108,9 @@ func ebpfAttach(e *Env) *cobra.Command {
 			w := cmd.OutOrStdout()
 			for _, cg := range cgs {
 				_, _ = fmt.Fprintf(w, "+ attach %s to %s/%s: TCP 80 and 443 of other hosts to 127.0.0.1:%d and [::1]:%d, "+
-					"UDP 443 refused, other egress to those ports dropped\n",
-					strings.Join(bpfredirect.Hooks, ", "), bpfredirect.CgroupRoot, cg, port, port)
+					"UDP 443 refused, other egress to those ports dropped; %s to %s: the listener's SO_ORIGINAL_DST for them\n",
+					strings.Join(bpfredirect.Hooks, ", "), bpfredirect.CgroupRoot, cg, port, port,
+					strings.Join(bpfredirect.ListenerHooks, ", "), bpfredirect.CgroupRoot)
 				a, err := ebpfLoader.Attach(cg, port)
 				if err != nil {
 					return err
