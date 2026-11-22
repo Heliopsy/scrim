@@ -5,8 +5,12 @@
 // attaches the programs in bpf/redirect.c to selected cgroup v2 control
 // groups, which rewrites their TCP connections to ports 80 and 443 to scrim's
 // transparent listener on loopback and denies their direct and QUIC egress.
-// The programs only move traffic; TLS interception happens in the listener,
-// routed by server name, so no original-destination lookup is needed.
+// The programs only move traffic; TLS interception happens in the listener.
+// The listener reads each connection's original destination with
+// SO_ORIGINAL_DST, as it does after an nftables redirect: a sockops program
+// in the covered control group records it per connection, and a getsockopt
+// program on the root control group answers the listener's query from that
+// record (see bpf/redirect.c). A connection with no record is closed.
 //
 // Attachments are bpf_links pinned under /sys/fs/bpf/scrim, so they outlive
 // the loader and scrim itself: while scrim is stopped, redirected
@@ -48,8 +52,15 @@ const (
 	DefaultPort = 9793
 )
 
-// Hooks are the program names in bpf/redirect.c, in attach order.
-var Hooks = []string{"connect4", "connect6", "sendmsg4", "sendmsg6", "egress"}
+// Hooks are the programs in bpf/redirect.c attached to each covered control
+// group, in attach order.
+var Hooks = []string{"connect4", "connect6", "sendmsg4", "sendmsg6", "sockops", "egress"}
+
+// ListenerHooks are attached to the root control group, so they apply to
+// scrim's listener wherever it runs: getsockopt answers its
+// SO_ORIGINAL_DST query for connections the attachment redirected. Each
+// attachment has its own, reading only its own connections.
+var ListenerHooks = []string{"getsockopt"}
 
 // Settings of the eBPF mode.
 var (
@@ -424,20 +435,26 @@ func (in Inspector) inspectOne(rec Record, c string, port int, caps Caps, broken
 			strings.Join(m, " and ") + ": run `sudo scrim status`"
 		return cr
 	}
-	got, err := in.Query(dir)
-	if err != nil {
-		cr.State, cr.Detail = Unverified, "querying the kernel failed: "+err.Error()
-		return cr
-	}
-	for _, h := range Hooks {
-		if !slices.Contains(got[h], a.Programs[h]) {
-			cr.State = Lost
-			cr.Detail = "the " + h + " program the loader attached is no longer attached: run `sudo scrim ebpf attach`"
+	for _, q := range []struct {
+		dir   string
+		hooks []string
+	}{{dir, Hooks}, {in.CgroupRoot, ListenerHooks}} {
+		got, err := in.Query(q.dir)
+		if err != nil {
+			cr.State, cr.Detail = Unverified, "querying the kernel failed: "+err.Error()
 			return cr
+		}
+		for _, h := range q.hooks {
+			if !slices.Contains(got[h], a.Programs[h]) {
+				cr.State = Lost
+				cr.Detail = "the " + h + " program the loader attached to " + q.dir + " is no longer attached: run `sudo scrim ebpf attach`"
+				return cr
+			}
 		}
 	}
 	cr.State = Active
-	cr.Detail = fmt.Sprintf("TCP 80 and 443 redirected to 127.0.0.1:%d and [::1]:%d, direct and QUIC egress denied (verified with the kernel)", port, port)
+	cr.Detail = fmt.Sprintf("TCP 80 and 443 redirected to 127.0.0.1:%d and [::1]:%d with their original destination, "+
+		"direct and QUIC egress denied (verified with the kernel)", port, port)
 	return cr
 }
 
