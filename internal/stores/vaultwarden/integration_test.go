@@ -6,9 +6,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -398,6 +401,154 @@ func TestVaultwarden(t *testing.T) {
 			t.Fatal(err)
 		}
 		check("Write", m.Labels, map[string]string{"vaultwarden.owner": "org", "vaultwarden.org.id": org.ID})
+	})
+
+	t.Run("MetadataReader", func(t *testing.T) {
+		e := newEnv(t, srv, bwcrypto.DefaultPBKDF2())
+		acc := e.account
+		org := acc.CreateOrg(t, "Acme", "Prod")
+		shared := acc.CreateCollection(t, org, "Shared/Team A")
+		pw := secret.FromString("pw_" + vwtest.RandHex(t, 16))
+		hidden := secret.FromString("hid_" + vwtest.RandHex(t, 16))
+		user := secret.FromString("user_" + vwtest.RandHex(t, 8))
+		note := secret.FromString("note_" + vwtest.RandHex(t, 8))
+		acc.CreateItem(t, vwtest.Item{
+			Org: org, Collections: []string{shared}, Name: "DB", Username: user, Password: pw, ItemKey: true,
+			Reprompt: true, URIs: []string{"https://db.example.com/x"},
+			Fields: map[string]secret.Value{"token": hidden},
+			Labels: map[string]string{"Env": "prod", "vaultwarden.org": "Evil", "scrim.hosts": "db.example.com", "copy": expose(t, pw)},
+		})
+		acc.CreateItem(t, vwtest.Item{Folder: "Agents/CI", Name: "Deploy", Password: pw, Notes: note,
+			Labels: map[string]string{"team": "ci"}})
+		acc.CreateItem(t, vwtest.Item{Name: "Loose", SecureNote: true, Notes: note})
+
+		proxy := vwtest.NewProxy(t, strings.TrimPrefix(srv.URL, "http://"))
+		a := e.adapter(t, proxy.URL, func(o *vaultwarden.Options) { o.MetaLabels = true })
+		defer func() { _ = a.Close() }()
+		set := stores.NewSet()
+		if err := set.Add(a); err != nil {
+			t.Fatal(err)
+		}
+		set.SetLabeling(a.Name(), vaultwarden.Kind, nil)
+		ctx := vwtest.Ctx(t, 60*time.Second)
+		values := []secret.Value{pw, hidden, user, note}
+		for _, r := range []string{
+			"vw://Shared/Team A/DB?org=Acme", "vw://Prod/DB?org=Acme", "vw://Prod/DB",
+			"vw://Agents/CI/Deploy", "vw://Agents/CI/Deploy#password", "vw://Loose#notes",
+		} {
+			ref := stores.MustParseRef(r)
+			s, err := a.Read(ctx, ref)
+			if err != nil {
+				t.Fatalf("Read %s: %v", r, err)
+			}
+			s.Wipe()
+			m, err := a.ReadMetadata(ctx, ref)
+			if err != nil {
+				t.Fatalf("ReadMetadata %s: %v", r, err)
+			}
+			if !reflect.DeepEqual(m, s.Meta) {
+				t.Errorf("%s: ReadMetadata differs from Read\n got %#v\nwant %#v", r, m, s.Meta)
+			}
+			if m.Labels["vaultwarden.id"] == "" {
+				t.Errorf("%s: no native labels: %v", r, m.Labels)
+			}
+			sm, exists, err := set.Metadata(ctx, ref)
+			if err != nil || !exists {
+				t.Fatalf("Set.Metadata %s: exists %v, %v", r, exists, err)
+			}
+			if got, want := set.Labels(ref, sm.Labels), set.Labels(ref, s.Meta.Labels); !maps.Equal(got, want) {
+				t.Errorf("%s: composed labels differ\n got %v\nwant %v", r, got, want)
+			}
+			for k, v := range m.Labels {
+				for _, val := range values {
+					if strings.Contains(k+"="+v, expose(t, val)) {
+						t.Errorf("%s: label %s carries a value", r, k)
+					}
+				}
+			}
+		}
+		m, err := a.ReadMetadata(ctx, stores.MustParseRef("vw://Prod/DB"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The meta guard still holds: the text field repeating the
+		// password is dropped, the plain one kept, the forged one demoted.
+		if m.Labels["vaultwarden.meta.env"] != "prod" || m.Labels["vaultwarden.org"] != "Acme" {
+			t.Errorf("labels: %v", m.Labels)
+		}
+		if _, ok := m.Labels["vaultwarden.meta.copy"]; ok {
+			t.Error("a meta label repeating the password was reported")
+		}
+
+		// Errors are Read's, and fail closed.
+		acc.CreateItem(t, vwtest.Item{Folder: "Prod", Name: "DB", Password: secret.FromString("p_" + vwtest.RandHex(t, 8))})
+		for r, kind := range map[string]error{
+			"vw://Agents/Nope":                  stores.ErrNotFound,
+			"vw://Agents/CI/Deploy#nope":        stores.ErrNotFound,
+			"vw://Prod/DB?org=Acme#scrim.hosts": stores.ErrNotFound,
+			"vw://Prod/DB":                      stores.ErrInvalidRef,
+			"vw://Prod/DB?version=1":            stores.ErrInvalidRef,
+		} {
+			ref := stores.MustParseRef(r)
+			_, rerr := a.Read(ctx, ref)
+			_, merr := a.ReadMetadata(ctx, ref)
+			if !errors.Is(rerr, kind) || !errors.Is(merr, kind) {
+				t.Errorf("%s: Read %v, ReadMetadata %v, want %v for both", r, rerr, merr, kind)
+			}
+		}
+		if _, exists, err := set.Metadata(ctx, stores.MustParseRef("vw://Agents/Nope")); exists || err != nil {
+			t.Errorf("Set.Metadata of a missing item: exists %v, %v", exists, err)
+		}
+		if _, exists, err := set.Metadata(ctx, stores.MustParseRef("vw://Prod/DB")); exists || !errors.Is(err, stores.ErrInvalidRef) {
+			t.Errorf("Set.Metadata of an ambiguous path: exists %v, %v", exists, err)
+		}
+		proxy.SetDown(true)
+		if _, err := a.ReadMetadata(ctx, stores.MustParseRef("vw://Agents/CI/Deploy")); !errors.Is(err, stores.ErrUnavailable) {
+			t.Errorf("ReadMetadata during an outage: %v", err)
+		}
+		if _, exists, err := set.Metadata(ctx, stores.MustParseRef("vw://Agents/CI/Deploy")); exists || !errors.Is(err, stores.ErrUnavailable) {
+			t.Errorf("Set.Metadata during an outage: exists %v, %v", exists, err)
+		}
+		proxy.SetDown(false)
+
+		scoped := e.adapter(t, srv.URL, func(o *vaultwarden.Options) { o.Scope = []string{"Agents"} })
+		defer func() { _ = scoped.Close() }()
+		if _, err := scoped.ReadMetadata(ctx, stores.MustParseRef("vw://Loose")); !errors.Is(err, stores.ErrNotFound) {
+			t.Errorf("ReadMetadata outside the scope: %v", err)
+		}
+		wrong := "file:" + vwtest.WriteSecretFile(t, e.dir, secret.FromString("wrong-"+vwtest.RandHex(t, 8)))
+		locked := e.adapter(t, srv.URL, func(o *vaultwarden.Options) { o.Unlock = config.SecretRef(wrong) })
+		defer func() { _ = locked.Close() }()
+		if _, err := locked.ReadMetadata(ctx, stores.MustParseRef("vw://Agents/CI/Deploy")); !errors.Is(err, stores.ErrLocked) {
+			t.Errorf("ReadMetadata while locked: %v", err)
+		}
+	})
+
+	// ReadMetadata decrypts no value: an item whose password does not
+	// decrypt fails Read but still has its metadata read.
+	t.Run("MetadataWithoutDecrypting", func(t *testing.T) {
+		e := newEnv(t, srv, bwcrypto.DefaultPBKDF2())
+		e.account.CreateItem(t, vwtest.Item{Folder: "Agents", Name: "Broken", ItemKey: true,
+			Password: secret.FromString("pw_" + vwtest.RandHex(t, 16)), UndecryptablePassword: true,
+			Labels: map[string]string{"scrim.hosts": "api.example.com"}})
+		a := e.adapter(t, srv.URL, nil)
+		defer func() { _ = a.Close() }()
+		ctx := vwtest.Ctx(t, 30*time.Second)
+		ref := stores.MustParseRef("vw://Agents/Broken")
+		if _, err := a.Read(ctx, ref); !errors.Is(err, stores.ErrPermission) {
+			t.Fatalf("Read of an undecryptable password: %v", err)
+		}
+		m, err := a.ReadMetadata(ctx, ref)
+		if err != nil {
+			t.Fatalf("ReadMetadata decrypted the password: %v", err)
+		}
+		if m.Labels["scrim.hosts"] != "api.example.com" || m.Labels["vaultwarden.has-password"] != "true" ||
+			m.Labels["vaultwarden.folder.Agents"] != "true" || !slices.Equal(m.Fields, []string{"password"}) {
+			t.Errorf("metadata: %+v", m)
+		}
+		if _, err := a.ReadMetadata(ctx, ref.WithField("password")); err != nil {
+			t.Errorf("ReadMetadata with the field: %v", err)
+		}
 	})
 
 	t.Run("Scope", func(t *testing.T) {

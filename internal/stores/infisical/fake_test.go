@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +51,16 @@ type fake struct {
 	// imports maps a destination folder (projectID|env|/path) to the
 	// source folder (env|/path) it imports, as a secret import does.
 	imports map[string]string
+	// gets records the query of every single-secret read; valuesServed
+	// counts single reads and listings that returned values.
+	gets         []url.Values
+	valuesServed int
+	// ignoreView makes single reads return the value whatever
+	// viewSecretValue says, as a server without the option would.
+	ignoreView bool
+	// denyValues refuses single reads that ask for the value with 403,
+	// as for an identity allowed to describe secrets but not read them.
+	denyValues bool
 }
 
 type fakeSecret struct {
@@ -330,7 +341,11 @@ func (f *fake) list(w http.ResponseWriter, r *http.Request) {
 			in = in || strings.HasPrefix(s.path, strings.TrimSuffix(path, "/")+"/")
 		}
 		if in {
-			out = append(out, s.json(q.Get("viewSecretValue") != "false", len(s.versions)))
+			view := q.Get("viewSecretValue") != "false"
+			if view {
+				f.valuesServed++
+			}
+			out = append(out, s.json(view, len(s.versions)))
 		}
 	}
 	writeJSON(w, 200, map[string]any{"secrets": out, "imports": []any{}})
@@ -340,6 +355,13 @@ func (f *fake) get(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.gets = append(f.gets, q)
+	// Infisical defaults viewSecretValue to true.
+	view := q.Get("viewSecretValue") != "false" || f.ignoreView
+	if view && f.denyValues {
+		apiErr(w, 403, "PermissionDenied", "You are not allowed to read the value of this secret")
+		return
+	}
 	pid, _ := f.projectID(q.Get("projectId"))
 	s, ok := f.secrets[skey(pid, q.Get("environment"), q.Get("secretPath"), r.PathValue("name"))]
 	if src, imp := f.imports[pid+"|"+q.Get("environment")+"|"+q.Get("secretPath")]; !ok && imp {
@@ -359,7 +381,10 @@ func (f *fake) get(w http.ResponseWriter, r *http.Request) {
 		}
 		version = n
 	}
-	writeJSON(w, 200, map[string]any{"secret": s.json(true, version)})
+	if view {
+		f.valuesServed++
+	}
+	writeJSON(w, 200, map[string]any{"secret": s.json(view, version)})
 }
 
 type writeBody struct {

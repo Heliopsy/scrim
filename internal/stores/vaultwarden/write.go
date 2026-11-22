@@ -306,10 +306,7 @@ func (a *Adapter) WriteLabels(ref stores.Ref) map[string]string {
 	if org == "" {
 		n.set("owner", "personal")
 		if container != "" {
-			n.set("folder", container)
-			for _, f := range ancestors(container) {
-				n[nativePrefix+"folder."+f] = "true"
-			}
+			n.setFolder(container)
 			if v != nil {
 				for id, fn := range v.folders {
 					if fn == container {
@@ -358,7 +355,7 @@ func (a *Adapter) WriteLabels(ref stores.Ref) map[string]string {
 		if len(ids) > 0 {
 			v.addCollections(n, ids)
 		} else {
-			n.setMulti("collection", true, container)
+			n.setNested("collection", container)
 		}
 	}
 	return mergeNative(nil, n)

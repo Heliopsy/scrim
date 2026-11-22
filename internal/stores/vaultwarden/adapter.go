@@ -46,6 +46,7 @@ import (
 const Kind = "vaultwarden"
 
 func init() {
+	stores.DeclareMulti(Kind, multiAttrs...)
 	stores.Register(Kind, func(_ context.Context, inst stores.Instance) (stores.Adapter, error) {
 		o, err := decodeOptions(inst.Name, inst.Options)
 		if err != nil {
@@ -81,7 +82,11 @@ type Adapter struct {
 	closed      bool
 }
 
-var _ stores.Adapter = (*Adapter)(nil)
+var (
+	_ stores.Adapter        = (*Adapter)(nil)
+	_ stores.MetadataReader = (*Adapter)(nil)
+	_ stores.WriteLabeler   = (*Adapter)(nil)
+)
 
 // New builds an adapter. It does not contact the server.
 func New(name string, o Options, resolve Resolver) (*Adapter, error) {
@@ -375,31 +380,64 @@ func (a *Adapter) metadata(ref stores.Ref, path string, it *item) stores.Metadat
 	return m
 }
 
-// Read implements stores.Adapter.
-func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, error) {
-	if err := a.checkRef(stores.OpRead, ref); err != nil {
-		return stores.Secret{}, err
+// locate finds the in-scope item ref names in an up-to-date vault. On
+// success it returns with a.mu held and the keyring present, so the keys
+// cannot be wiped while the caller uses the item; the caller unlocks.
+func (a *Adapter) locate(ctx context.Context, op stores.Op, ref stores.Ref) (*item, error) {
+	if err := a.checkRef(op, ref); err != nil {
+		return nil, err
 	}
 	if !a.inScope(ref.Path) {
-		return stores.Secret{}, a.fail(stores.OpRead, ref, stores.ErrNotFound, "outside the configured scope", nil)
+		return nil, a.fail(op, ref, stores.ErrNotFound, "outside the configured scope", nil)
 	}
-	v, err := a.current(ctx, stores.OpRead)
+	v, err := a.current(ctx, op)
 	if err != nil {
-		return stores.Secret{}, err
+		return nil, err
 	}
 	it, path, err := v.lookup(ref.Path, ref.Selector("org"))
 	if err != nil {
-		return stores.Secret{}, a.fail(stores.OpRead, ref, stores.ErrInvalidRef, path, err)
+		return nil, a.fail(op, ref, stores.ErrInvalidRef, path, err)
 	}
 	if it == nil {
-		return stores.Secret{}, a.fail(stores.OpRead, ref, stores.ErrNotFound, "", nil)
+		return nil, a.fail(op, ref, stores.ErrNotFound, "", nil)
 	}
 	a.mu.Lock()
-	keys := a.keys
-	defer a.mu.Unlock()
-	if keys == nil {
-		return stores.Secret{}, a.fail(stores.OpRead, ref, stores.ErrLocked, "", nil)
+	if a.keys == nil {
+		a.mu.Unlock()
+		return nil, a.fail(op, ref, stores.ErrLocked, "", nil)
 	}
+	return it, nil
+}
+
+// ReadMetadata implements stores.MetadataReader. Everything it returns
+// comes from the index built at the last sync (names, folders, collections,
+// field names and labels, decrypted with the account and organisation keys
+// as item metadata), so it decrypts no secret field. It checks the server
+// and fails the way Read does: outside the scope or missing is
+// ErrNotFound, an ambiguous path ErrInvalidRef, a locked or unreachable
+// store its error. The labels are the ones Read reports for the item.
+func (a *Adapter) ReadMetadata(ctx context.Context, ref stores.Ref) (stores.Metadata, error) {
+	it, err := a.locate(ctx, stores.OpRead, ref)
+	if err != nil {
+		return stores.Metadata{}, err
+	}
+	defer a.mu.Unlock()
+	if ref.Field != "" && !slices.Contains(it.fields, ref.Field) {
+		return stores.Metadata{}, a.fail(stores.OpRead, ref, stores.ErrNotFound, "no field "+strconv.Quote(ref.Field), nil)
+	}
+	m := a.metadata(ref, ref.Path, it)
+	m.Ref = ref.Secret()
+	return m, nil
+}
+
+// Read implements stores.Adapter.
+func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, error) {
+	it, err := a.locate(ctx, stores.OpRead, ref)
+	if err != nil {
+		return stores.Secret{}, err
+	}
+	defer a.mu.Unlock()
+	keys := a.keys
 	want := it.fields
 	if ref.Field != "" {
 		want = []string{ref.Field}
