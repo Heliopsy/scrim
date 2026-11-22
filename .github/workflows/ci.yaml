@@ -59,7 +59,8 @@ jobs:
           SCRIM_TEST_PODMAN: "0"
 
   # GitHub-hosted: the store adapters are tested against real OpenBao,
-  # Infisical and Vaultwarden containers, and the ho-z10 pods have no podman.
+  # Infisical and Vaultwarden containers, and LocalStack for the AWS ones;
+  # the ho-z10 pods have no podman.
   # Every container is published on a free port and named scrim-stores-*.
   stores:
     name: Store conformance (podman)

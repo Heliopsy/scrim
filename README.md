@@ -179,6 +179,8 @@ directly, so write-only access, approvals and grants behave the same on every st
 | OpenBao, and Vault-compatible KV v2 | `openbao` | yes | yes | yes | yes |
 | Infisical | `infisical` | yes | yes | yes | yes |
 | Vaultwarden, and Bitwarden-compatible servers | `vaultwarden` | yes | yes | yes | yes |
+| AWS Secrets Manager | `awssm` | yes | yes | yes | yes |
+| AWS SSM Parameter Store | `ssm` | yes | yes | yes | yes |
 | Environment variables | `env` | yes | yes | no | no |
 | Files (raw, dotenv, JSON) | `file` | yes | yes | yes | no |
 | Memory (tests, throwaway runs) | `memory` | yes | yes | yes | yes |
@@ -474,6 +476,7 @@ veil's per-tool policy.
 | [docs/stores/openbao.md](docs/stores/openbao.md) | OpenBao and Vault-compatible KV v2 |
 | [docs/stores/infisical.md](docs/stores/infisical.md) | Infisical |
 | [docs/stores/vaultwarden.md](docs/stores/vaultwarden.md) | Vaultwarden and Bitwarden-compatible servers |
+| [docs/stores/aws.md](docs/stores/aws.md) | AWS Secrets Manager and SSM Parameter Store |
 | [docs/stores/local.md](docs/stores/local.md) | Environment and file sources |
 | [docs/catalog.md](docs/catalog.md) | Logical names, host bindings, placeholders and profiles |
 | [docs/cli-tools.md](docs/cli-tools.md) | Tool profiles for gh, git, kubectl, aws, terraform and other CLIs |

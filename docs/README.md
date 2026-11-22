@@ -47,6 +47,7 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 | [stores/openbao.md](stores/openbao.md) | OpenBao and Vault-compatible KV v2 |
 | [stores/infisical.md](stores/infisical.md) | Infisical |
 | [stores/vaultwarden.md](stores/vaultwarden.md) | Vaultwarden and Bitwarden-compatible servers, client-side decryption |
+| [stores/aws.md](stores/aws.md) | AWS Secrets Manager and SSM Parameter Store, ambient identity |
 | [stores/local.md](stores/local.md) | Environment variables and files |
 | [catalog.md](catalog.md) | Logical names, host bindings, declared placeholders, profiles and bulk mapping |
 | [ca.md](ca.md) | The tool proxy's interception CA: where it lives, rotation, export, per-user trust install and uninstall |

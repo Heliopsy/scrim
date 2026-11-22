@@ -138,7 +138,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 ## 11a. More stores
 
 - [ ] 11a.1 HashiCorp Vault adapter (KV v1/v2, namespaces, token, AppRole, Kubernetes, JWT, dynamic leases); verify: conformance suite against Vault dev mode in podman, lease revoked when the grant ends
-- [ ] 11a.2 AWS Secrets Manager and SSM Parameter Store adapters with ambient identity and version/stage selectors; verify: conformance suite against LocalStack in podman
+- [x] 11a.2 AWS Secrets Manager and SSM Parameter Store adapters with ambient identity and version/stage selectors; verify: conformance suite against LocalStack in podman (`TestLocalStack` in `internal/stores/aws`, LocalStack 4.14.0: both conformance runs with outage, stages, binary and JSON secrets, parameter labels and suffixes, native labels equal between read and metadata lookup, default chain from the environment, STS role assumption), unit tests for value-free write errors and forged tags, each watched failing
 - [ ] 11a.3 Google Secret Manager and Azure Key Vault adapters with workload identity; verify: conformance suite against the services or compatible fakes
 - [ ] 11a.4 1Password, Bitwarden Secrets Manager and Doppler adapters; verify: conformance suite against each service's test account or recorded fixtures
 - [x] 11a.5 Local env and file sources with read-only capabilities declared; verify: conformance suite locally, writes to read-only sources refused
