@@ -197,6 +197,7 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 
 	opened, err := storeconfig.OpenWith(ctx, cfg, stores.DefaultRegistry, storeconfig.Options{
 		OnChange: a.valuesChanged,
+		Log:      obs.WithComponent(a.Log, "stores"),
 		OnStatus: func(st refresh.Status) {
 			a.Instruments.StoreHealth(st.Store, st.Healthy, st.LastSuccess, st.Values, st.State == refresh.StateDegraded)
 			a.Instruments.StoreRefresh(st.Store, st.LastDuration, st.LastError != "")

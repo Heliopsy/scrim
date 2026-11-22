@@ -360,6 +360,26 @@ happens, so `store.write` rules can match its destination.
 - **THEN** the rule sees `vaultwarden.org = "Acme"` and `vaultwarden.collection.Prod` before the
   item is created
 
+### Requirement: Vaultwarden labels read without values
+
+The Vaultwarden adapter SHALL return an existing item's metadata and labels without decrypting any
+of its field values, from the index of the last sync after checking the server's revision date. The
+labels SHALL be the ones a read of the item reports, the meta label guard and its scope included, and
+a lookup SHALL fail wherever a read fails for the item itself (locked, unreachable, outside the
+scope, ambiguous, no such field).
+
+#### Scenario: Write to an item outside every redaction set
+
+- **WHEN** an agent writes to `vw://Prod/DB?org=Acme`, which exists but is in no redaction set
+- **THEN** the write rule sees the item's `vaultwarden.*` labels exactly as a read would report them
+- **AND** no field value of the item is decrypted for the lookup, so an item whose password does not
+  decrypt still has its labels
+
+#### Scenario: Locked store
+
+- **WHEN** the store is locked and a rule needs an item's labels
+- **THEN** the lookup fails and the request is decided with its labels unknown
+
 ### Requirement: Infisical adapter
 
 The system SHALL read and write Infisical secrets by project, environment, folder and key, and SHALL
@@ -401,6 +421,25 @@ contacting Infisical, so `store.write` rules can match on them.
 
 - **WHEN** a rule asks for writes under `/db` and an agent creates `inf://payments/dev/db/NEW`
 - **THEN** the write is decided on `infisical.folder.db = true` before the secret exists, and asks
+
+### Requirement: Infisical labels read without values
+
+The Infisical adapter SHALL return an existing secret's metadata and labels through a request that
+asks Infisical not to return the value (`viewSecretValue=false`, references not expanded), and SHALL
+wipe whatever arrives in the value field unread. The labels SHALL be the ones a read reports, and a
+lookup SHALL fail wherever a read fails.
+
+#### Scenario: Labels of an existing secret
+
+- **WHEN** a rule needs the labels of `inf://payments/prod/db/PASSWORD`, which exists but is in no
+  redaction set
+- **THEN** scrim asks Infisical for the secret with `viewSecretValue=false` and the labels equal those
+  a read reports, tags, metadata and import source included
+
+#### Scenario: Infisical unreachable
+
+- **WHEN** Infisical does not answer the lookup
+- **THEN** the lookup fails and the request is decided with its labels unknown
 
 ### Requirement: Infisical metadata cannot forge native labels
 
@@ -504,6 +543,56 @@ The OpenBao adapter SHALL treat a version as deleted only once its deletion time
 
 - **WHEN** the current version has a deletion time in the future, set by `delete_version_after`
 - **THEN** it is read and listed as usual, with that time in `openbao.deletion_time`
+
+### Requirement: OpenBao paths are escaped once
+
+The OpenBao adapter SHALL send a secret path to OpenBao with each segment escaped exactly once, so
+OpenBao stores and finds the secret under the name in its reference.
+
+#### Scenario: Path with a space
+
+- **WHEN** scrim writes `bao://kv/agents/git hub`
+- **THEN** OpenBao receives the path `kv/data/agents/git%20hub` and stores the secret as
+  `agents/git hub`
+
+### Requirement: OpenBao secrets under the legacy double-escaped name
+
+When a secret is not found under its name and the name contains characters that need escaping, the
+OpenBao adapter SHALL look it up under the name releases up to 0.4.0 stored it under (each segment
+escaped once more), use it if it exists, and log one warning per secret naming both paths and no
+value. A secret under the correct name SHALL take precedence.
+
+#### Scenario: Secret under the legacy double-escaped name
+
+- **WHEN** a secret written by an earlier release exists only as `agents/git%20hub` and scrim reads
+  `bao://kv/agents/git hub` twice
+- **THEN** both reads return it
+- **AND** one warning names `kv/agents/git hub` and `kv/agents/git%20hub` and no value
+
+### Requirement: OpenBao metadata without values
+
+The OpenBao adapter SHALL implement the metadata read of "Metadata without values" from the KV v2
+metadata endpoint, returning the labels, version and times a read would return without reading
+the secret's data. It SHALL miss the same versions a read misses and refuse the same references,
+write-only paths included. When the store refuses the metadata read, it SHALL fall back to reading
+the secret and wiping every value; any other failure SHALL be returned as an error.
+
+#### Scenario: Labels of an existing secret without its value
+
+- **WHEN** a policy decision needs the labels of `bao://kv-prod/prod/eu/db`, which is in no
+  redaction set
+- **THEN** scrim requests `kv-prod/metadata/prod/eu/db` and not `kv-prod/data/prod/eu/db`
+- **AND** the labels equal the labels a read of the secret reports
+
+#### Scenario: Metadata refused
+
+- **WHEN** scrim's token may read the secret's data but not its metadata
+- **THEN** scrim reads the secret, wipes the values, and uses the labels of that read
+
+#### Scenario: Store failure
+
+- **WHEN** the metadata read fails with a server error
+- **THEN** the lookup fails with the store unavailable and the data is not read
 
 ### Requirement: Store login with the pod's Kubernetes service account
 

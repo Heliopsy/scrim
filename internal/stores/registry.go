@@ -5,6 +5,7 @@ package stores
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 
@@ -28,6 +29,9 @@ type Instance struct {
 	// Resolve turns a secret reference into its value. The adapter owns the
 	// returned value and wipes it when no longer needed.
 	Resolve func(ctx context.Context, ref config.SecretRef) (secret.Value, error)
+	// Log receives the adapter's warnings, already scrubbing. Nil means
+	// discard.
+	Log *slog.Logger
 }
 
 // Factory builds an adapter for one instance. It must not contact the store;

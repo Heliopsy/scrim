@@ -411,3 +411,66 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// TestEscapedPathsLive: a secret whose path needs escaping is stored by
+// OpenBao under that path, not under an escaped copy of it, and a secret
+// that an earlier release stored under the double-escaped name is still
+// read.
+func TestEscapedPathsLive(t *testing.T) {
+	s := startServer(t)
+	a := s.adapter(t, "bao-esc", nil)
+	defer func() { _ = a.Close() }()
+	ctx := t.Context()
+	base := "scrim-conformance/" + randHex(t, 6)
+	value := "esc_" + randHex(t, 16)
+
+	ref := stores.Ref{Scheme: "bao-esc", Path: "kv/" + base + "/git hub/a+b%c"}
+	if _, err := a.Write(ctx, ref, map[string]secret.Value{"token": secret.FromString(value)}, stores.WriteOptions{}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	// One escaping level in the URL: OpenBao decodes it to "git hub/a+b%c".
+	got, err := s.api("GET", "kv/data/"+base+"/git%20hub/a+b%25c", nil)
+	if err != nil {
+		t.Fatalf("secret not stored under its own name: %v", err)
+	}
+	if got["data"].(map[string]any)["data"].(map[string]any)["token"] != value {
+		t.Fatal("stored value differs")
+	}
+	keys, err := s.api("LIST", "kv/metadata/"+base+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(keys["data"].(map[string]any)["keys"]) != "[git hub/]" {
+		t.Errorf("folder keys %v, want [git hub/]", keys["data"])
+	}
+	sec, err := a.Read(ctx, ref)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	sec.Wipe()
+	ms, err := a.List(ctx, stores.Ref{Scheme: "bao-esc", Path: "kv/" + base})
+	if err != nil || len(ms) != 1 || ms[0].Ref.Path != ref.Path {
+		t.Fatalf("List: %v %v", ms, err)
+	}
+
+	// What 0.4 did for "old name": sent old%2520name, stored "old%20name".
+	if _, err := s.api("POST", "kv/data/"+base+"/old%2520name", map[string]any{"data": map[string]string{"token": value}}); err != nil {
+		t.Fatal(err)
+	}
+	legacy := stores.Ref{Scheme: "bao-esc", Path: "kv/" + base + "/old name"}
+	sec, err = a.Read(ctx, legacy)
+	if err != nil {
+		t.Fatalf("Read of a secret under its legacy name: %v", err)
+	}
+	if v, ok := sec.Field("token"); !ok || v.IsZero() {
+		t.Error("legacy value missing")
+	}
+	sec.Wipe()
+	if _, err := a.ReadMetadata(ctx, legacy); err != nil {
+		t.Fatalf("ReadMetadata of a secret under its legacy name: %v", err)
+	}
+	// A name that needs no escaping has no legacy twin.
+	if _, err := a.Read(ctx, stores.Ref{Scheme: "bao-esc", Path: "kv/" + base + "/plain"}); !errors.Is(err, stores.ErrNotFound) {
+		t.Errorf("Read of a missing plain name: %v", err)
+	}
+}

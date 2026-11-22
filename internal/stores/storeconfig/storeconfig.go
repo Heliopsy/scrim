@@ -26,6 +26,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -238,6 +239,8 @@ type Options struct {
 	OnChange func(store string)
 	// OnStatus is called after every refresh attempt, for metrics.
 	OnStatus func(refresh.Status)
+	// Log is handed to every adapter for its warnings. Nil discards them.
+	Log *slog.Logger
 }
 
 // Open builds every configured store's adapter (without contacting it),
@@ -257,6 +260,7 @@ func OpenWith(ctx context.Context, cfg *config.Config, reg *stores.Registry, opt
 			errs = append(errs, err)
 			continue
 		}
+		inst.Log = opts.Log
 		a, err := reg.Open(ctx, inst)
 		if err != nil {
 			errs = append(errs, err)

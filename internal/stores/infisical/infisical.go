@@ -48,6 +48,7 @@ const Kind = "infisical"
 const Field = "value"
 
 func init() {
+	stores.DeclareMulti(Kind, multiAttrs...)
 	stores.Register(Kind, New)
 }
 
@@ -61,6 +62,8 @@ type Adapter struct {
 var (
 	_ stores.Adapter          = (*Adapter)(nil)
 	_ stores.CredentialHolder = (*Adapter)(nil)
+	_ stores.MetadataReader   = (*Adapter)(nil)
+	_ stores.WriteLabeler     = (*Adapter)(nil)
 )
 
 // New builds an adapter from its configuration. It validates the options and
@@ -228,12 +231,12 @@ func (a *Adapter) labels(p projectInfo, projectID string, l location, folder str
 		}
 	}
 	nativeLocation(out, p, projectID, l, folder, s.Name)
-	setNative(out, "encrypted-meta", encrypted...)
+	stores.SetNative(out, Kind, "encrypted-meta", encrypted...)
 	if s.Type != "" {
-		setNative(out, "type", s.Type)
+		stores.SetNative(out, Kind, "type", s.Type)
 	}
 	if s.Version > 0 {
-		setNative(out, "version", strconv.Itoa(s.Version))
+		stores.SetNative(out, Kind, "version", strconv.Itoa(s.Version))
 	}
 	setTime(out, "created", s.CreatedAt)
 	setTime(out, "updated", s.UpdatedAt)
@@ -241,18 +244,18 @@ func (a *Adapter) labels(p projectInfo, projectID string, l location, folder str
 	for _, t := range s.Tags {
 		slugs = append(slugs, t.Slug)
 	}
-	setNative(out, "tag", slugs...)
+	stores.SetNative(out, Kind, "tag", slugs...)
 	if s.IsRotatedSecret != nil {
 		setBool(out, "rotation", *s.IsRotatedSecret)
 		if *s.IsRotatedSecret && s.RotationID != "" {
-			setNative(out, "rotation.id", s.RotationID)
+			stores.SetNative(out, Kind, "rotation.id", s.RotationID)
 		}
 	}
 	if s.ReminderDays.set {
 		on := s.ReminderDays.n != nil && *s.ReminderDays.n > 0
 		setBool(out, "reminder", on)
 		if on {
-			setNative(out, "reminder.days", strconv.Itoa(*s.ReminderDays.n))
+			stores.SetNative(out, Kind, "reminder.days", strconv.Itoa(*s.ReminderDays.n))
 		}
 	}
 	// A secret Infisical served through a secret import carries the
@@ -264,12 +267,12 @@ func (a *Adapter) labels(p projectInfo, projectID string, l location, folder str
 		if srcEnv == "" {
 			srcEnv = l.env
 		}
-		setNative(out, "import.environment", srcEnv)
-		setNative(out, "import.path", srcPath)
+		stores.SetNative(out, Kind, "import.environment", srcEnv)
+		stores.SetNative(out, Kind, "import.path", srcPath)
 	}
 	for _, e := range s.SecretMetadata {
 		if !e.IsEncrypted {
-			userMeta(out, e.Key, e.Value)
+			stores.UserMeta(out, Kind, e.Key, e.Value)
 		}
 	}
 	return out
@@ -281,31 +284,31 @@ func (a *Adapter) labels(p projectInfo, projectID string, l location, folder str
 func nativeLocation(out map[string]string, p projectInfo, projectID string, l location, folder, key string) {
 	switch {
 	case p.ok:
-		setNative(out, "project", p.Slug)
-		setNative(out, "project.id", p.ID)
-		setNative(out, "project.slug", p.Slug)
-		setNative(out, "project.name", p.Name)
+		stores.SetNative(out, Kind, "project", p.Slug)
+		stores.SetNative(out, Kind, "project.id", p.ID)
+		stores.SetNative(out, Kind, "project.slug", p.Slug)
+		stores.SetNative(out, Kind, "project.name", p.Name)
 		if p.OrgID != "" {
-			setNative(out, "org.id", p.OrgID)
+			stores.SetNative(out, Kind, "org.id", p.OrgID)
 		}
 	case uuidPattern.MatchString(l.project):
-		setNative(out, "project", l.project)
-		setNative(out, "project.id", l.project)
+		stores.SetNative(out, Kind, "project", l.project)
+		stores.SetNative(out, Kind, "project.id", l.project)
 	default:
-		setNative(out, "project", l.project)
-		setNative(out, "project.slug", l.project)
+		stores.SetNative(out, Kind, "project", l.project)
+		stores.SetNative(out, Kind, "project.slug", l.project)
 		if projectID != "" {
-			setNative(out, "project.id", projectID)
+			stores.SetNative(out, Kind, "project.id", projectID)
 		}
 	}
-	setNative(out, "environment", l.env)
+	stores.SetNative(out, Kind, "environment", l.env)
 	if name, id := p.env(l.env); name != "" {
-		setNative(out, "environment.name", name)
-		setNative(out, "environment.id", id)
+		stores.SetNative(out, Kind, "environment.name", name)
+		stores.SetNative(out, Kind, "environment.id", id)
 	}
 	folderKeys(out, folder)
-	setNative(out, "key", key)
-	setNative(out, "path", strings.TrimSuffix("/"+strings.Trim(folder, "/"), "/")+"/"+key)
+	stores.SetNative(out, Kind, "key", key)
+	stores.SetNative(out, Kind, "path", strings.TrimSuffix("/"+strings.Trim(folder, "/"), "/")+"/"+key)
 }
 
 // WriteLabels returns the native labels a secret written at ref would get,
@@ -321,7 +324,7 @@ func (a *Adapter) WriteLabels(ref stores.Ref) map[string]string {
 	p := a.c.cachedProject(l.project)
 	out := map[string]string{}
 	nativeLocation(out, p, p.ID, l, l.folder, l.key)
-	setNative(out, "type", "shared")
+	stores.SetNative(out, Kind, "type", "shared")
 	return out
 }
 
@@ -335,40 +338,77 @@ func (a *Adapter) baseQuery(ctx context.Context, l location) (url.Values, string
 
 // Read implements stores.Adapter.
 func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, error) {
+	got, err := a.get(ctx, ref, true)
+	if err != nil {
+		return stores.Secret{}, err
+	}
+	defer got.secret.SecretValue.Wipe()
+	v, err := got.secret.SecretValue.Value()
+	if err != nil {
+		return stores.Secret{}, &stores.Error{Store: a.name, Op: stores.OpRead, Ref: ref, Kind: stores.ErrUnavailable, Detail: "secret value missing from the response"}
+	}
+	return stores.Secret{Meta: got.secret.meta(ref, got.labels), Fields: map[string]secret.Value{Field: v}}, nil
+}
+
+// ReadMetadata implements stores.MetadataReader. It makes the request Read
+// makes with viewSecretValue=false, so Infisical answers with its hidden
+// value mask in place of the value, and without expanding secret
+// references, which only change the value. Whatever stands in the value
+// field (the mask, or the value from a server that ignores the option) is
+// wiped unread. The labels are the ones Read builds from the same
+// response, and errors are Read's.
+func (a *Adapter) ReadMetadata(ctx context.Context, ref stores.Ref) (stores.Metadata, error) {
+	got, err := a.get(ctx, ref, false)
+	if err != nil {
+		return stores.Metadata{}, err
+	}
+	got.secret.SecretValue.Wipe()
+	return got.secret.meta(ref, got.labels), nil
+}
+
+// fetched is one secret as GET /api/v4/secrets/{key} returned it, with its
+// labels. The caller wipes secret.SecretValue.
+type fetched struct {
+	secret apiSecret
+	labels map[string]string
+}
+
+// get fetches the secret ref names, with its value when withValue is set.
+func (a *Adapter) get(ctx context.Context, ref stores.Ref, withValue bool) (fetched, error) {
 	l, ok := splitSecret(ref.Path)
 	if !ok {
-		return stores.Secret{}, a.invalid(stores.OpRead, ref, "want <project>/<environment>/[<folder>/...]<KEY>")
+		return fetched{}, a.invalid(stores.OpRead, ref, "want <project>/<environment>/[<folder>/...]<KEY>")
 	}
 	var version string
 	if ref.Selectors != "" {
 		q, _ := url.ParseQuery(ref.Selectors)
 		for k := range q {
 			if k != "version" {
-				return stores.Secret{}, a.invalid(stores.OpRead, ref, "unknown selector "+strconv.Quote(k)+" (supported: version)")
+				return fetched{}, a.invalid(stores.OpRead, ref, "unknown selector "+strconv.Quote(k)+" (supported: version)")
 			}
 		}
 		version = q.Get("version")
 		if n, err := strconv.Atoi(version); err != nil || n < 1 {
-			return stores.Secret{}, a.invalid(stores.OpRead, ref, "version must be a positive integer")
+			return fetched{}, a.invalid(stores.OpRead, ref, "version must be a positive integer")
 		}
 	}
 	if ref.Field != "" && ref.Field != Field {
-		return stores.Secret{}, &stores.Error{Store: a.name, Op: stores.OpRead, Ref: ref, Kind: stores.ErrNotFound,
+		return fetched{}, &stores.Error{Store: a.name, Op: stores.OpRead, Ref: ref, Kind: stores.ErrNotFound,
 			Detail: "Infisical secrets hold a single field named " + Field}
 	}
 	q, id, err := a.baseQuery(ctx, l)
 	if err != nil {
-		return stores.Secret{}, a.fail(stores.OpRead, ref, err)
+		return fetched{}, a.fail(stores.OpRead, ref, err)
 	}
 	q.Set("type", "shared")
-	q.Set("viewSecretValue", "true")
-	q.Set("expandSecretReferences", strconv.FormatBool(a.s.expandRefs))
+	q.Set("viewSecretValue", strconv.FormatBool(withValue))
+	q.Set("expandSecretReferences", strconv.FormatBool(withValue && a.s.expandRefs))
 	if version != "" {
 		q.Set("version", version)
 	}
 	b, err := a.c.do(ctx, http.MethodGet, "/api/v4/secrets/"+url.PathEscape(l.key), q, nil, nil)
 	if err != nil {
-		return stores.Secret{}, a.fail(stores.OpRead, ref, err)
+		return fetched{}, a.fail(stores.OpRead, ref, err)
 	}
 	defer secret.WipeBytes(b)
 	var resp struct {
@@ -376,19 +416,14 @@ func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, erro
 	}
 	if err := json.Unmarshal(b, &resp); err != nil {
 		resp.Secret.SecretValue.Wipe()
-		return stores.Secret{}, stores.NewError(a.name, stores.OpRead, ref, stores.ErrUnavailable, errors.New("malformed secret response"))
-	}
-	defer resp.Secret.SecretValue.Wipe()
-	v, err := resp.Secret.SecretValue.Value()
-	if err != nil {
-		return stores.Secret{}, &stores.Error{Store: a.name, Op: stores.OpRead, Ref: ref, Kind: stores.ErrUnavailable, Detail: "secret value missing from the response"}
+		return fetched{}, stores.NewError(a.name, stores.OpRead, ref, stores.ErrUnavailable, errors.New("malformed secret response"))
 	}
 	// A single read reports no reminder whether or not one is set
 	// (Infisical v0.167 joins reminders into listings only), so the
 	// reminder labels come from listings alone rather than say "false".
 	resp.Secret.ReminderDays = optInt{}
 	labels := a.labels(a.c.projectDetails(ctx, id), id, l, l.folder, &resp.Secret)
-	return stores.Secret{Meta: resp.Secret.meta(ref, labels), Fields: map[string]secret.Value{Field: v}}, nil
+	return fetched{secret: resp.Secret, labels: labels}, nil
 }
 
 // List implements stores.Adapter. It never asks Infisical for values.

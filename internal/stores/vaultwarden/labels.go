@@ -7,14 +7,15 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/heliopsy/scrim/internal/stores"
 )
 
 // Store-native labels. The adapter describes where an item lives and what it
 // is under the reserved prefix "vaultwarden.", so policy rules can match the
-// real location of an item rather than the spelling of its reference. The
-// shape follows the shared convention of stores.SetNative and
-// stores.UserMeta (feat/store-labels-core), which this file mirrors until
-// the adapter can call them:
+// real location of an item rather than the spelling of its reference. Keys
+// are set with the shared helpers stores.SetNative and stores.UserMeta
+// (internal/stores/labels.go):
 //
 //	vaultwarden.collection          = "Prod,Shared/Team A"  (names, verbatim)
 //	vaultwarden.collection.Prod     = "true"                (one presence key per value)
@@ -25,8 +26,9 @@ import (
 // case-sensitive. A nested folder or collection also gets a presence key for
 // each ancestor, so "Agents/CI" matches a rule on "Agents". Text custom
 // fields that are not scrim.* labels become vaultwarden.meta.<key>, with the
-// key folded by labelKey. Native keys are computed last and replace anything
-// else under the prefix, so whoever can edit an item cannot forge them.
+// key folded by stores.LabelKey. Native keys are computed last and replace
+// anything else under the prefix, so whoever can edit an item cannot forge
+// them.
 const (
 	nativePrefix = Kind + "."
 	metaPrefix   = nativePrefix + "meta."
@@ -34,28 +36,11 @@ const (
 	metaMaxLen = 256
 )
 
-// labelKey folds s into a label key exactly as stores.LabelKey does:
-// lower-case ASCII letters, digits, '-' and '_' in dot-separated segments;
-// every other character becomes '_' and empty segments are dropped.
-func labelKey(s string) string {
-	var b strings.Builder
-	for seg := range strings.SplitSeq(strings.ToLower(s), ".") {
-		if seg == "" {
-			continue
-		}
-		if b.Len() > 0 {
-			b.WriteByte('.')
-		}
-		for _, c := range seg {
-			switch {
-			case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-', c == '_':
-				b.WriteRune(c)
-			default:
-				b.WriteByte('_')
-			}
-		}
-	}
-	return b.String()
+// multiAttrs are the multi-valued native attributes: they get presence
+// keys even for a single value (stores.DeclareMulti, in init).
+var multiAttrs = []string{
+	"collection", "collection-id", "collection-read-only",
+	"collection-hide-passwords", "collection-manage", "uri-host",
 }
 
 // ancestors returns a "/"-separated name and each of its ancestors,
@@ -75,7 +60,7 @@ type nativeLabels map[string]string
 
 // set records a single-valued attribute: vaultwarden.<attr> = value.
 func (n nativeLabels) set(attr, value string) {
-	n[nativePrefix+attr] = value
+	stores.SetNative(n, Kind, attr, value)
 }
 
 // setBool records a boolean attribute as "true" or "false".
@@ -83,49 +68,54 @@ func (n nativeLabels) setBool(attr string, v bool) {
 	n.set(attr, strconv.FormatBool(v))
 }
 
-// setMulti records a multi-valued attribute: the values verbatim, sorted and
-// comma-joined under vaultwarden.<attr>, and vaultwarden.<attr>.<value> =
-// "true" for each value (as stores.SetNative does for an attribute declared
-// multi). With nested, each "/"-ancestor of a value gets a presence key as
-// well. No values records nothing.
-func (n nativeLabels) setMulti(attr string, nested bool, values ...string) {
-	var vs []string
-	for _, v := range values {
-		if v != "" && !slices.Contains(vs, v) {
-			vs = append(vs, v)
-		}
-	}
-	if len(vs) == 0 {
-		return
-	}
+// setMulti records a multi-valued attribute (declared in multiAttrs) with
+// stores.SetNative: the values verbatim, sorted and comma-joined under
+// vaultwarden.<attr>, and vaultwarden.<attr>.<value> = "true" for each
+// value. No values records nothing.
+func (n nativeLabels) setMulti(attr string, values ...string) {
+	vs := slices.Clone(values)
 	slices.Sort(vs)
-	n.set(attr, strings.Join(vs, ","))
-	for _, v := range vs {
-		keys := []string{v}
-		if nested {
-			keys = ancestors(v)
+	stores.SetNative(n, Kind, attr, vs...)
+}
+
+// setNested is setMulti for "/"-nested names (collections): each ancestor
+// of a value gets a presence key as well.
+func (n nativeLabels) setNested(attr string, values ...string) {
+	n.setMulti(attr, values...)
+	n.ancestorKeys(attr, values...)
+}
+
+// ancestorKeys adds vaultwarden.<attr>.<ancestor> = "true" for every
+// "/"-ancestor of each non-empty value. stores.SetNative has written the
+// keys of the values themselves; the ancestors are this adapter's own
+// convention for nested folders and collections.
+func (n nativeLabels) ancestorKeys(attr string, values ...string) {
+	key := stores.NativeKey(Kind, attr)
+	for _, v := range values {
+		if v == "" {
+			continue
 		}
-		for _, k := range keys {
-			n[nativePrefix+attr+"."+k] = "true"
+		for _, a := range ancestors(v) {
+			n[key+"."+a] = "true"
 		}
 	}
 }
 
-// addMeta records a text custom field as vaultwarden.meta.<key>, as
-// stores.UserMeta does: the first field of a key wins, as for values. Long
+// setFolder records a personal folder: vaultwarden.folder = its name and a
+// presence key for it and each of its ancestors.
+func (n nativeLabels) setFolder(name string) {
+	n.set("folder", name)
+	n.ancestorKeys("folder", name)
+}
+
+// addMeta records a text custom field as vaultwarden.meta.<key> with
+// stores.UserMeta: the first field of a key wins, as for values. Long
 // values are skipped.
 func addMeta(labels map[string]string, name, value string) {
 	if len(value) > metaMaxLen {
 		return
 	}
-	key := labelKey(name)
-	if key == "" {
-		return
-	}
-	k := metaPrefix + key
-	if _, dup := labels[k]; !dup {
-		labels[k] = value
-	}
+	stores.UserMeta(labels, Kind, name, value)
 }
 
 // mergeNative returns user labels (scrim.* and vaultwarden.meta.*) with the
