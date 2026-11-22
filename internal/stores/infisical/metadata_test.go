@@ -246,3 +246,28 @@ func TestReadMetadataServerIgnoresView(t *testing.T) {
 		t.Errorf("fields: %v", m.Fields)
 	}
 }
+
+// An identity that may describe a secret but not read its value gets the
+// mask with secretValueHidden on a normal read. Read refuses it as a
+// permission error and never returns the mask as the value.
+func TestReadRefusesHiddenValue(t *testing.T) {
+	f := newFake(t)
+	a := newAdapter(t, f, nil)
+	f.put("prod", "/", "A", "v-"+randID(16), nil)
+	f.mu.Lock()
+	f.maskValues = true
+	f.mu.Unlock()
+	s, err := a.Read(t.Context(), parse(t, "proj/prod/A"))
+	if !errors.Is(err, stores.ErrPermission) {
+		t.Fatalf("Read of a hidden value = %v, want ErrPermission", err)
+	}
+	if len(s.Fields) != 0 {
+		t.Fatalf("Read returned fields for a hidden value")
+	}
+	if strings.Contains(err.Error(), "hidden-by-infisical") {
+		t.Fatalf("error carries the mask: %v", err)
+	}
+	if _, err := a.ReadMetadata(t.Context(), parse(t, "proj/prod/A")); err != nil {
+		t.Fatalf("ReadMetadata of a hidden value: %v", err)
+	}
+}
