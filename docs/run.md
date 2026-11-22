@@ -294,7 +294,8 @@ or give the scrim binary an AppArmor profile with `userns,`.
 - the session cannot be minted;
 - the secret values found in project files cannot be registered for redaction;
 - `scrim run` is already inside a session (`SCRIM_SESSION_TOKEN` is set);
-- the preset refuses the environment (Claude Code with Bedrock, Vertex or Foundry);
+- the preset refuses the environment (Claude Code in a cloud provider mode scrim has no route for,
+  see [providers](providers/README.md#claude-code-under-scrim-run));
 - the command is `caveman` (see below) or cannot be found;
 - the [filesystem view](#filesystem-view) cannot be set up, or `run.fs-view` is `namespace` and the
   host has no unprivileged user namespaces.
@@ -431,7 +432,8 @@ backend only one of them can hold the state file, so a second concurrent `scrim 
 
 - The wrapper relies on the agent honouring the variables and arguments it is given. It does not
   stop an agent that ignores them; the transparent, managed-settings and Kubernetes modes enforce.
-- Claude Code on Bedrock, Vertex or Foundry is refused until scrim serves those APIs (tasks.md 11.4).
+- Claude Code on Vertex is refused until scrim serves it. Bedrock, Mantle, Claude Platform on AWS
+  and Foundry need a [provider route](providers/README.md).
 - Codex with a custom `model_provider` in its configuration talks to that provider's own base URL,
   which `scrim run` does not change. Codex signed in with a ChatGPT account calls the Responses
   API on `chatgpt.com` through the forward proxy, which routes it to the LLM proxy

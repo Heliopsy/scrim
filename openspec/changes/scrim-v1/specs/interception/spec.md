@@ -81,8 +81,17 @@ inherited setting that would send the agent around scrim.
 
 #### Scenario: Cloud provider mode not served
 
-- **WHEN** `CLAUDE_CODE_USE_BEDROCK` is set and the user runs `scrim run -- claude`
+- **WHEN** `CLAUDE_CODE_USE_BEDROCK` is set, scrim has no `bedrock` provider route and the user runs
+  `scrim run -- claude`
 - **THEN** `scrim run` refuses, because Claude Code would reach Bedrock directly
+
+#### Scenario: Cloud provider mode served
+
+- **WHEN** `CLAUDE_CODE_USE_BEDROCK` is set, scrim has a `bedrock` provider route and the user runs
+  `scrim run -- claude`
+- **THEN** Claude Code sends its Bedrock requests to scrim's route with its own AWS authentication
+  turned off, inherited provider keys are removed from its environment, and scrim signs each
+  redacted request with the credentials it holds
 
 ### Requirement: Wrapper exports declared placeholders
 
