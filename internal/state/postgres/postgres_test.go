@@ -391,3 +391,57 @@ func TestNoValueInDatabase(t *testing.T) {
 		}
 	}
 }
+
+// A read-only store's sessions refuse writes and DDL, it never migrates, and
+// a write through it fails before taking the events advisory lock.
+func TestOpenReadOnly(t *testing.T) {
+	dsn := freshDSN(t)
+	rw := open2(t, dsn)
+	if err := rw.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ro, err := postgres.OpenReadOnly(t.Context(), secret.FromString(dsn), postgres.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ro.Close() }()
+	if err := ro.Migrate(t.Context()); !errors.Is(err, postgres.ErrReadOnly) {
+		t.Errorf("Migrate on a read-only store = %v", err)
+	}
+	if _, err := ro.Listen(t.Context()); !errors.Is(err, postgres.ErrReadOnly) {
+		t.Errorf("Listen on a read-only store = %v", err)
+	}
+	if err := applyGrant(t.Context(), ro, "ro-grant", 1); err == nil {
+		t.Error("write through a read-only store succeeded")
+	}
+	conn, err := ro.Pool().Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	var mode string
+	if err := conn.QueryRow(t.Context(), `SHOW default_transaction_read_only`).Scan(&mode); err != nil || mode != "on" {
+		t.Errorf("default_transaction_read_only = %q (%v)", mode, err)
+	}
+	if _, err := conn.Exec(t.Context(), `CREATE TABLE scrim_ro_probe (id int)`); err == nil {
+		t.Error("DDL through a read-only session succeeded")
+	}
+	want, err := postgres.LatestSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, err := ro.SchemaVersion(t.Context()); err != nil || v != want {
+		t.Errorf("SchemaVersion = %d, %v; want %d", v, err, want)
+	}
+	assertNothing(t, rw, "ro-grant")
+}
+
+func open2(t *testing.T, dsn string) *postgres.Store {
+	t.Helper()
+	s, err := postgres.Open(t.Context(), secret.FromString(dsn), postgres.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}

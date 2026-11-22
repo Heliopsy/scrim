@@ -21,6 +21,7 @@ import (
 	"github.com/heliopsy/scrim/internal/fsview"
 	"github.com/heliopsy/scrim/internal/install"
 	"github.com/heliopsy/scrim/internal/state"
+	"github.com/heliopsy/scrim/internal/state/postgres"
 	"github.com/heliopsy/scrim/internal/state/sqlite"
 	"github.com/heliopsy/scrim/internal/status"
 	"github.com/heliopsy/scrim/internal/version"
@@ -219,11 +220,15 @@ func installedAgentModes(cfg *config.Config) []status.AgentMode {
 // openStateForStatus opens the state backend for a report. A SQLite file is
 // opened read-only, without the process lock, so status never stops a scrim
 // starting at the same moment from opening it, and a missing file is
-// reported, not created.
+// reported, not created. PostgreSQL is opened in read-only sessions and
+// never migrated: its schema version is reported against this binary's.
 func openStateForStatus(ctx context.Context, cfg *config.Config) (status.StateOf, func()) {
 	name := state.BackendSetting.Get(cfg)
-	if name == sqlite.Name {
+	switch name {
+	case sqlite.Name:
 		return openSQLiteForStatus(ctx, cfg)
+	case postgres.Name:
+		return openPostgresForStatus(ctx, cfg)
 	}
 	s, err := state.Open(ctx, cfg)
 	if err != nil {
@@ -234,6 +239,27 @@ func openStateForStatus(ctx context.Context, cfg *config.Config) (status.StateOf
 		return status.StateOf{Name: name, Err: err}, func() {}
 	}
 	return status.StateOf{Store: s}, func() { _ = s.Close() }
+}
+
+// openPostgresForStatus connects with default_transaction_read_only=on and
+// takes no advisory lock, so status runs no DDL, writes nothing, works for a
+// role without DDL rights and never races daemons migrating the shared
+// database during a rolling upgrade.
+func openPostgresForStatus(ctx context.Context, cfg *config.Config) (status.StateOf, func()) {
+	expected, err := postgres.LatestSchema()
+	if err != nil {
+		return status.StateOf{Name: postgres.Name, Err: err}, func() {}
+	}
+	dsn, ok := cfg.Secret(postgres.DSNSetting)
+	if !ok {
+		return status.StateOf{Name: postgres.Name,
+			Err: errors.New("state: state.backend is postgres but state.postgres.dsn is not set or not resolved")}, func() {}
+	}
+	s, err := postgres.OpenReadOnly(ctx, dsn, postgres.Options{ConnectTimeout: postgres.ConnectTimeoutSetting.Get(cfg)})
+	if err != nil {
+		return status.StateOf{Name: postgres.Name, Err: err}, func() {}
+	}
+	return status.StateOf{Store: s, Expected: expected}, func() { _ = s.Close() }
 }
 
 func openSQLiteForStatus(ctx context.Context, cfg *config.Config) (status.StateOf, func()) {

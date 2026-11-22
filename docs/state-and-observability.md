@@ -41,6 +41,13 @@ through the admin API instead.
 - The DSN is a secret reference. Errors and `scrim status` show `postgres://user@host:port/db`
   without the password.
 - Replicas starting together migrate once, under an advisory lock.
+- Only a starting daemon migrates. `scrim status` and `scrim doctor` connect with
+  `default_transaction_read_only=on` (`application_name` `scrim-status`), take no advisory lock and
+  run no DDL, so they work with a role that can only read the scrim tables and never race replicas
+  migrating during a rolling upgrade. They report the schema version against the one the binary
+  expects: not created yet (no daemon has started), behind (a daemon of this release migrates it
+  when it starts) or ahead (a newer release migrated it; the backend shows as unhealthy until this
+  binary is upgraded).
 - Events are written to the outbox under a transaction advisory lock, so event IDs become visible
   in commit order. A replica tailing the outbox by ID never misses an event that committed late,
   for example a grant revocation made through another replica. The same transaction sends a
@@ -156,6 +163,7 @@ counts it), never let through.
 Each SQL backend embeds its migrations (`internal/state/<backend>/migrations/NNNN_name.sql`), applied
 in order at start-up, each in its own transaction with its `schema_migrations` row. They are forward
 only. A database migrated by a newer scrim is refused with both schema versions in the message.
+`scrim status` and `scrim doctor` never migrate; they report the version they find.
 
 | Version | Change |
 | --- | --- |
@@ -373,7 +381,8 @@ pending a restart), interception modes, protections, providers, stores, the stat
 sinks, the data plane, everything degraded and every weakened setting. `-o json` (or `--json`) puts
 weakened settings under `weakened_protections`. A component this process cannot check is reported
 as not reported and degraded, never healthy. While a daemon holds the SQLite file, status reports
-it as in use by that process.
+it as in use by that process. Status never creates or migrates state: SQLite is opened read-only,
+PostgreSQL in read-only sessions ([PostgreSQL](#postgresql)).
 
 `scrim doctor` turns the same report into checks, adds the state location permissions for SQLite
 and any checks other areas contribute (CA trust per runtime, interception rules), prints each
