@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.4.0](https://github.com/Heliopsy/scrim/compare/v0.3.0...v0.4.0) (2026-11-22)
+
+
+### Features
+
+* **cli-tools:** credential helpers and secrets in project files ([#76](https://github.com/Heliopsy/scrim/issues/76)) ([b1fe2e3](https://github.com/Heliopsy/scrim/commit/b1fe2e3d3250a3a9074f2711e339a52941b864e0))
+* **install:** managed agent settings and agent hooks interception modes ([#68](https://github.com/Heliopsy/scrim/issues/68)) ([e07ddc8](https://github.com/Heliopsy/scrim/commit/e07ddc82fa0da66979f6e1dcfb50c2a3cb3eca70))
+* **interception:** eBPF cgroup transparent mode with a privileged loader ([#72](https://github.com/Heliopsy/scrim/issues/72)) ([d6b1784](https://github.com/Heliopsy/scrim/commit/d6b1784a37411086fc92abb0e36f793329344e58))
+* **interception:** transparent mode, DNS override and Java trust ([#70](https://github.com/Heliopsy/scrim/issues/70)) ([3dafad6](https://github.com/Heliopsy/scrim/commit/3dafad68c19c8b557ded34c08f2809f0378eaac6))
+* **profiles:** tool profiles for command-line tools with placeholder credentials ([#69](https://github.com/Heliopsy/scrim/issues/69)) ([7e91236](https://github.com/Heliopsy/scrim/commit/7e912364e5df25b21dd71324df318a386c5a7f0e))
+* **run:** session filesystem view for credential files at fixed home paths ([#75](https://github.com/Heliopsy/scrim/issues/75)) ([5b62ad1](https://github.com/Heliopsy/scrim/commit/5b62ad1b83aea1d2b3d53b2e067c5580382acfe4))
+* **state:** Valkey and NATS events, shared rate limits and external audit sinks ([#71](https://github.com/Heliopsy/scrim/issues/71)) ([0e82c5b](https://github.com/Heliopsy/scrim/commit/0e82c5ba0b634b86d217a406e61a08f1065065a9))
+* store-native metadata as policy labels ([#84](https://github.com/Heliopsy/scrim/issues/84)) ([6b3c82b](https://github.com/Heliopsy/scrim/commit/6b3c82bb80a424e5da184dd8a1edd6b2352c9e03))
+* **stores:** native OpenBao labels for policy rules ([#81](https://github.com/Heliopsy/scrim/issues/81)) ([fd3182d](https://github.com/Heliopsy/scrim/commit/fd3182d0b58398c9be38e1a5f2a83775bb2542bb))
+* **stores:** native policy labels for Infisical secrets ([#83](https://github.com/Heliopsy/scrim/issues/83)) ([37a2a05](https://github.com/Heliopsy/scrim/commit/37a2a0519c02d9e1ff355faa0c717401a3867720))
+* **stores:** native vaultwarden.* labels for policy rules ([#82](https://github.com/Heliopsy/scrim/issues/82)) ([bf5ae19](https://github.com/Heliopsy/scrim/commit/bf5ae1903fdaef4108779a6c5d20c76265e1cbfa))
+* **toolproxy:** re-sign AWS SigV4, shape placeholders, present client certificates upstream ([#73](https://github.com/Heliopsy/scrim/issues/73)) ([f974f4a](https://github.com/Heliopsy/scrim/commit/f974f4a37f0b67d5c7da6bb56e1fdb41ddf5ddb6))
+
+
+### Bug Fixes
+
+* **helm:** size the scrim container's default requests from the load test ([#86](https://github.com/Heliopsy/scrim/issues/86)) ([8995e25](https://github.com/Heliopsy/scrim/commit/8995e25de6535cf0b19b841d761cdb6d24099ad0))
+* **interception:** move the transparent listener off the metrics port ([#88](https://github.com/Heliopsy/scrim/issues/88)) ([60b1c94](https://github.com/Heliopsy/scrim/commit/60b1c94da4defb9433fbdc423c3d7858fd0bcc5f))
+* **stores:** no size arithmetic in the label map allocation ([#90](https://github.com/Heliopsy/scrim/issues/90)) ([4573602](https://github.com/Heliopsy/scrim/commit/45736025ee5e95ff4fff5dbde4679ea06974cb43))
+
 ## [0.3.0](https://github.com/Heliopsy/scrim/compare/v0.2.0...v0.3.0) (2026-11-21)
 
 
