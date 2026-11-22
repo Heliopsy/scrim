@@ -425,7 +425,7 @@ Tool aliases by name: `role` (none, read, search, shell, edit, write, network), 
 
 ### `stores.<name>`
 
-Secret store instances by name. The name is the instance's reference scheme (`bao://...` for an instance named bao); `kind` picks the adapter, `aliases` adds schemes, `redact` lists references and prefixes loaded into the redaction set, `refresh.*` tunes refresh and outage handling, and every other field is the adapter's own. See docs/stores.
+Secret store instances by name. The name is the instance's reference scheme (`bao://...` for an instance named bao); `kind` picks the adapter, `aliases` adds schemes, `redact` lists references and prefixes loaded into the redaction set, `refresh.*` tunes refresh and outage handling, `labels` derives policy labels from the store's own labels (docs/policy.md, "Labels from stores"), and every other field is the adapter's own. See docs/stores.
 
 | | |
 |---|---|

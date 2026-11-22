@@ -60,6 +60,7 @@ fn engine(value: &[u8]) -> RestoreEngine {
         name: "".into(),
         store: "fuzz".into(),
         traits: ValueTraits::of(value),
+        labels: Default::default(),
     });
     RestoreEngine::new(Settings::standard(), None, ix)
 }

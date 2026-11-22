@@ -35,6 +35,7 @@ import (
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/ratelimit"
 	"github.com/heliopsy/scrim/internal/state"
+	"github.com/heliopsy/scrim/internal/stores"
 )
 
 // ActionDecision is the audit action of a decision entry.
@@ -61,8 +62,14 @@ type Gate struct {
 	// StoreAccess, when set, checks that the caller's own store identity
 	// may use a secret scrim's rules allowed it to use ([Gate.Answer]).
 	StoreAccess StoreAccess
-	Log         *slog.Logger
-	Now         func() time.Time
+	// Labels, when set, gives a request that names a secret but carries no
+	// secret labels the labels policy sees for it (store-native, store.*
+	// and derived). An error marks the labels unknown: rules that read them
+	// count as erroring, so deny and ask rules match, and the error is
+	// recorded in the decision's audit entry.
+	Labels func(context.Context, stores.Ref) (map[string]string, error)
+	Log    *slog.Logger
+	Now    func() time.Time
 }
 
 // Status is the outcome of a check.
@@ -112,6 +119,7 @@ type Options struct {
 // logged. A decision that cannot be audited is refused, so nothing proceeds
 // unaudited.
 func (g *Gate) Check(ctx context.Context, req policy.Request, o Options) Verdict {
+	req, o = g.withLabels(ctx, req, o)
 	v := g.check(ctx, req, o)
 	if v.Status == Allowed && o.Confirm != nil {
 		if err := o.Confirm(ctx); err != nil {
@@ -123,6 +131,26 @@ func (g *Gate) Check(ctx context.Context, req policy.Request, o Options) Verdict
 		return Verdict{Status: Denied, Rule: v.Rule, Reason: "decision could not be audited", ApprovalID: v.ApprovalID}
 	}
 	return v
+}
+
+// withLabels fills req.SecretLabels from g.Labels when the request names a
+// secret and carries none (the data plane sends the labels its snapshot
+// holds, so its asks are evaluated on what it decided on).
+func (g *Gate) withLabels(ctx context.Context, req policy.Request, o Options) (policy.Request, Options) {
+	if g.Labels == nil || len(req.SecretLabels) != 0 || req.Ref.IsZero() {
+		return req, o
+	}
+	l, err := g.Labels(ctx, req.Ref)
+	req.SecretLabels = l
+	if err != nil {
+		req.SecretLabelsUnknown = true
+		attrs := make(map[string]string, len(o.Attrs)+1)
+		maps.Copy(attrs, o.Attrs)
+		attrs["secret_labels"] = "unknown: " + err.Error()
+		o.Attrs = attrs
+		g.logErr("secret labels could not be read; rules on them count as matching", err)
+	}
+	return req, o
 }
 
 func (g *Gate) check(ctx context.Context, req policy.Request, o Options) Verdict {

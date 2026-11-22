@@ -333,6 +333,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		Catalog:   d.catalog.Current,
 		CA:        o.CA,
 		Listeners: ListenersFrom(cfg),
+		Labels:    a.Stores.Labels,
 		Policy: func() *pb.Policy {
 			ver, _ := pp.Rules.Health()
 			rs := pp.Rules.RuleSet()

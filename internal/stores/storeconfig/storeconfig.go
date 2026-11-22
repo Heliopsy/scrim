@@ -42,6 +42,9 @@ const Key = "stores"
 const (
 	FieldKind    = "kind"
 	FieldAliases = "aliases"
+	// FieldLabels derives the instance's own policy labels from the labels
+	// its adapter reports (stores.LabelMapping).
+	FieldLabels = "labels"
 )
 
 // SecretFields are the credential fields any adapter may use. They are
@@ -65,12 +68,33 @@ var Collection = config.RegisterCollection(config.CollectionSpec{
 	Description: "Secret store instances by name. The name is the instance's reference scheme " +
 		"(`bao://...` for an instance named bao); `kind` picks the adapter, `aliases` adds schemes, " +
 		"`redact` lists references and prefixes loaded into the redaction set, `refresh.*` tunes " +
-		"refresh and outage handling, and every other field is the adapter's own. See docs/stores.",
+		"refresh and outage handling, `labels` derives policy labels from the store's own labels " +
+		"(docs/policy.md, \"Labels from stores\"), and every other field is the adapter's own. See docs/stores.",
+	FieldSchemas:    map[string]map[string]any{FieldLabels: labelsSchema},
 	SecretFields:    SecretFields,
 	RequiredFields:  []string{FieldKind},
 	RestartRequired: true,
 	Validate:        func(inst config.Instance) error { return Validate(stores.DefaultRegistry, inst) },
 })
+
+// labelsSchema is the JSON schema of the labels field.
+var labelsSchema = map[string]any{
+	"type":          "object",
+	"description":   "Derived policy labels by name: a source label name to copy, or {from, regex, value}.",
+	"propertyNames": map[string]any{"pattern": `^[a-z0-9_-]+(\.[a-z0-9_-]+)*$`},
+	"additionalProperties": map[string]any{"anyOf": []any{
+		map[string]any{"type": "string", "minLength": 1},
+		map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"from":  map[string]any{"type": "string", "minLength": 1},
+				"regex": map[string]any{"type": "string"},
+				"value": map[string]any{"type": "string"},
+			},
+		},
+	}},
+}
 
 // split separates an instance's generic fields from the adapter's options.
 func split(inst config.Instance) (kind string, aliases []string, adapterOpts, refreshOpts map[string]any, err error) {
@@ -102,7 +126,7 @@ func split(inst config.Instance) (kind string, aliases []string, adapterOpts, re
 	adapterOpts, refreshOpts = map[string]any{}, map[string]any{}
 	for k, v := range inst.Fields {
 		switch k {
-		case FieldKind, FieldAliases:
+		case FieldKind, FieldAliases, FieldLabels:
 		case refresh.KeyRedact, "refresh":
 			refreshOpts[k] = v
 		default:
@@ -131,6 +155,9 @@ func Validate(reg *stores.Registry, inst config.Instance) error {
 	}
 	rc, err := refresh.ParseConfig(inst.Name, ropts)
 	if err != nil {
+		return err
+	}
+	if _, err := stores.ParseLabelMapping(kind, inst.Fields[FieldLabels]); err != nil {
 		return err
 	}
 	a, err := reg.Open(context.Background(), stores.Instance{
@@ -240,11 +267,18 @@ func OpenWith(ctx context.Context, cfg *config.Config, reg *stores.Registry, opt
 			errs = append(errs, fmt.Errorf("store %s: %w", inst.Name, err))
 			continue
 		}
+		mapping, err := stores.ParseLabelMapping(inst.Kind, ci.Fields[FieldLabels])
+		if err != nil {
+			_ = a.Close()
+			errs = append(errs, fmt.Errorf("store %s: %w", inst.Name, err))
+			continue
+		}
 		if err := o.Set.Add(a, inst.Aliases...); err != nil {
 			_ = a.Close()
 			errs = append(errs, err)
 			continue
 		}
+		o.Set.SetLabeling(a.Name(), inst.Kind, mapping)
 		if opts.OnChange != nil {
 			name := a.Name()
 			rc.OnChange = func() { opts.OnChange(name) }

@@ -149,6 +149,12 @@ message Snapshot {
   // forwarding it as text. The redaction core ignores them. An entry whose
   // reference or name also has a value in `values` is ignored.
   repeated ValueEntry unavailable = 12;
+  // value_labels says every entry's `labels` holds each label of that value
+  // a condition of `policy` reads (docs/policy.md "Labels from stores"), and
+  // only those: a key missing from an entry is missing on the value, and an
+  // empty map is a value without such labels. False (an older control
+  // plane) means no labels were sent, and `secret.labels` is unknown.
+  bool value_labels = 13;
 }
 
 // CaCertificate is one generation of the tool-proxy CA.
@@ -295,6 +301,12 @@ message ValueEntry {
   // the credential's placeholder certificate (credential-injection spec,
   // "Client certificates toward upstreams").
   bool client_certificate = 15;
+  // labels are the value's labels (docs/policy.md "Labels from stores": the
+  // store's native labels, the generic `store.*` labels and the instance's
+  // derived labels) that a condition of the snapshot's policy reads, so a
+  // policy without label conditions sends none. Metadata only, never a
+  // value. Meaningful only with `Snapshot.value_labels`.
+  map<string, string> labels = 16;
 }
 
 // AwsSigV4 binds an AWS secret access key to its access key id and to the

@@ -84,6 +84,13 @@ pub struct Snapshot {
     /// reference or name also has a value in `values` is ignored.
     #[prost(message, repeated, tag = "12")]
     pub unavailable: ::prost::alloc::vec::Vec<ValueEntry>,
+    /// value_labels says every entry's `labels` holds each label of that value
+    /// a condition of `policy` reads (docs/policy.md "Labels from stores"), and
+    /// only those: a key missing from an entry is missing on the value, and an
+    /// empty map is a value without such labels. False (an older control
+    /// plane) means no labels were sent, and `secret.labels` is unknown.
+    #[prost(bool, tag = "13")]
+    pub value_labels: bool,
 }
 /// CaCertificate is one generation of the tool-proxy CA.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -149,7 +156,7 @@ pub struct RestoreSettings {
     #[prost(string, repeated, tag = "5")]
     pub reveal_credential_refs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 #[prost(skip_debug)]
 pub struct ValueEntry {
     /// ref is the store reference the value was read from, for example
@@ -215,6 +222,16 @@ pub struct ValueEntry {
     /// "Client certificates toward upstreams").
     #[prost(bool, tag = "15")]
     pub client_certificate: bool,
+    /// labels are the value's labels (docs/policy.md "Labels from stores": the
+    /// store's native labels, the generic `store.*` labels and the instance's
+    /// derived labels) that a condition of the snapshot's policy reads, so a
+    /// policy without label conditions sends none. Metadata only, never a
+    /// value. Meaningful only with `Snapshot.value_labels`.
+    #[prost(map = "string, string", tag = "16")]
+    pub labels: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
 }
 /// AwsSigV4 binds an AWS secret access key to its access key id and to the
 /// regions and services a request's credential scope may name.

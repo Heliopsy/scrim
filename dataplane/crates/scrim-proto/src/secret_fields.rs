@@ -39,6 +39,7 @@ impl fmt::Debug for ValueEntry {
             .field("aws_sigv4", &self.aws_sigv4)
             .field("placeholder_format", &self.placeholder_format)
             .field("client_certificate", &self.client_certificate)
+            .field("labels", &self.labels)
             .finish()
     }
 }
