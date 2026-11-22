@@ -220,3 +220,20 @@ func TestBuildBodyCarriesEveryInsert(t *testing.T) {
 		t.Fatalf("markers: %v", got)
 	}
 }
+
+func TestFreePortBelowEphemeralRange(t *testing.T) {
+	used := map[int]bool{}
+	for range 50 {
+		p, err := freePort(used)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p < portLow || p >= portHigh {
+			t.Fatalf("port %d outside %d-%d", p, portLow, portHigh-1)
+		}
+		if used[p] {
+			t.Fatalf("port %d handed out twice", p)
+		}
+		used[p] = true
+	}
+}
