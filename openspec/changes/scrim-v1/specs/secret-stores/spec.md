@@ -477,6 +477,56 @@ note or the value of an encrypted metadata entry.
 - **THEN** none of them appears in any label key or value, and the encrypted entry is listed by key
   only in `infisical.encrypted-meta`
 
+### Requirement: 1Password adapter
+
+The system SHALL read, list, watch and write 1Password items through a 1Password Connect server,
+addressed as `<scheme>://<vault>/<item>[#[<section>/]<field>]` with vault and item given by name or
+ID, and SHALL authenticate with a Connect token held only by scrim. Version selectors SHALL be
+refused, since Connect serves only the current version.
+
+#### Scenario: Section field like an op:// reference
+
+- **WHEN** an agent's request references `op://Prod/GitHub#API/token`
+- **THEN** scrim reads the field labelled `token` in section `API` of item `GitHub` in vault `Prod`,
+  the value `op://Prod/GitHub/API/token` names in the 1Password CLI
+
+#### Scenario: Rotation keeps the rest of the item
+
+- **WHEN** scrim writes a new `password` to an existing login item
+- **THEN** Connect receives the item with only that field's value changed, keeping its username,
+  other fields, sections, tags and files
+
+### Requirement: 1Password ambiguous references are refused
+
+A 1Password field selector or item title SHALL resolve to exactly one field or item. One that
+matches several SHALL be refused as an invalid reference rather than resolved to one of them.
+
+#### Scenario: Same field label in two sections
+
+- **WHEN** item `GitHub` has a `token` field in sections `API` and `Backup` and a reference selects
+  `#token`
+- **THEN** the read fails as an invalid reference naming the ambiguity, and no value is returned
+
+### Requirement: 1Password labels without values
+
+The 1Password adapter SHALL label items under `onepassword.<attr>` (vault name, ID and type, item
+title and ID, category, tags with their parents, URL hosts, favourite, version, times, last editor)
+from the vault and the item listing only, so reads, listings and metadata lookups report the same
+labels and a metadata lookup or listing SHALL NOT fetch a full item. Field values, notes and
+one-time codes SHALL NOT appear in labels.
+
+#### Scenario: Labels of an existing item without its values
+
+- **WHEN** a rule needs the labels of `op://Prod/GitHub`, which is in no redaction set
+- **THEN** scrim finds the item through the title-filtered item listing, returns the labels a read
+  reports, and makes no request for the full item
+
+#### Scenario: Write target labelled before it exists
+
+- **WHEN** a rule asks for writes into vault `Prod` and an agent creates `op://Prod/svc/new`
+- **THEN** the write is decided on `onepassword.vault = Prod`, `onepassword.item = svc/new` and the
+  configured `onepassword.category` before Connect is contacted
+
 ### Requirement: OpenBao adapter
 
 The system SHALL read and write OpenBao (and Vault-compatible) KV version 2 secrets, authenticating

@@ -46,6 +46,7 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 | [stores/README.md](stores/README.md) | Store adapters, the capability matrix, references, freshness and outages |
 | [stores/openbao.md](stores/openbao.md) | OpenBao and Vault-compatible KV v2 |
 | [stores/infisical.md](stores/infisical.md) | Infisical |
+| [stores/onepassword.md](stores/onepassword.md) | 1Password through a Connect server |
 | [stores/vaultwarden.md](stores/vaultwarden.md) | Vaultwarden and Bitwarden-compatible servers, client-side decryption |
 | [stores/local.md](stores/local.md) | Environment variables and files |
 | [catalog.md](catalog.md) | Logical names, host bindings, declared placeholders, profiles and bulk mapping |
