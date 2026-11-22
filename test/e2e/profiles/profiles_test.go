@@ -64,7 +64,10 @@ type env struct {
 	repo    string
 }
 
-func setup(t *testing.T) *env {
+func setup(t *testing.T) *env { return setupWith(t, "") }
+
+// setupWith starts the daemon with extra configuration appended.
+func setupWith(t *testing.T, extra string) *env {
 	bin := harness.Require(t)
 	e := &env{seeds: map[string]leak.Seed{}}
 	vals := map[string]string{}
@@ -82,6 +85,7 @@ func setup(t *testing.T) *env {
 		Upstream:   "http://" + harness.FreePort(t), // no model traffic in this test
 		Catalog:    catalogYAML,
 		UpstreamCA: pki.CAPEM,
+		Extra:      extra,
 	})
 
 	// A bare repository served as https://github.com/acme/repo.git.
@@ -208,9 +212,14 @@ find "$d" -type f -print -exec cat {} \;`,
 		harness.LookPath(t, "git")
 		r := e.sh(t, "", `set -e
 git clone -q https://github.com/acme/repo.git work
-git -C work log --format=%s -1`)
+git -C work log --format=%s -1
+git config --get-all credential.helper
+printf 'protocol=https\nhost=github.com\n\n' | git credential fill`)
 		must(t, r, "git clone")
 		contains(t, r, "initial")
+		// git authenticates through scrim's credential helper (10a.9).
+		contains(t, r, " credential-helper git --file ")
+		contains(t, r, "password=SCRIM_GITHUB\n")
 		e.authenticated(t, "github.com")
 	})
 
@@ -242,9 +251,25 @@ kubectl config view --raw`, path("kubectl"))
 		r := e.sh(t, "", `set -e
 skopeo login registry.scrim.test
 skopeo login --authfile "$DOCKER_CONFIG/config.json" registry.scrim.test
-skopeo login --get-login registry.scrim.test`, path("skopeo"))
+skopeo login --get-login registry.scrim.test
+cat "$DOCKER_CONFIG/config.json"
+echo registry.scrim.test | docker-credential-scrim get
+docker-credential-scrim list
+if printf '{"ServerURL":"registry.scrim.test","Username":"me","Secret":"typed-registry-password"}' | docker-credential-scrim store; then
+  echo STORE-ACCEPTED
+fi`, path("skopeo"))
 		must(t, r, "skopeo login")
 		contains(t, r, "scrim")
+		// DOCKER_CONFIG names docker-credential-scrim in credHelpers, so
+		// containers/image asks only it for registry.scrim.test; it is on the
+		// session's PATH and returns the placeholder (10a.9).
+		contains(t, r, `"credHelpers": {`)
+		contains(t, r, `"Secret":"SCRIM_REGISTRY"`)
+		contains(t, r, `"registry.scrim.test":"scrim"`)
+		contains(t, r, "does not store credentials")
+		if strings.Contains(r.Output(), "STORE-ACCEPTED") {
+			t.Error("docker-credential-scrim stored a credential it was handed")
+		}
 		if n := e.fake.count("registry.scrim.test") - before; n < 2 {
 			t.Errorf("%d authenticated registry logins, want 2 (REGISTRY_AUTH_FILE and DOCKER_CONFIG)", n)
 		}

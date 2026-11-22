@@ -213,6 +213,11 @@ in the audit log without any value.
 - **THEN** the agent receives status 403 with code `unbound_destination` and the credential alias,
   and the audit entry names the alias and destination
 
+#### Scenario: Signature not made with the placeholder
+
+- **WHEN** a SigV4 request names a credential's placeholder access key id and is signed with another secret
+- **THEN** the agent receives status 403 with code `signature_invalid` naming both credentials by alias
+
 ### Requirement: Unresolved placeholders are refused
 
 A request toward a host with bound credentials that carries a placeholder no credential with a
@@ -431,16 +436,85 @@ credential toward bound endpoints only. A request that cannot be re-signed SHALL
 - **THEN** scrim re-signs the request with the real keys and S3 accepts it
 - **AND** a request signed for an unbound account or region is refused
 
+#### Scenario: Caller identity against LocalStack
+
+- **WHEN** the agent runs `aws sts get-caller-identity` with placeholder keys through the tool proxy toward a LocalStack endpoint the credentials are bound to
+- **THEN** LocalStack sees the real access key id, and the agent sees its placeholder where the response names it
+
+### Requirement: SigV4 requests are signed with the placeholder
+
+An AWS secret access key credential SHALL name its access key id credential and MAY restrict
+regions and services. A request whose SigV4 access key id is that credential's placeholder SHALL
+use both credentials, with their bindings and injection decisions; its signature SHALL be verified
+as sent with the secret's placeholders, refused with `signature_invalid` when none made it and with
+`unbound_destination` for a region or service not allowed.
+
+#### Scenario: Signed with another secret
+
+- **WHEN** a request names the access key id placeholder but is signed with a secret that is not a placeholder of the bound secret
+- **THEN** it is refused with `signature_invalid` and nothing is sent upstream
+
+#### Scenario: Region not allowed
+
+- **WHEN** a request signed with the placeholder keys names `eu-west-1` and the credential allows only `us-east-1`
+- **THEN** it is refused with `unbound_destination` naming the region, and nothing is sent upstream
+
+### Requirement: SigV4 forms and payloads
+
+After substitution the tool proxy SHALL sign the request again with the real access key id and
+secret, keeping the client's URI canonicalisation and payload mode, for the `Authorization`
+header and presigned query forms, body hashes, `UNSIGNED-PAYLOAD` and a substituted session token.
+Signed headers the proxy removes SHALL leave the signed header list.
+
+#### Scenario: Presigned URL
+
+- **WHEN** a presigned URL made with the placeholder keys is fetched through the tool proxy
+- **THEN** the upstream receives it with the real access key id and a signature made with the real secret, and the same URL sent directly is refused by the upstream
+
+#### Scenario: Body changed by substitution
+
+- **WHEN** an S3 request with a body hash has a placeholder substituted in its body
+- **THEN** `x-amz-content-sha256` and the signature cover the body as sent
+
+### Requirement: Chunk-signed bodies are re-chained
+
+For a chunk-signed body (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, with or without a signed trailer),
+the tool proxy SHALL verify every chunk and trailer signature against the placeholder chain and
+replace it with the real chain, buffered or streamed, and SHALL refuse a placeholder inside a
+chunk-signed or `aws-chunked` body.
+
+#### Scenario: Chunk-signed upload
+
+- **WHEN** an upload with a chunk-signed body larger than the buffering limit is sent through the tool proxy
+- **THEN** every chunk and trailer signature the upstream receives chains from the real seed signature, and a chunk signed with another secret cuts the upload off
+
+### Requirement: Signing credentials are never sent as text
+
+A secret access key with `aws_sigv4` and a client certificate credential SHALL only be used by
+the tool proxy, never substituted into a request as text.
+
+#### Scenario: Secret placeholder sent as text
+
+- **WHEN** a request carries the secret access key's placeholder in a header
+- **THEN** it is refused with `undeclared_location`
+
 ### Requirement: Format-preserving placeholders
 
 A credential MAY be configured to use a placeholder that keeps the real secret's prefix, length and
 alphabet, for clients that validate a token's shape before sending it. Format-preserving
-placeholders SHALL still be unique, deterministic and recognised by the redactor and the guard.
+placeholders SHALL still be unique, deterministic and recognised by the redactor and the guard
+(redaction spec "Format-preserving placeholders"), and the tool proxy SHALL treat them exactly like
+any other placeholder of the credential.
 
 #### Scenario: Client that checks the token prefix
 
 - **WHEN** a CLI rejects tokens that do not start with `ghp_`
 - **THEN** the format-preserving placeholder starts with `ghp_` and the CLI sends it
+
+#### Scenario: Shaped placeholder toward another host
+
+- **WHEN** a client sends a credential's format-preserving placeholder to a host the credential is not bound to
+- **THEN** the request is refused with `unbound_destination`, as for any placeholder
 
 ### Requirement: Client certificates toward upstreams
 
@@ -452,6 +526,41 @@ connection. The private key SHALL never be written to the agent's filesystem.
 
 - **WHEN** a cluster credential is a client certificate and key stored in a store
 - **THEN** kubectl reaches the API server through scrim, which presents the certificate upstream
+
+#### Scenario: Placeholder certificate in a kubeconfig
+
+- **WHEN** kubectl's kubeconfig holds the placeholder certificate and key, the scrim CA and the tool proxy as `proxy-url`, and the cluster's admin certificate is the credential bound to the API server
+- **THEN** `kubectl get nodes` succeeds as the admin, and the kubeconfig holds no part of the real key
+
+### Requirement: Placeholder client certificates
+
+The agent's configuration SHALL hold a placeholder certificate: a self-signed certificate over an
+Ed25519 key whose seed is `SHA-256("scrim-placeholder-cert-v1" || 0x00 || placeholder)` for one of
+the credential's placeholder strings. Only on a tunnel toward a host a client certificate
+credential is bound to SHALL the tool proxy ask the agent for a client certificate, never
+requiring one.
+
+#### Scenario: Host without a certificate credential
+
+- **WHEN** a client holding a placeholder certificate opens a tunnel to a host no client certificate credential is bound to
+- **THEN** the proxy does not ask for a certificate and the request is handled as usual
+
+### Requirement: Client certificate use follows bindings
+
+A request on a connection that presented a credential's placeholder certificate SHALL count as
+using that credential: its binding and the injection decision apply, and the real certificate
+SHALL be presented upstream on a connection used for that certificate only. Without the
+placeholder certificate no client certificate SHALL be presented upstream.
+
+#### Scenario: Another certificate
+
+- **WHEN** the agent presents a certificate that is no credential's placeholder certificate
+- **THEN** nothing is presented upstream and the API server sees an anonymous client
+
+#### Scenario: Path outside the binding
+
+- **WHEN** a request on a connection with the placeholder certificate goes to a path the credential is not bound to
+- **THEN** it is refused with `unbound_destination` and nothing is sent upstream
 
 ### Requirement: Edge forwarder for local sockets
 
@@ -563,11 +672,37 @@ doctor` SHALL warn about it with the fix.
 The system SHALL provide credential helpers for tools that support them (git credential helper,
 docker credential helper, AWS `credential_process`, kubectl exec plugin) returning placeholders by
 default, or short-lived scoped credentials only where policy allows it and with the grant recorded.
+A helper SHALL answer only from what the session's tool profiles generated, SHALL NOT read a store or
+the home directory's credential files, and SHALL NOT store a credential a tool hands it.
 
 #### Scenario: git asks its credential helper
 
 - **WHEN** git pushes over HTTPS and calls the scrim credential helper
 - **THEN** the helper returns a placeholder and the push succeeds through the tool proxy
+
+#### Scenario: docker login with a typed password
+
+- **WHEN** a client whose registry configuration names the scrim docker credential helper asks it to
+  store a credential other than the placeholder it returns
+- **THEN** the helper refuses and nothing is stored
+
+#### Scenario: kubectl exec plugin
+
+- **WHEN** the kubectl profile's helper is on and kubectl calls the API server
+- **THEN** the exec plugin returns an ExecCredential holding the placeholder, the kubeconfig holds no
+  token, and the request is injected toward the bound host
+
+#### Scenario: AWS credential_process
+
+- **WHEN** the aws profile's helper is on
+- **THEN** the AWS CLI obtains placeholder keys from scrim's `credential_process` and the generated
+  credentials file holds none
+
+#### Scenario: Helper outside a session
+
+- **WHEN** the docker credential helper runs without a session's generated configuration
+- **THEN** it knows no credentials and returns none, even if the home directory holds a docker
+  configuration with real ones
 
 ### Requirement: Tools that print their own credentials
 
@@ -592,6 +727,34 @@ with a reference. Nothing is moved or rewritten without confirmation.
 - **WHEN** a project's `.env` contains an API key that no store holds
 - **THEN** scrim redacts it from LLM traffic from the start of the session
 - **AND** `scrim doctor` lists it with an offer to move it into a store
+
+#### Scenario: Value written while the agent runs
+
+- **WHEN** the agent or the user adds a secret value to a project file during the session
+- **THEN** the rescan registers it and later requests carry its placeholder
+
+#### Scenario: Move only after confirmation
+
+- **WHEN** the user runs `scrim project move` and answers no
+- **THEN** the store and the file are unchanged
+- **AND** after a yes the value is written to the store and the file holds a `{{scrim:<ref>}}`
+  reference in its place
+
+### Requirement: Project values in force before the first request
+
+Values found in project files SHALL be in force in the data plane before the agent's first request,
+SHALL be redacted and never injected, and SHALL leave the redaction set when the session ends. If
+they cannot be registered, `scrim run` SHALL NOT start the agent.
+
+#### Scenario: Registration fails
+
+- **WHEN** the values found in project files cannot be added to the redaction set
+- **THEN** `scrim run` refuses to start the agent
+
+#### Scenario: Session ends
+
+- **WHEN** the session that registered project values ends or is swept
+- **THEN** the values are wiped and the next snapshot no longer holds them
 
 ### Requirement: User-declared placeholders
 

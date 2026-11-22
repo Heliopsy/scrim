@@ -63,6 +63,8 @@ func (Commands) Run(e *Env) *cobra.Command {
 				MCP: agentrun.MCP.Get(cfg), SessionName: name, SessionTTL: ttl,
 				AllowUnredacted: agentrun.AllowUnredactedStart.Get(cfg),
 				Reserved:        agentrun.ReservedBy(e.Registry),
+				ScanProject:     agentrun.ScanProject.Get(cfg),
+				ScanInterval:    agentrun.ScanInterval.Get(cfg),
 				FSView:          agentrun.FSViewOptions{Mode: fsview.Setting.Get(cfg), Hide: fsview.Hide.Get(cfg)},
 			}
 			if log, err := obs.LoggerFromConfig(e.Stderr, cfg, nil); err == nil {
@@ -178,6 +180,9 @@ func writePlan(w io.Writer, p *agentrun.Plan, format string) error {
 	}
 	if len(p.Profiles) > 0 {
 		_, _ = fmt.Fprintf(w, "\ntool profiles\n  %s\n", strings.Join(p.Profiles, "\n  "))
+	}
+	if len(p.Project) > 0 {
+		_, _ = fmt.Fprintf(w, "\nproject values (redacted for the session; scrim project move moves them into a store)\n  %s\n", strings.Join(p.Project, "\n  "))
 	}
 	if len(p.Unset) > 0 {
 		_, _ = fmt.Fprintf(w, "\nunset\n  %s\n", strings.Join(p.Unset, "\n  "))

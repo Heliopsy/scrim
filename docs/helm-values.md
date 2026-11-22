@@ -190,7 +190,7 @@ kubernetes-replicator (`global.replication`).
 | central.enabled | bool | `true` | Deploy the central scrim. |
 | central.replicaCount | int | `1` | Replicas when autoscaling is off. More than one needs postgres.enabled. |
 | central.strategy | object | See the keys below. | Deployment strategy. |
-| central.resources | object | See the keys below. | Resources of the scrim container. |
+| central.resources | object | See the keys below. | Resources of the scrim container. The requests match one replica at about 330 concurrent streams in the load test (docs/state-and-observability.md, "Load test"): 0.25 cores and about 150 MiB. Raise them for more streams per replica. |
 | central.nodeSelector | object | `{}` | nodeSelector (empty: global.nodeSelector). |
 | central.tolerations | list | `[]` | tolerations (empty: global.tolerations). |
 | central.affinity | object | `{}` | affinity (empty: global.affinity; tpl). |

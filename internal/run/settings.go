@@ -4,6 +4,7 @@ package run
 
 import (
 	"strings"
+	"time"
 
 	"github.com/heliopsy/scrim/internal/config"
 )
@@ -33,6 +34,28 @@ var (
 		Key:         "run.placeholder-env",
 		Default:     true,
 		Description: "Export each declared catalog placeholder that resolves for the session as an environment variable of the same name holding the placeholder, for example SCRIM_ACME_KEY=SCRIM_ACME_KEY.",
+		Flag:        true,
+	})
+)
+
+// Project file scan settings (specs/credential-injection "Secrets in
+// project files").
+var (
+	// ScanProject registers secret values found in project files.
+	ScanProject = config.Register(config.Spec[bool]{
+		Key:     "run.scan-project",
+		Default: true,
+		Description: "Scan the agent's working directory for secret values in project files (.env*, *.tfvars, application " +
+			"config, compose files, .npmrc) and redact them from the session's first request. scrim run refuses to start " +
+			"the agent when they cannot be registered.",
+		Flag: true,
+	})
+
+	// ScanInterval is how often project files are rescanned.
+	ScanInterval = config.Register(config.Spec[time.Duration]{
+		Key:         "run.scan-interval",
+		Default:     10 * time.Second,
+		Description: "How often scrim run rescans the project files while the agent runs and registers changed values; 0 scans once at start.",
 		Flag:        true,
 	})
 )

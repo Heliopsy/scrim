@@ -173,6 +173,17 @@ leak *args: leak-selftest
     if [ -n "${SCRIM_LEAK_PROXY_CMD:-}" ]; then cmd=(--proxy-cmd "$SCRIM_LEAK_PROXY_CMD"); fi
     go run . audit run --proxy "$proxy" "${cmd[@]}" --report "${SCRIM_LEAK_REPORT:-leak-report.json}" {{args}}
 
+# Three replicas on PostgreSQL with Valkey events in memory- and CPU-capped rootless podman
+# containers, the release data plane, a fake provider and a fake tool API. Fails on any leak,
+# unrestored placeholder, failed injection or approval that did not cross replicas, and on the
+# thresholds in test/load/profiles.json. smoke takes a few minutes; full (1,000 streams) wants a whole
+# machine, see docs/state-and-observability.md. Extra arguments go to `scrim-load run`, for example
+# `just load-test smoke --events nats --out /tmp/load`.
+#
+# Proxy-level load test (tasks.md 14.3), profile smoke or full.
+load-test profile="smoke" *args:
+    test/load/run.sh --profile {{profile}} {{args}}
+
 # Standalone fake model provider for testing a proxy by hand or from Rust tests.
 fakeprovider *args:
     go run ./internal/testing/fakeprovider/cmd/scrim-fakeprovider {{args}}

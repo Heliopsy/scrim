@@ -140,6 +140,18 @@ the syntax it lands in (percent-encoding in URLs and forms, string escaping in J
 multipart). CA rotation serves leaves with a cross certificate during the overlap, so clients that
 trust only the previous CA keep working without a second leaf cache.
 
+Some credentials never travel as text. For AWS SigV4 the agent signs with placeholder keys; the
+proxy checks the signature was made with the secret's placeholder (so the request is a scrim
+session's, not one signed with keys the agent has of its own), then signs it again with the real
+keys toward bound regions and services, chunk signatures included. scrim implements SigV4 itself
+(about 600 lines, checked against AWS's signing test suite): the `aws-sigv4` crate signs requests
+with a header selection of its own and has no verification, and the proxy must reproduce the
+client's exact canonical request. A client certificate is presented in the proxy's upstream
+handshake when the agent presents the credential's placeholder certificate, an Ed25519 key derived
+from the placeholder text, so a kubeconfig still parses. For clients that check a token's shape a
+credential can opt into a format-preserving placeholder (`ghp_` and 36 characters, `AKIA` and 16),
+still a keyed HMAC of the value, found by exact match because it has no delimiters.
+
 ### D6. Stores are brokered, and scrim enforces write-only itself
 
 scrim is the only holder of store credentials. Agents call scrim, never the store, so write-only,

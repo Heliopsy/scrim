@@ -159,9 +159,20 @@ pub struct Entry {
     pub meta: EntryMeta,
     /// The value.
     pub value: SecretValue,
+    /// Use a format-preserving placeholder ([`crate::shaped_placeholder_for`]) when the value
+    /// has a shape and is a credential.
+    pub shape: bool,
 }
 
 impl Entry {
+    /// Asks for a format-preserving placeholder (credentials only; a value without a shape keeps
+    /// the bracket form).
+    #[must_use]
+    pub fn with_shape(mut self, shape: bool) -> Self {
+        self.shape = shape;
+        self
+    }
+
     /// Convenience constructor.
     pub fn new(id: u64, slug: RefSlug, class: ValueClass, value: SecretValue) -> Self {
         Self {
@@ -171,6 +182,7 @@ impl Entry {
                 class,
             },
             value,
+            shape: false,
         }
     }
 }

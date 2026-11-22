@@ -2073,7 +2073,11 @@ mod tests {
     use super::*;
 
     fn empty_resolver() -> Arc<Resolver> {
-        Arc::new(Resolver::new(HashMap::new(), Arc::from(Vec::new())))
+        Arc::new(Resolver::new(
+            HashMap::new(),
+            Arc::from(Vec::new()),
+            Default::default(),
+        ))
     }
 
     #[test]

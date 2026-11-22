@@ -354,6 +354,8 @@ is out of date.
 | [`run.mcp`](#runmcp) | bool | `true` | hot |
 | [`run.placeholder-env`](#runplaceholder-env) | bool | `true` | hot |
 | [`run.profiles`](#runprofiles) | list | `["auto"]` | hot |
+| [`run.scan-interval`](#runscan-interval) | duration | `10s` | hot |
+| [`run.scan-project`](#runscan-project) | bool | `true` | hot |
 | [`session.max-ttl`](#sessionmax-ttl) | duration | `168h0m0s` | restart required |
 | [`session.ttl`](#sessionttl) | duration | `12h0m0s` | restart required |
 | [`state.backend`](#statebackend) | string | `memory` | restart required |
@@ -390,7 +392,7 @@ is out of date.
 
 ### `catalog.entries.<name>`
 
-Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools. References only, never values.
+Catalog entries by logical name: ref, profiles, variants, prefix, template, hosts, placeholder, class, inject, tools, placeholder_format, aws_sigv4, client_certificate. References only, never values.
 
 | | |
 |---|---|
@@ -2228,6 +2230,30 @@ Tool profiles scrim run applies: profile names, `auto` for every profile at leas
 | Default | `["auto"]` |
 | Environment | `SCRIM_RUN_PROFILES` |
 | Flag | `--run-profiles` |
+| Reload | hot |
+
+#### `run.scan-interval`
+
+How often scrim run rescans the project files while the agent runs and registers changed values; 0 scans once at start.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `10s` |
+| Environment | `SCRIM_RUN_SCAN_INTERVAL` |
+| Flag | `--run-scan-interval` |
+| Reload | hot |
+
+#### `run.scan-project`
+
+Scan the agent's working directory for secret values in project files (.env*, *.tfvars, application config, compose files, .npmrc) and redact them from the session's first request. scrim run refuses to start the agent when they cannot be registered.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `true` |
+| Environment | `SCRIM_RUN_SCAN_PROJECT` |
+| Flag | `--run-scan-project` |
 | Reload | hot |
 
 ### session
