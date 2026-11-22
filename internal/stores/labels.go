@@ -225,7 +225,7 @@ func GenericLabels(name, kind string, ref Ref) map[string]string {
 //
 // The result is a new map; native is not modified.
 func ComposeLabels(name, kind string, ref Ref, native map[string]string, m LabelMapping) map[string]string {
-	out := make(map[string]string, len(native)+5)
+	out := make(map[string]string, len(native))
 	foreign := foreignKinds(kind)
 	for k, v := range native {
 		if strings.HasPrefix(k, StoreLabelPrefix) {
