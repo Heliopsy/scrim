@@ -8,6 +8,7 @@ value back.
 | ------- | ------ | ------- |
 | OpenBao (and Vault-compatible KV v2) | `openbao` | [openbao.md](openbao.md) |
 | Infisical | `infisical` | [infisical.md](infisical.md) |
+| Bitwarden Secrets Manager | `bws` | [bws.md](bws.md) |
 | Environment variables, files | `env`, `file` | [local.md](local.md) |
 | Memory (tests, throwaway runs) | `memory` | none |
 
@@ -20,13 +21,14 @@ support is refused before anything is attempted.
 |-------------|------|------|-------|-------|----------|---------|
 | `openbao`   | yes  | yes  | yes   | yes   | no       | no      |
 | `infisical` | yes  | yes  | yes   | yes   | no       | no      |
+| `bws`       | yes  | yes  | yes   | yes   | no       | no      |
 | `env`       | yes  | yes  | no    | no    | no       | no      |
 | `file`      | yes  | yes  | yes   | no    | no       | no      |
 | `memory`    | yes  | yes  | yes   | yes   | no       | no      |
 
-Watch on OpenBao and Infisical polls version metadata. It never fetches values, so it stays cheap
-even with a short interval. Generated secrets are produced by scrim and then written, so generate
-needs write and no store-side support.
+Watch on OpenBao, Infisical and Bitwarden Secrets Manager polls version metadata. It never fetches
+values, so it stays cheap even with a short interval. Generated secrets are produced by scrim and
+then written, so generate needs write and no store-side support.
 
 ## Configuring an instance
 

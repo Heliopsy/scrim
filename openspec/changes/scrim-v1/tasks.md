@@ -140,7 +140,7 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [ ] 11a.1 HashiCorp Vault adapter (KV v1/v2, namespaces, token, AppRole, Kubernetes, JWT, dynamic leases); verify: conformance suite against Vault dev mode in podman, lease revoked when the grant ends
 - [ ] 11a.2 AWS Secrets Manager and SSM Parameter Store adapters with ambient identity and version/stage selectors; verify: conformance suite against LocalStack in podman
 - [ ] 11a.3 Google Secret Manager and Azure Key Vault adapters with workload identity; verify: conformance suite against the services or compatible fakes
-- [ ] 11a.4 1Password, Bitwarden Secrets Manager and Doppler adapters; verify: conformance suite against each service's test account or recorded fixtures
+- [x] 11a.4 1Password, Bitwarden Secrets Manager and Doppler adapters; verify: conformance suite against each service's test account or recorded fixtures (verified: no test accounts, so storetest runs against in-process fakes built from each service's recorded fixtures and API docs; Bitwarden SM's login and ciphertexts are the official SDK's recorded vectors, with known-answer tests)
 - [x] 11a.5 Local env and file sources with read-only capabilities declared; verify: conformance suite locally, writes to read-only sources refused
 - [ ] 11a.5b Kubernetes Secrets adapter and local SOPS-file and OS keyring sources with read-only capabilities declared where applicable; verify: conformance suite in kind and locally, writes to read-only sources refused
 
