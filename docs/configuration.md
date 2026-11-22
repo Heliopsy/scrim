@@ -329,6 +329,7 @@ is out of date.
 | [`proxy.upstream.anthropic`](#proxyupstreamanthropic) | string | `https://api.anthropic.com` | hot |
 | [`proxy.upstream.chatgpt`](#proxyupstreamchatgpt) | string | `https://chatgpt.com` | hot |
 | [`proxy.upstream.chatgpt-ab`](#proxyupstreamchatgpt-ab) | string | `https://ab.chatgpt.com` | hot |
+| [`proxy.upstream.gemini`](#proxyupstreamgemini) | string | `https://generativelanguage.googleapis.com` | hot |
 | [`proxy.upstream.openai`](#proxyupstreamopenai) | string | `https://api.openai.com` | hot |
 | [`ratelimit.agent-api.burst`](#ratelimitagent-apiburst) | int | `120` | hot |
 | [`ratelimit.agent-api.interval`](#ratelimitagent-apiinterval) | duration | `1m0s` | hot |
@@ -1914,6 +1915,18 @@ Base URL requests to ab.chatgpt.com (Codex signed in with ChatGPT, through the f
 | Type | string |
 | Default | `https://ab.chatgpt.com` |
 | Environment | `SCRIM_PROXY_UPSTREAM_CHATGPT_AB` |
+| Flag | none |
+| Reload | hot |
+
+#### `proxy.upstream.gemini`
+
+Base URL Gemini API (generateContent, streamGenerateContent, countTokens) requests are forwarded to after redaction.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `https://generativelanguage.googleapis.com` |
+| Environment | `SCRIM_PROXY_UPSTREAM_GEMINI` |
 | Flag | none |
 | Reload | hot |
 

@@ -44,7 +44,7 @@ restarts it with backoff and traffic is refused until it is back.
 
 | What | Setting | Default | Notes |
 | --- | --- | --- | --- |
-| LLM proxy base URL | `proxy.listen` | `127.0.0.1:9790` | `http://<addr>/anthropic` and `http://<addr>/openai/v1`. Keep it on loopback. |
+| LLM proxy base URL | `proxy.listen` | `127.0.0.1:9790` | `http://<addr>/anthropic`, `http://<addr>/openai/v1` and `http://<addr>/gemini`. Keep it on loopback. |
 | LLM proxy on a Unix socket | `proxy.socket` | off | Same routes, for clients that can use a socket. |
 | Forward proxy | `proxy.forward-listen` | `127.0.0.1:9791` | `HTTPS_PROXY=http://<addr>` (`scrim run` sets it with the CA for the child): provider hosts, including `chatgpt.com` and `ab.chatgpt.com` for Codex, go to the LLM proxy; other hosts to the tool proxy with credential injection. |
 | Tool proxy | `tool-proxy.listen` | off | HTTPS tool proxy alone. |
@@ -134,7 +134,8 @@ changed key collection is picked up on reload. Key material is never logged.
 provider request exactly as it left, and the response as received, to `DIR`, so you can check what
 the provider saw. The directory
 is created with mode 0700 and the daemon refuses to start if group or others can access it. The
-agent's own `authorization` and `x-api-key` headers are masked in captures; bodies are byte for byte
+agent's own `authorization`, `x-api-key` and `x-goog-api-key` headers, and the Gemini `key` query
+parameter, are masked in captures; bodies are byte for byte
 what the provider received. Files older than `proxy.capture.retention` (7 days) are deleted.
 
 Captures hold only post-redaction bytes, but they are still your prompts: turn capture off when you

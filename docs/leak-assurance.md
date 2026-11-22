@@ -6,12 +6,13 @@ the claim stops.
 
 The leak suite has four parts:
 
-- a **fake provider** that speaks the Anthropic Messages API and the OpenAI Chat Completions and
-  Responses APIs, streaming and not, with tool calls, and records every byte it receives;
+- a **fake provider** that speaks the Anthropic Messages API, the OpenAI Chat Completions and
+  Responses APIs and the Google Gemini API, streaming and not, with tool calls, and records every
+  byte it receives;
 - a **leak checker**, written independently of scrim's redactor and guard, that looks for every
   seeded value in what the fake provider received, under far more encodings than the redactor
   matches, including fragments;
-- the **bypass matrix**: 437 rows, each a way a secret can sit in a request other than verbatim,
+- the **bypass matrix**: 571 rows, each a way a secret can sit in a request other than verbatim,
   with the outcome scrim must produce;
 - a **scenario corpus** of realistic agent sessions (reading `.env`, printing configs, a diff with
   keys, a log with tokens, an MCP tool result, a Kubernetes Secret, `curl -v`, `env`), played by a
@@ -58,7 +59,7 @@ Useful flags:
 | Flag | Meaning |
 | --- | --- |
 | `--suite matrix,scenarios` | which parts to run (default both) |
-| `--api anthropic,openai-chat,openai-responses` | which provider APIs (default all) |
+| `--api anthropic,openai-chat,openai-responses,gemini` | which provider APIs (default all) |
 | `--rows <prefix>` | only matrix rows whose ID starts with the prefix, for example `openai-chat/header/` |
 | `--route api=/prefix` | the proxy serves an API under a path prefix |
 | `--header 'Name: value'` | sent with every request, typically the agent's own provider key (never a seed) |
@@ -78,9 +79,12 @@ The exit status is 0 when the gate passes and 1 when it fails or the run could n
 
 `scrim-fakeprovider` (`just fakeprovider`, or `go run ./internal/testing/fakeprovider/cmd/scrim-fakeprovider`)
 runs the fake provider on its own, for testing a proxy from another language or by hand. It answers
-`/v1/messages`, `/v1/messages/count_tokens`, `/v1/chat/completions`, `/v1/responses` and
-`/v1/models` under any path prefix, streams text and tool-call arguments in small deltas so
-placeholders are split across events, reports prompt-cache usage the way providers do (a block
+`/v1/messages`, `/v1/messages/count_tokens`, `/v1/chat/completions`, `/v1/responses`,
+`/v1/models` and Gemini's `/v1beta/models/{model}:generateContent`, `:streamGenerateContent`
+(server-sent events with `alt=sse`, otherwise a JSON array flushed element by element) and
+`:countTokens` under any path prefix, streams text and tool-call arguments in small deltas so
+placeholders are split across events (a Gemini `functionCall` part arrives whole, as it does from
+Google), reports prompt-cache usage the way providers do (a block
 counts as cached only when it and everything before it is byte-identical to an earlier request),
 and returns provider-shaped errors. `/_fake/exchanges` lists what it received, `/_fake/reset`
 forgets it, `-capture-dir` writes each exchange to a file and `-script` takes scripted replies.
@@ -211,24 +215,24 @@ transform's and its placement's expectation.
 
 | Placement | Where | Expected | Note |
 | --- | --- | --- | --- |
-| `tool-result` | tool result content as a string (primary placement) ([anthropic-messages openai-chat openai-responses]) | redacted | |
-| `tool-result-streaming` | tool result in a streaming request ([anthropic-messages openai-chat openai-responses]) | redacted | |
-| `tool-result-blocks` | tool result content as text blocks ([anthropic-messages openai-chat openai-responses]) | redacted | |
-| `user-text` | user message text ([anthropic-messages openai-chat openai-responses]) | redacted | |
-| `user-blocks` | user message content parts ([anthropic-messages openai-chat openai-responses]) | redacted | |
-| `system-prompt` | system prompt, instructions or system/developer message ([anthropic-messages openai-chat openai-responses]) | redacted | |
-| `tool-call-input` | a prior tool call's input in the history (a restored value sent back) ([anthropic-messages openai-chat openai-responses]) | redacted | |
-| `assistant-text` | a prior assistant message in the history ([anthropic-messages openai-chat openai-responses]) | redacted | |
-| `tool-definition` | a tool description (an MCP server describing itself) ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `tool-result` | tool result content as a string (primary placement) ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
+| `tool-result-streaming` | tool result in a streaming request ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
+| `tool-result-blocks` | tool result content as text blocks ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
+| `user-text` | user message text ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
+| `user-blocks` | user message content parts ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
+| `system-prompt` | system prompt, instructions or system/developer message ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
+| `tool-call-input` | a prior tool call's input in the history (a restored value sent back) ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
+| `assistant-text` | a prior assistant message in the history ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
+| `tool-definition` | a tool description (an MCP server describing itself) ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
 | `metadata` | request metadata (user id, metadata map) ([anthropic-messages openai-chat openai-responses]) | redacted | |
-| `unknown-field` | an undocumented top-level field (like Claude Code's safeguards field) ([anthropic-messages openai-chat openai-responses]) | redacted | |
-| `unknown-block-field` | an undocumented field inside a content block ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `unknown-field` | an undocumented top-level field (like Claude Code's safeguards field) ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
+| `unknown-block-field` | an undocumented field inside a content block ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
 | `document-text` | a plain-text document or file input ([anthropic-messages openai-chat openai-responses]) | redacted | |
-| `header` | a custom HTTP request header ([anthropic-messages openai-chat openai-responses]) | guard | |
-| `query` | the request URL query string ([anthropic-messages openai-chat openai-responses]) | guard | |
-| `image-metadata` | text in an image's PNG tEXt metadata ([anthropic-messages openai-chat openai-responses]) | limitation | limitation: images and other binary parts pass unscanned under the default binary policy |
-| `split-blocks` | the value split across two content blocks of one message ([anthropic-messages openai-chat openai-responses]) | limitation | limitation: a value split by the agent across separate fields is matched only by the guard's fragment rules, if at all |
-| `split-tool-results` | the value split across two tool results ([anthropic-messages openai-chat openai-responses]) | limitation | limitation: a value split by the agent across separate tool results is not reassembled |
+| `header` | a custom HTTP request header ([anthropic-messages gemini openai-chat openai-responses]) | guard | |
+| `query` | the request URL query string ([anthropic-messages gemini openai-chat openai-responses]) | guard | |
+| `image-metadata` | text in an image's PNG tEXt metadata ([anthropic-messages gemini openai-chat openai-responses]) | limitation | limitation: images and other binary parts pass unscanned under the default binary policy |
+| `split-blocks` | the value split across two content blocks of one message ([anthropic-messages gemini openai-chat openai-responses]) | limitation | limitation: a value split by the agent across separate fields is matched only by the guard's fragment rules, if at all |
+| `split-tool-results` | the value split across two tool results ([anthropic-messages gemini openai-chat openai-responses]) | limitation | limitation: a value split by the agent across separate tool results is not reassembled |
 | `split-requests` | the value split across two requests chained by previous_response_id ([openai-responses]) | limitation | limitation: server-side conversation state lets halves arrive in separate requests |
 <!-- matrix:end -->
 
@@ -263,7 +267,7 @@ These are outside what scrim protects. The matrix runs a row for each one it can
 | Limitation | Matrix rows | Mitigation |
 | --- | --- | --- |
 | The agent's local transcripts, memory and history files hold real values: scrim protects the wire, not the agent's disk. | none | Keep agent state on an encrypted disk; restored values only reach tools the tool policy names. |
-| Images, PDFs and other binary parts pass unscanned under the default `pass` binary policy, including text in image metadata. | `image-metadata` | Set the binary policy to `block`; the status command reports the current policy. |
+| Images, PDFs and other binary parts pass unscanned under the default `pass` binary policy, including text in image metadata. In the Gemini API that is every `inlineData` part, a `text/plain` document included, so the matrix has no Gemini `document-text` row. | `image-metadata` | Set the binary policy to `block`; the status command reports the current policy. |
 | Look-alike Unicode substitution (Cyrillic or fullwidth letters) is not matched: confusable tables are unbounded and no shell tool produces it. | `homoglyphs`, `fullwidth` | none yet |
 | Values spelled out in words (NATO alphabet) are not matched: any language or alphabet would do. | `nato-spelling` | none yet |
 | Compressed content (`gzip`, `zlib`) is not decompressed: decompression is unbounded work per byte. | `gzip-base64` | none yet |

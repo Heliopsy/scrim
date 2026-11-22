@@ -54,7 +54,7 @@ jobs:
           SCRIM_DATAPLANE_PATH: ${{ github.workspace }}/dataplane/target/debug/scrim-dataplane
         run: |
           go run . audit run --proxy http://127.0.0.1:18484 --proxy-cmd test/leak/start-proxy.sh \
-            --route anthropic-messages=/anthropic --route openai-chat=/openai --route openai-responses=/openai \
+            --route anthropic-messages=/anthropic --route openai-chat=/openai --route openai-responses=/openai --route gemini=/gemini \
             --upstream-listen 127.0.0.1:18089 --report leak-report.json
 
       - name: Upload reports

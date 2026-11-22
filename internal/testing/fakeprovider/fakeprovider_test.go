@@ -36,9 +36,24 @@ func requestFor(api API, stream bool) string {
 		return `{"model":"claude-x","max_tokens":10,"stream":` + s + `,"messages":[{"role":"user","content":"key is ` + ph + `"}]}`
 	case OpenAIChat:
 		return `{"model":"gpt-x","stream":` + s + `,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"key is ` + ph + `"}]}`
+	case Gemini:
+		return `{"contents":[{"role":"user","parts":[{"text":"key is ` + ph + `"}]}],"generationConfig":{"maxOutputTokens":10}}`
 	default:
 		return `{"model":"gpt-x","stream":` + s + `,"input":[{"role":"user","content":"key is ` + ph + `"}]}`
 	}
+}
+
+// urlFor is the request URL of an API, streamed or not. Gemini streams by
+// path, as server-sent events.
+func urlFor(base string, api API, stream bool) string {
+	if !stream {
+		return base + api.Path()
+	}
+	p, q := api.StreamPath(true)
+	if len(q) > 0 {
+		p += "?" + q.Encode()
+	}
+	return base + p
 }
 
 func TestRoundTripEveryAPI(t *testing.T) {
@@ -54,7 +69,7 @@ func TestRoundTripEveryAPI(t *testing.T) {
 	}
 	for _, api := range APIs {
 		for _, stream := range []bool{false, true} {
-			status, body := post(t, srv.URL+api.Path(), requestFor(api, stream))
+			status, body := post(t, urlFor(srv.URL, api, stream), requestFor(api, stream))
 			if status != 200 {
 				t.Fatalf("%s stream=%v: status %d %s", api, stream, status, body)
 			}
@@ -65,7 +80,9 @@ func TestRoundTripEveryAPI(t *testing.T) {
 			if p.Text != "reading "+ph+" now" {
 				t.Errorf("%s stream=%v: text %q", api, stream, p.Text)
 			}
-			if len(p.ToolCalls) != 1 || p.ToolCalls[0].Name != "Bash" || p.ToolCalls[0].ID == "" {
+			// Gemini function calls carry no ID; the name ties the
+			// functionResponse to its call.
+			if len(p.ToolCalls) != 1 || p.ToolCalls[0].Name != "Bash" || (p.ToolCalls[0].ID == "") != (api == Gemini) {
 				t.Fatalf("%s stream=%v: calls %+v", api, stream, p.ToolCalls)
 			}
 			var in map[string]string
@@ -77,7 +94,13 @@ func TestRoundTripEveryAPI(t *testing.T) {
 				// the proxy's holdback. Responses' done events repeat the full
 				// text, as the real API does, so the proxy must restore those
 				// too.
-				if api != OpenAIResponses && bytes.Contains(body, []byte(ph)) {
+				// A Gemini functionCall part arrives whole, so only its text
+				// chunks must split the placeholder.
+				text := body
+				if api == Gemini {
+					text = body[:bytes.Index(body, []byte(`"functionCall"`))]
+				}
+				if api != OpenAIResponses && bytes.Contains(text, []byte(ph)) {
 					t.Errorf("%s: placeholder arrived in one event", api)
 				}
 				if want := wantEvents[api]; want != nil {
@@ -93,12 +116,15 @@ func TestRoundTripEveryAPI(t *testing.T) {
 		}
 	}
 	ex := fake.Exchanges()
-	if len(ex) != 6 {
+	if len(ex) != 2*len(APIs) {
 		t.Fatalf("recorded %d exchanges", len(ex))
 	}
 	for _, e := range ex {
 		if len(e.Placeholders) != 1 || e.Placeholders[0] != ph {
 			t.Errorf("exchange %d placeholders %v", e.Seq, e.Placeholders)
+		}
+		if e.API == Gemini && (e.Model != GeminiModel || e.Stream != strings.Contains(e.Path, ":streamGenerateContent")) {
+			t.Errorf("gemini exchange %d: model %q stream %v path %s", e.Seq, e.Model, e.Stream, e.Path)
 		}
 	}
 }
@@ -187,5 +213,132 @@ func TestResponsesNamespacedToolCall(t *testing.T) {
 		if n := bytes.Count(body, []byte(`"namespace":"mcp__scrim"`)); n != want {
 			t.Errorf("stream=%v: namespace appears %d times, want %d: %s", stream, n, want, body)
 		}
+	}
+}
+
+// Gemini streams by path: with alt=sse as server-sent events with no event
+// names and no [DONE], without it as a JSON array whose elements are flushed
+// one by one. Both carry the same chunks; only the last has finishReason and
+// usageMetadata, and the functionCall part arrives whole with its
+// thoughtSignature.
+func TestGeminiStreamForms(t *testing.T) {
+	steps := []ScriptStep{{Text: "reading {{placeholder}} now", ToolCalls: []ScriptToolCall{{Name: "Bash", Input: map[string]any{"command": "echo {{placeholder}}"}}}}}
+	fake := New(Options{Responder: Script(steps), ChunkSize: 3})
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	req := requestFor(Gemini, true)
+	var parsed []Parsed
+	for _, sse := range []bool{true, false} {
+		p, q := Gemini.StreamPath(sse)
+		u := srv.URL + "/gemini" + p
+		if len(q) > 0 {
+			u += "?" + q.Encode()
+		}
+		resp, err := http.Post(u, "application/json", strings.NewReader(req))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		ct := resp.Header.Get("Content-Type")
+		if resp.StatusCode != 200 {
+			t.Fatalf("sse=%v: status %d %s", sse, resp.StatusCode, body)
+		}
+		if sse {
+			if ct != "text/event-stream" || !bytes.HasPrefix(body, []byte("data: {")) || bytes.Contains(body, []byte("event:")) || bytes.Contains(body, []byte("[DONE]")) {
+				t.Errorf("sse framing: %s %q", ct, body)
+			}
+			if !bytes.HasSuffix(body, []byte("}\r\n\r\n")) {
+				t.Errorf("sse chunks do not end with CRLF CRLF: %q", body)
+			}
+		} else {
+			if !strings.HasPrefix(ct, "application/json") || !bytes.HasPrefix(body, []byte("[{")) || !bytes.HasSuffix(body, []byte("}\r\n]")) || !bytes.Contains(body, []byte("}\r\n,{")) {
+				t.Errorf("json array framing: %s %q", ct, body)
+			}
+		}
+		if bytes.Contains(body[:bytes.Index(body, []byte(`"functionCall"`))], []byte(ph)) {
+			t.Errorf("sse=%v: placeholder arrived in one text chunk", sse)
+		}
+		if n := bytes.Count(body, []byte(`"finishReason":"STOP"`)); n != 1 {
+			t.Errorf("sse=%v: finishReason appears %d times", sse, n)
+		}
+		if n := bytes.Count(body, []byte(`"cachedContentTokenCount"`)); n != 1 {
+			t.Errorf("sse=%v: usageMetadata appears %d times", sse, n)
+		}
+		got, err := ParseReply(Gemini, true, body)
+		if err != nil {
+			t.Fatalf("sse=%v: %v", sse, err)
+		}
+		if got.Text != "reading "+ph+" now" || len(got.ToolCalls) != 1 || got.ToolCalls[0].Signature == "" || len(got.Events) < 3 {
+			t.Errorf("sse=%v: parsed %+v", sse, got)
+		}
+		parsed = append(parsed, got)
+	}
+	if parsed[0].Text != parsed[1].Text || parsed[0].ToolCalls[0] != parsed[1].ToolCalls[0] || len(parsed[0].Events) != len(parsed[1].Events) {
+		t.Errorf("stream forms differ: %+v vs %+v", parsed[0], parsed[1])
+	}
+	for _, e := range fake.Exchanges() {
+		if !e.Stream || e.API != Gemini || e.Model != GeminiModel {
+			t.Errorf("exchange %d: %+v", e.Seq, e)
+		}
+	}
+}
+
+// Thought parts are not answer text, and a functionResponse after a model
+// turn counts as a tool result for the script.
+func TestGeminiParseAndTurns(t *testing.T) {
+	body := `{"candidates":[{"content":{"role":"model","parts":[{"text":"thinking","thought":true},{"text":"answer"},{"functionCall":{"name":"Read","args":{"file_path":".env"}},"thoughtSignature":"c2ln"}]},"finishReason":"STOP","index":0}]}`
+	p, err := ParseReply(Gemini, false, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Text != "answer" || len(p.ToolCalls) != 1 || p.ToolCalls[0].Arguments != `{"file_path":".env"}` || p.ToolCalls[0].Signature != "c2ln" {
+		t.Errorf("parsed %+v", p)
+	}
+	fake := New(Options{Responder: func(tn Turn) Reply {
+		if tn.ToolResults != 1 || tn.Assistant != 1 {
+			return Reply{Status: 400, Error: "wrong turn count"}
+		}
+		return Reply{Text: "done"}
+	}})
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	req := `{"systemInstruction":{"parts":[{"text":"sys"}]},"tools":[{"functionDeclarations":[{"name":"Read","description":"d","parameters":{"type":"object"}}]}],"contents":[{"role":"user","parts":[{"text":"hi"}]},{"role":"model","parts":[{"functionCall":{"name":"Read","args":{}}}]},{"role":"user","parts":[{"functionResponse":{"name":"Read","response":{"output":"x"}}}]}]}`
+	if code, b := post(t, srv.URL+Gemini.Path(), req); code != 200 {
+		t.Fatalf("status %d %s", code, b)
+	}
+	if ex := fake.Exchanges(); ex[0].PromptBytes == 0 {
+		t.Error("gemini prompt blocks not counted")
+	}
+}
+
+func TestGeminiErrorsAuthAndCountTokens(t *testing.T) {
+	fake := New(Options{RequireAuth: true, Responder: func(Turn) Reply { return Reply{Status: 429, Error: "slow down"} }})
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	code, b := post(t, srv.URL+Gemini.Path(), requestFor(Gemini, false))
+	if code != 401 || !strings.Contains(string(b), `"status":"UNAUTHENTICATED"`) || !strings.Contains(string(b), `"code":401`) {
+		t.Errorf("unauthenticated: %d %s", code, b)
+	}
+	code, b = post(t, srv.URL+Gemini.Path()+"?key=k", requestFor(Gemini, false))
+	if code != 429 || !strings.Contains(string(b), `"status":"RESOURCE_EXHAUSTED"`) {
+		t.Errorf("key query: %d %s", code, b)
+	}
+	r, _ := http.NewRequest(http.MethodPost, srv.URL+Gemini.Path(), strings.NewReader(requestFor(Gemini, false)))
+	r.Header.Set("X-Goog-Api-Key", "k")
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 429 {
+		t.Errorf("x-goog-api-key: %d", resp.StatusCode)
+	}
+	code, b = post(t, srv.URL+"/v1beta/models/gemini-2.5-flash:countTokens", requestFor(Gemini, false))
+	if code != 200 || !strings.Contains(string(b), `"totalTokens":`) {
+		t.Errorf("countTokens: %d %s", code, b)
+	}
+	if ex := fake.Exchanges(); ex[len(ex)-1].Model != "gemini-2.5-flash" || ex[len(ex)-1].API != Gemini {
+		t.Errorf("countTokens exchange: %+v", ex[len(ex)-1])
 	}
 }
