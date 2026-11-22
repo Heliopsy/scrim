@@ -58,7 +58,7 @@ type settings struct {
 	endpoint      *url.URL
 	fips          bool
 	keyIDRef      config.SecretRef
-	secretKeyRef  config.SecretRef
+	keyRef        config.SecretRef
 	roleARN       string
 	externalID    string
 	sessionName   string
@@ -89,14 +89,13 @@ func decodeSettings(inst stores.Instance, kind string) (*settings, error) {
 		profile:       strings.TrimSpace(d.String(optProfile, "")),
 		fips:          d.Bool(optFIPS, false),
 		keyIDRef:      d.SecretRef(optAccessKeyID),
-		secretKeyRef:  d.SecretRef(optSecretAccessKey),
+		keyRef:        d.SecretRef(optSecretAccessKey),
 		roleARN:       strings.TrimSpace(d.String(optRoleARN, "")),
 		externalID:    d.String(optExternalID, ""),
 		sessionName:   d.String(optSessionName, defaultSessionName),
 		roleDuration:  d.Duration(optRoleDuration, 0),
 		stsEndpoint:   d.String(optSTSEndpoint, ""),
 		timeout:       d.Duration(optTimeout, defaultTimeout),
-		maxAttempts:   int(d.Int(optMaxAttempts, defaultMaxAttempts)),
 		watchInterval: d.Duration(optWatchInterval, defaultWatchInterval),
 		watchBackoff:  d.Duration(optWatchBackoff, defaultWatchBackoff),
 		kmsKey:        strings.TrimSpace(d.String(optKMSKey, "")),
@@ -127,8 +126,10 @@ func decodeSettings(inst stores.Instance, kind string) (*settings, error) {
 			d.Errorf("option %s must be positive", key)
 		}
 	}
-	if s.maxAttempts < 1 || s.maxAttempts > 10 {
+	if n := d.Int(optMaxAttempts, defaultMaxAttempts); n < 1 || n > 10 {
 		d.Errorf("option %s must be between 1 and 10", optMaxAttempts)
+	} else {
+		s.maxAttempts = int(n)
 	}
 	if s.region != "" && !regionPattern.MatchString(s.region) {
 		d.Errorf("option %s must be an AWS region such as eu-west-1", optRegion)
@@ -148,7 +149,7 @@ func decodeSettings(inst stores.Instance, kind string) (*settings, error) {
 			d.Errorf("option %s %v", optSTSEndpoint, err)
 		}
 	}
-	if (s.keyIDRef == "") != (s.secretKeyRef == "") {
+	if (s.keyIDRef == "") != (s.keyRef == "") {
 		d.Errorf("options %s and %s go together", optAccessKeyID, optSecretAccessKey)
 	}
 	if s.keyIDRef != "" && s.profile != "" {

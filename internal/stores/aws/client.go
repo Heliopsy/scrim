@@ -174,10 +174,10 @@ func (c *client) staticProvider(ctx context.Context) (sdkaws.CredentialsProvider
 	if err != nil {
 		return nil, &apiError{kind: stores.ErrPermission, msg: fmt.Sprintf("option %s: cannot resolve %s", optAccessKeyID, c.s.keyIDRef), cause: err}
 	}
-	key, err := c.s.resolve(ctx, c.s.secretKeyRef)
+	key, err := c.s.resolve(ctx, c.s.keyRef)
 	if err != nil {
 		id.Wipe()
-		return nil, &apiError{kind: stores.ErrPermission, msg: fmt.Sprintf("option %s: cannot resolve %s", optSecretAccessKey, c.s.secretKeyRef), cause: err}
+		return nil, &apiError{kind: stores.ErrPermission, msg: fmt.Sprintf("option %s: cannot resolve %s", optSecretAccessKey, c.s.keyRef), cause: err}
 	}
 	if id.IsZero() || key.IsZero() {
 		id.Wipe()
