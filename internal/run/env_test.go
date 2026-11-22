@@ -13,6 +13,7 @@ import (
 	_ "github.com/heliopsy/scrim/internal/app"
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/localapi"
+	"github.com/heliopsy/scrim/internal/profiles"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -354,3 +355,21 @@ func TestTrustInputs(t *testing.T) {
 }
 
 func writeFile(p, body string) error { return os.WriteFile(p, []byte(body), 0o600) }
+
+// TestCredentialHelperLinks: a profile's credential helper binaries are
+// linked to scrim in the session's bin directory, which goes first on PATH.
+func TestCredentialHelperLinks(t *testing.T) {
+	in := input("claude")
+	in.Profiles = &profiles.Rendered{Profiles: []string{"docker"}, Bin: []string{"docker-credential-scrim"}}
+	p := mustBuild(t, in)
+	if got := p.Links["bin/docker-credential-scrim"]; got != "/usr/local/bin/scrim" {
+		t.Fatalf("links = %v", p.Links)
+	}
+	if got := vars(p)["PATH"].Value; got != "/run/user/1000/scrim/run/s1/bin:/usr/bin" {
+		t.Fatalf("PATH = %q", got)
+	}
+	in.Profiles = &profiles.Rendered{Profiles: []string{"gh"}}
+	if p := mustBuild(t, in); len(p.Links) != 0 || vars(p)["PATH"].Name != "" {
+		t.Fatalf("a profile without helpers changed PATH or links: %v", p.Links)
+	}
+}

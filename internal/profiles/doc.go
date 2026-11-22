@@ -4,7 +4,7 @@
 // (specs/credential-injection, "Placeholder credentials for command-line
 // tools", "Built-in tool profiles", "Environment overrides before file
 // tricks", "Tools that print their own credentials"; tasks 10a.1, 10a.5,
-// 10a.6, 10a.10).
+// 10a.6, 10a.9, 10a.10).
 //
 // A profile says where a tool (gh, git, kubectl, aws, ...) reads its
 // credentials, which hosts it sends them to, and what `scrim run` generates
@@ -31,6 +31,7 @@
 //	env:   {GH_TOKEN: '{{ placeholder "token" }}', GH_CONFIG_DIR: '{{ path "config" }}'}
 //	unset: [GITHUB_TOKEN, "TF_TOKEN_*"]   # inherited variables removed
 //	dirs:  [config]                 # created empty in the profile directory
+//	bin:   [docker-credential-scrim] # linked to scrim, first on PATH
 //	files: [{path: npmrc, content: "..."}]
 //	paths: [{home: .config/gh/hosts.yml, generated: ""}]
 //	test:  {command: [gh, auth, token], expect: '{{ placeholder "token" }}'}
@@ -46,8 +47,10 @@
 // first filling entry's placeholder, "" when unfilled), creds SLOT (every
 // filling entry as [Cred]: Name, Placeholder, Hosts, Host), host SLOT, param
 // NAME, path REL (absolute path in the profile's session directory), dir,
-// cabundle (the session CA bundle), home, authsjson SLOT USER (a container
-// registry auth file), b64, basic USER PASS, json, envname, stripport. A
+// cabundle (the session CA bundle), home, scrim (the scrim executable,
+// Session.Scrim), authsjson SLOT USER [HELPER] (a container registry auth
+// file, with credHelpers naming HELPER), b64, basic USER PASS, json, shquote,
+// envname, stripport. A
 // variable whose template renders empty is not set, unless the template
 // itself is empty. Templates only ever see placeholders.
 //
@@ -71,10 +74,13 @@
 // (~/.aws/credentials, ~/.kube/config, ~/.docker/config.json, ...), with the
 // absolute path of the generated replacement or "" to hide the path. The
 // session filesystem view (package fsview, 10a.7, 10a.8) mounts them over
-// the real paths or mirrors the home without them; the
-// credential helpers (10a.9) can add their configuration through profile
-// env or files (GIT_CONFIG_*, credsStore in authsjson output, a kubeconfig
-// exec user) by overriding or extending a profile.
+// the real paths or mirrors the home without them.
+//
+// The git, docker, aws and kubectl profiles point their tools at scrim's
+// credential helpers (internal/credhelper) when their `helper` param is
+// "scrim": a git credential.helper, credHelpers in the docker config with
+// docker-credential-scrim in [Rendered.Bin], a credential_process and a
+// kubeconfig exec user. git and docker default to it.
 //
 // [Check] runs a profile's test command with an empty home, decoys at the
 // fixed paths and in the unset variables, and fails unless the tool prints

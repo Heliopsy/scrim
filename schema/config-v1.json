@@ -1707,6 +1707,25 @@
           "x-scrim-flag": "--run-profiles",
           "x-scrim-restart-required": false,
           "x-scrim-weakening": false
+        },
+        "scan-interval": {
+          "default": "10s",
+          "description": "How often scrim run rescans the project files while the agent runs and registers changed values; 0 scans once at start.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_RUN_SCAN_INTERVAL",
+          "x-scrim-flag": "--run-scan-interval",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "scan-project": {
+          "default": true,
+          "description": "Scan the agent's working directory for secret values in project files (.env*, *.tfvars, application config, compose files, .npmrc) and redact them from the session's first request. scrim run refuses to start the agent when they cannot be registered.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_RUN_SCAN_PROJECT",
+          "x-scrim-flag": "--run-scan-project",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
         }
       },
       "type": "object"
