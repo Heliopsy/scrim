@@ -34,8 +34,11 @@ func (a *Adapter) DoctorChecks() []status.Check {
 			var out []status.Finding
 			for _, m := range advice {
 				f := status.Finding{Check: name, Outcome: status.Warn, Message: m}
-				if strings.Contains(m, "dedicated agent account") {
+				switch {
+				case strings.Contains(m, "dedicated agent account"):
 					f.Fix = "use a Vaultwarden account or organisation that holds only agent secrets, or set " + OptScope
+				case strings.Contains(m, OptMetaLabels+" is on"):
+					f.Fix = "set " + OptMetaLabels + ": false unless every text custom field in scope is free of secrets"
 				}
 				out = append(out, f)
 			}

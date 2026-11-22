@@ -287,6 +287,79 @@ locked, the store SHALL be reported as locked, and operations needing its values
   personal items
 - **THEN** scrim warns that a dedicated agent account or organisation is recommended
 
+### Requirement: Vaultwarden native labels
+
+The Vaultwarden adapter SHALL report where an item lives and what it is as labels under the reserved
+prefix `vaultwarden.` (organisation, ownership, collections and permissions, folder and ancestors,
+type, flags, URI hosts, field presence, dates). A multi-valued attribute SHALL carry its values
+comma-joined plus one presence key per value, so a rule matches the item's real location whatever
+path its reference uses.
+
+#### Scenario: Collection rule matches through any path
+
+- **WHEN** an item is in collections `Prod` and `Shared` and a rule asks for any secret with
+  `"vaultwarden.collection.Prod" in secret.labels`
+- **THEN** the rule matches the item whether it is referenced as `vw://Prod/DB` or
+  `vw://Shared/DB`
+- **AND** the item carries `vaultwarden.collection = "Prod,Shared"` and both presence keys
+
+#### Scenario: Nested folder matches its ancestors
+
+- **WHEN** an item is in the folder `Agents/CI`
+- **THEN** it carries `vaultwarden.folder.Agents` and `vaultwarden.folder.Agents/CI`, so a rule on
+  folder `Agents` also matches it
+
+### Requirement: Vaultwarden labels carry no values and cannot be forged
+
+Text custom fields that are not `scrim.*` labels SHALL be reported as `vaultwarden.meta.<key>`
+only when the operator enables it, and doctor SHALL warn while it is on. A meta label whose value
+equals or contains a secret value of an in-scope item SHALL NOT be reported, and items outside the
+scope SHALL NOT be decrypted for it. Hidden fields, passwords, TOTP seeds, notes and key material
+SHALL never become labels. Native labels SHALL override any user-supplied label.
+
+#### Scenario: Meta labels are off by default
+
+- **WHEN** a Vaultwarden store is configured without `meta-labels`
+- **THEN** no `vaultwarden.meta.*` label is reported
+- **AND** with `meta-labels: true`, `scrim doctor` warns that text fields are visible as labels
+
+#### Scenario: Meta label repeating a secret is dropped
+
+- **WHEN** `meta-labels` is on and a text custom field holds a value that equals or contains a
+  password, hidden field, TOTP seed, note or key of any item inside the configured scope
+- **THEN** that field is not reported as a label
+
+#### Scenario: Meta guard stays inside the scope
+
+- **WHEN** `meta-labels` is on and the store has a scope
+- **THEN** the guard decrypts no item outside the scope, and no text field of such an item becomes a
+  label
+
+#### Scenario: Native label cannot be forged
+
+- **WHEN** someone who can edit an organisation item adds a text custom field named
+  `vaultwarden.org` with the value `Evil`
+- **THEN** `vaultwarden.org` still reports the organisation the item is in
+- **AND** the field is reported only as `vaultwarden.meta.vaultwarden.org`
+
+#### Scenario: Hidden fields never become labels
+
+- **WHEN** an item has a hidden custom field `token`, a password and login URIs with user info,
+  paths or queries
+- **THEN** no label contains the token, the password or anything of the URIs but their host names
+
+### Requirement: Vaultwarden write labels
+
+The Vaultwarden adapter SHALL expose the native labels a write leaves on the item before the write
+happens, so `store.write` rules can match its destination.
+
+#### Scenario: Write rule sees where a new item lands
+
+- **WHEN** a `store.write` rule asks for writes into organisation `Acme` and an agent writes
+  `vw://Prod/New?org=Acme`, which does not exist yet
+- **THEN** the rule sees `vaultwarden.org = "Acme"` and `vaultwarden.collection.Prod` before the
+  item is created
+
 ### Requirement: Infisical adapter
 
 The system SHALL read and write Infisical secrets by project, environment, folder and key, and SHALL
