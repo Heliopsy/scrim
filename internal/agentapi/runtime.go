@@ -183,6 +183,12 @@ func (r *Runtime) SetSessionValues(fn func(ctx context.Context, sessionID string
 	r.api.SessionEnded = ended
 }
 
+// SetExec serves POST /v1/exec with fn, the exec broker. Call it before
+// Serve.
+func (r *Runtime) SetExec(fn func(ctx context.Context, id identity.Identity, in agenttools.ExecInput) (agenttools.ExecOutput, error)) {
+	r.api.Exec = fn
+}
+
 // lookupGroup resolves api.group to a group ID; empty is 0 (unchanged).
 func lookupGroup(name string) (int, error) {
 	if name == "" {

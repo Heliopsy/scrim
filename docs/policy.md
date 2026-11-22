@@ -375,6 +375,21 @@ an approval (`internal/gate` `TestForwardConformance` checks the two agree).
 
 The agent fields come from the transport ([identity.md](identity.md#provider-and-tool-traffic)).
 
+### Rules and the exec broker
+
+Each secret a command run through the [exec broker](exec-broker.md) would receive is decided as
+`op == "exec"`, with the secret's fields, `tool.name` (the command name, `git`) and `tool.command`
+(the whole command line with placeholders, `git push origin main`). For a command on the secret's
+allow list (`exec.commands`) the default decision is allow, audited as rule `exec.allow-list`; deny
+and ask rules still apply. Any other command needs a rule that allows it. The control plane decides
+these requests, so every condition works, residual ones included.
+
+```yaml
+- name: pushes-need-a-human
+  decision: ask
+  when: op == "exec" && tool.name == "git" && tool.command.startsWith("git push ")
+```
+
 ### Rules and restore
 
 Restoring a placeholder into a response (`op == "restore"`) is governed by the tool policy first

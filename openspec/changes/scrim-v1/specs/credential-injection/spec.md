@@ -279,6 +279,67 @@ run; others SHALL be refused or sent for approval per policy.
 - **WHEN** an agent asks the broker to run a command not on the secret's allow list
 - **THEN** the broker refuses it or asks for approval, as the policy decides
 
+### Requirement: Exec broker requests name secrets by placeholder
+
+An agent SHALL name the command, not a path, and SHALL put placeholders where secrets belong: in the
+environment, and in arguments or on standard input only where the command's allow-list entry permits
+it. The broker SHALL refuse a request in which a placeholder names no credential with a value, and
+a request that names no secret.
+
+#### Scenario: Placeholder that names nothing
+
+- **WHEN** a request carries a placeholder that matches no credential with a value
+- **THEN** the broker refuses it and runs nothing
+
+#### Scenario: Placeholder where the entry does not allow one
+
+- **WHEN** a request puts a placeholder in an argument and the command's entry injects into the environment only
+- **THEN** the broker refuses it and runs nothing
+
+### Requirement: Exec broker decisions
+
+Each secret a brokered command would receive SHALL be decided as `op == "exec"` through the control
+plane's gate, with `tool.name` the command name and `tool.command` the command line with
+placeholders. For a command on the secret's allow list the default decision SHALL be allow; deny and
+ask rules SHALL still apply.
+
+#### Scenario: Ask rule on a command
+
+- **WHEN** an ask rule matches `op == "exec"` for the command
+- **THEN** the command runs only after a person approves, and is refused when the approval is denied
+
+#### Scenario: Deny rule on an allowed command
+
+- **WHEN** a deny rule matches `op == "exec"` for a command on the secret's allow list
+- **THEN** the broker refuses it
+
+### Requirement: Exec broker identity
+
+A brokered command SHALL start from scrim, outside the agent's process tree and file system view,
+with an environment built only from the broker's settings and the variables the command's entry lets
+the agent set. It SHALL never run as root, and never as the calling agent's operating-system user
+unless a weakening setting allows it.
+
+#### Scenario: Command runs as another user
+
+- **WHEN** scrim runs as root with `exec.user` set and an agent of another user asks for an allowed command
+- **THEN** the command runs as `exec.user` with the secret, and a process of the agent's user cannot read the command's environment
+
+#### Scenario: Same user as the agent
+
+- **WHEN** the command would run as the calling agent's own user and `exec.allow-same-user` is not set
+- **THEN** the broker refuses it and runs nothing
+
+### Requirement: Exec broker environment is guarded
+
+An agent SHALL never set, through the broker, a variable that makes the dynamic loader, a shell or a
+common tool run code or read configuration the agent chose, whatever the command's entry allows.
+
+#### Scenario: Loader variable
+
+- **WHEN** a request sets `LD_PRELOAD`
+- **THEN** the broker refuses it and runs nothing
+
 ### Requirement: Exec broker output is redacted
 
 The exec broker SHALL redact known values and their encoded variants from command output before
@@ -289,6 +350,38 @@ encoders, reversers, character splitting) when they are applied to a secret.
 
 - **WHEN** an agent asks the broker to run a command that encodes the environment
 - **THEN** the broker refuses it and the audit log records the blocked transform
+
+#### Scenario: Command prints the secret
+
+- **WHEN** an allowed command prints the injected secret on standard output and standard error and exits with status 7
+- **THEN** the agent receives both streams with the secret replaced by its placeholder, and exit status 7
+
+### Requirement: Exec broker withholds what it cannot redact
+
+Standard output and standard error SHALL each pass the data plane's redactor and then a separate
+check of the broker's own for the injected values. A stream that is larger than the output limit,
+cannot be redacted, still holds a value after redaction or is not text SHALL be withheld whole,
+never cut or repaired. The exit status SHALL always be returned.
+
+#### Scenario: Encoded output the redactor misses
+
+- **WHEN** an allowed command prints an encoding of the secret that the redactor does not replace
+- **THEN** the broker withholds that stream and says why
+
+#### Scenario: Redaction unavailable
+
+- **WHEN** the redactor fails on a command's output
+- **THEN** the output is withheld and only the exit status is returned
+
+### Requirement: Exec broker refuses shells and interpreters
+
+Shells, interpreters and programs that run other programs SHALL be refused like transforms, whatever
+the allow list or policy says, and SHALL not be accepted as allow-list entries.
+
+#### Scenario: Shell with an allow rule
+
+- **WHEN** a rule allows every `exec` and an agent asks the broker to run `sh -c`
+- **THEN** the broker refuses it and audits the blocked transform
 
 ### Requirement: SSH agent
 

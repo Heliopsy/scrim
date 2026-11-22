@@ -20,6 +20,7 @@ redaction core is wired in, its placeholder. Values move around the model instea
 | `secret_capture` | the command runs in the tool process; only the extracted value goes to scrim |
 | `secret_ask_human` | a person types it into a local entry page, which writes it to the store |
 | `scrim secret put --stdin` | read from standard input (echo off on a terminal) and sent to scrim |
+| `secret_exec` | used, not moved: scrim runs an allowed command as another user with the value and returns redacted output |
 
 ## Running the agent API
 
@@ -288,6 +289,29 @@ On a terminal it prompts on standard error and reads with echo off. One trailing
 removed unless `--keep-newline` is given. Without `--stdin` the command refuses to run: values never
 come from arguments, where shell history and process listings would keep them.
 
+### secret_exec
+
+Runs a command scrim allows with a secret the agent never holds: the agent puts the secret's
+placeholder where the value belongs, scrim runs the command outside the agent's process as another
+user, and the exit status and redacted output come back. The CLI form is `scrim exec`. Which
+commands may run, what is always refused and the security argument are in
+[exec-broker.md](exec-broker.md).
+
+```json
+{"name": "secret_exec", "arguments": {"command": ["psql", "-h", "db.internal", "-c", "select 1"],
+  "env": {"PGPASSWORD": "SCRIM_DB_PASSWORD"}}}
+```
+
+<!-- docs-test: skip: needs a configured exec.commands entry and a database -->
+
+```sh
+scrim exec --env PGPASSWORD=SCRIM_DB_PASSWORD -- psql -h db.internal -c 'select 1'
+```
+
+```json
+{"exit_code": 0, "stdout": " ?column? \n----------\n        1\n", "stderr": "", "refs": ["bao://kv/app/db#password"]}
+```
+
 ## CLI output and exit codes
 
 Every `scrim secret` command takes `-o json` for the same fields the MCP tool returns. Errors with
@@ -323,6 +347,7 @@ HTTP/1.1 with JSON on the Unix socket, every route under `/v1`, every response c
 | `GET /v1/status/{id}` | `approval_status` |
 | `GET /v1/grants` | `grants_list` |
 | `POST /v1/redact` | redact text for an agent hook: raw body in, `{"text", "replacements"}` out |
+| `POST /v1/exec` | `secret_exec`, the [exec broker](exec-broker.md) |
 
 The caller is identified from the socket's peer credentials and, when present, the
 `Authorization: Bearer` session token. Unmapped users are refused. JSON bodies with unknown fields

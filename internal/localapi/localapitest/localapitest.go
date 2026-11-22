@@ -28,6 +28,12 @@ type Server struct {
 // "dev". It is stopped when the test ends.
 func Start(t testing.TB) *Server {
 	t.Helper()
+	return StartWith(t, nil)
+}
+
+// StartWith is [Start] with setup adjusting the server before it serves.
+func StartWith(t testing.TB, setup func(*localapi.Server)) *Server {
+	t.Helper()
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("peer credentials are implemented on Linux and macOS")
 	}
@@ -39,6 +45,9 @@ func Start(t testing.TB) *Server {
 	mgr := identity.NewManager(identity.NewMemorySessions(), identity.ManagerOptions{})
 	api := &localapi.Server{Resolver: identity.Resolver{Peers: peers, Sessions: mgr}, Sessions: mgr,
 		Tools: e.Service, Auditor: e.Audit, ServerVersion: "test", SweepEvery: -1}
+	if setup != nil {
+		setup(api)
+	}
 	// Unix socket paths are limited to about 100 bytes; keep this one short.
 	dir, err := os.MkdirTemp("", "scrim")
 	if err != nil {

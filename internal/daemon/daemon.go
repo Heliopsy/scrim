@@ -388,6 +388,10 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	d.addrs.AgentAPI, d.addrs.EntryPage = d.runtime.Socket, d.runtime.EntryURL
 	d.runtime.SetEndpoints(d.agentEndpoints)
 	d.runtime.SetRedactor(d.redact)
+	if err := d.wireExec(pp.Gate); err != nil {
+		d.runtime.Close()
+		return nil, err
+	}
 	d.runtime.SetSessionValues(d.project.set, func(id string) {
 		if d.project.end(id) {
 			d.pusher.Trigger()

@@ -74,6 +74,10 @@ type Server struct {
 	// SessionEnded, when set, is called with the ID of every session this
 	// API revokes or sweeps.
 	SessionEnded func(id string)
+	// Exec, when set, serves POST /v1/exec: the exec broker
+	// (internal/execbroker), which runs an allow-listed command with
+	// the secrets its placeholders name and returns redacted output.
+	Exec func(ctx context.Context, id identity.Identity, req agenttools.ExecInput) (agenttools.ExecOutput, error)
 }
 
 // NamedValue is one value registered for redaction. Name says where it was
@@ -244,6 +248,7 @@ func (s *Server) Handler() http.Handler {
 	authed("GET "+v+"/status/{id}", s.status)
 	authed("GET "+v+"/grants", s.grants)
 	authed("POST "+v+"/redact", s.redact)
+	authed("POST "+v+"/exec", s.exec)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, agenttools.Errorf(agenttools.CodeNotFound, "no such route in API %s", Version))
 	})
@@ -583,11 +588,35 @@ func (s *Server) redact(w http.ResponseWriter, r *http.Request, id identity.Iden
 	writeJSON(w, http.StatusOK, RedactOutput{Text: string(out.Text), Replacements: out.Replacements})
 }
 
+// exec runs a command through the exec broker. Errors are the broker's own,
+// safe to show; the result holds redacted output only.
+func (s *Server) exec(w http.ResponseWriter, r *http.Request, id identity.Identity) {
+	if s.Exec == nil {
+		writeError(w, agenttools.Errorf(agenttools.CodeUnavailable, "the exec broker is not available from this scrim process"))
+		return
+	}
+	var in agenttools.ExecInput
+	if decodeN(w, r, &in, maxExecBody) {
+		// A brokered command may wait for an approval and then run up to
+		// exec.timeout, longer than the server's write timeout; both are
+		// bounded by the broker.
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+		out, err := s.Exec(r.Context(), id, in)
+		reply(w, out, err)
+	}
+}
+
 // maxBody bounds a JSON request body.
 const maxBody = 64 << 10
 
-func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+// maxExecBody bounds POST /v1/exec, whose stdin may be up to
+// agenttools.MaxExecStdin.
+const maxExecBody = 2*agenttools.MaxExecStdin + maxBody
+
+func decode(w http.ResponseWriter, r *http.Request, v any) bool { return decodeN(w, r, v, maxBody) }
+
+func decodeN(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		writeError(w, agenttools.Errorf(agenttools.CodeInvalid, "the request body is not valid JSON for this route"))

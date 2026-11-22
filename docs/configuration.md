@@ -272,6 +272,11 @@ is out of date.
 | [`events.nats.subject`](#eventsnatssubject) | string | `scrim.events` | restart required |
 | [`events.poll-interval`](#eventspoll-interval) | duration | `1s` | restart required |
 | [`events.valkey.channel`](#eventsvalkeychannel) | string | `scrim:events` | restart required |
+| [`exec.allow-same-user`](#execallow-same-user) | bool | `false` | hot |
+| [`exec.max-output`](#execmax-output) | int | `1048576` | hot |
+| [`exec.path`](#execpath) | string | `/usr/local/bin:/usr/bin:/bin` | hot |
+| [`exec.timeout`](#exectimeout) | duration | `2m0s` | hot |
+| [`exec.user`](#execuser) | string | `""` | hot |
 | [`grants.default-ttl`](#grantsdefault-ttl) | duration | `30m0s` | hot |
 | [`grants.max-ttl`](#grantsmax-ttl) | duration | `8h0m0s` | hot |
 | [`identity.kubernetes.agents`](#identitykubernetesagents) | map | `{}` | restart required |
@@ -384,6 +389,7 @@ is out of date.
 | [`valkey.tls-ca-file`](#valkeytls-ca-file) | string | `""` | restart required |
 | [`valkey.username`](#valkeyusername) | string | `""` | restart required |
 | [`catalog.entries.<name>.*`](#catalogentriesname) | collection | empty | hot |
+| [`exec.commands.<name>.*`](#execcommandsname) | collection | empty | hot |
 | [`redaction.placeholder-keys.<name>.*`](#redactionplaceholder-keysname) | collection | empty | hot |
 | [`restore.tools.<name>.*`](#restoretoolsname) | collection | empty | hot |
 | [`stores.<name>.*`](#storesname) | collection | empty | restart required |
@@ -398,6 +404,17 @@ Catalog entries by logical name: ref, profiles, variants, prefix, template, host
 |---|---|
 | Type | collection of named instances (names: lower-case words with dashes) |
 | Environment | `SCRIM_CATALOG_ENTRIES` (JSON object of instances, replaces the collection); `SCRIM_CATALOG_ENTRIES_<NAME>_<FIELD>` for one field |
+| Reload | hot |
+
+### `exec.commands.<name>`
+
+Commands the exec broker may run with secrets, by the name agents call them: `path` (absolute, required), `secrets` (globs over store references or catalog names whose values the command may receive; its allow list), `inject` (where placeholders are replaced: env, args, stdin; default env), `env-names` (globs of variables the agent may set), `env` (fixed variables, not secret), `dirs` (globs of working directories the agent may choose; default none, a fresh empty directory), `args` (regular expressions; the shell-quoted argument list must match one in full) and `timeout`.
+
+| | |
+|---|---|
+| Type | collection of named instances (names: lower-case words with dashes) |
+| Environment | `SCRIM_EXEC_COMMANDS` (JSON object of instances, replaces the collection); `SCRIM_EXEC_COMMANDS_<NAME>_<FIELD>` for one field |
+| Required fields | `path`, `secrets` |
 | Reload | hot |
 
 ### `redaction.placeholder-keys.<name>`
@@ -1201,6 +1218,69 @@ Valkey channel the valkey events backend publishes and subscribes to. Replicas o
 | Environment | `SCRIM_EVENTS_VALKEY_CHANNEL` |
 | Flag | none |
 | Reload | restart required |
+
+### exec
+
+#### `exec.allow-same-user`
+
+Run brokered commands even when they would run as the calling agent's own user. That user can read the command's environment and memory (/proc/<pid>/environ, ptrace), so the agent can read the injected secret. For single-user development only.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_EXEC_ALLOW_SAME_USER` |
+| Flag | none |
+| Reload | hot |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `exec.max-output`
+
+Largest standard output or standard error, in bytes, a brokered command may return. A stream above it is withheld entirely, never cut, because a cut could split a secret past redaction.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `1048576` |
+| Environment | `SCRIM_EXEC_MAX_OUTPUT` |
+| Flag | none |
+| Reload | hot |
+
+#### `exec.path`
+
+PATH of brokered commands, and the directories a command that is not in exec.commands is looked up in. The agent's PATH is never used.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `/usr/local/bin:/usr/bin:/bin` |
+| Environment | `SCRIM_EXEC_PATH` |
+| Flag | none |
+| Reload | hot |
+
+#### `exec.timeout`
+
+Longest a brokered command may run; a call can ask for less. The process group is killed when it runs out.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `2m0s` |
+| Environment | `SCRIM_EXEC_TIMEOUT` |
+| Flag | none |
+| Reload | hot |
+
+#### `exec.user`
+
+User name or numeric ID brokered commands run as, with that user's primary group and no supplementary groups. Empty runs them as scrim's own user. scrim needs the right to switch users (root or CAP_SETUID and CAP_SETGID) when it is set. A command never runs as root or as the calling agent's user.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_EXEC_USER` |
+| Flag | none |
+| Reload | hot |
 
 ### grants
 

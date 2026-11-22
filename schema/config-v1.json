@@ -681,6 +681,73 @@
       },
       "type": "object"
     },
+    "exec": {
+      "additionalProperties": false,
+      "properties": {
+        "allow-same-user": {
+          "default": false,
+          "description": "Run brokered commands even when they would run as the calling agent's own user. That user can read the command's environment and memory (/proc/<pid>/environ, ptrace), so the agent can read the injected secret. For single-user development only.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_EXEC_ALLOW_SAME_USER",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true
+        },
+        "commands": {
+          "additionalProperties": {
+            "properties": {},
+            "required": [
+              "path",
+              "secrets"
+            ],
+            "type": "object"
+          },
+          "description": "Commands the exec broker may run with secrets, by the name agents call them: `path` (absolute, required), `secrets` (globs over store references or catalog names whose values the command may receive; its allow list), `inject` (where placeholders are replaced: env, args, stdin; default env), `env-names` (globs of variables the agent may set), `env` (fixed variables, not secret), `dirs` (globs of working directories the agent may choose; default none, a fresh empty directory), `args` (regular expressions; the shell-quoted argument list must match one in full) and `timeout`.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+          },
+          "type": "object",
+          "x-scrim-collection": true,
+          "x-scrim-env": "SCRIM_EXEC_COMMANDS",
+          "x-scrim-restart-required": false
+        },
+        "max-output": {
+          "default": 1048576,
+          "description": "Largest standard output or standard error, in bytes, a brokered command may return. A stream above it is withheld entirely, never cut, because a cut could split a secret past redaction.",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "type": "integer",
+          "x-scrim-env": "SCRIM_EXEC_MAX_OUTPUT",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "path": {
+          "default": "/usr/local/bin:/usr/bin:/bin",
+          "description": "PATH of brokered commands, and the directories a command that is not in exec.commands is looked up in. The agent's PATH is never used.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EXEC_PATH",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "timeout": {
+          "default": "2m0s",
+          "description": "Longest a brokered command may run; a call can ask for less. The process group is killed when it runs out.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EXEC_TIMEOUT",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "user": {
+          "default": "",
+          "description": "User name or numeric ID brokered commands run as, with that user's primary group and no supplementary groups. Empty runs them as scrim's own user. scrim needs the right to switch users (root or CAP_SETUID and CAP_SETGID) when it is set. A command never runs as root or as the calling agent's user.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EXEC_USER",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
     "grants": {
       "additionalProperties": false,
       "properties": {
