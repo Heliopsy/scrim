@@ -154,6 +154,9 @@ type Session struct {
 	CABundle string
 	// Home is the agent's home directory.
 	Home string
+	// Scrim is the scrim executable credential helpers run as; empty is
+	// "scrim" from PATH.
+	Scrim string
 }
 
 // EnvVar is one variable a profile sets.
@@ -197,6 +200,9 @@ type Rendered struct {
 	Dirs []string `json:"dirs,omitempty"`
 	// Paths are fixed credential paths for the session filesystem view.
 	Paths []PathView `json:"paths,omitempty"`
+	// Bin are credential helper names scrim run links to scrim in the
+	// session's bin directory, first on PATH.
+	Bin []string `json:"bin,omitempty"`
 	// Hosts are the hosts each applied profile's credentials are bound to.
 	Hosts map[string][]string `json:"hosts,omitempty"`
 	// Warnings are shown before the agent starts.
@@ -248,6 +254,11 @@ func Render(ps []*Profile, b Bindings, sess Session) (*Rendered, error) {
 		for _, u := range p.Unset {
 			if !slices.Contains(out.Unset, u) {
 				out.Unset = append(out.Unset, u)
+			}
+		}
+		for _, b := range p.Bin {
+			if !slices.Contains(out.Bin, b) {
+				out.Bin = append(out.Bin, b)
 			}
 		}
 		for _, pv := range p.Paths {
@@ -318,12 +329,18 @@ func (p *Profile) executor(filled map[string][]Cred, sess Session) (func(name st
 		"dir":      func() string { return dir },
 		"cabundle": func() string { return sess.CABundle },
 		"home":     func() string { return sess.Home },
-		"authsjson": func(slot, user string) (string, error) {
+		"scrim": func() string {
+			if sess.Scrim == "" {
+				return "scrim"
+			}
+			return sess.Scrim
+		},
+		"authsjson": func(slot, user string, helper ...string) (string, error) {
 			cs, err := slotCreds(p, filled, slot)
 			if err != nil {
 				return "", err
 			}
-			return authsJSON(cs, user)
+			return authsJSON(cs, user, helper...)
 		},
 	}
 	t, err := p.tmpl.Clone()
@@ -344,19 +361,36 @@ func (p *Profile) executor(filled map[string][]Cred, sess Session) (func(name st
 var dockerHub = []string{"docker.io", "index.docker.io", "registry-1.docker.io"}
 
 // authsJSON is a container registry auth file ({"auths": {...}}) with a
-// Basic credential of user and each entry's placeholder for each host.
-func authsJSON(cs []Cred, user string) (string, error) {
+// Basic credential of user and each entry's placeholder for each host. With
+// a non-empty helper, credHelpers names it for each host, so the client
+// asks docker-credential-<helper>, which answers from these auths.
+func authsJSON(cs []Cred, user string, helper ...string) (string, error) {
 	auths := map[string]map[string]string{}
+	helpers := map[string]string{}
+	h0 := ""
+	if len(helper) > 0 {
+		h0 = helper[0]
+	}
 	for _, c := range cs {
 		for _, h := range c.Hosts {
 			a := map[string]string{"auth": base64.StdEncoding.EncodeToString([]byte(user + ":" + c.Placeholder))}
 			auths[h] = a
+			if h0 != "" {
+				helpers[h] = h0
+			}
 			if slices.Contains(dockerHub, h) {
 				auths["https://index.docker.io/v1/"] = a
+				if h0 != "" {
+					helpers["docker.io"] = h0
+				}
 			}
 		}
 	}
-	b, err := json.MarshalIndent(map[string]any{"auths": auths}, "", "  ")
+	out := map[string]any{"auths": auths}
+	if len(helpers) > 0 {
+		out["credHelpers"] = helpers
+	}
+	b, err := json.MarshalIndent(out, "", "  ")
 	return string(b) + "\n", err
 }
 
@@ -435,6 +469,7 @@ var pureFuncs = template.FuncMap{
 		}
 		return b.String()
 	},
+	"shquote": func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" },
 	"stripport": func(h string) string {
 		if i := strings.LastIndexByte(h, ':'); i > 0 && !strings.Contains(h[i:], "]") {
 			return h[:i]
@@ -453,7 +488,8 @@ var funcStubs = maps2(template.FuncMap{
 	"dir":         func() string { return "" },
 	"cabundle":    func() string { return "" },
 	"home":        func() string { return "" },
-	"authsjson":   func(string, string) (string, error) { return "", nil },
+	"scrim":       func() string { return "" },
+	"authsjson":   func(string, string, ...string) (string, error) { return "", nil },
 }, pureFuncs)
 
 // Write writes the rendered files under dir (Session.Dir) with directories

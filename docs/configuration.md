@@ -285,6 +285,8 @@ is out of date.
 | [`identity.peers`](#identitypeers) | map | `{}` | restart required |
 | [`identity.store-credentials`](#identitystore-credentials) | map | `{}` | restart required |
 | [`identity.store-login`](#identitystore-login) | map | `{}` | restart required |
+| [`interception.ebpf.cgroups`](#interceptionebpfcgroups) | list | `[]` | hot |
+| [`interception.ebpf.port`](#interceptionebpfport) | int | `9792` | hot |
 | [`log.format`](#logformat) | string | `text` | hot |
 | [`log.level`](#loglevel) | string | `info` | hot |
 | [`metrics.allow-unauthenticated-remote`](#metricsallow-unauthenticated-remote) | bool | `false` | restart required |
@@ -352,6 +354,8 @@ is out of date.
 | [`run.mcp`](#runmcp) | bool | `true` | hot |
 | [`run.placeholder-env`](#runplaceholder-env) | bool | `true` | hot |
 | [`run.profiles`](#runprofiles) | list | `["auto"]` | hot |
+| [`run.scan-interval`](#runscan-interval) | duration | `10s` | hot |
+| [`run.scan-project`](#runscan-project) | bool | `true` | hot |
 | [`session.max-ttl`](#sessionmax-ttl) | duration | `168h0m0s` | restart required |
 | [`session.ttl`](#sessionttl) | duration | `12h0m0s` | restart required |
 | [`state.backend`](#statebackend) | string | `memory` | restart required |
@@ -1360,6 +1364,32 @@ Per-agent store login, by store instance: `kubernetes role:<template> [mount:<pa
 | Flag | none |
 | Reload | restart required |
 
+### interception
+
+#### `interception.ebpf.cgroups`
+
+Control groups (cgroup v2 paths below /sys/fs/cgroup, such as agents.slice) the eBPF transparent mode covers (Linux): `sudo scrim ebpf attach` redirects their TCP connections to ports 80 and 443 to the transparent listener and denies their direct and QUIC egress. Status and doctor report each one that is not attached. Empty: the mode is off.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_INTERCEPTION_EBPF_CGROUPS` |
+| Flag | none |
+| Reload | hot |
+
+#### `interception.ebpf.port`
+
+Port of the transparent listener on 127.0.0.1 and ::1 that the eBPF transparent mode redirects to. It must match the port of proxy.transparent-listen; nothing listening there means covered connections fail, never go direct.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `9792` |
+| Environment | `SCRIM_INTERCEPTION_EBPF_PORT` |
+| Flag | none |
+| Reload | hot |
+
 ### log
 
 #### `log.format`
@@ -2200,6 +2230,30 @@ Tool profiles scrim run applies: profile names, `auto` for every profile at leas
 | Default | `["auto"]` |
 | Environment | `SCRIM_RUN_PROFILES` |
 | Flag | `--run-profiles` |
+| Reload | hot |
+
+#### `run.scan-interval`
+
+How often scrim run rescans the project files while the agent runs and registers changed values; 0 scans once at start.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `10s` |
+| Environment | `SCRIM_RUN_SCAN_INTERVAL` |
+| Flag | `--run-scan-interval` |
+| Reload | hot |
+
+#### `run.scan-project`
+
+Scan the agent's working directory for secret values in project files (.env*, *.tfvars, application config, compose files, .npmrc) and redact them from the session's first request. scrim run refuses to start the agent when they cannot be registered.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `true` |
+| Environment | `SCRIM_RUN_SCAN_PROJECT` |
+| Flag | `--run-scan-project` |
 | Reload | hot |
 
 ### session

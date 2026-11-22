@@ -185,6 +185,10 @@ type Daemon struct {
 	infoPath   string
 	trust      func() string
 
+	// project are the values scrim run found in each session's project
+	// files, redacted until the session ends.
+	project *projectValues
+
 	mu        sync.Mutex
 	addrs     Addrs
 	dpReady   atomic.Bool
@@ -299,11 +303,13 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	d.cleanup = append(d.cleanup, d.tokens.close)
 	d.kubeTokens = newSessionTokens(kubeTokenStore, func() { d.pusher.Trigger() })
 	d.cleanup = append(d.cleanup, d.kubeTokens.close)
-	values := make([]ValueSource, 0, len(a.Refreshers)+1)
+	d.project = newProjectValues(d.pushNow)
+	d.cleanup = append(d.cleanup, d.project.close)
+	values := make([]ValueSource, 0, len(a.Refreshers)+3)
 	for _, r := range a.Refreshers {
 		values = append(values, r)
 	}
-	values = append(values, d.tokens, d.kubeTokens)
+	values = append(values, d.tokens, d.kubeTokens, d.project)
 	pp := a.PolicyParts
 	// Per-agent store identity: the gate checks it on every use of a
 	// governed store's secrets, and the snapshot sends those uses to the
@@ -382,6 +388,11 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	d.addrs.AgentAPI, d.addrs.EntryPage = d.runtime.Socket, d.runtime.EntryURL
 	d.runtime.SetEndpoints(d.agentEndpoints)
 	d.runtime.SetRedactor(d.redact)
+	d.runtime.SetSessionValues(d.project.set, func(id string) {
+		if d.project.end(id) {
+			d.pusher.Trigger()
+		}
+	})
 	// Asks name their caller by transport; the gate verifies sessions and
 	// maps peers with the agent API's resolver. Set before anything runs.
 	pp.Gate.Callers = d.runtime.Resolver
@@ -737,7 +748,11 @@ func (d *Daemon) sweepSessions(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		if a, b := d.tokens.prune(), d.kubeTokens.prune(); a || b {
+		active := func(id string) bool {
+			s, err := d.runtime.Sessions.Get(ctx, id)
+			return err == nil && s.Active(time.Now())
+		}
+		if a, b, c := d.tokens.prune(), d.kubeTokens.prune(), d.project.prune(active); a || b || c {
 			d.pusher.Trigger()
 		}
 		if gone, err := d.runtime.Sessions.Sweep(ctx); err != nil {
@@ -746,6 +761,20 @@ func (d *Daemon) sweepSessions(ctx context.Context) {
 			d.log.Info("revoked sessions whose process exited", "count", len(gone))
 		}
 	}
+}
+
+// pushNow pushes a snapshot and returns once the data plane applied it, for
+// changes the caller must see in force before it goes on (project values
+// before the agent's first request).
+func (d *Daemon) pushNow(ctx context.Context) error {
+	for !d.sup.Ready() {
+		select {
+		case <-ctx.Done():
+			return errors.New("the data plane is not ready")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	return d.sup.Push(ctx)
 }
 
 // App returns the composition root, for callers embedding the daemon.

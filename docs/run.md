@@ -22,8 +22,12 @@ Spec: `openspec/changes/scrim-v1/specs/interception` ("Wrapper mode") and
    its descendants; see [identity.md](identity.md).
 3. **A session directory is created** under `$XDG_RUNTIME_DIR/scrim/run/` (mode 0700) for the CA
    files and the MCP configuration.
-4. **The agent starts as a child** with the environment and arguments below.
-5. **When the agent exits**, `scrim run` ends the session (`DELETE /v1/sessions/self`), removes the
+4. **Project files are scanned.** Secret values in the working directory's `.env*`, `*.tfvars`,
+   application config and similar files are registered with scrim for this session and applied to the
+   data plane before the agent starts, so they are redacted from its first request. See
+   [Secrets in project files](#secrets-in-project-files).
+5. **The agent starts as a child** with the environment and arguments below.
+6. **When the agent exits**, `scrim run` ends the session (`DELETE /v1/sessions/self`), removes the
    session directory and exits with the agent's status. If `scrim run` itself is killed, scrim
    revokes the session once it sees the process is gone.
 
@@ -38,6 +42,8 @@ name could be read as a flag. `scrim run` flags go before it:
 | `--ttl 2h` | Session token lifetime (default `session.ttl`). The session ends earlier when the agent exits. |
 | `--run-mcp=false` | Do not register `scrim mcp` with the agent (setting `run.mcp`). |
 | `--run-placeholder-env=false` | Do not export declared placeholders (setting `run.placeholder-env`). |
+| `--run-scan-project=false` | Do not scan the working directory for secret values (setting `run.scan-project`). |
+| `--run-scan-interval 30s` | How often project files are rescanned while the agent runs; `0` scans once (setting `run.scan-interval`, default 10s). |
 | `--run-fs-view auto\|namespace\|home\|off` | Session filesystem view (setting `run.fs-view`). See [Filesystem view](#filesystem-view). |
 | `--run-allow-unredacted-start` | Weakening: start the agent even when scrim cannot serve it. See [Failing closed](#failing-closed). |
 
@@ -154,6 +160,35 @@ real credential (`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, ...) are removed. Whic
 `run.profiles` (`auto`: every profile a catalog entry names in its tools list). See
 [cli-tools.md](cli-tools.md).
 
+## Secrets in project files
+
+Before the agent starts, `scrim run` walks the working directory (four levels deep, skipping `.git`,
+`node_modules`, `vendor`, `.terraform`, build output and virtualenvs) for the files secrets are
+usually written into: `.env` and `.env.*` (not `.env.example`, `.sample`, `.template`), `*.env`,
+`*.tfvars` and `*.tfvars.json`, `application*.properties|yml`, `appsettings*.json`, compose files,
+`secrets.*`, `credentials.*`, `.npmrc`, `.pypirc`, `.netrc` and YAML, JSON, TOML or INI files under a
+`config/` or `conf/` directory. In them it takes the value of every key whose name says it holds a
+secret (`TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `DSN`, `AUTH`, ...) and the password of every URL with
+credentials, skipping empty values, references (`{{scrim:...}}`, `SCRIM_*`, `${...}`), booleans,
+numbers, paths and sample words.
+
+The values are sent to scrim over the local agent API (`PUT /v1/sessions/self/values`, the body is
+the values and nothing else) and added to the redaction set as `project://<file>#<key>`, redacted and
+never injected. The call returns only after the data plane applied them, so the agent's first request
+is already redacted. `scrim run` rescans every `run.scan-interval` and registers the new set when a
+value or file changed. The values leave the redaction set when the session ends.
+
+`scrim project scan` lists what the scan finds (file, line, key; never the value), `scrim doctor`
+lists each finding with the offer to move it, and `scrim project move` writes each value into a store
+through the agent API (policy and audit apply) and replaces it in the file with a `{{scrim:<ref>}}`
+reference, asking before each one. Nothing is written or rewritten without a yes (`--yes` answers yes
+to all). Add a catalog entry for the reference so its placeholder is injected where the file's value
+was sent.
+
+If the values cannot be registered, `scrim run` refuses to start the agent (exit 125);
+`run.scan-project=false` skips the scan. A working directory that is the home directory or `/` is not
+scanned.
+
 ## Filesystem view
 
 Profiles point tools at their generated files through override variables. Some tools have none
@@ -203,6 +238,12 @@ Not covered by the namespace view:
   daemon) run outside the view and can read the real files on the agent's behalf.
 - A covered path created after the session started is not covered.
 
+The session directory, with the generated profile files, the credential helper links in
+`<session-dir>/bin` and their target (the scrim executable), stays reachable in both views: it lives
+under `$XDG_RUNTIME_DIR`, outside the covered paths. `just e2e-profiles` (TestCredentialHelpers,
+TestProjectFileValues) runs git, skopeo, kubectl and aws through scrim's helpers, and the project
+scan, inside the namespace view.
+
 ### Home mirror (fallback)
 
 On macOS, and on Linux hosts that forbid unprivileged user namespaces (Ubuntu 24.04's default
@@ -250,6 +291,7 @@ or give the scrim binary an AppArmor profile with `userns,`.
 - its data plane is not ready (no snapshot, a listener not bound, a store still loading);
 - it has no LLM base URL listener or no local agent API;
 - the session cannot be minted;
+- the secret values found in project files cannot be registered for redaction;
 - `scrim run` is already inside a session (`SCRIM_SESSION_TOKEN` is set);
 - the preset refuses the environment (Claude Code with Bedrock, Vertex or Foundry);
 - the command is `caveman` (see below) or cannot be found;

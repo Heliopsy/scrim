@@ -61,7 +61,7 @@ fuzz:
 # ---------------------------------------------------------------- gates
 
 # The pre-push gate.
-check: fmt-check lint md test spec proto-check vuln deps-fresh monitoring
+check: fmt-check lint md test spec proto-check ebpf-check vuln deps-fresh monitoring
 
 fmt:
     gofmt -w .
@@ -130,6 +130,21 @@ import "scripts/release/release.just"
 proto-check: proto
     git diff --exit-code -- internal/dataplane/dataplanev1 dataplane/crates/scrim-proto/src/gen
 
+# Regenerate the committed eBPF objects of internal/bpfredirect from bpf/redirect.c. bpf2go runs
+# here; clang and llvm-strip run in rootless podman from scripts/bpf/Containerfile.
+ebpf:
+    BPF2GO_CC="{{justfile_directory()}}/scripts/bpf/clang" BPF2GO_STRIP="{{justfile_directory()}}/scripts/bpf/llvm-strip" \
+      go generate ./internal/bpfredirect
+
+# Fail when the committed eBPF objects differ from what bpf/redirect.c produces.
+ebpf-check: ebpf
+    git diff --exit-code -- internal/bpfredirect
+
+# Per-cgroup redirect and direct-egress denial as root on a throwaway kernel in qemu (tasks.md 15.1);
+# SCRIM_VM_KERNEL picks the vmlinuz. Nothing runs against this host's kernel.
+ebpf-vm-test *args:
+    SCRIM_VM_TEST_ARGS="{{args}}" test/ebpf/vm-test.sh
+
 # Regenerate the config JSON Schema and the settings reference from the registry.
 config-docs:
     go run . config schema > schema/config-v1.json
@@ -157,6 +172,17 @@ leak *args: leak-selftest
     cmd=()
     if [ -n "${SCRIM_LEAK_PROXY_CMD:-}" ]; then cmd=(--proxy-cmd "$SCRIM_LEAK_PROXY_CMD"); fi
     go run . audit run --proxy "$proxy" "${cmd[@]}" --report "${SCRIM_LEAK_REPORT:-leak-report.json}" {{args}}
+
+# Three replicas on PostgreSQL with Valkey events in memory- and CPU-capped rootless podman
+# containers, the release data plane, a fake provider and a fake tool API. Fails on any leak,
+# unrestored placeholder, failed injection or approval that did not cross replicas, and on the
+# thresholds in test/load/profiles.json. smoke takes a few minutes; full (1,000 streams) wants a whole
+# machine, see docs/state-and-observability.md. Extra arguments go to `scrim-load run`, for example
+# `just load-test smoke --events nats --out /tmp/load`.
+#
+# Proxy-level load test (tasks.md 14.3), profile smoke or full.
+load-test profile="smoke" *args:
+    test/load/run.sh --profile {{profile}} {{args}}
 
 # Standalone fake model provider for testing a proxy by hand or from Rust tests.
 fakeprovider *args:

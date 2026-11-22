@@ -152,6 +152,7 @@
         "/^test/k8s/golden/out/.+\\.yaml$/",
         "/^internal/testing/pgtest/pgtest\\.go$/",
         "/^internal/testing/podtest/services\\.go$/",
+        "/^test/load/orchestrate\\.go$/",
         "/^internal/stores/openbao/openbao_integration_test\\.go$/",
         "/^internal/stores/vaultwarden/vwtest/vwtest\\.go$/",
         "/^internal/stores/infisical/testdata/pod\\.yaml$/",

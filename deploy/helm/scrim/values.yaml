@@ -379,14 +379,16 @@ central:
     rollingUpdate:
       maxSurge: 1
       maxUnavailable: 0
-  # -- Resources of the scrim container.
+  # -- Resources of the scrim container. The requests match one replica at about 330
+  # concurrent streams in the load test (docs/state-and-observability.md, "Load test"):
+  # 0.25 cores and about 150 MiB. Raise them for more streams per replica.
   # @default -- See the keys below.
   resources:
     requests:
-      cpu: 100m
-      memory: 128Mi
+      cpu: 250m
+      memory: 256Mi
     limits:
-      memory: 512Mi
+      memory: 1Gi
   # -- nodeSelector (empty: global.nodeSelector).
   nodeSelector: {}
   # -- tolerations (empty: global.tolerations).
