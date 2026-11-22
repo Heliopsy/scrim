@@ -54,6 +54,10 @@ const EventsChannel = "scrim_events"
 // [Store.Listen] opens, so an operator can tell it from pool connections.
 const ListenerApplicationName = "scrim-events"
 
+// StatusApplicationName is the application_name of the read-only
+// connections [OpenReadOnly] opens for scrim status and doctor.
+const StatusApplicationName = "scrim-status"
+
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
@@ -127,6 +131,9 @@ type Store struct {
 	pool     *pgxpool.Pool
 	db       *sql.DB
 	location string
+	// readOnly is set by OpenReadOnly: read-only sessions, no migration,
+	// no advisory locks.
+	readOnly bool
 }
 
 var _ state.Store = (*Store)(nil)
@@ -135,6 +142,39 @@ var _ state.Store = (*Store)(nil)
 // exposed only to build the pool config and never appears in an error or in
 // [Store.Location], which drops the password.
 func Open(ctx context.Context, dsn secret.Value, o Options) (*Store, error) {
+	return open(ctx, dsn, o, false)
+}
+
+// ErrReadOnly is returned by Migrate and Listen on a store opened with
+// [OpenReadOnly]. A write through it fails with this error or with
+// PostgreSQL's own read-only transaction error.
+var ErrReadOnly = errors.New("state: postgres opened read-only")
+
+// readOnlyLockTimeout bounds how long a read-only session waits for a lock,
+// for example on schema_migrations while a daemon migrates, so status
+// reports instead of hanging.
+const readOnlyLockTimeout = "5s"
+
+// OpenReadOnly connects for inspection, as scrim status and doctor do. Every
+// session starts with default_transaction_read_only=on, so PostgreSQL itself
+// refuses any write or DDL. It runs no migration and takes no advisory lock,
+// so it never waits on, races with or holds up daemons migrating the same
+// database, and it works for a role without DDL or write rights. Migrate
+// returns [ErrReadOnly]; compare [Store.SchemaVersion] with [LatestSchema].
+func OpenReadOnly(ctx context.Context, dsn secret.Value, o Options) (*Store, error) {
+	return open(ctx, dsn, o, true)
+}
+
+// LatestSchema is the schema version this binary migrates to.
+func LatestSchema() (int, error) {
+	all, err := Migrations()
+	if err != nil {
+		return 0, err
+	}
+	return migrate.Latest(all), nil
+}
+
+func open(ctx context.Context, dsn secret.Value, o Options, readOnly bool) (*Store, error) {
 	if o.MaxConns <= 0 {
 		o.MaxConns = 16
 	}
@@ -162,6 +202,12 @@ func Open(ctx context.Context, dsn secret.Value, o Options) (*Store, error) {
 	pc.MaxConnIdleTime = 5 * time.Minute
 	pc.MaxConnLifetime = 30 * time.Minute
 	pc.ConnConfig.RuntimeParams["application_name"] = "scrim"
+	if readOnly {
+		pc.MaxConns = min(pc.MaxConns, 2)
+		pc.ConnConfig.RuntimeParams["application_name"] = StatusApplicationName
+		pc.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+		pc.ConnConfig.RuntimeParams["lock_timeout"] = readOnlyLockTimeout
+	}
 
 	cctx, cancel := context.WithTimeout(ctx, o.ConnectTimeout)
 	defer cancel()
@@ -174,23 +220,29 @@ func Open(ctx context.Context, dsn secret.Value, o Options) (*Store, error) {
 		return nil, fmt.Errorf("state: postgres at %s is unreachable within %s: %w", location, o.ConnectTimeout, scrubConnErr(err))
 	}
 	db := stdlib.OpenDBFromPool(pool)
-	s := &Store{pool: pool, db: db, location: location}
+	s := &Store{pool: pool, db: db, location: location, readOnly: readOnly}
+	beforeEmit := func(ctx context.Context, tx *sql.Tx) error {
+		// NOTIFY is delivered on commit and dropped on rollback; within
+		// one transaction PostgreSQL folds identical notifications into
+		// one.
+		_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1), pg_notify($2, '')`, eventsLockKey, EventsChannel)
+		return err
+	}
+	if readOnly {
+		// The session would refuse the outbox insert anyway; refusing here
+		// keeps a read-only store from ever taking the events lock.
+		beforeEmit = func(context.Context, *sql.Tx) error { return ErrReadOnly }
+	}
 	s.DB = sqlstate.New(sqlstate.Config{
-		Backend:  Name,
-		Dialect:  migrate.Postgres,
-		Reader:   db,
-		Writer:   db,
-		IsUnique: isUnique,
-		BeforeEmit: func(ctx context.Context, tx *sql.Tx) error {
-			// NOTIFY is delivered on commit and dropped on rollback; within
-			// one transaction PostgreSQL folds identical notifications into
-			// one.
-			_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1), pg_notify($2, '')`, eventsLockKey, EventsChannel)
-			return err
-		},
-		Scrubber: o.Scrubber,
-		Faults:   o.Faults,
-		Observe:  o.Observe,
+		Backend:    Name,
+		Dialect:    migrate.Postgres,
+		Reader:     db,
+		Writer:     db,
+		IsUnique:   isUnique,
+		BeforeEmit: beforeEmit,
+		Scrubber:   o.Scrubber,
+		Faults:     o.Faults,
+		Observe:    o.Observe,
 	})
 	return s, nil
 }
@@ -205,6 +257,9 @@ func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 // [EventsChannel]. The caller waits on it with WaitForNotification and
 // closes it. Errors never carry connection parameters.
 func (s *Store) Listen(ctx context.Context) (*pgx.Conn, error) {
+	if s.readOnly {
+		return nil, fmt.Errorf("%w: %s", ErrReadOnly, s.location)
+	}
 	cc := s.pool.Config().ConnConfig.Copy()
 	cc.RuntimeParams["application_name"] = ListenerApplicationName
 	conn, err := pgx.ConnectConfig(ctx, cc)
@@ -223,7 +278,11 @@ func (s *Store) Listen(ctx context.Context) (*pgx.Conn, error) {
 func ScrubError(err error) error { return scrubConnErr(err) }
 
 // Migrate implements [state.Store]. Replicas serialise on an advisory lock.
+// A store opened with [OpenReadOnly] returns [ErrReadOnly].
 func (s *Store) Migrate(ctx context.Context) error {
+	if s.readOnly {
+		return fmt.Errorf("%w: %s", ErrReadOnly, s.location)
+	}
 	all, err := Migrations()
 	if err != nil {
 		return err

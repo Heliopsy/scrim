@@ -28,6 +28,11 @@ type StateOf struct {
 	// Info, when set, replaces the detail of a healthy report, for example
 	// "held by the running scrim process 4242".
 	Info string
+	// Expected, when set, is the schema version this binary migrates to,
+	// for a store opened without migrating it. A schema behind it is
+	// reported and stays healthy, since a daemon of this release migrates
+	// it when it starts; one ahead of it is unhealthy.
+	Expected int
 }
 
 // StateStatus implements [StateSource].
@@ -52,7 +57,32 @@ func (s StateOf) StateStatus(ctx context.Context) State {
 		st.Healthy, st.Detail = false, fmt.Sprintf("reading schema version: %v", err)
 	}
 	st.SchemaVersion = v
+	if err == nil && s.Expected > 0 {
+		schemaAgainst(&st, s.Expected)
+	}
 	return st
+}
+
+// schemaAgainst reports st's schema version against the one this binary
+// expects.
+func schemaAgainst(st *State, expected int) {
+	var note string
+	switch v := st.SchemaVersion; {
+	case v == expected:
+		return
+	case v == 0:
+		note = "schema not created yet; a scrim daemon creates it when it first starts"
+	case v < expected:
+		note = fmt.Sprintf("schema version %d is behind version %d of this scrim; a daemon of this version migrates it when it starts", v, expected)
+	default:
+		st.Healthy = false
+		note = fmt.Sprintf("schema version %d is ahead of version %d, the newest this scrim understands; "+
+			"a newer scrim migrated it, upgrade this binary", v, expected)
+	}
+	if st.Detail != "" {
+		note = st.Detail + "; " + note
+	}
+	st.Detail = note
 }
 
 // DBAuditSink reports the db audit sink, which is the state backend itself
