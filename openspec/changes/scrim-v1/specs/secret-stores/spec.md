@@ -380,6 +380,57 @@ scope, ambiguous, no such field).
 - **WHEN** the store is locked and a rule needs an item's labels
 - **THEN** the lookup fails and the request is decided with its labels unknown
 
+### Requirement: Bitwarden Secrets Manager adapter
+
+The system SHALL read, list, watch and write Bitwarden Secrets Manager secrets by project name or ID
+and key, or by secret ID, logging in as a machine account with its access token. Keys, values, notes
+and project names SHALL be encrypted and decrypted by scrim with the organization key the login
+yields, so Bitwarden only ever receives ciphertext, and the protocol steps SHALL be pinned by
+known-answer tests against vectors from the official SDK.
+
+#### Scenario: Read through a project name
+
+- **WHEN** scrim reads `bws://prod/db/PASSWORD` with a machine account that can read project `prod`
+- **THEN** it returns the decrypted value of key `db/PASSWORD` in that project as the field `value`
+- **AND** the note is returned only for `bws://prod/db/PASSWORD#note`
+
+#### Scenario: Write into a read-only project
+
+- **WHEN** an agent writes `bws://prod/NEW` and the machine account may only read `prod`
+- **THEN** the write fails with permission denied naming the store and reference, although Bitwarden
+  answers it with not found
+
+### Requirement: Bitwarden Secrets Manager names that are not unique
+
+Secrets Manager allows several secrets with one key and several projects with one name. A read,
+write or label lookup through a name that matches more than one SHALL fail as an invalid reference
+naming the IDs to use instead, and SHALL NOT pick one. A listing SHALL return secrets that share a
+key by their ID.
+
+#### Scenario: Two secrets share a key
+
+- **WHEN** project `app` holds two secrets with key `TOKEN` and an agent reads `bws://app/TOKEN`
+- **THEN** the read fails as an invalid reference naming both secret IDs
+- **AND** listing `bws://app` returns both as `bws://<secret-id>` so a redact target still loads them
+
+### Requirement: Bitwarden Secrets Manager labels without values
+
+The adapter SHALL label every secret with `bws.org`, `bws.id`, `bws.key`, its projects as
+`bws.project` and `bws.project-id` with presence keys, and `bws.created` and `bws.updated`. The
+labels of an existing secret SHALL come from the secret identifier list without fetching its value,
+SHALL equal those a read reports, and SHALL NOT contain the value or the note. A write target SHALL
+be labelled from its reference alone.
+
+#### Scenario: Labels of a write target
+
+- **WHEN** a rule asks for writes into project `prod` and an agent creates `bws://prod/NEW`
+- **THEN** the write is decided on `bws.project.prod = true` before the secret exists, and asks
+
+#### Scenario: Labels hold no value or note
+
+- **WHEN** a secret has a value and a note and a rule needs its labels
+- **THEN** no secret is fetched and neither the value nor the note appears in any label
+
 ### Requirement: Infisical adapter
 
 The system SHALL read and write Infisical secrets by project, environment, folder and key, and SHALL
