@@ -198,7 +198,7 @@ placeholderKeys:
       version: 1
       key: k1
 
-# -- Secret slots (templates/_helpers.tpl, "Secrets"): each credential the chart mounts is a slot whose Secret is a Secret you manage (existing), an ExternalSecret the chart renders (externalSecrets.data), or a Secret the chart generates (only the metrics token). Slots: admin (key token, for admin.tcp), metrics (key token, generated), postgres (key dsn). There is no way to put a credential value into values.
+# -- Secret slots (templates/_helpers.tpl, "Secrets"): each credential the chart mounts is a slot whose Secret is a Secret you manage (existing), an ExternalSecret the chart renders (externalSecrets.data), or a Secret the chart generates (only the metrics token). Slots: admin (key token, for admin.tcp), metrics (key token, generated), postgres (key dsn), valkey (key password), nats (key token or password), otlp (key token), loki (key password), kafka (key password). There is no way to put a credential value into values.
 # @default -- See the keys below.
 secrets:
   # -- Existing Secrets by slot (slot -> Secret name, tpl). Nothing is rendered for those slots.
@@ -220,13 +220,110 @@ secrets:
     # -- Remote references by slot and key (slot -> key -> remote key string, or a remoteRef object).
     data: {}
 
-# -- Shared state and events. Several replicas (the HPA, global.ha) need PostgreSQL: it renders state.backend postgres and events.backend postgres together. The DSN is the Secret slot postgres (key dsn).
+# -- Shared state and events. Several replicas (the HPA, global.ha) need PostgreSQL: it renders state.backend postgres and events.backend from the events values (postgres by default). The DSN is the Secret slot postgres (key dsn).
 # @default -- See the keys below.
 postgres:
   # -- Use PostgreSQL for state (approvals, grants, sessions) and for events between replicas (LISTEN/NOTIFY). Off: in-memory state in one replica; a restart loses approvals and grants.
   enabled: false
   # -- Connection pool size per replica.
   maxConns: 16
+
+# -- How replicas wake each other after a change (events.backend). Every backend delivers from the outbox in PostgreSQL, so a lost wake-up costs latency, never an event. Only read with postgres.enabled; without it events stay local to the one replica.
+# @default -- See the keys below.
+events:
+  # -- postgres (LISTEN/NOTIFY on the state database), valkey (pub/sub, the valkey values) or nats (core pub/sub, the nats values).
+  backend: postgres
+
+# -- Valkey (or a Redis-compatible server) for events.backend valkey and rateLimit.backend valkey (valkey.*). The password, when auth is on, is the Secret slot valkey (key password).
+# @default -- See the keys below.
+valkey:
+  # -- Servers as host:port; several are seeds of one cluster.
+  addresses: []
+  # -- ACL user; empty for the default user.
+  username: ""
+  # -- Send the password from the Secret slot valkey (key password).
+  auth: false
+  # -- Logical database (standalone servers only).
+  db: 0
+  # -- Connect over TLS, verified against the system roots.
+  tls: false
+
+# -- NATS for events.backend nats (nats.*). Credentials come from the Secret slot nats.
+# @default -- See the keys below.
+nats:
+  # -- Server URLs (nats://host:4222, tls://host:4222).
+  servers: []
+  # -- none, token (the Secret slot nats, key token) or password (nats.username and the Secret slot nats, key password).
+  auth: none
+  # -- User for auth password.
+  username: ""
+
+# -- Where per-agent rate limits are counted (ratelimit.backend). local counts per replica (with N replicas an agent can get up to N times a limit); valkey shares one exact limit through the valkey values. The limits themselves are in config.ratelimit (agent-api, approvals, asks).
+# @default -- See the keys below.
+rateLimit:
+  # -- local or valkey.
+  backend: local
+
+# -- External audit sinks (audit.sinks), each additive to the database audit log and fed from its own bounded queue. policy drop never slows a request and counts what does not fit in scrim_audit_sink_dropped_total; block makes the audited operation wait up to timeout and then refuses it. Credentials come from the Secret slots otlp (key token), loki (key password) and kafka (key password).
+# @default -- See the keys below.
+auditSinks:
+  # -- OTLP logs to a collector or backend.
+  # @default -- See the keys below.
+  otlp:
+    # -- Send audit entries as OTLP log records.
+    enabled: false
+    # -- OTLP/HTTP endpoint, http(s)://host:4318.
+    endpoint: ""
+    # -- Send a bearer token from the Secret slot otlp (key token).
+    auth: false
+    # -- block or drop.
+    policy: drop
+    # -- With block, how long an audited operation waits for queue room.
+    timeout: 5s
+    # -- Entries waiting for the sink at most.
+    queueSize: 10000
+  # -- Loki push API.
+  # @default -- See the keys below.
+  loki:
+    # -- Push audit entries to Loki.
+    enabled: false
+    # -- Base URL; entries go to <url>/loki/api/v1/push.
+    url: ""
+    # -- Tenant (X-Scope-OrgID); empty for single-tenant Loki.
+    tenant: ""
+    # -- Basic auth user; with auth and no user the password is sent as a bearer token.
+    username: ""
+    # -- Send the password from the Secret slot loki (key password).
+    auth: false
+    # -- Extra static stream labels, low-cardinality.
+    labels: {}
+    # -- block or drop.
+    policy: drop
+    # -- With block, how long an audited operation waits for queue room.
+    timeout: 5s
+    # -- Entries waiting for the sink at most.
+    queueSize: 10000
+  # -- Kafka or Redpanda.
+  # @default -- See the keys below.
+  kafka:
+    # -- Produce audit entries to Kafka.
+    enabled: false
+    # -- Seed brokers as host:port.
+    brokers: []
+    # -- Topic, created beforehand.
+    topic: scrim-audit
+    # -- Connect over TLS, verified against the system roots.
+    tls: false
+    # -- none, plain (needs tls), scram-sha-256 or scram-sha-512; the password is the Secret slot kafka (key password).
+    saslMechanism: none
+    # -- SASL user.
+    username: ""
+    # -- block or drop.
+    policy: drop
+    # -- With block, how long an audited operation waits for queue room.
+    timeout: 5s
+    # -- Entries waiting for the sink at most.
+    queueSize: 10000
 
 # -- Kubernetes identity (identity.kubernetes.*): agent pods present a projected service account token for `audience`, which scrim verifies with TokenReview. Per-agent store login (identity.store-login) goes in `config.identity`.
 # @default -- See the keys below.
@@ -282,14 +379,16 @@ central:
     rollingUpdate:
       maxSurge: 1
       maxUnavailable: 0
-  # -- Resources of the scrim container.
+  # -- Resources of the scrim container. The requests match one replica at about 330
+  # concurrent streams in the load test (docs/state-and-observability.md, "Load test"):
+  # 0.25 cores and about 150 MiB. Raise them for more streams per replica.
   # @default -- See the keys below.
   resources:
     requests:
-      cpu: 100m
-      memory: 128Mi
+      cpu: 250m
+      memory: 256Mi
     limits:
-      memory: 512Mi
+      memory: 1Gi
   # -- nodeSelector (empty: global.nodeSelector).
   nodeSelector: {}
   # -- tolerations (empty: global.tolerations).

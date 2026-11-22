@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/heliopsy/scrim/internal/fsview"
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/profiles"
 	"github.com/heliopsy/scrim/internal/secret"
@@ -38,6 +39,9 @@ const (
 	FileMCP    = "mcp.json"
 	// ProfilesDir holds what tool profiles generate.
 	ProfilesDir = "profiles"
+	// BinDir holds the credential helper links tool profiles ask for; it is
+	// first on the agent's PATH.
+	BinDir = "bin"
 )
 
 // proxyVars are set to the forward proxy, in both spellings clients read.
@@ -100,10 +104,19 @@ type Plan struct {
 	Files map[string][]byte `json:"-"`
 	// Dirs are created in the session directory, mode 0700.
 	Dirs []string `json:"-"`
+	// Links are symbolic links created in the session directory, keyed by
+	// slash-separated path relative to it, to the absolute target: the
+	// credential helper names tool profiles run scrim as.
+	Links map[string]string `json:"-"`
 	// Profiles are the tool profiles applied (docs/cli-tools.md).
 	Profiles []string `json:"profiles,omitempty"`
+	// Project names the secret values found in project files and
+	// registered for redaction (`<file>:<line> <key>`, never a value).
+	Project []string `json:"project,omitempty"`
 	// Warnings are shown before the agent starts.
 	Warnings []string `json:"warnings,omitempty"`
+	// FSView is the session filesystem view (package fsview).
+	FSView *fsview.Plan `json:"fs_view,omitempty"`
 }
 
 // Input is what a plan is built from.
@@ -386,6 +399,19 @@ func (b *builder) profiles() {
 	}
 	for _, d := range r.Dirs {
 		b.plan.Dirs = append(b.plan.Dirs, ProfilesDir+"/"+d)
+	}
+	if len(r.Bin) > 0 && b.in.ScrimPath != "" {
+		if b.plan.Links == nil {
+			b.plan.Links = map[string]string{}
+		}
+		for _, name := range r.Bin {
+			b.plan.Links[BinDir+"/"+name] = b.in.ScrimPath
+		}
+		path := b.file(BinDir)
+		if old := b.env["PATH"]; old != "" {
+			path += string(filepath.ListSeparator) + old
+		}
+		b.setVar("PATH", path, "credential helpers of the tool profiles ("+strings.Join(r.Bin, ", ")+") first")
 	}
 }
 

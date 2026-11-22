@@ -199,7 +199,7 @@ jobs:
           name: dataplane-${{ matrix.platform }}
           path: out/
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 1
       - name: Remove build output
         if: always()
         run: rm -rf "$RUNNER_TEMP/cargo-home" "$RUNNER_TEMP/target" "$RUNNER_TEMP/tools" out
@@ -247,13 +247,13 @@ jobs:
           name: bin
           path: dist/bin/
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 1
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: release
           path: dist/release/
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 1
 
   # Rebuilds the linux-amd64 pair on a fresh GitHub-hosted runner, from
   # nothing, and refuses the release unless every byte matches the pair built
@@ -390,7 +390,7 @@ jobs:
           name: signed
           path: dist/release/
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 1
 
   publish:
     name: GitHub release

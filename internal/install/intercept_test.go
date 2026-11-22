@@ -95,8 +95,8 @@ func TestTransparentAndDNSInstallAndUninstallLeaveNoTrace(t *testing.T) {
 	rules := h.read("etc/scrim/transparent.nft")
 	for _, want := range []string{
 		"table inet scrim {", "meta skuid 900 return", "ip daddr 127.0.0.0/8 return", "ip6 daddr ::1 return",
-		"meta skuid { 1001 } tcp dport { 80, 443 } redirect to :9792",
-		`socket cgroupv2 level 1 "agents.slice" tcp dport { 80, 443 } redirect to :9792`,
+		"meta skuid { 1001 } tcp dport { 80, 443 } redirect to :9793",
+		`socket cgroupv2 level 1 "agents.slice" tcp dport { 80, 443 } redirect to :9793`,
 		"meta skuid { 1001 } tcp dport { 80, 443 } reject with tcp reset", "meta skuid { 1001 } udp dport 443 reject",
 		"meta skuid 900 accept",
 	} {
@@ -112,7 +112,7 @@ func TestTransparentAndDNSInstallAndUninstallLeaveNoTrace(t *testing.T) {
 		}
 	}
 	drop := h.read("etc/systemd/system/scrim.service.d/interception.conf")
-	for _, want := range []string{"Environment=SCRIM_PROXY_TRANSPARENT_LISTEN=127.0.0.1:9792,[::1]:9792",
+	for _, want := range []string{"Environment=SCRIM_PROXY_TRANSPARENT_LISTEN=127.0.0.1:9793,[::1]:9793",
 		"Environment=SCRIM_PROXY_SNI_LISTEN=127.0.83.1:443", "AmbientCapabilities=CAP_NET_BIND_SERVICE"} {
 		if !strings.Contains(drop, want) {
 			t.Errorf("drop-in lacks %q:\n%s", want, drop)

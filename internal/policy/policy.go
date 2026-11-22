@@ -137,6 +137,11 @@ type Request struct {
 	// are metadata and safe to log; a store adapter must never copy a value
 	// into them.
 	SecretLabels map[string]string
+	// SecretLabelsUnknown says the secret's labels could not be looked up
+	// (its store failed to answer). Every rule that reads secret.labels then
+	// counts as erroring on the request: a deny or ask rule matches, an allow
+	// rule does not.
+	SecretLabelsUnknown bool `json:",omitempty"`
 	// Provider is the model provider ("anthropic", "openai").
 	Provider string
 	// Host, Method and Path describe the destination.

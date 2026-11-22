@@ -384,6 +384,71 @@ update and patch without read.
 - **AND** scrim reports it as write-only and does not try to load it into the redaction set from the
   store, keeping only the value it just wrote
 
+### Requirement: OpenBao native labels
+
+The OpenBao adapter SHALL label every secret it reads, lists or writes with what OpenBao reports
+about it, under `openbao.<attribute>` keys: mount, engine, namespace, path and its folders and
+segments, versions and version settings, times, deletion state, and mount description, options and
+settings. A list attribute SHALL be stored comma-joined and as one presence key per value. Labels
+SHALL never hold a secret value.
+
+#### Scenario: Ancestor folders match
+
+- **WHEN** scrim reads `bao://kv-prod/prod/eu/db`
+- **THEN** its labels hold `openbao.mount: kv-prod`, `openbao.path: prod/eu/db`,
+  `openbao.ancestors: prod,prod/eu`, `openbao.ancestors.prod: "true"` and
+  `openbao.ancestors.prod/eu: "true"`
+- **AND** a rule matching `"openbao.ancestors.prod" in secret.labels` matches it
+
+#### Scenario: No value in labels
+
+- **WHEN** scrim reads, lists and writes a secret holding a generated value
+- **THEN** no label key or value contains that value
+
+### Requirement: OpenBao custom metadata labels cannot forge native keys
+
+The OpenBao adapter SHALL label KV v2 custom metadata as `openbao.meta.<key>` and, unless the key
+starts with `openbao.` or `store.`, under its own key as well. Custom metadata SHALL NOT overwrite a
+native key. Custom metadata keys SHALL be folded to lowercase ASCII letters, digits, `-` and `_` in
+dot-separated segments; presence keys SHALL carry their value verbatim.
+
+#### Scenario: Custom metadata cannot forge native keys
+
+- **WHEN** a secret under mount `kv-prod` has custom metadata `openbao.mount = kv-dev` and
+  `team = payments`
+- **THEN** its labels hold `openbao.mount: kv-prod`, `openbao.meta.openbao.mount: kv-dev`,
+  `openbao.meta.team: payments` and `team: payments`
+
+### Requirement: OpenBao label lookups are optional
+
+A request the OpenBao adapter makes only for labels (secret metadata on read, mount information)
+SHALL NOT fail the operation or force a new login when it is refused or fails; the labels that
+depended on it SHALL be left out. Configuration SHALL be able to turn these requests off.
+
+#### Scenario: Forbidden metadata lookups degrade
+
+- **WHEN** scrim's token may read a secret's data but not its metadata or its mount
+- **THEN** the read succeeds with the value
+- **AND** the labels that need metadata, such as `openbao.current_version` and
+  `openbao.max_versions`, are absent while `openbao.mount`, `openbao.path` and `openbao.version`
+  are present
+- **AND** scrim does not log in again because of the refusal
+
+#### Scenario: Label lookups turned off
+
+- **WHEN** `labels.lookups` is false
+- **THEN** a read makes no request besides the data read
+- **AND** its labels still hold the mount, path and version labels
+
+### Requirement: OpenBao scheduled deletion is not deletion
+
+The OpenBao adapter SHALL treat a version as deleted only once its deletion time has passed.
+
+#### Scenario: Scheduled deletion is not deletion
+
+- **WHEN** the current version has a deletion time in the future, set by `delete_version_after`
+- **THEN** it is read and listed as usual, with that time in `openbao.deletion_time`
+
 ### Requirement: Store login with the pod's Kubernetes service account
 
 When scrim runs in Kubernetes, the OpenBao adapter (`auth.method: kubernetes`) and the Infisical
@@ -565,6 +630,88 @@ returned by any API, tool, log, metric, trace or audit entry.
 
 - **WHEN** scrim logs in to OpenBao with AppRole and receives a client token
 - **THEN** that token is added to the redaction set like scrim's configured credentials
+
+### Requirement: Store-native metadata labels
+
+Each adapter SHALL describe where a secret lives in its store as labels without values: native
+attributes under `<kind>.` (`vaultwarden.org`, `openbao.mount`), a multi-valued attribute as one
+comma-joined key plus one presence key per value (`vaultwarden.collection.Prod`), and metadata store
+users can edit under `<kind>.meta.<key>`. A native label SHALL always win over user-editable
+metadata. The local stores SHALL report native labels too (`env.variable`, `file.path`).
+
+#### Scenario: Secret in two collections
+
+- **WHEN** a Vaultwarden item belongs to collections Prod and Shared
+- **THEN** its labels hold `vaultwarden.collection=Prod,Shared`, `vaultwarden.collection.Prod=true` and `vaultwarden.collection.Shared=true`
+
+#### Scenario: Custom field named like a native label
+
+- **WHEN** a store user adds a custom field `vaultwarden.collection.Prod` to an item outside Prod
+- **THEN** the item's labels hold `vaultwarden.meta.vaultwarden.collection.prod` and not `vaultwarden.collection.Prod`
+
+### Requirement: Generic store labels
+
+The system SHALL add the labels `store.name`, `store.kind`, `store.path`, `store.container` and
+`store.field` to every secret of every store, SHALL replace any `store.*` label an adapter reports,
+and SHALL drop labels an adapter reports under another adapter kind's prefix.
+
+#### Scenario: Adapter reports a store label
+
+- **WHEN** an adapter's metadata for a secret carries `store.kind=other`
+- **THEN** the secret's labels hold the instance's real kind
+
+### Requirement: Derived labels per store
+
+A store instance's `labels` option SHALL derive labels from its native and generic labels: a copy
+(`team: vaultwarden.org`), a constant (`{value: prod}`), a constant set when another label exists
+(`{from, value}`), and a regular-expression match with submatch expansion (`{from, regex, value}`).
+Derived labels SHALL never replace a native or `store.*` label, and a name under `store.`, `scrim.`
+or an adapter kind's prefix SHALL be rejected when configuration loads.
+
+#### Scenario: Team from the organisation
+
+- **WHEN** a Vaultwarden store sets `labels: {team: vaultwarden.org}` and an item belongs to organisation Acme
+- **THEN** the item's labels hold `team=Acme`
+
+#### Scenario: Derived label claims a native name
+
+- **WHEN** a store's `labels` option names a label `vaultwarden.org`
+- **THEN** configuration validation fails naming `labels.vaultwarden.org`
+
+### Requirement: Metadata without values
+
+An adapter that can return a secret's metadata without its values SHALL offer it, and the system
+SHALL use it to label a secret that is not in a redaction set. Where an adapter cannot, the system
+SHALL read the secret and wipe every value before the lookup returns, and SHALL cache nothing beyond
+what the refresher holds.
+
+#### Scenario: Fallback read
+
+- **WHEN** an adapter without a metadata read is asked for the labels of a secret outside every redaction set
+- **THEN** the secret is read, every value read is wiped before the labels are used, and no value is kept
+
+### Requirement: Labels of a new item
+
+Before a secret exists, the system SHALL label a write or generate target with the generic `store.*`
+labels derived from its reference, the store's derived labels, and any native labels its adapter can
+tell from the reference alone.
+
+#### Scenario: Write to a new path
+
+- **WHEN** an agent writes `bao://kv/prod/app/token`, which does not exist yet
+- **THEN** the policy request carries `store.container=kv/prod/app` and `store.kind=openbao`
+
+### Requirement: Listing a secret's labels
+
+`scrim catalog labels <name|reference>` SHALL print every label a secret has as rules see it, with
+where each comes from (store, native, user, scrim, derived), reading the secret's metadata and never
+its value; for a secret the store does not hold yet it SHALL print the labels a new item there would
+get. `scrim catalog show <name>` SHALL print the entry with its secret's labels.
+
+#### Scenario: Operator writes a rule
+
+- **WHEN** an operator runs `scrim catalog labels github`
+- **THEN** the labels of the secret `github` names are printed, and no value appears in the output
 
 ### Requirement: Optional secret catalog
 

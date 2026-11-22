@@ -125,6 +125,12 @@ key per process, so a rewrite of the same length within one filesystem timestamp
 noticed. The digest is never shown or stored. A poll that fails reports nothing and keeps the
 previous state, so a briefly unreadable directory never looks like a mass deletion.
 
+## Labels
+
+Both sources label their secrets for policy rules (see [labels](README.md#labels)): an env secret
+carries `env.variable` and, when `prefix` is set, `env.prefix`; a file secret carries `file.root`,
+`file.path` (the absolute path) and `file.format`.
+
 ## Least privilege
 
 - Run scrim as its own user. Make secret files owned by that user with mode `0600`, and the root

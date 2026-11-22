@@ -1,0 +1,10 @@
+[pass] data-plane: ok
+[fail] ebpf: agents.slice: not attached: run `sudo scrim ebpf attach`; attaching needs root, or CAP_BPF and CAP_NET_ADMIN, and this process lacks CAP_BPF and CAP_NET_ADMIN
+       fix: run `sudo scrim ebpf attach`
+[warn] ebpf: ci.slice: attached according to the loader's record (/run/scrim-ebpf/attachments.json); confirming it with the kernel needs CAP_NET_ADMIN: run `sudo scrim status`
+       fix: run `sudo scrim doctor` to confirm the attachment with the kernel
+[fail] ebpf: nothing accepts connections on 127.0.0.1:9792: redirected connections fail (they never go direct)
+       fix: start scrim with proxy.transparent-listen on port 9792, or set interception.ebpf.port to its port and attach again
+[pass] state: ok
+
+2 check(s) failed, 1 warning(s)

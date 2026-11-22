@@ -10,7 +10,7 @@ of their own: they are an add-on that keeps methods 1 and 2 from being skipped.
 | --- | --- | --- | --- | --- |
 | 1 | [Wrapper (`scrim run`)](#1-wrapper-scrim-run), with base URL underneath | v0.1.0 | full | yes, by ignoring or clearing its environment |
 | 2 | [Forward proxy](#2-forward-proxy) (`HTTPS_PROXY` and CA) | v0.1.0 | full | yes, by ignoring the proxy variables |
-| 3 | [Transparent, machine-wide](#3-transparent-machine-wide) (nftables; eBPF variant) | on `main` (`scrim install --transparent`; eBPF planned, M3) | full | no, inside the covered users or cgroups |
+| 3 | [Transparent, machine-wide](#3-transparent-machine-wide) (nftables; eBPF variant) | on `main` (`scrim install --transparent`; eBPF variant: `scrim ebpf attach`) | full | no, inside the covered users or cgroups |
 | 4 | [DNS override](#4-dns-override) | on `main` (`scrim install --dns`) | full for connections by name | yes, by connecting to an IP address |
 | 5 | [Kubernetes transparent](#5-kubernetes-transparent) | on `main` (Helm chart, Kyverno injection, NetworkPolicy) | full | no, while NetworkPolicy is enforced |
 | 6 | [Hooks only](#6-hooks-only) | on `main` (`scrim install --hooks`) | partial: tool results and prompts only | yes; model traffic never passes scrim |
@@ -365,7 +365,7 @@ sudo scrim install --system --transparent --cover-user agent1 --cover-cgroup age
 It installs the system service ([service.md](service.md)) if it is not there yet, then:
 
 - a drop-in, `/etc/systemd/system/scrim.service.d/interception.conf`, that turns on the
-  transparent listener (`proxy.transparent-listen`, `127.0.0.1:9792` and `[::1]:9792`; the port
+  transparent listener (`proxy.transparent-listen`, `127.0.0.1:9793` and `[::1]:9793`; the port
   is `--transparent-port`);
 - the CA in the system trust store and in every Java truststore it finds (below);
 - the rule set `/etc/scrim/transparent.nft`, one table `inet scrim`, loaded by
@@ -454,17 +454,27 @@ truststores and `nft list ruleset` match the snapshot taken before.
 
 ### Variant: eBPF cgroup hooks
 
-Planned for M3 (tasks.md 15.1). Instead of packet filter rules, a privileged loader attaches eBPF
-programs to the `cgroup/connect4` and `cgroup/connect6` hooks of selected control groups. When a
-process in the cgroup calls `connect()` to a provider address, the program rewrites the destination
-to scrim's transparent listener; a direct connection to the provider is denied. This gives
-per-cgroup redirect and deny without separate Unix users or nftables rule sets.
+On `main` (tasks.md 15.1): `scrim ebpf attach`, `detach` and `status`. Instead of packet filter
+rules, a privileged loader attaches eBPF programs to selected cgroup v2 control groups. They do per
+control group what the nftables rules do per user:
+
+| Hook | What it does in a covered control group |
+| --- | --- |
+| `cgroup/connect4`, `cgroup/connect6` | a TCP connection to port 80 or 443 of any address that is not loopback is rewritten to the transparent listener, `127.0.0.1:<port>` or `[::1]:<port>` (an IPv4-mapped destination to `::ffff:127.0.0.1`); a datagram socket connecting to port 443 is refused |
+| `cgroup/sendmsg4`, `cgroup/sendmsg6` | an unconnected datagram to port 443 (QUIC) is refused |
+| `cgroup_skb/egress` | a second check on the packets themselves: TCP to port 80 or 443, or UDP to 443, leaving for an address that is not loopback is dropped, whatever path it took |
+
+Loopback destinations (`127.0.0.0/8`, `::1`, the unspecified address and their IPv4-mapped forms)
+are never touched, so local listeners, chained upstreams on loopback and the DNS override keep
+working. A child control group inherits the programs of its parent. Processes outside the covered
+control groups are not affected at all.
 
 ```mermaid
 flowchart LR
-  loader["privileged loader"] -. "attach connect4/connect6" .-> cg["agent cgroup"]
-  agent["agent in cgroup"] -- "connect()" --> hook["eBPF hook<br>rewrite destination"]
-  hook --> tl["transparent listener"] --> prov["provider"]
+  loader["scrim ebpf attach<br>(root)"] -. "attach and pin" .-> cg["agent cgroup"]
+  agent["agent in cgroup"] -- "connect()" --> hook["connect4/6<br>rewrite to loopback"]
+  hook --> tl["transparent listener<br>routed by SNI"] --> prov["provider"]
+  agent -. "UDP 443, or any packet<br>to 80/443 not redirected" .-x prov
   classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
   classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
   classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
@@ -473,15 +483,75 @@ flowchart LR
   class agent agent
   class tl dplane
   class prov ext
+  linkStyle 3 stroke:#dc2626,stroke-width:2px
 ```
 
-It is Linux only and needs cgroup v2. The loader needs `CAP_BPF` and `CAP_NET_ADMIN`, or root;
-agents run unprivileged. If the loader is not installed or lacks the rights, scrim does not report
-the method as active and `scrim status` names the missing privilege (spec, "Loader not available").
-eBPF only moves the traffic (design D8): TLS interception still happens in scrim's listener, so the
-CA is still required and a pinning client still fails. The programs stay attached when scrim stops,
-so redirected connections fail. It suits hosts that already manage agents per cgroup, such as
-systemd units, container runtimes or one `scrim run` scope per agent.
+The programs only move traffic (design D8). The rewritten connection lands on the transparent
+listener (`proxy.transparent-listen`, task 13.3), which reads the TLS server name, terminates TLS
+with scrim's CA and routes the request, so no original-destination lookup is needed and the CA is
+still required. A pinning client fails.
+
+#### Setup
+
+Linux with the unified cgroup v2 hierarchy and BPF links for control groups (5.7 or later). The
+loader needs root, or `CAP_BPF` and `CAP_NET_ADMIN` with write access to `/sys/fs/bpf`; agents run
+unprivileged. A rootless container cannot load the programs: its capabilities only count inside its
+user namespace, and the loader says so.
+
+```yaml
+# /etc/scrim/config.yaml: the control groups to cover, here a system slice for agents
+interception:
+  ebpf:
+    cgroups: [agents.slice]
+```
+
+```sh
+sudo systemctl start agents.slice    # a slice's control group exists once it is started
+sudo scrim ebpf attach               # or: sudo scrim ebpf attach --cgroup agents.slice --port 9793
+sudo systemd-run --slice=agents.slice --uid=agent1 --pty -- claude   # started in the slice: covered
+sudo scrim ebpf detach --cgroup agents.slice                         # or --all
+```
+
+`attach` prints what it attaches before doing it. It loads the programs with the listener port
+(`interception.ebpf.port`, default 9793, the port `scrim install --transparent` gives the
+transparent listener), attaches one link per hook and pins the links under
+`/sys/fs/bpf/scrim/cg-<id>-<time>/`, then records the attachment in
+`/run/scrim-ebpf/attachments.json` (paths, IDs and times, readable by every user). Attaching again
+replaces the attachment in place: the new links go in first and the old ones are removed after, so
+the control group is never uncovered in between. `detach` removes the pins and waits until the
+kernel confirms the programs are gone. The control group has to exist when you attach.
+
+The attachment lasts until `scrim ebpf detach`, the control group's removal, or a reboot. `scrim
+install` does not set it up at boot yet (tasks.md 15.1a); until then run `scrim ebpf attach` from a
+oneshot unit ordered before the agents' units, or after each boot.
+
+#### Status
+
+`scrim status`, `scrim doctor` and `scrim ebpf status` read the loader's record and check each
+control group in `interception.ebpf.cgroups` or in the record:
+
+| State | Meaning |
+| --- | --- |
+| `active` | the kernel lists every program the loader attached on the control group (needs `CAP_NET_ADMIN`, so `sudo scrim status`) |
+| `unverified` | the record says it is attached, but this process may not ask the kernel; status does not count it |
+| `not-attached` | configured but never attached, or attached for another port; the detail names the privilege the loader needs and whether this process has it |
+| `lost` | the control group was removed or recreated since, or a program is no longer attached |
+
+Only an `active` control group appears under Interception and turns on the "direct egress blocked"
+protection for that group. Every other state is listed as degraded, `doctor` fails on
+`not-attached` and `lost` and warns on `unverified`, and both check that something accepts
+connections on `127.0.0.1:<port>`.
+
+#### Verifying
+
+`just ebpf-vm-test` boots a kernel in qemu (the host's `/boot/vmlinuz`, or `SCRIM_VM_KERNEL`) with
+only the test binary as root inside it, and checks per-cgroup redirect over IPv4, IPv6 and
+IPv4-mapped addresses, that child control groups inherit it and other control groups are untouched,
+the QUIC refusal, the egress drop on its own, that the programs survive the loader, fail closed
+with no listener, replace in place and detach cleanly, and what status reports with and without
+the privilege to query. CI runs it on every change. On a real host, from inside the control group,
+`curl -v https://api.anthropic.com` should show scrim's certificate, and `curl --http3-only` should
+fail.
 
 ## 4. DNS override
 
@@ -1025,7 +1095,9 @@ when one fails. The spec asks both to show, per agent or scope, the active metho
 egress is blocked, CA trust, chained upstreams and every known gap; a wrapper with no enforcement
 should read as redaction active, direct egress not blocked. The Interception section lists the
 listeners a running daemon serves and the agent-side modes `scrim install` recorded (hooks and
-managed settings), each with the files it changed, what it covers and what it does not.
+managed settings), each with the files it changed, what it covers and what it does not. The eBPF variant
+of method 3 is read from the host and counts only once confirmed with the kernel (see
+[its status](#status)).
 
 Inside a wrapped session, `scrim api whoami` shows that the agent is identified by its session.
 
@@ -1059,6 +1131,8 @@ its cgroup or pod, and confirm it fails.
 | Forward proxy mode | 2 |
 | Transparent mode with packet filtering | 3 |
 | Transparent mode with eBPF | 3, eBPF variant |
+| eBPF egress denial | 3, eBPF variant |
+| eBPF loader and status | 3, eBPF variant, "Setup" and "Status" |
 | DNS override mode | 4 |
 | Kubernetes injection | 5 |
 | Hooks-only mode is reported as partial | 6 |

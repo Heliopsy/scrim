@@ -20,7 +20,9 @@
 //!    value's reference, name, store and class keeps the placeholder
 //!    ([`crate::Table::restricts`]). The agent identity is taken from the [`Caller`]; when it
 //!    is not known, conditions on it are unknown and a rule that depends on it keeps the
-//!    placeholder. `secret.labels` is always unknown here, because the snapshot carries none.
+//!    placeholder. `secret.labels` are the value's labels from the snapshot
+//!    (`ValueEntry.labels`); a snapshot without labels (an older control plane) leaves them
+//!    unknown, so a rule on them keeps the placeholder.
 //!
 //! [`RestoreEngine::decide`] answers for one placeholder without seeing its value (it uses
 //! [`crate::escape::ValueTraits`]), which is what the streaming proxy needs: it inserts the
@@ -44,7 +46,7 @@ use crate::request::{Field, FieldSet, Request};
 use crate::table::{DecidedBy, Table, TableError};
 
 pub use tools::{BUILTIN_TOOLS, DisplayMode, Settings, SettingsError, ToolRole, ToolSpec};
-pub use values::{ValueClass, ValueIndex, ValueInfo};
+pub use values::{LabelInterner, Labels, ValueClass, ValueIndex, ValueInfo};
 
 #[cfg(feature = "llm")]
 pub use llm::LlmRestorePolicy;
@@ -265,7 +267,7 @@ impl RestoreEngine {
         Ok(RestoreEngine::new(
             settings,
             table,
-            ValueIndex::from_entries(&s.values),
+            ValueIndex::from_entries(&s.values, s.value_labels),
         ))
     }
 
@@ -310,12 +312,18 @@ impl RestoreEngine {
         req.secret.name = info.name.to_string();
         req.secret.store = info.store.to_string();
         info.class.as_str().clone_into(&mut req.secret.class);
-        let mut unknown = FieldSet::EMPTY.with(Field::SecretLabels);
-        match &caller.agent {
-            Some(a) => req.agent = a.clone(),
-            None => {
-                unknown = FieldSet::AGENT.with(Field::SecretLabels);
+        let mut unknown = match &caller.agent {
+            Some(a) => {
+                req.agent = a.clone();
+                FieldSet::EMPTY
             }
+            None => FieldSet::AGENT,
+        };
+        match &info.labels {
+            // The request starts with no labels; most values have none a rule reads.
+            Some(l) if l.is_empty() => {}
+            Some(l) => req.secret.labels.clone_from(l),
+            None => unknown = unknown.with(Field::SecretLabels),
         }
         match &caller.provider {
             Some(p) => req.provider.clone_from(p),

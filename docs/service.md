@@ -252,7 +252,7 @@ add, each change printed first and recorded in the manifest:
 
 | Change | `--transparent` | `--dns` |
 | --- | --- | --- |
-| `/etc/systemd/system/scrim.service.d/interception.conf` | turns on the transparent listener (`127.0.0.1:9792`, `[::1]:9792`) | turns on the SNI listener (`127.0.83.1:443`) and grants `CAP_NET_BIND_SERVICE` |
+| `/etc/systemd/system/scrim.service.d/interception.conf` | turns on the transparent listener (`127.0.0.1:9793`, `[::1]:9793`) | turns on the SNI listener (`127.0.83.1:443`) and grants `CAP_NET_BIND_SERVICE` |
 | `/etc/scrim/transparent.nft`, `scrim-transparent.service`, the nftables table `inet scrim` | the redirect and deny rules for the covered users and cgroups | |
 | `/etc/hosts` | | one marked block resolving the provider hosts to scrim |
 | Java truststores | the CA, checked in the stores the system trust tool rebuilds and imported into other JDKs' `cacerts` (`--java-home` for one outside `/usr/lib/jvm`) | the same |

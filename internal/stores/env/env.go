@@ -158,7 +158,7 @@ func (a *Adapter) Read(_ context.Context, ref stores.Ref) (stores.Secret, error)
 		return stores.Secret{}, a.err(stores.OpRead, ref, stores.ErrNotFound, "")
 	}
 	return stores.Secret{
-		Meta:   stores.Metadata{Ref: ref.Secret(), Fields: []string{Field}},
+		Meta:   stores.Metadata{Ref: ref.Secret(), Fields: []string{Field}, Labels: a.labels(ref.Path)},
 		Fields: map[string]secret.Value{Field: secret.FromString(v)},
 	}, nil
 }
@@ -188,9 +188,18 @@ func (a *Adapter) List(_ context.Context, prefix stores.Ref) ([]stores.Metadata,
 	names = slices.Compact(names)
 	out := make([]stores.Metadata, 0, len(names))
 	for _, n := range names {
-		out = append(out, stores.Metadata{Ref: stores.Ref{Scheme: prefix.Scheme, Path: n}, Fields: []string{Field}})
+		out = append(out, stores.Metadata{Ref: stores.Ref{Scheme: prefix.Scheme, Path: n}, Fields: []string{Field}, Labels: a.labels(n)})
 	}
 	return out, nil
+}
+
+// labels are an env secret's native labels: env.variable, the variable
+// name, and env.prefix, the configured prefix when there is one.
+func (a *Adapter) labels(name string) map[string]string {
+	l := map[string]string{}
+	stores.SetNative(l, Kind, "variable", name)
+	stores.SetNative(l, Kind, "prefix", a.cfg.Prefix)
+	return l
 }
 
 // Watch implements stores.Adapter: always refused.

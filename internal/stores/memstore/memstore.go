@@ -267,7 +267,31 @@ func cloneMeta(m stores.Metadata, ref stores.Ref) stores.Metadata {
 	m.Ref = ref
 	m.Fields = slices.Clone(m.Fields)
 	m.Labels = maps.Clone(m.Labels)
+	if l := WriteLabels(ref); l != nil {
+		if m.Labels == nil {
+			m.Labels = map[string]string{}
+		}
+		// Native labels replace anything a writer stored under memory.*.
+		maps.Copy(m.Labels, l)
+	}
 	return m
+}
+
+// WriteLabels implements stores.WriteLabeler. The memory store's one native
+// label is memory.top, the first segment of a secret's path when the path
+// has more than one.
+func (s *Store) WriteLabels(ref stores.Ref) map[string]string { return WriteLabels(ref) }
+
+// WriteLabels is the native labels a secret at ref has (see
+// [Store.WriteLabels]); nil when there are none.
+func WriteLabels(ref stores.Ref) map[string]string {
+	top, _, ok := strings.Cut(ref.Path, "/")
+	if !ok {
+		return nil
+	}
+	l := map[string]string{}
+	stores.SetNative(l, Kind, "top", top)
+	return l
 }
 
 func copyValue(v secret.Value) secret.Value {

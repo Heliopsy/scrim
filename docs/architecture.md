@@ -623,8 +623,8 @@ Status: v0.1.0 ships the laptop path and the forward proxy; `scrim run` and `scr
 policy are on `main` ([kubernetes.md](kubernetes.md)); the sidecar is a full `scrim proxy`, not
 the standalone data plane. TokenReview identity, Postgres notify events and the local service are on
 `main` too, and so are the transparent mode (nftables) and the DNS override. The edge forwarder is
-planned for M2; Valkey, NATS and eBPF for M3. The PostgreSQL state backend and the standalone `scrim-dataplane`
-image are on `main`.
+planned for M2; Valkey and NATS for M3. The eBPF transparent mode's loader (`scrim ebpf`), the
+PostgreSQL state backend and the standalone `scrim-dataplane` image are on `main`.
 
 ## Where to find it in the code
 

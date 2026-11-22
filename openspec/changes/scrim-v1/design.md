@@ -140,6 +140,18 @@ the syntax it lands in (percent-encoding in URLs and forms, string escaping in J
 multipart). CA rotation serves leaves with a cross certificate during the overlap, so clients that
 trust only the previous CA keep working without a second leaf cache.
 
+Some credentials never travel as text. For AWS SigV4 the agent signs with placeholder keys; the
+proxy checks the signature was made with the secret's placeholder (so the request is a scrim
+session's, not one signed with keys the agent has of its own), then signs it again with the real
+keys toward bound regions and services, chunk signatures included. scrim implements SigV4 itself
+(about 600 lines, checked against AWS's signing test suite): the `aws-sigv4` crate signs requests
+with a header selection of its own and has no verification, and the proxy must reproduce the
+client's exact canonical request. A client certificate is presented in the proxy's upstream
+handshake when the agent presents the credential's placeholder certificate, an Ed25519 key derived
+from the placeholder text, so a kubeconfig still parses. For clients that check a token's shape a
+credential can opt into a format-preserving placeholder (`ghp_` and 36 characters, `AKIA` and 16),
+still a keyed HMAC of the value, found by exact match because it has no delimiters.
+
 ### D6. Stores are brokered, and scrim enforces write-only itself
 
 scrim is the only holder of store credentials. Agents call scrim, never the store, so write-only,
@@ -223,6 +235,35 @@ eBPF is an option, not a dependency: it gives per-cgroup redirection and direct-
 without UID games, but needs a privileged loader and Linux. TLS interception and CA trust are still
 required; eBPF only moves the traffic.
 
+**eBPF transparent mode (task 15.1).** Where the task left room, the conservative choice was taken:
+
+- Same match as the nftables rules, per control group: TCP to ports 80 and 443 of any non-loopback
+  address is rewritten in `cgroup/connect4` and `connect6` to the transparent listener on
+  `127.0.0.1` or `::1` (an IPv4-mapped destination to `::ffff:127.0.0.1`), UDP to 443 is refused in
+  the connect and `sendmsg` hooks, and a `cgroup_skb/egress` program drops any TCP 80/443 or UDP 443
+  packet that still leaves for a non-loopback address. The egress program shares no code path with
+  the rewrite, so a gap in one is not a gap in both. Provider IP lists were rejected: CDN addresses
+  rotate, and the listener routes by server name anyway, so no original-destination map is needed.
+- The loader is `scrim ebpf attach|detach` run as root (or `CAP_BPF` and `CAP_NET_ADMIN`). Each hook
+  is a bpf_link pinned under `/sys/fs/bpf/scrim`, so attachments outlive the loader and scrim and
+  fail closed. Replacing an attachment attaches the new links before removing the old ones. Detach
+  waits until the kernel no longer lists the programs, because a link is released an RCU grace
+  period after its last pin goes.
+- The loader writes a record (`/run/scrim-ebpf/attachments.json`, world-readable, no secrets; not
+  under `/run/scrim`, which systemd removes when the service stops). Querying attachments needs
+  `CAP_NET_ADMIN`, so an unprivileged `scrim status` cannot confirm the record: such a control group
+  is reported `unverified`, never `active`, and does not turn on the direct egress protection. A
+  recreated control group (new inode) or a missing program is `lost`.
+- Programs are C compiled ahead of time by bpf2go and committed (little and big endian), embedded in
+  the binary and loaded with cilium/ebpf, so the single static binary needs no compiler or headers
+  at run time. clang runs in a pinned Debian image; `just ebpf-check` rebuilds the objects and fails
+  on any byte difference. The C uses no libbpf headers and no GPL-only helper.
+- Verified by booting a real kernel in qemu with the test binary as root inside it
+  (`just ebpf-vm-test`, CI job `ebpf`). A rootless container cannot stand in: its capabilities do
+  not count for loading cgroup programs.
+- Not yet: setting the attachment up at boot through `scrim install` (task 15.1a), which shares the
+  transparent listener drop-in with task 13.3.
+
 ### D9. State is pluggable and holds no values
 
 Memory, SQLite and PostgreSQL behind one interface, chosen in configuration. SQLite is an embedded
@@ -240,6 +281,20 @@ every (re)connection and, while disconnected, every `events.poll-interval`. Gran
 no event: they are read on every use. The polling loops of D7 stay as the fallback bound.
 `deployment.replicas` makes the replica count explicit, so a multi-replica deployment on `local`
 events or unshared state fails at start-up instead of running with replicas that disagree.
+The `valkey` and `nats` backends carry the same wake-up outside the database: each replica publishes
+an empty hint after its own commits (the state backend's commit hook) and subscribes to the channel
+or subject; a hint published while cut off is sent once the connection is back.
+
+**Rate limits** are one GCRA timestamp per hashed class and agent: in process memory (`local`,
+per replica) or in Valkey through one atomic script on Valkey's clock (`valkey`, exact across
+replicas). An unanswered limiter refuses.
+
+**External audit sinks tap the state backend.** Every write transaction that appends audit entries
+reserves room for them on each `block` sink's bounded queue before it commits, waiting up to the
+sink's timeout and refusing the change if there is none; after the commit the entries, scrubbed, are
+queued on every sink. One writer per sink retries failed batches with backoff, so a slow sink never
+slows another, and under `drop` never an operation. What leaves a queue undelivered (overflow under
+`drop`, a batch rejected as invalid, shutdown) is counted per sink and reason.
 
 ### D10. One configuration contract
 

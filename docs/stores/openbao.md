@@ -28,8 +28,9 @@ their JSON text.
 |------|------|-------|-------|----------|---------|
 | yes  | yes  | yes   | yes   | no       | no      |
 
-- **List** walks a folder recursively and returns names and metadata only (version, times, custom
-  metadata), never values. Soft-deleted and destroyed secrets are left out.
+- **List** walks a folder recursively and returns names and metadata only (version, times,
+  [labels](#labels)), never values. Soft-deleted and destroyed secrets are left out; a version
+  whose deletion is only scheduled (by `delete_version_after`) is still live.
 - **Watch** polls version metadata every `watch.interval` (with ±20% jitter) and reports changed
   and deleted secrets. On OpenBao one `LIST .../detailed-metadata/<folder>` per folder returns
   every key's version, so a poll costs a few requests however many secrets there are. On Vault,
@@ -38,6 +39,163 @@ their JSON text.
 - **Write** creates a new version with `POST <mount>/data/<path>`. It needs `create` (new secret)
   or `update` (new version), never `read`. Create-only writes use check-and-set version 0.
   Labels are written to the secret's custom metadata.
+
+## Labels
+
+Every secret the adapter reads, lists or writes carries labels that describe it in OpenBao's own
+terms: its mount, namespace, path, versions, settings and custom metadata. Policy rules see them as
+`secret.labels` ([policy.md](../policy.md)), so a rule can match on anything the store knows about
+a secret, not only on its reference. Labels hold metadata only, never a value.
+
+### Keys
+
+Native keys start with `openbao.`. A list attribute is stored twice: comma-joined under its key, and
+as one presence key per value set to `"true"`, so both `"openbao.ancestors.prod" in secret.labels`
+and `secret.labels["openbao.ancestors"].split(",")` work, and the data plane can decide on presence
+keys without CEL.
+
+| Key | Example | Source | Meaning |
+| --- | --- | --- | --- |
+| `openbao.mount` | `kv-prod` | reference | Mount path, without the trailing slash. Always set. |
+| `openbao.engine` | `kv-v2` | mount, else `kv-v2` | Secrets engine: `kv-v2` or `kv-v1` for KV, otherwise the mount type. The adapter speaks KV v2, so this is `kv-v2` when the mount cannot be read. |
+| `openbao.namespace` | `team-a/eu` | `namespace` option | Configured namespace. Absent without one. |
+| `openbao.namespaces` (list) | `team-a,team-a/eu` | `namespace` option | The namespace and every parent namespace: `openbao.namespaces.team-a` matches `team-a` and everything in it. |
+| `openbao.path` | `prod/eu/db` | reference | Path inside the mount. |
+| `openbao.name` | `db` | reference | Last path segment. |
+| `openbao.folder` | `prod/eu` | reference | Parent folder. Absent at the top of the mount. |
+| `openbao.ancestors` (list) | `prod,prod/eu` | reference | Every folder above the secret: `openbao.ancestors.prod` and `openbao.ancestors.prod/eu` are both set for `prod/eu/db`. Absent at the top of the mount. |
+| `openbao.segments` (list) | `prod,eu,db` | reference | Every path segment, wherever it sits: `openbao.segments.eu`. |
+| `openbao.version` | `3` | data or metadata | Version described: the one read (also with `?version=`), the current one in a list, the one written. |
+| `openbao.current_version` | `3` | metadata | Current version. |
+| `openbao.oldest_version` | `2` | metadata | Oldest version kept. Absent while it is 0. |
+| `openbao.max_versions` | `5` | metadata | Versions kept for this secret; `0` means the mount's setting. |
+| `openbao.versions` | `3` | metadata | Number of versions on record. |
+| `openbao.deleted_versions` | `1` | metadata | Versions soft-deleted (deletion time passed, not destroyed). |
+| `openbao.destroyed_versions` | `1` | metadata | Versions destroyed. |
+| `openbao.cas_required` | `true` | metadata | Whether writes must use check-and-set. |
+| `openbao.delete_version_after` | `720h0m0s` | metadata | Secret's automatic deletion delay; `0s` means none. |
+| `openbao.created_time` | `2026-01-01T00:00:00Z` | metadata | When the secret was created. |
+| `openbao.updated_time` | `2026-03-01T00:00:00Z` | metadata | When its last version was written. |
+| `openbao.version_created_time` | `2026-03-01T00:00:00Z` | data or metadata | When the described version was written. |
+| `openbao.deletion_time` | `2026-03-31T00:00:00Z` | data or metadata | Deletion time of the described version: in the future when `delete_version_after` scheduled it. Absent when none. |
+| `openbao.destroyed` | `false` | data or metadata | Whether the described version is destroyed. |
+| `openbao.mount_type` | `kv` | mount | Mount type. |
+| `openbao.mount_version` | `2` | mount | The mount's `version` option. |
+| `openbao.mount_description` | `Production` | mount | Mount description. |
+| `openbao.mount_accessor` | `kv_1a2b3c4d` | mount | Mount accessor. |
+| `openbao.mount_plugin_version` | `v2.0.0` | mount | Plugin version, when the mount reports one. |
+| `openbao.mount_local` | `false` | mount | Whether the mount is local (not replicated). |
+| `openbao.mount_seal_wrap` | `false` | mount | Whether seal wrapping is on. |
+| `openbao.mount_external_entropy_access` | `false` | mount | Whether the mount has external entropy access. |
+| `openbao.mount_option.<option>` | `openbao.mount_option.version: 2` | mount | Each mount option. |
+| `openbao.mount_config.<setting>` | `openbao.mount_config.listing_visibility: hidden` | mount | Each mount tuning setting (`default_lease_ttl`, `max_lease_ttl`, `listing_visibility`, ...); lists are comma-joined. |
+| `openbao.meta.<key>` | `openbao.meta.team: payments` | custom metadata | Each custom metadata entry. |
+| `<key>` | `scrim.hosts: api.example.com` | custom metadata | Each custom metadata entry under its own key, as before, unless the key starts with `openbao.`. |
+
+Where the sources come from:
+
+- **reference** and the `namespace` option: always present.
+- **data**: the data read itself (`<mount>/data/<path>`), which every read makes anyway.
+- **metadata**: `<mount>/metadata/<path>`. A list gets it from `detailed-metadata` (or the per-secret
+  metadata reads of the fallback) at no extra cost. A read makes one extra `GET` of it.
+- **mount**: `sys/internal/ui/mounts/<mount>`, which OpenBao answers for any token with a capability
+  under the mount, then `sys/mounts/<mount>`, which needs `read` on that path. Looked up at most once
+  per mount every 5 minutes; a refusal is remembered for the same time.
+
+These extra requests are optional. When the store refuses one, or it fails, the read or list goes
+ahead and the labels that depended on it are missing, so a rule that matches on them does not
+match. A refused lookup never triggers a new login. A write reports the labels it knows without
+asking: the reference, the version it created, the custom metadata it stored and mount labels
+already cached. To stop the extra requests altogether (no refusals in the store's audit log, one
+request per read), set `labels.lookups: false`; metadata and mount labels are then present only
+where a list returns them anyway.
+
+### Normalisation
+
+Keys follow the convention every store adapter shares. Attribute names are fixed, lowercase ASCII,
+dot-separated. A part of a key that comes from store data and names something (a custom metadata
+key, a mount option or setting name) is folded: ASCII letters are lowercased, every character other
+than `a-z`, `0-9`, `-` and `_` becomes `_`, dots separate segments and empty segments are dropped.
+`Cost Center` becomes `openbao.meta.cost_center`, `team/owner` becomes `openbao.meta.team_owner`.
+When two custom metadata keys fold to the same key, the first in byte order wins (`TEAM` before
+`team`).
+
+The value part of a presence key is the value verbatim, so `openbao.ancestors.Prod/EU` is set for
+`Prod/EU/db` and a rule matches folders exactly, case included. Values are never changed. A comma
+inside a path segment makes the comma-joined list ambiguous; the presence keys stay exact.
+
+### Native keys cannot be forged
+
+Native keys are set first and custom metadata never overwrites them. A custom metadata key that
+starts with `openbao.` or `store.` (in any case) is not copied under its own name, only under
+`openbao.meta.`, so it can neither pose as a native key nor as one of the generic `store.*` labels
+scrim adds for every secret. An entry
+`openbao.mount = kv-dev` written by whoever may edit a secret's metadata shows up as
+`openbao.meta.openbao.mount` and cannot make a secret look like it lives elsewhere. Custom metadata
+is editable by anyone with `update` on the metadata path, so rules that grant access should prefer
+native keys, which come from the store and from scrim's own configuration.
+
+Custom metadata also appears under its own key, as it did before native labels existed, so the
+catalog's `scrim.*` keys and rules on plain keys keep working. The one difference: keys starting with
+`openbao.` or `store.` no longer appear under their own name.
+
+### Example rules
+
+A rule that reads a label the secret does not have fails, and a failing `ask` or `deny` rule counts
+as matching ([policy.md](../policy.md#how-rules-combine)). Guard every label that can be missing
+with `in` (or `has()`) before reading it, as below; `openbao.mount`, `openbao.engine` and the path
+labels are always present on an OpenBao secret.
+
+```yaml
+rules:
+  # Anything under mount kv-prod, with custom metadata team=payments, or below prod/ in any
+  # mount must be approved, whatever the operation.
+  - name: prod-asks
+    decision: ask
+    when: >-
+      secret.store == "bao" && (
+        secret.labels["openbao.mount"] == "kv-prod" ||
+        ("openbao.meta.team" in secret.labels && secret.labels["openbao.meta.team"] == "payments") ||
+        "openbao.ancestors.prod" in secret.labels)
+
+  # The same with a glob on the path, for writes only.
+  - name: prod-writes-ask
+    decision: ask
+    when: >-
+      op == "store.write" && secret.store == "bao" &&
+      secret.labels["openbao.path"].glob("prod/**")
+
+  # Secrets in a mount described as production, or in team-a's namespace or below it.
+  - name: described-prod
+    decision: ask
+    when: >-
+      ("openbao.mount_description" in secret.labels &&
+       secret.labels["openbao.mount_description"].contains("Production")) ||
+      "openbao.namespaces.team-a" in secret.labels
+
+  # Stale secrets: last written more than 90 days ago.
+  - name: stale
+    decision: deny
+    when: >-
+      "openbao.updated_time" in secret.labels &&
+      timestamp(secret.labels["openbao.updated_time"]) < now - duration("2160h")
+
+  # Secrets set to delete themselves, or whose writes need check-and-set.
+  - name: self-deleting-or-cas
+    decision: ask
+    when: >-
+      ("openbao.delete_version_after" in secret.labels &&
+       secret.labels["openbao.delete_version_after"] != "0s") ||
+      ("openbao.cas_required" in secret.labels && secret.labels["openbao.cas_required"] == "true")
+```
+
+Missing labels make a guarded rule not match, so do not grant access by absence: `allow` rules that
+match on `!("openbao.meta.team" in secret.labels)` let through every secret whose metadata the
+token could not read. `secret.labels` is not available to restore decisions in the data plane
+([policy.md](../policy.md#rules-and-restore)). Which operations carry a secret's store labels into
+`secret.labels` is decided by the policy gate, not by the adapter; for a `store.write` rule on a secret
+that does not exist yet, the adapter reports the labels it can derive without asking the store
+(`WriteLabels`, the `stores.WriteLabeler` interface): reference, namespace and cached mount labels.
 
 ## Configuration
 
@@ -76,6 +234,7 @@ stores:
 | `stores.bao.watch.interval` | `SCRIM_STORES_BAO_WATCH_INTERVAL` | `30s` | Metadata poll period for watch. |
 | `stores.bao.watch.max-backoff` | `SCRIM_STORES_BAO_WATCH_MAX_BACKOFF` | `5m` | Longest wait between polls while the store fails. |
 | `stores.bao.write-only-paths` | `SCRIM_STORES_BAO_WRITE_ONLY_PATHS` | none | Path prefixes (mount included) that scrim writes but never reads back. |
+| `stores.bao.labels.lookups` | `SCRIM_STORES_BAO_LABELS_LOOKUPS` | `true` | Make the optional requests that fill [labels](#labels): a secret's metadata on read, and mount information. |
 
 The common keys (`kind`, `aliases`, `redact`, `refresh.*`) are described in the
 [stores overview](README.md). Unknown keys fail validation and name the closest known key. Lists
@@ -228,6 +387,8 @@ path "kv/detailed-metadata/agents/inbox/*" { capabilities = ["list"] }
   it if you do not write labels.
 - `list` on `detailed-metadata/` makes watch cheap. Without it the adapter falls back to listing
   `metadata/` and reading each secret's metadata, which needs `read` on `metadata/`.
+- `read` on `metadata/` also fills the metadata [labels](#labels) of a read. Without it reads still
+  work and those labels are missing.
 - `token/lookup-self` (in the `default` policy) is used by the health check.
 - Grant no `delete` or `destroy`. scrim never deletes from a store.
 
@@ -267,16 +428,19 @@ contains any value sent in the request, it is replaced by `(store message withhe
 - Values are decoded straight into wiped memory, but the token header goes through Go's HTTP
   client as a string for the length of each request.
 - A soft-deleted current version is reported as deleted. Undeleting it makes the secret reappear
-  on the next poll.
+  on the next poll. A version whose deletion time is still in the future (set by
+  `delete_version_after`) is read and listed as usual until that time.
 
 ## Testing
 
 `go test -race ./internal/stores/openbao/` runs unit tests against an in-process fake. With podman
 available it also starts `quay.io/openbao/openbao:2.7.3` in dev mode, sets up a KV v2 mount, the
-policy above and an AppRole role with a 30 second TTL, and then runs three things. The first is
+policy above and an AppRole role with a 30 second TTL, and then runs four things. The first is
 the conformance suite, with the outage simulated by pausing the container. The second covers
-token auth and the write-only policy. The third stops the store mid-run under the refresher. See
-the [stores overview](README.md#conformance) for the switches.
+token auth and the write-only policy. The third stops the store mid-run under the refresher. The
+fourth creates a described mount and a secret with version settings and custom metadata, then
+checks its labels through a token with full access and one that may only read the data. See the
+[stores overview](README.md#conformance) for the switches.
 
 Kubernetes auth is covered by the unit tests: an in-process OpenBao checks the login body,
 renew-self, renewal refused then a fresh login, a rotated token file picked up at the next login,
