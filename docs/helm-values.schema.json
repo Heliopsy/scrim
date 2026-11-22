@@ -925,7 +925,7 @@
         },
         "resources": {
           "type": "object",
-          "description": "Resources of the scrim container.",
+          "description": "Resources of the scrim container. The requests match one replica at about 330 concurrent streams in the load test (docs/state-and-observability.md, \"Load test\"): 0.25 cores and about 150 MiB. Raise them for more streams per replica.",
           "properties": {
             "requests": {
               "type": "object",

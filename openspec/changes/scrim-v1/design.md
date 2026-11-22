@@ -235,6 +235,35 @@ eBPF is an option, not a dependency: it gives per-cgroup redirection and direct-
 without UID games, but needs a privileged loader and Linux. TLS interception and CA trust are still
 required; eBPF only moves the traffic.
 
+**eBPF transparent mode (task 15.1).** Where the task left room, the conservative choice was taken:
+
+- Same match as the nftables rules, per control group: TCP to ports 80 and 443 of any non-loopback
+  address is rewritten in `cgroup/connect4` and `connect6` to the transparent listener on
+  `127.0.0.1` or `::1` (an IPv4-mapped destination to `::ffff:127.0.0.1`), UDP to 443 is refused in
+  the connect and `sendmsg` hooks, and a `cgroup_skb/egress` program drops any TCP 80/443 or UDP 443
+  packet that still leaves for a non-loopback address. The egress program shares no code path with
+  the rewrite, so a gap in one is not a gap in both. Provider IP lists were rejected: CDN addresses
+  rotate, and the listener routes by server name anyway, so no original-destination map is needed.
+- The loader is `scrim ebpf attach|detach` run as root (or `CAP_BPF` and `CAP_NET_ADMIN`). Each hook
+  is a bpf_link pinned under `/sys/fs/bpf/scrim`, so attachments outlive the loader and scrim and
+  fail closed. Replacing an attachment attaches the new links before removing the old ones. Detach
+  waits until the kernel no longer lists the programs, because a link is released an RCU grace
+  period after its last pin goes.
+- The loader writes a record (`/run/scrim-ebpf/attachments.json`, world-readable, no secrets; not
+  under `/run/scrim`, which systemd removes when the service stops). Querying attachments needs
+  `CAP_NET_ADMIN`, so an unprivileged `scrim status` cannot confirm the record: such a control group
+  is reported `unverified`, never `active`, and does not turn on the direct egress protection. A
+  recreated control group (new inode) or a missing program is `lost`.
+- Programs are C compiled ahead of time by bpf2go and committed (little and big endian), embedded in
+  the binary and loaded with cilium/ebpf, so the single static binary needs no compiler or headers
+  at run time. clang runs in a pinned Debian image; `just ebpf-check` rebuilds the objects and fails
+  on any byte difference. The C uses no libbpf headers and no GPL-only helper.
+- Verified by booting a real kernel in qemu with the test binary as root inside it
+  (`just ebpf-vm-test`, CI job `ebpf`). A rootless container cannot stand in: its capabilities do
+  not count for loading cgroup programs.
+- Not yet: setting the attachment up at boot through `scrim install` (task 15.1a), which shares the
+  transparent listener drop-in with task 13.3.
+
 ### D9. State is pluggable and holds no values
 
 Memory, SQLite and PostgreSQL behind one interface, chosen in configuration. SQLite is an embedded

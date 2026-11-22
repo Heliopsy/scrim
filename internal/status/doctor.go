@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -208,6 +209,9 @@ func ReportChecks(r Report) []Check {
 				fmt.Sprintf(" (%d dropped)", a.Dropped), Fix: "check the sink's endpoint in audit.sinks"}}
 		}})
 	}
+	if e := r.EBPF; e != nil {
+		checks = append(checks, Check{Name: "ebpf", Run: func(context.Context) []Finding { return ebpfFindings(e) }})
+	}
 	for _, m := range r.AgentModes {
 		checks = append(checks, Check{Name: "agent-mode:" + m.Mode, Run: func(context.Context) []Finding {
 			var fs []Finding
@@ -237,6 +241,35 @@ func ReportChecks(r Report) []Check {
 		}})
 	}
 	return checks
+}
+
+// ebpfFindings checks the eBPF mode: every covered control group attached
+// and confirmed, and something listening where the programs redirect to.
+func ebpfFindings(e *EBPF) []Finding {
+	if e.Problem != "" {
+		return []Finding{{Outcome: Fail, Message: e.Problem,
+			Fix: "use a Linux host with the unified cgroup v2 hierarchy, or the nftables transparent mode"}}
+	}
+	var fs []Finding
+	for _, c := range e.Cgroups {
+		switch c.State {
+		case "active":
+		case "unverified":
+			fs = append(fs, Finding{Outcome: Warn, Message: c.Cgroup + ": " + c.Detail,
+				Fix: "run `sudo scrim doctor` to confirm the attachment with the kernel"})
+		default:
+			fix := "run `sudo scrim ebpf attach`"
+			if !slices.Contains(e.Configured, c.Cgroup) {
+				fix += ", or `sudo scrim ebpf detach --cgroup " + c.Cgroup + "` if it is no longer wanted"
+			}
+			fs = append(fs, Finding{Outcome: Fail, Message: c.Cgroup + ": " + c.Detail, Fix: fix})
+		}
+	}
+	if len(e.Cgroups) > 0 && !e.ListenerUp {
+		fs = append(fs, Finding{Outcome: Fail, Message: e.Listener,
+			Fix: fmt.Sprintf("start scrim with proxy.transparent-listen on port %d, or set interception.ebpf.port to its port and attach again", e.Port)})
+	}
+	return fs
 }
 
 // StateLocationCheck checks a SQLite state path: its directory exists or

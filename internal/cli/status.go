@@ -115,6 +115,7 @@ func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) 
 	}
 	src.RunView = runViewStatus(ctx, cfg)
 	src.Service = installedService(ctx, cfg)
+	src.EBPF = ebpfSource{e}
 	src.AgentModes = installedAgentModes(cfg)
 	stateCfg := cfg
 	if src.Service != nil && src.Service.System && installEUID() == 0 {

@@ -99,6 +99,11 @@ func Check(ctx context.Context, p *Profile, path string) (CheckResult, error) {
 		}
 	}
 	sess := Session{Dir: sessDir, Home: home, CABundle: filepath.Join(root, "ca-bundle.pem")}
+	// Credential helpers run as this executable: `scrim profiles test` is
+	// scrim.
+	if exe, err := os.Executable(); err == nil {
+		sess.Scrim = exe
+	}
 	// The session bundle exists in a session; tools check the path.
 	if err := os.WriteFile(sess.CABundle, nil, 0o600); err != nil {
 		return CheckResult{}, err

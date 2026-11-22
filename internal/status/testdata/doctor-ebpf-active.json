@@ -1,0 +1,21 @@
+{
+  "findings": [
+    {
+      "check": "data-plane",
+      "outcome": "pass",
+      "message": "ok"
+    },
+    {
+      "check": "ebpf",
+      "outcome": "pass",
+      "message": "ok"
+    },
+    {
+      "check": "state",
+      "outcome": "pass",
+      "message": "ok"
+    }
+  ],
+  "failed": 0,
+  "warned": 0
+}

@@ -269,3 +269,70 @@ func (b bindings) Entries() []catalog.Resolved {
 	}
 	return out
 }
+
+// TestCredentialHelpers renders the helper variants of the git, docker, aws
+// and kubectl profiles (tasks 10a.9): each points its tool at scrim's
+// helper with placeholders only.
+func TestCredentialHelpers(t *testing.T) {
+	withHelper := func(name string) *Profile {
+		p, _ := Builtin().Get(name)
+		p = p.clone()
+		p.Params["helper"] = "scrim"
+		if err := p.validate(); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	sess := Session{Dir: "/s", Home: "/h", CABundle: "/s/ca.pem", Scrim: "/opt/scrim bin/scrim"}
+	render := func(p *Profile) (map[string]string, *Rendered) {
+		r, err := Render([]*Profile{p}, SampleBindings(p, "T"), sess)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files := map[string]string{}
+		for _, f := range r.Files {
+			files[f.Path] = string(f.Data)
+		}
+		for _, e := range r.Env {
+			files["env:"+e.Name] = e.Value
+		}
+		return files, r
+	}
+
+	git, _ := Builtin().Get("git")
+	f, _ := render(git)
+	if want := `!'/opt/scrim bin/scrim' credential-helper git --file '/s/git/git-credentials'`; f["env:GIT_CONFIG_VALUE_1"] != want {
+		t.Errorf("git helper = %q, want %q", f["env:GIT_CONFIG_VALUE_1"], want)
+	}
+
+	docker, _ := Builtin().Get("docker")
+	f, r := render(docker)
+	if !strings.Contains(f["docker/docker/config.json"], `"credHelpers"`) || !strings.Contains(f["docker/docker/config.json"], `: "scrim"`) {
+		t.Errorf("docker config names no scrim credential helper:\n%s", f["docker/docker/config.json"])
+	}
+	if !slices.Equal(r.Bin, []string{"docker-credential-scrim"}) {
+		t.Errorf("docker bin = %v", r.Bin)
+	}
+
+	f, _ = render(withHelper("aws"))
+	ph := SamplePlaceholder(withHelper("aws"), "secret-access-key", "T")
+	if strings.Contains(f["aws/credentials"], ph) {
+		t.Errorf("the credentials file holds keys although credential_process supplies them:\n%s", f["aws/credentials"])
+	}
+	if !strings.Contains(f["aws/config"], "credential_process = '/opt/scrim bin/scrim' credential-helper aws --access-key-id ") ||
+		!strings.Contains(f["aws/config"], "--secret-access-key '"+ph+"'") {
+		t.Errorf("aws config:\n%s", f["aws/config"])
+	}
+
+	f, _ = render(withHelper("kubectl"))
+	kc := f["kubectl/kubeconfig"]
+	if strings.Contains(kc, "token: ") || !strings.Contains(kc, `command: "/opt/scrim bin/scrim"`) ||
+		!strings.Contains(kc, `args: [credential-helper, kubectl, --token, "`+SamplePlaceholder(withHelper("kubectl"), "token", "T")+`"]`) {
+		t.Errorf("kubeconfig:\n%s", kc)
+	}
+
+	bad := &Profile{Name: "bad", Description: "x", Credentials: []Slot{{Name: "t"}}, Bin: []string{"git"}}
+	if err := bad.validate(); !errors.Is(err, ErrInvalid) {
+		t.Errorf("a profile linking git into the session's PATH was accepted: %v", err)
+	}
+}

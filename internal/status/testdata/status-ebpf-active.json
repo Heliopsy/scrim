@@ -1,0 +1,45 @@
+{
+  "version": "0.1.0",
+  "interception_modes": [
+    "ebpf cgroup agents.slice (TCP 80 and 443 to 127.0.0.1:9792 and [::1]:9792)",
+    "transparent 127.0.0.1:9792"
+  ],
+  "protections": [
+    {
+      "name": "direct egress blocked",
+      "active": true,
+      "detail": "for the control groups agents.slice (eBPF cgroup hooks); other processes can still reach providers directly"
+    }
+  ],
+  "providers": [],
+  "stores": [],
+  "state": {
+    "backend": "memory",
+    "schema_version": 0,
+    "healthy": true
+  },
+  "audit_sinks": [],
+  "data_plane": {
+    "running": true,
+    "pid": 7,
+    "healthy": true
+  },
+  "degraded": [],
+  "weakened_protections": [],
+  "ebpf": {
+    "configured": [
+      "agents.slice"
+    ],
+    "port": 9792,
+    "cgroups": [
+      {
+        "cgroup": "agents.slice",
+        "state": "active",
+        "detail": "TCP 80 and 443 redirected to 127.0.0.1:9792 and [::1]:9792, direct and QUIC egress denied (verified with the kernel)",
+        "attached_at": "2026-11-20T09:30:00Z"
+      }
+    ],
+    "listener": "127.0.0.1:9792 accepts connections",
+    "listener_up": true
+  }
+}
