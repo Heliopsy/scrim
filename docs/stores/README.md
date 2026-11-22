@@ -11,6 +11,7 @@ value back.
 | Bitwarden Secrets Manager | `bws` | [bws.md](bws.md) |
 | Environment variables, files | `env`, `file` | [local.md](local.md) |
 | SOPS-encrypted files | `sops` | [sops.md](sops.md) |
+| OS keyring (Secret Service, Keychain, Credential Manager) | `keyring` | [keyring.md](keyring.md) |
 | Memory (tests, throwaway runs) | `memory` | none |
 
 ## Capabilities
@@ -26,6 +27,7 @@ support is refused before anything is attempted.
 | `env`       | yes  | yes  | no    | no    | no       | no      |
 | `file`      | yes  | yes  | yes   | no    | no       | no      |
 | `sops`      | yes  | yes  | yes   | no    | no       | no      |
+| `keyring`   | yes  | Linux | no   | no    | no       | no      |
 | `memory`    | yes  | yes  | yes   | yes   | no       | no      |
 
 Watch on OpenBao, Infisical and Bitwarden Secrets Manager polls version metadata. It never fetches

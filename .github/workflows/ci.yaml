@@ -196,6 +196,12 @@ jobs:
       # home mirror fallback and its gaps, and scrim run uses the mirror.
       - name: Filesystem view fallback
         run: go test -count=1 -run 'TestStatusRunFSView|TestFSViewHomeMirror|TestFSViewNamespaceRequiredRefuses|TestGapsAndProbe|TestHomeMirror' ./internal/cli/ ./internal/run/ ./internal/fsview/
+      # The keyring source's Keychain backend against a throwaway keychain
+      # file (never the login keychain), with the conformance suite.
+      - name: Keychain source
+        run: go test -count=1 -run TestKeychain ./internal/stores/keyring/
+        env:
+          SCRIM_TEST_KEYCHAIN: "1"
 
   ntfy-e2e:
     name: ntfy end-to-end
