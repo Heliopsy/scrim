@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"math"
 	"os"
 	"os/exec"
 	"os/user"
@@ -77,6 +78,10 @@ func scratchDir(who account) (string, error) {
 		return "", err
 	}
 	if who.UID != uint32(os.Geteuid()) { //nolint:gosec // IDs are non-negative
+		if who.UID > math.MaxInt32 || who.GID > math.MaxInt32 {
+			_ = os.RemoveAll(dir)
+			return "", errors.New("exec.user has an out-of-range user or group ID")
+		}
 		if err := os.Chown(dir, int(who.UID), int(who.GID)); err != nil {
 			_ = os.RemoveAll(dir)
 			return "", err
@@ -198,7 +203,8 @@ func (c *capped) Write(p []byte) (int, error) {
 		p = p[:max(room, 0)]
 	}
 	if len(c.b)+len(p) > cap(c.b) {
-		grown := make([]byte, len(c.b), max(2*cap(c.b), len(c.b)+len(p), 4096))
+		// Never beyond the limit: len(c.b)+len(p) is at most limit here.
+		grown := make([]byte, len(c.b), min(max(2*cap(c.b), len(c.b)+len(p), 4096), c.limit))
 		copy(grown, c.b)
 		secret.WipeBytes(c.b[:cap(c.b)])
 		c.b = grown
