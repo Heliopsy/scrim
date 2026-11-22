@@ -4,6 +4,7 @@ go 1.27.4
 
 require (
 	cel.dev/cel-go v0.33.4
+	filippo.io/age v1.3.2
 	github.com/cilium/ebpf v0.22.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/jackc/pgx/v5 v5.13.0
@@ -34,6 +35,7 @@ require (
 
 require (
 	cel.dev/expr v0.25.3 // indirect
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect

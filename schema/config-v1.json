@@ -1867,6 +1867,10 @@
     "stores": {
       "additionalProperties": {
         "properties": {
+          "age-identity": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          },
           "client-id": {
             "type": "string",
             "x-scrim-secret-ref": true

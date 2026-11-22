@@ -51,7 +51,7 @@ const (
 // SecretFields are the credential fields any adapter may use. They are
 // top-level names so the collection can resolve and mask them; an adapter
 // that needs another adds it here.
-var SecretFields = []string{"token", "role-id", "secret-id", "client-id", "client-secret", "password", "unlock"}
+var SecretFields = []string{"token", "role-id", "secret-id", "client-id", "client-secret", "password", "unlock", "age-identity"}
 
 // AllowEmptyTargets lets scrim start while a redact target loads no value.
 var AllowEmptyTargets = config.Register(config.Spec[bool]{

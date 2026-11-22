@@ -9,6 +9,7 @@ value back.
 | OpenBao (and Vault-compatible KV v2) | `openbao` | [openbao.md](openbao.md) |
 | Infisical | `infisical` | [infisical.md](infisical.md) |
 | Environment variables, files | `env`, `file` | [local.md](local.md) |
+| SOPS-encrypted files | `sops` | [sops.md](sops.md) |
 | Memory (tests, throwaway runs) | `memory` | none |
 
 ## Capabilities
@@ -22,6 +23,7 @@ support is refused before anything is attempted.
 | `infisical` | yes  | yes  | yes   | yes   | no       | no      |
 | `env`       | yes  | yes  | no    | no    | no       | no      |
 | `file`      | yes  | yes  | yes   | no    | no       | no      |
+| `sops`      | yes  | yes  | yes   | no    | no       | no      |
 | `memory`    | yes  | yes  | yes   | yes   | no       | no      |
 
 Watch on OpenBao and Infisical polls version metadata. It never fetches values, so it stays cheap
@@ -153,6 +155,7 @@ The local stores report:
 | --- | --- |
 | `env` | `env.variable` (variable name), `env.prefix` (the `prefix` option, when set) |
 | `file` | `file.root` (the `root` option), `file.path` (absolute path of the file), `file.format` (`raw`, `dotenv` or `json`) |
+| `sops` | `sops.root`, `sops.path`, `sops.format`, `sops.version`, `sops.lastmodified`, `sops.key-type`, `sops.age-recipient` and more from the file's metadata ([sops.md](sops.md#labels)) |
 | `memory` | `memory.top` (first path segment, when the path has more than one) |
 
 `labels` derives names of your own from the labels above. Each entry is a label name and a source:

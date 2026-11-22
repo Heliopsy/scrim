@@ -477,6 +477,51 @@ note or the value of an encrypted metadata entry.
 - **THEN** none of them appears in any label key or value, and the encrypted entry is listed by key
   only in `infisical.encrypted-meta`
 
+### Requirement: SOPS file source
+
+The system SHALL provide a read-only `sops` source for SOPS-encrypted YAML, JSON, dotenv and INI files
+under a configured root, addressed as `<instance>://<path under root>[#key-path]`, a key path joining
+map keys and list positions with `/`. It SHALL decrypt only with the age identities its configuration
+names, never with ambient sops key locations, and SHALL declare read, list, watch and glob, refusing
+writes as read-only.
+
+#### Scenario: Decrypt with the configured age key
+
+- **WHEN** `prod/app.yaml` under the root was encrypted by sops for the age recipient of the identity
+  `age-identity` names
+- **THEN** reading `team://prod/app.yaml#db/password` returns the decrypted value of `db.password`
+- **AND** a file encrypted only for another recipient is refused with a permission error naming the
+  store and reference, without any value
+
+#### Scenario: Write refused as read-only
+
+- **WHEN** a rule targets a `sops` instance for `secret_capture` or `secret_gen`
+- **THEN** the call is refused with an error saying the sops source is read-only
+- **AND** nothing is written under the root
+
+### Requirement: SOPS files are authenticated before use
+
+The `sops` source SHALL verify a file's MAC over all of its values before returning any of them, and
+SHALL refuse a file whose MAC or values do not authenticate.
+
+#### Scenario: MAC failure refused
+
+- **WHEN** a value, the order of values, an unencrypted leaf or the MAC of a SOPS file was changed by
+  anything but sops
+- **THEN** the read fails with a permission error and no value of that file is returned
+
+### Requirement: SOPS native labels
+
+The `sops` source SHALL label every secret with its file's plaintext sops metadata under
+`sops.<attribute>` keys, read without decrypting, and the labels SHALL never hold a secret value.
+
+#### Scenario: Labels from sops metadata
+
+- **WHEN** a policy rule needs the labels of a SOPS file encrypted for two age recipients
+- **THEN** the labels include `sops.path`, `sops.format`, `sops.version`, `sops.lastmodified` and
+  `sops.age-recipient` with one presence key per recipient, read without the age key
+- **AND** no label key or value contains a decrypted value or the age identity
+
 ### Requirement: OpenBao adapter
 
 The system SHALL read and write OpenBao (and Vault-compatible) KV version 2 secrets, authenticating
