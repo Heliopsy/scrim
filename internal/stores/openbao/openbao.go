@@ -33,6 +33,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -52,10 +53,13 @@ const Kind = "openbao"
 const Caps = stores.CapRead | stores.CapList | stores.CapWatch | stores.CapWrite
 
 func init() {
+	stores.DeclareMulti(Kind, multiAttrs...)
 	stores.Register(Kind, func(_ context.Context, inst stores.Instance) (stores.Adapter, error) {
 		return New(inst)
 	})
 }
+
+var _ stores.MetadataReader = (*Adapter)(nil)
 
 // Adapter is one OpenBao instance.
 type Adapter struct {
@@ -83,8 +87,12 @@ func New(inst stores.Instance) (*Adapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store %s: %w", inst.Name, err)
 	}
+	log := inst.Log
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
 	a := &Adapter{
-		c:      &client{name: inst.Name, opts: opts, http: hc, resolve: inst.Resolve, now: time.Now},
+		c:      &client{name: inst.Name, opts: opts, http: hc, resolve: inst.Resolve, now: time.Now, log: log},
 		jitter: defaultJitter,
 	}
 	a.detailed.Store(true)
@@ -194,10 +202,7 @@ func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, erro
 	if version > 0 {
 		q = url.Values{"version": {strconv.Itoa(version)}}
 	}
-	resp, err := a.c.do(ctx, request{
-		op: stores.OpRead, ref: ref, method: http.MethodGet,
-		path: escapePath(mount) + "/data/" + escapePath(rest), query: q,
-	})
+	resp, at, err := a.get(ctx, request{op: stores.OpRead, ref: ref, query: q}, mount, "data", rest)
 	defer resp.wipe()
 	if err != nil {
 		return stores.Secret{}, err
@@ -224,7 +229,7 @@ func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, erro
 	}
 	var createdAt time.Time
 	if a.c.opts.LabelLookups {
-		if m, err := a.optionalMetadata(ctx, ref, mount, rest); err == nil {
+		if m, err := a.optionalMetadata(ctx, ref, mount, at); err == nil {
 			in.meta = &m
 			createdAt = parseTime(m.CreatedTime)
 		}
@@ -259,6 +264,126 @@ func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, erro
 		return stores.Secret{}, a.err(stores.OpRead, ref, stores.ErrNotFound, "no such field")
 	}
 	return out, nil
+}
+
+// get sends a GET for the data or metadata (kind) of the secret rest under
+// mount, and returns where it was found: rest, or its legacy name.
+//
+// Releases up to 0.4 escaped secret paths twice, so OpenBao stored a secret
+// written as "kv/git hub" under the name "git%20hub". When the store has no
+// secret at rest and its legacy name differs, get asks for the legacy name
+// and, if that exists, uses it and warns once per path so the operator moves
+// it. A secret that exists at rest, even with its current version deleted,
+// is never shadowed by a legacy one.
+func (a *Adapter) get(ctx context.Context, r request, mount, kind, rest string) (resp *response, at string, err error) {
+	r.method = http.MethodGet
+	r.path = escapePath(mount) + "/" + kind + "/" + escapePath(rest)
+	resp, err = a.c.do(ctx, r)
+	legacy := escapePath(rest)
+	if !errorsIsNotFound(err) || legacy == rest || !noSecret(resp) {
+		return resp, rest, err
+	}
+	r.path = escapePath(mount) + "/" + kind + "/" + escapePath(legacy)
+	lresp, lerr := a.c.do(ctx, r)
+	if lerr != nil {
+		lresp.wipe()
+		return resp, rest, err
+	}
+	resp.wipe()
+	if _, warned := a.c.legacyWarned.LoadOrStore(mount+"/"+legacy, true); !warned {
+		a.c.log.Warn("OpenBao secret found only under its legacy double-escaped name; "+
+			"move it to the reference's name, the legacy lookup will be removed",
+			"store", a.c.name, "path", mount+"/"+rest, "legacy_path", mount+"/"+legacy)
+	}
+	return lresp, legacy, nil
+}
+
+// noSecret reports whether a 404 response says nothing exists at the path
+// (no data object), as opposed to a secret whose version is deleted.
+func noSecret(resp *response) bool {
+	if resp == nil {
+		return true
+	}
+	var b struct {
+		Data json.RawMessage `json:"data"`
+	}
+	_ = json.Unmarshal(resp.body, &b)
+	return len(b.Data) == 0 || string(b.Data) == "null"
+}
+
+// ReadMetadata implements stores.MetadataReader. It returns what Read
+// would report about the secret, labels included, from its KV metadata
+// alone (GET metadata/), so policy can label an existing secret without its
+// value being read. Fields stays empty: KV v2 metadata does not name them.
+//
+// It refuses write-only paths, as Read does. When the store refuses the
+// metadata read (a policy with read on data/ only), it falls back to Read
+// and wipes the values, which is what stores.Set.Metadata does for an
+// adapter without this method; every other error is returned as is.
+func (a *Adapter) ReadMetadata(ctx context.Context, ref stores.Ref) (stores.Metadata, error) {
+	ref = ref.Secret()
+	if a.writeOnly(ref.Path) {
+		return stores.Metadata{}, a.err(stores.OpRead, ref, stores.ErrPermission,
+			"write-only path: scrim does not read it back from the store")
+	}
+	version, err := a.versionSelector(stores.OpRead, ref)
+	if err != nil {
+		return stores.Metadata{}, err
+	}
+	mount, rest := a.split(ref.Path)
+	if rest == "" {
+		return stores.Metadata{}, a.err(stores.OpRead, ref, stores.ErrInvalidRef, "reference names a mount, not a secret")
+	}
+	resp, _, err := a.get(ctx, request{op: stores.OpRead, ref: ref}, mount, "metadata", rest)
+	defer resp.wipe()
+	if errors.Is(err, stores.ErrPermission) {
+		s, rerr := a.Read(ctx, ref)
+		s.Wipe()
+		if rerr != nil {
+			return stores.Metadata{}, rerr
+		}
+		return s.Meta, nil
+	}
+	if err != nil {
+		return stores.Metadata{}, err
+	}
+	var mr struct {
+		Data *secretMeta `json:"data"`
+	}
+	if err := json.Unmarshal(resp.body, &mr); err != nil || mr.Data == nil {
+		return stores.Metadata{}, a.err(stores.OpRead, ref, stores.ErrUnavailable, "malformed response")
+	}
+	m := *mr.Data
+	if version == 0 {
+		version = m.CurrentVersion
+	}
+	v, ok := m.Versions[strconv.Itoa(version)]
+	// The same versions Read finds missing: none yet, beyond the current
+	// one, pruned, deleted (deletion time passed) or destroyed.
+	if version <= 0 || version > m.CurrentVersion || (!ok && m.Versions != nil) ||
+		(v.DeletionTime != "" && !a.future(v.DeletionTime)) || v.Destroyed {
+		return stores.Metadata{}, a.err(stores.OpRead, ref, stores.ErrNotFound, "")
+	}
+	destroyed := v.Destroyed
+	in := labelInput{
+		mount: mount, path: rest, version: version, custom: m.CustomMetadata,
+		versionCreated: v.CreatedTime, deletion: v.DeletionTime, destroyed: &destroyed,
+	}
+	var createdAt time.Time
+	if a.c.opts.LabelLookups {
+		// Read gets these from optional lookups; here the metadata is at
+		// hand already.
+		in.meta = &m
+		createdAt = parseTime(m.CreatedTime)
+		in.mountInfo = a.mount(ctx, ref, mount)
+	}
+	return stores.Metadata{
+		Ref:       ref,
+		Version:   strconv.Itoa(version),
+		CreatedAt: createdAt,
+		UpdatedAt: parseTime(v.CreatedTime),
+		Labels:    a.labels(in),
+	}, nil
 }
 
 type secretMeta struct {
