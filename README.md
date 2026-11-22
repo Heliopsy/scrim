@@ -178,6 +178,8 @@ directly, so write-only access, approvals and grants behave the same on every st
 | --- | --- | --- | --- | --- | --- |
 | OpenBao, and Vault-compatible KV v2 | `openbao` | yes | yes | yes | yes |
 | Infisical | `infisical` | yes | yes | yes | yes |
+| Google Secret Manager | `gcpsm` | yes | yes | yes | yes |
+| Azure Key Vault | `azkv` | yes | yes | yes | yes |
 | Vaultwarden, and Bitwarden-compatible servers | `vaultwarden` | yes | yes | yes | yes |
 | Environment variables | `env` | yes | yes | no | no |
 | Files (raw, dotenv, JSON) | `file` | yes | yes | yes | no |
@@ -473,6 +475,8 @@ veil's per-tool policy.
 | [docs/stores/README.md](docs/stores/README.md) | Store adapters, capabilities, freshness and outages |
 | [docs/stores/openbao.md](docs/stores/openbao.md) | OpenBao and Vault-compatible KV v2 |
 | [docs/stores/infisical.md](docs/stores/infisical.md) | Infisical |
+| [docs/stores/gcp.md](docs/stores/gcp.md) | Google Secret Manager |
+| [docs/stores/azure.md](docs/stores/azure.md) | Azure Key Vault |
 | [docs/stores/vaultwarden.md](docs/stores/vaultwarden.md) | Vaultwarden and Bitwarden-compatible servers |
 | [docs/stores/local.md](docs/stores/local.md) | Environment and file sources |
 | [docs/catalog.md](docs/catalog.md) | Logical names, host bindings, placeholders and profiles |
