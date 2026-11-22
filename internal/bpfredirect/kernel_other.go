@@ -16,6 +16,9 @@ type Loader struct {
 	Now        func() time.Time
 }
 
+// Check reports [ErrUnsupported].
+func (Loader) Check() error { return ErrUnsupported }
+
 // Attach reports [ErrUnsupported].
 func (Loader) Attach(string, int) (Attachment, error) { return Attachment{}, ErrUnsupported }
 

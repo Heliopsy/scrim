@@ -7,11 +7,14 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -376,5 +379,47 @@ func testLabelsLive(t *testing.T, adm *admin, p project, a *Adapter) {
 		if imp[k] != v {
 			t.Errorf("imported: label %s = %q, want %q", k, imp[k], v)
 		}
+	}
+
+	// ReadMetadata: the same metadata as Read, from a request Infisical
+	// answers without the value.
+	for _, path := range []string{
+		p.slug + "/prod/db/Primary/DB_PASSWORD", p.id + "/prod/db/Primary/DB_PASSWORD",
+		p.slug + "/prod/db/Primary/DB_PASSWORD?version=1", p.slug + "/prod/app/SHARED_KEY",
+	} {
+		ref := stores.Ref{Scheme: "inf"}
+		ref.Path, ref.Selectors, _ = strings.Cut(path, "?")
+		s, err := a.Read(t.Context(), ref)
+		if err != nil {
+			t.Fatalf("Read %s: %v", path, err)
+		}
+		s.Wipe()
+		m, err := a.ReadMetadata(t.Context(), ref)
+		if err != nil {
+			t.Fatalf("ReadMetadata %s: %v", path, err)
+		}
+		if !reflect.DeepEqual(m, s.Meta) {
+			t.Errorf("%s: ReadMetadata differs from Read\n got %#v\nwant %#v", path, m, s.Meta)
+		}
+	}
+	if _, err := a.ReadMetadata(t.Context(), stores.Ref{Scheme: "inf", Path: p.slug + "/prod/db/Primary/MISSING"}); !errors.Is(err, stores.ErrNotFound) {
+		t.Errorf("ReadMetadata of a missing secret: %v", err)
+	}
+	var hidden struct {
+		Secret struct {
+			Value  string `json:"secretValue"`
+			Hidden *bool  `json:"secretValueHidden"`
+			Tags   []struct {
+				Slug string `json:"slug"`
+			} `json:"tags"`
+		} `json:"secret"`
+	}
+	adm.must("GET", "/api/v4/secrets/DB_PASSWORD?"+url.Values{
+		"projectId": {p.id}, "environment": {"prod"}, "secretPath": {"/db/Primary"}, "type": {"shared"},
+		"viewSecretValue": {"false"}, "expandSecretReferences": {"false"},
+	}.Encode(), nil, &hidden)
+	if hidden.Secret.Value == value || hidden.Secret.Hidden == nil || !*hidden.Secret.Hidden || len(hidden.Secret.Tags) != 1 {
+		t.Errorf("Infisical does not answer viewSecretValue=false with a hidden value and the tags (hidden %v, %d tags)",
+			hidden.Secret.Hidden, len(hidden.Secret.Tags))
 	}
 }

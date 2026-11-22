@@ -3,10 +3,11 @@
 package infisical
 
 import (
-	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/heliopsy/scrim/internal/stores"
 )
 
 // Store-native policy labels (docs/stores/infisical.md, "Policy labels").
@@ -19,69 +20,26 @@ import (
 // never overwrites a key, so metadata cannot forge a native attribute.
 // Labels hold metadata only, never a value.
 //
-// The helpers below have the semantics of stores.SetNative, stores.UserMeta
-// and stores.LabelKey (feat/store-labels-core), with this adapter's kind and
-// multi-valued attributes fixed; they can be replaced by those once that
-// lands.
+// Keys are set with the shared helpers stores.SetNative and stores.UserMeta
+// (internal/stores/labels.go); the multi-valued attributes are declared in
+// init with stores.DeclareMulti.
 
 // labelPrefix is the namespace of every label this adapter derives.
 const labelPrefix = Kind + "."
-
-// metaPrefix is the namespace of user-editable secret metadata.
-const metaPrefix = labelPrefix + "meta."
 
 // multiAttrs are the multi-valued attributes: they get presence keys even
 // for a single value.
 var multiAttrs = []string{"tag", "encrypted-meta"}
 
-// setNative sets the native attribute attr, replacing whatever is there.
-// One value of a single-valued attribute is infisical.<attr> = value.
-// Several values, or any values of a multi-valued attribute, are the values
-// joined by "," (duplicates dropped) plus infisical.<attr>.<value> = "true"
-// per value, the value verbatim. Empty values are skipped; with none left
-// nothing is set.
-func setNative(labels map[string]string, attr string, values ...string) {
-	key := labelPrefix + labelKey(attr)
-	vals := make([]string, 0, len(values))
-	for _, v := range values {
-		if v != "" && !slices.Contains(vals, v) {
-			vals = append(vals, v)
-		}
-	}
-	if len(vals) == 0 {
-		return
-	}
-	labels[key] = strings.Join(vals, ",")
-	if len(vals) > 1 || slices.Contains(multiAttrs, attr) {
-		for _, v := range vals {
-			labels[key+"."+v] = "true"
-		}
-	}
-}
-
 // setBool sets a boolean native attribute to "true" or "false".
 func setBool(labels map[string]string, attr string, v bool) {
-	setNative(labels, attr, strconv.FormatBool(v))
+	stores.SetNative(labels, Kind, attr, strconv.FormatBool(v))
 }
 
 // setTime sets a timestamp attribute in RFC 3339, UTC, when it is known.
 func setTime(labels map[string]string, attr string, t time.Time) {
 	if !t.IsZero() {
-		setNative(labels, attr, t.UTC().Format(time.RFC3339Nano))
-	}
-}
-
-// userMeta records one user-editable metadata entry as
-// infisical.meta.<labelKey(key)>, the value as Infisical returns it. It
-// never overwrites a key already set, so of two keys that fold to the same
-// name the first wins.
-func userMeta(labels map[string]string, key, value string) {
-	k := labelKey(key)
-	if k == "" {
-		return
-	}
-	if _, taken := labels[metaPrefix+k]; !taken {
-		labels[metaPrefix+k] = value
+		stores.SetNative(labels, Kind, attr, t.UTC().Format(time.RFC3339Nano))
 	}
 }
 
@@ -93,30 +51,6 @@ func isReserved(key string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), labelPrefix)
 }
 
-// labelKey folds s into a label key: lower-case ASCII letters, digits, '-'
-// and '_' in dot-separated segments. Other characters (space, '/', ',',
-// non-ASCII) become '_', empty segments are dropped.
-func labelKey(s string) string {
-	var b strings.Builder
-	for seg := range strings.SplitSeq(strings.ToLower(s), ".") {
-		if seg == "" {
-			continue
-		}
-		if b.Len() > 0 {
-			b.WriteByte('.')
-		}
-		for _, c := range seg {
-			switch {
-			case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-', c == '_':
-				b.WriteRune(c)
-			default:
-				b.WriteByte('_')
-			}
-		}
-	}
-	return b.String()
-}
-
 // folderKeys sets infisical.folder to the folder path as Infisical spells it
 // ("/" or "/db/Primary") and one presence key per folder on the way down,
 // with the folder names verbatim joined by dots: infisical.folder.db and
@@ -124,7 +58,8 @@ func labelKey(s string) string {
 // digits, '-' and '_', so the dotted form is unambiguous.
 func folderKeys(labels map[string]string, folder string) {
 	folder = "/" + strings.Trim(folder, "/")
-	setNative(labels, "folder", folder)
+	stores.SetNative(labels, Kind, "folder", folder)
+	key := stores.NativeKey(Kind, "folder")
 	acc := ""
 	for _, seg := range strings.Split(strings.Trim(folder, "/"), "/") {
 		if seg == "" {
@@ -134,6 +69,6 @@ func folderKeys(labels map[string]string, folder string) {
 			acc += "."
 		}
 		acc += seg
-		labels[labelPrefix+"folder."+acc] = "true"
+		labels[key+"."+acc] = "true"
 	}
 }

@@ -335,6 +335,9 @@ type Item struct {
 	URIs        []string // login URIs
 	Favorite    bool
 	Reprompt    bool
+	// UndecryptablePassword encrypts Password under a random key, so the
+	// password is present but does not decrypt with the item's key.
+	UndecryptablePassword bool
 }
 
 // CreateItem creates an item the way a Bitwarden client would, so the
@@ -390,7 +393,19 @@ func (a *Account) CreateItem(t testing.TB, it Item) string {
 		for _, u := range it.URIs {
 			uris = append(uris, map[string]any{"uri": encm(u), "match": nil})
 		}
-		cipher["login"] = map[string]any{"username": encv(it.Username), "password": encv(it.Password), "uris": uris}
+		pw := encv(it.Password)
+		if it.UndecryptablePassword {
+			other, err := bwcrypto.GenerateSymmetricKey()
+			if err != nil {
+				t.Fatal(err)
+			}
+			e, err := other.Encrypt(it.Password)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pw = e.String()
+		}
+		cipher["login"] = map[string]any{"username": encv(it.Username), "password": pw, "uris": uris}
 	}
 	var fields []map[string]any
 	for n, v := range it.Fields {

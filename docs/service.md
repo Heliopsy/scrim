@@ -239,29 +239,56 @@ A file install wrote and you changed since is such a change: scrim does not dele
 
 ## Host-level interception
 
-With `--system`, two more flags install interception that needs no agent configuration
+With `--system`, three more flags install interception that needs no agent configuration
 ([interception.md](interception.md), methods 3 and 4):
 
 ```sh
 sudo scrim install --system --transparent --cover-user agent1 --cover-cgroup agents.slice
+sudo scrim install --system --ebpf --cover-cgroup agents.slice
 sudo scrim install --system --dns
 ```
 
-Both can be added to an existing system install; run the command again with the flag. What they
-add, each change printed first and recorded in the manifest:
+Each can be added to an existing system install; run the command again with the flag.
+`--transparent` and `--ebpf` are alternatives: nftables rules for users and control groups, or
+eBPF cgroup hooks for control groups only. What they add, each change printed first and recorded
+in the manifest:
 
-| Change | `--transparent` | `--dns` |
-| --- | --- | --- |
-| `/etc/systemd/system/scrim.service.d/interception.conf` | turns on the transparent listener (`127.0.0.1:9793`, `[::1]:9793`) | turns on the SNI listener (`127.0.83.1:443`) and grants `CAP_NET_BIND_SERVICE` |
-| `/etc/scrim/transparent.nft`, `scrim-transparent.service`, the nftables table `inet scrim` | the redirect and deny rules for the covered users and cgroups | |
-| `/etc/hosts` | | one marked block resolving the provider hosts to scrim |
-| Java truststores | the CA, checked in the stores the system trust tool rebuilds and imported into other JDKs' `cacerts` (`--java-home` for one outside `/usr/lib/jvm`) | the same |
+| Change | `--transparent` | `--ebpf` | `--dns` |
+| --- | --- | --- | --- |
+| `/etc/systemd/system/scrim.service.d/interception.conf` | turns on the transparent listener (`127.0.0.1:9793`, `[::1]:9793`) | the same | turns on the SNI listener (`127.0.83.1:443`) and grants `CAP_NET_BIND_SERVICE` |
+| `/etc/scrim/transparent.nft`, `scrim-transparent.service`, the nftables table `inet scrim` | the redirect and deny rules for the covered users and cgroups | | |
+| `/etc/systemd/system/scrim-ebpf.service`, the pinned links under `/sys/fs/bpf/scrim` | | a oneshot unit that runs `scrim ebpf attach` for the covered control groups at every boot and `scrim ebpf detach` when stopped | |
+| `/etc/hosts` | | | one marked block resolving the provider hosts to scrim |
+| Java truststores | the CA, checked in the stores the system trust tool rebuilds and imported into other JDKs' `cacerts` (`--java-home` for one outside `/usr/lib/jvm`) | the same | the same |
 
 The rules unit is separate from `scrim.service` and keeps the rules loaded while scrim is stopped,
 so covered agents fail closed. `--block-unrouted` closes connections to hosts scrim has no route
 for instead of relaying them untouched. Uninstall deletes the table, removes the hosts block (or
 leaves an edited one with the manual step), removes the CA from every truststore it was added to,
 including a Java store the system trust tool kept it in, and removes the files.
+
+### eBPF at boot
+
+`scrim-ebpf.service` is ordered like the nftables unit: before `network-pre.target` and before
+`scrim.service`, without the default dependencies, so a covered control group has no window at
+boot in which it reaches a provider directly. It pulls in each covered slice (`Wants=` and
+`After=agents.slice`), since the programs attach to an existing control group; any other control
+group must exist when it runs. The loader pins the links in bpffs, so they stay after the oneshot
+exits and while scrim is stopped. Stopping the unit, or shutting down, detaches them. Running the
+install again with other `--cover-cgroup` values reattaches in place (`systemctl reload`) and
+detaches the control groups that are no longer listed.
+
+The install needs root, or `CAP_BPF` and `CAP_NET_ADMIN`, and the cgroup v2 hierarchy; it checks
+both before changing anything and names what is missing. `--dry-run` needs neither and prints the
+unit and the drop-in it would write. It refuses `--cover-user` (use `--transparent`) and a control
+group that holds `scrim.service` (`system.slice` or below): the programs cannot exempt scrim's own
+user the way the nftables rules do, so scrim's upstream connections would come back to itself.
+With a `--transparent-port` other than 9793, also set `interception.ebpf.port` in
+`/etc/scrim/conf.d/` so `scrim status` checks the attachment against the right port.
+
+Uninstall detaches each recorded control group first and waits until the kernel confirms it, then
+stops and disables the unit and removes it and the drop-in, reloading systemd after each. Running
+it again finds nothing to do.
 
 `scrim status` lists the active modes under Interception, and `direct egress blocked` as active
 while the transparent listener runs.
@@ -285,10 +312,25 @@ truststores. The Java keystores are compared by the certificates they hold, not 
 the trust tool rewrites them; dpkg's backup `/var/lib/dpkg/status-old` is left out, since Debian's
 ca-certificates-java hook rewrites it when it runs dpkg triggers (the status file is compared).
 
+`--ebpf` needs `CAP_BPF` in the initial user namespace, which no rootless container has, so
+`test/ebpf/install-test.sh` (`just ebpf-install-vm-test`, CI job `ebpf-install`) boots a real
+kernel in qemu with a Debian root file system built by podman and systemd as PID 1, and boots the
+same disk twice. First boot: snapshot, a dry run as an unprivileged user (prints the unit, changes
+nothing), an unprivileged install (refused), the install, the unit active and enabled, the control
+group verified attached with the kernel, the drop-in's listener on `127.0.0.1:9793` and
+`[::1]:9793`, connections of `agents.slice` to ports 80 and 443 of a stand-in provider landing on
+port 9793 and failing when nothing listens there, a process outside the slice untouched. Second
+boot: the unit attached again before `scrim.service` started, the redirect still in place, then
+`uninstall --purge` (no unit, no pins, nothing recorded, the slice reaches the stand-in directly
+again), the file system identical to the snapshot, and a second uninstall that does nothing.
+
 ## Not covered yet
 
 - Firefox profiles; Firefox uses its own store unless `security.enterprise_roots.enabled` is set.
 - Managed agent settings (task 13.4); install will record those the same way.
-- Transparent mode and the DNS override on a Quadlet install: they need the system unit.
+- Transparent mode, eBPF and the DNS override on a Quadlet install: they need the system unit.
+- An eBPF-redirected connection is closed by scrim's transparent listener until tasks.md 15.1b:
+  covered control groups fail closed rather than being redacted (see
+  [interception.md](interception.md), "Variant: eBPF cgroup hooks").
 - A launch agent on macOS.
 - Quadlet runs in the unit tests only; the VM test covers the system and user units.

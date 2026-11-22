@@ -345,14 +345,25 @@ func TestWriteLabels(t *testing.T) {
 	}
 }
 
+// TestLabelKey pins the metadata key folding docs/stores/infisical.md
+// describes, which the adapter takes from stores.UserMeta, and the
+// multi-valued attributes it declares.
 func TestLabelKey(t *testing.T) {
 	for in, want := range map[string]string{
 		"PCI": "pci", "scrim.hosts": "scrim.hosts", "Cost Center": "cost_center", " x ": "_x_", "a/b,c": "a_b_c", "a..b.": "a.b",
 		"ünï": "_n_", "team-a_b": "team-a_b",
 	} {
-		if got := labelKey(in); got != want {
-			t.Errorf("labelKey(%q) = %q, want %q", in, got, want)
+		if got := stores.LabelKey(in); got != want {
+			t.Errorf("stores.LabelKey(%q) = %q, want %q", in, got, want)
 		}
+	}
+	for _, a := range []string{"tag", "encrypted-meta"} {
+		if !stores.IsMulti(Kind, a) {
+			t.Errorf("%s.%s is not declared multi-valued", Kind, a)
+		}
+	}
+	if stores.IsMulti(Kind, "folder") {
+		t.Errorf("%s.folder is declared multi-valued", Kind)
 	}
 }
 

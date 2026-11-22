@@ -360,6 +360,26 @@ happens, so `store.write` rules can match its destination.
 - **THEN** the rule sees `vaultwarden.org = "Acme"` and `vaultwarden.collection.Prod` before the
   item is created
 
+### Requirement: Vaultwarden labels read without values
+
+The Vaultwarden adapter SHALL return an existing item's metadata and labels without decrypting any
+of its field values, from the index of the last sync after checking the server's revision date. The
+labels SHALL be the ones a read of the item reports, the meta label guard and its scope included, and
+a lookup SHALL fail wherever a read fails for the item itself (locked, unreachable, outside the
+scope, ambiguous, no such field).
+
+#### Scenario: Write to an item outside every redaction set
+
+- **WHEN** an agent writes to `vw://Prod/DB?org=Acme`, which exists but is in no redaction set
+- **THEN** the write rule sees the item's `vaultwarden.*` labels exactly as a read would report them
+- **AND** no field value of the item is decrypted for the lookup, so an item whose password does not
+  decrypt still has its labels
+
+#### Scenario: Locked store
+
+- **WHEN** the store is locked and a rule needs an item's labels
+- **THEN** the lookup fails and the request is decided with its labels unknown
+
 ### Requirement: Infisical adapter
 
 The system SHALL read and write Infisical secrets by project, environment, folder and key, and SHALL
@@ -401,6 +421,25 @@ contacting Infisical, so `store.write` rules can match on them.
 
 - **WHEN** a rule asks for writes under `/db` and an agent creates `inf://payments/dev/db/NEW`
 - **THEN** the write is decided on `infisical.folder.db = true` before the secret exists, and asks
+
+### Requirement: Infisical labels read without values
+
+The Infisical adapter SHALL return an existing secret's metadata and labels through a request that
+asks Infisical not to return the value (`viewSecretValue=false`, references not expanded), and SHALL
+wipe whatever arrives in the value field unread. The labels SHALL be the ones a read reports, and a
+lookup SHALL fail wherever a read fails.
+
+#### Scenario: Labels of an existing secret
+
+- **WHEN** a rule needs the labels of `inf://payments/prod/db/PASSWORD`, which exists but is in no
+  redaction set
+- **THEN** scrim asks Infisical for the secret with `viewSecretValue=false` and the labels equal those
+  a read reports, tags, metadata and import source included
+
+#### Scenario: Infisical unreachable
+
+- **WHEN** Infisical does not answer the lookup
+- **THEN** the lookup fails and the request is decided with its labels unknown
 
 ### Requirement: Infisical metadata cannot forge native labels
 

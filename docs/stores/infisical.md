@@ -331,6 +331,15 @@ made. A project addressed by ID costs one `GET /api/v1/projects/{id}` the first 
 refused, labels carry the ID only and the lookup is retried after five minutes rather than at every
 read. Everything else comes with the secret itself.
 
+### Labels without the value
+
+When a rule needs the labels of a secret that is not in a redaction set (a write to an existing
+secret, or `scrim catalog labels`), scrim asks for the secret with `viewSecretValue=false` and
+without expanding references. Infisical answers with its hidden-value mask in place of the value, and
+scrim wipes whatever is in that field unread. The labels are the ones a read reports. A failure
+(unreachable, refused, unknown project or environment) fails the lookup, and the rule is decided as
+if the labels were unknown; a secret that does not exist gets the labels of a new one.
+
 ## Watch and refresh
 
 Self-hosted Infisical has no change feed scrim can subscribe to, so the adapter polls the listing of

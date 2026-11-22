@@ -453,11 +453,8 @@ func (v *vault) native(it *item, k bwcrypto.SymmetricKey, folder, folderID strin
 		}
 	}
 	if folder != "" {
-		n.set("folder", folder)
+		n.setFolder(folder)
 		n.set("folder-id", folderID)
-		for _, f := range ancestors(folder) {
-			n[nativePrefix+"folder."+f] = "true"
-		}
 	}
 	v.addCollections(n, colls)
 	n.setBool("favorite", c.Favorite)
@@ -490,7 +487,7 @@ func (v *vault) native(it *item, k bwcrypto.SymmetricKey, folder, folderID strin
 		if set(l.PasswordRevisionDate) {
 			n.set("password-revision-date", *l.PasswordRevisionDate)
 		}
-		n.setMulti("uri-host", false, uriHosts(loginURIs(l.URIs, k))...)
+		n.setMulti("uri-host", uriHosts(loginURIs(l.URIs, k))...)
 	}
 	return n
 }
@@ -513,11 +510,11 @@ func (v *vault) addCollections(n nativeLabels, ids []string) {
 			manage = append(manage, cn)
 		}
 	}
-	n.setMulti("collection", true, names...)
-	n.setMulti("collection-id", false, ids...)
-	n.setMulti("collection-read-only", true, readOnly...)
-	n.setMulti("collection-hide-passwords", true, hide...)
-	n.setMulti("collection-manage", true, manage...)
+	n.setNested("collection", names...)
+	n.setMulti("collection-id", ids...)
+	n.setNested("collection-read-only", readOnly...)
+	n.setNested("collection-hide-passwords", hide...)
+	n.setNested("collection-manage", manage...)
 }
 
 // loginURIs decrypts the URIs of a login item, skipping those matched as

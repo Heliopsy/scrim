@@ -49,6 +49,9 @@ func (Commands) EBPF(e *Env) *cobra.Command {
 type ebpfTargets struct {
 	cgroups []string
 	port    int
+	// noListenerCheck skips the warning about the listener, for the boot
+	// unit of `scrim install --ebpf`, which attaches before scrim starts.
+	noListenerCheck bool
 }
 
 func (t *ebpfTargets) bind(c *cobra.Command) {
@@ -111,6 +114,9 @@ func ebpfAttach(e *Env) *cobra.Command {
 				}
 				_, _ = fmt.Fprintf(w, "  attached %s, links pinned in %s (`scrim ebpf detach --cgroup %s` removes them)\n", a, a.PinDir, cg)
 			}
+			if t.noListenerCheck {
+				return nil
+			}
 			if up, msg := ebpfInspector.CheckListener(port); !up {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s; start scrim with proxy.transparent-listen on port %d\n", msg, port)
 			}
@@ -119,6 +125,8 @@ func ebpfAttach(e *Env) *cobra.Command {
 	}
 	t.bind(c)
 	c.Flags().IntVar(&t.port, "port", bpfredirect.DefaultPort, "transparent listener port (default interception.ebpf.port)")
+	c.Flags().BoolVar(&t.noListenerCheck, "no-listener-check", false,
+		"do not warn when nothing listens on the port yet (the boot unit of `scrim install --ebpf` attaches before scrim starts)")
 	return c
 }
 
