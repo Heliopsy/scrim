@@ -93,6 +93,13 @@ var (
 		Description: "Base URL OpenAI Chat Completions and Responses requests are forwarded to after redaction.",
 		Validate:    httpURL,
 	})
+	// UpstreamGemini is where Google Gemini API requests are forwarded.
+	UpstreamGemini = config.Register(config.Spec[string]{
+		Key:         "proxy.upstream.gemini",
+		Default:     "https://generativelanguage.googleapis.com",
+		Description: "Base URL Gemini API (generateContent, streamGenerateContent, countTokens) requests are forwarded to after redaction.",
+		Validate:    httpURL,
+	})
 	// UpstreamChatGPT is where ChatGPT-signed-in Codex requests go.
 	UpstreamChatGPT = config.Register(config.Spec[string]{
 		Key:         "proxy.upstream.chatgpt",

@@ -11,10 +11,11 @@ import (
 const (
 	ProviderAnthropic = "anthropic"
 	ProviderOpenAI    = "openai"
+	ProviderGemini    = "gemini"
 )
 
 // DefaultRoutes are the LLM proxy's default path prefixes per provider.
-var DefaultRoutes = map[string]string{ProviderAnthropic: "/anthropic", ProviderOpenAI: "/openai"}
+var DefaultRoutes = map[string]string{ProviderAnthropic: "/anthropic", ProviderOpenAI: "/openai", ProviderGemini: "/gemini"}
 
 // Endpoints is what a running scrim offers an agent. None of it is secret.
 type Endpoints struct {

@@ -44,7 +44,7 @@ restarts it with backoff and traffic is refused until it is back.
 
 | What | Setting | Default | Notes |
 | --- | --- | --- | --- |
-| LLM proxy base URL | `proxy.listen` | `127.0.0.1:9790` | `http://<addr>/anthropic` and `http://<addr>/openai/v1`. Keep it on loopback. |
+| LLM proxy base URL | `proxy.listen` | `127.0.0.1:9790` | `http://<addr>/anthropic`, `http://<addr>/openai/v1` and `http://<addr>/gemini`. Keep it on loopback. |
 | LLM proxy on a Unix socket | `proxy.socket` | off | Same routes, for clients that can use a socket. |
 | Forward proxy | `proxy.forward-listen` | `127.0.0.1:9791` | `HTTPS_PROXY=http://<addr>` (`scrim run` sets it with the CA for the child): provider hosts, including `chatgpt.com` and `ab.chatgpt.com` for Codex, go to the LLM proxy; other hosts to the tool proxy with credential injection. |
 | Tool proxy | `tool-proxy.listen` | off | HTTPS tool proxy alone. |

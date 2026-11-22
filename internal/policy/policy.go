@@ -142,7 +142,7 @@ type Request struct {
 	// counts as erroring on the request: a deny or ask rule matches, an allow
 	// rule does not.
 	SecretLabelsUnknown bool `json:",omitempty"`
-	// Provider is the model provider ("anthropic", "openai").
+	// Provider is the model provider ("anthropic", "openai", "gemini").
 	Provider string
 	// Host, Method and Path describe the destination.
 	Host   string

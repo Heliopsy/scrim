@@ -425,6 +425,10 @@ func routes(cfg *config.Config) []*pb.Route {
 			Hosts: []string{"api.anthropic.com"}, Chain: clone()},
 		{Name: "openai", Provider: "openai", Upstream: UpstreamOpenAI.Get(cfg), PathPrefix: "/openai",
 			Hosts: []string{"api.openai.com"}, Chain: clone()},
+		// Google Gemini API (Gemini CLI, the google-genai SDKs). The agent's
+		// own x-goog-api-key header or key= query parameter is forwarded.
+		{Name: "gemini", Provider: "gemini", Upstream: UpstreamGemini.Get(cfg), PathPrefix: "/gemini",
+			Hosts: []string{"generativelanguage.googleapis.com"}, Chain: clone()},
 		// Codex signed in with ChatGPT calls the Responses API on
 		// chatgpt.com (/backend-api/codex/responses), reached through the
 		// forward proxy.
@@ -442,7 +446,7 @@ func routes(cfg *config.Config) []*pb.Route {
 // not intercepted").
 func bypass(cfg *config.Config) []string {
 	var out []string
-	for _, raw := range []string{ChainURL.Get(cfg), UpstreamAnthropic.Get(cfg), UpstreamOpenAI.Get(cfg), UpstreamChatGPT.Get(cfg), UpstreamChatGPTAB.Get(cfg)} {
+	for _, raw := range []string{ChainURL.Get(cfg), UpstreamAnthropic.Get(cfg), UpstreamOpenAI.Get(cfg), UpstreamGemini.Get(cfg), UpstreamChatGPT.Get(cfg), UpstreamChatGPTAB.Get(cfg)} {
 		u, err := url.Parse(raw)
 		if err != nil || u.Host == "" {
 			continue

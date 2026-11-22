@@ -41,13 +41,14 @@ These settings come up throughout. Each has a config key, a `SCRIM_*` variable a
 
 | Setting | Default | What it is |
 | --- | --- | --- |
-| `proxy.listen` | `127.0.0.1:9790` | LLM proxy base URL listener. Agents use `http://127.0.0.1:9790/anthropic` and `http://127.0.0.1:9790/openai/v1` |
+| `proxy.listen` | `127.0.0.1:9790` | LLM proxy base URL listener. Agents use `http://127.0.0.1:9790/anthropic`, `http://127.0.0.1:9790/openai/v1` and `http://127.0.0.1:9790/gemini` |
 | `proxy.socket` | empty (off) | the same LLM proxy on a Unix socket |
 | `proxy.forward-listen` | empty (off) | forward proxy (`CONNECT` with TLS interception) |
 | `tool-proxy.listen` | empty (off) | the HTTPS tool proxy on its own |
 | `api.socket` | `$XDG_RUNTIME_DIR/scrim/api.sock` | local agent API, used by `scrim mcp` and `scrim secret` |
 | `proxy.upstream.anthropic` | `https://api.anthropic.com` | where redacted Anthropic requests go |
 | `proxy.upstream.openai` | `https://api.openai.com` | where redacted OpenAI requests go |
+| `proxy.upstream.gemini` | `https://generativelanguage.googleapis.com` | where redacted Gemini API requests go |
 
 The data plane on `main` serves every kind except `TRANSPARENT`, and the forward proxy hands
 provider hosts to the LLM proxy. A listener that cannot be bound, or whose kind is not implemented,
@@ -55,11 +56,11 @@ reports itself unbound, which keeps the data plane not ready, so nothing is forw
 The listener settings above and `scrim proxy`, which turns them into data plane listeners, land
 with the daemon (v0.1.0).
 
-The built-in routes are `/anthropic` and `/openai`. The prefix is stripped and the rest of the path
-is appended to the upstream, so `/anthropic/v1/messages` goes to
+The built-in routes are `/anthropic`, `/openai` and `/gemini`. The prefix is stripped and the rest
+of the path is appended to the upstream, so `/anthropic/v1/messages` goes to
 `https://api.anthropic.com/v1/messages`. On the forward-proxy and transparent paths there is no
-prefix: the route is picked by host name (`api.anthropic.com`, `api.openai.com`) and the whole path
-is forwarded.
+prefix: the route is picked by host name (`api.anthropic.com`, `api.openai.com`,
+`generativelanguage.googleapis.com`) and the whole path is forwarded.
 
 ## 1. Wrapper (`scrim run`)
 
@@ -116,6 +117,7 @@ What it sets, in short:
 | --- | --- |
 | `ANTHROPIC_BASE_URL` | `http://127.0.0.1:<port>/anthropic` |
 | `OPENAI_BASE_URL` | `http://127.0.0.1:<port>/openai/v1` |
+| `GOOGLE_GEMINI_BASE_URL` | `http://127.0.0.1:<port>/gemini` |
 | `HTTPS_PROXY`, `HTTP_PROXY` and lowercase forms | the forward proxy, when `proxy.forward-listen` is set |
 | `NO_PROXY`, `no_proxy` | loopback plus chained local upstreams |
 | `NODE_EXTRA_CA_CERTS` | the session's `scrim-ca.pem` |
@@ -173,7 +175,8 @@ codex -c openai_base_url="http://127.0.0.1:9790/openai/v1"
 openai_base_url = "http://127.0.0.1:9790/openai/v1"
 ```
 
-SDK-based agents read `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`.
+SDK-based agents read `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`; Gemini CLI and the Google Gen AI
+SDKs read `GOOGLE_GEMINI_BASE_URL`.
 
 The same LLM proxy can listen on a Unix socket:
 
@@ -243,7 +246,7 @@ traffic. This is the method for "I don't want to change the proxy URL".
 ```mermaid
 flowchart LR
   agent["agent<br>HTTPS_PROXY = scrim"] -- "CONNECT host:443" --> fwd["forward proxy<br>TLS with scrim CA"]
-  fwd -- "api.anthropic.com, api.openai.com" --> llm["LLM proxy"]
+  fwd -- "api.anthropic.com, api.openai.com,<br>generativelanguage.googleapis.com" --> llm["LLM proxy"]
   fwd -- "any other host" --> tp["tool proxy<br>inject, redact"]
   llm --> prov["provider"]
   tp --> host["tool host"]
@@ -380,7 +383,7 @@ How the listener routes each redirected connection:
 
 | What arrives | Where it goes |
 | --- | --- |
-| TLS whose server name is a provider host (`api.anthropic.com`, `api.openai.com`, `chatgpt.com`, `ab.chatgpt.com`) | the LLM proxy, redacted as through the forward proxy |
+| TLS whose server name is a provider host (`api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`, `chatgpt.com`, `ab.chatgpt.com`) | the LLM proxy, redacted as through the forward proxy |
 | TLS whose server name a credential binding or capture rule names | the tool proxy: credential injection and response redaction |
 | TLS for any other name | relayed untouched to that name, resolved by scrim, never to the address the client dialled; with `--block-unrouted` (`proxy.transparent-unrouted: block`) closed |
 | TLS without a server name (a connection by address) | closed, and an `interception_refused` audit event |
@@ -1179,9 +1182,11 @@ against the base URL listener:
 ```sh
 SCRIM_PROXY_UPSTREAM_ANTHROPIC=http://127.0.0.1:18089 \
 SCRIM_PROXY_UPSTREAM_OPENAI=http://127.0.0.1:18089 \
+SCRIM_PROXY_UPSTREAM_GEMINI=http://127.0.0.1:18089 \
   scrim proxy &
 scrim audit run --proxy http://127.0.0.1:9790 --upstream-listen 127.0.0.1:18089 \
   --route anthropic=/anthropic --route openai-chat=/openai --route openai-responses=/openai \
+  --route gemini=/gemini \
   --seeds-out ./leak-seeds.json --report leak-report.json
 ```
 
