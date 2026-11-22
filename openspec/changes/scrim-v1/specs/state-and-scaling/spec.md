@@ -96,6 +96,40 @@ version, and SHALL refuse to start against a schema newer than it understands.
 - **WHEN** an older scrim starts against a database migrated by a newer release
 - **THEN** it refuses to start and names both schema versions
 
+### Requirement: Status reads PostgreSQL state read-only
+
+`scrim status` and `scrim doctor` SHALL open the `postgres` backend in sessions with
+`default_transaction_read_only=on`, SHALL NOT migrate it, run DDL, write to it or take the advisory
+locks the daemons use, and SHALL report the database's schema version against the version the binary
+expects. Only a starting scrim daemon SHALL migrate the schema. When the schema is at the expected
+version, status SHALL report the backend as it does for a migrated database.
+
+#### Scenario: Status before any daemon started
+
+- **WHEN** `scrim status` runs against an empty PostgreSQL database
+- **THEN** it reports the schema as not created yet and creates nothing
+
+#### Scenario: Status against an older schema
+
+- **WHEN** `scrim status` runs against a schema older than its binary expects, as during a rolling
+  upgrade
+- **THEN** it reports the schema as behind, says a daemon will migrate it, and leaves it unchanged
+
+#### Scenario: Status against a newer schema
+
+- **WHEN** `scrim status` runs against a schema migrated by a newer release
+- **THEN** it reports the state backend as unhealthy and names both schema versions
+
+#### Scenario: Status with a read-only role
+
+- **WHEN** `state.postgres.dsn` names a role that can only read the scrim tables
+- **THEN** `scrim status` reports the schema version and a healthy backend
+
+#### Scenario: Daemon migrating while status runs
+
+- **WHEN** a daemon holds the migration lock or migrates while `scrim status` is connected
+- **THEN** neither waits for the other, and status reports the version the daemon migrated to
+
 ### Requirement: Stateless placeholder resolution across replicas
 
 Placeholder generation and resolution SHALL depend only on the shared placeholder key and the

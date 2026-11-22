@@ -113,6 +113,10 @@ jobs:
         env:
           SCRIM_TEST_PODMAN: "1"
           SCRIM_TEST_CONTAINER_PREFIX: scrim-scale
+      - name: Status against PostgreSQL
+        run: go test -race -count=1 -timeout 5m -run 'TestStatusPostgres' ./internal/cli/
+        env:
+          SCRIM_TEST_PODMAN: "1"
       - name: Multi-replica load test
         run: go test -race -count=1 -timeout 10m -run 'TestReplicasLoad|TestReplicasShareChangesThroughPostgresEvents' -v ./internal/daemon/
         env:
