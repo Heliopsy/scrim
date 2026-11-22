@@ -7,7 +7,7 @@
 # the VM off. Its own files live in /opt/scrim-test, outside the snapshot.
 #
 # The stand-in provider is a fake provider on 10.99.0.1 (on lo), ports 443
-# and 80 in plain HTTP, which api.anthropic.com resolves to: whatever reaches
+# and 80 in plain HTTP, which curl resolves api.anthropic.com to: whatever reaches
 # it went around scrim. scrim's own upstream is a second fake provider on
 # 127.0.0.1:18089 (as in test/service/transparent-test.sh), and a generated
 # secret in a file store is what must not reach it. An agent in agents.slice
@@ -48,8 +48,6 @@ setup() {
   fake direct443 10.99.0.1:443
   fake direct80 10.99.0.1:80
   fake upstream 127.0.0.1:18089
-  # In the file system snapshot, so written once, before it.
-  grep -q ' api.anthropic.com$' /etc/hosts || echo '10.99.0.1 api.anthropic.com' >>/etc/hosts
   [ -s "$st/secret" ] || echo "vm-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')" >"$st/secret"
   secret="$(cat "$st/secret")"
 }
@@ -148,7 +146,7 @@ wait_healthy() {
 # programs stay attached throughout.
 redirected() {
   wait_healthy
-  agent https://api.anthropic.com/v1/messages
+  agent https://api.anthropic.com/v1/messages --resolve api.anthropic.com:443:10.99.0.1
   check_redacted 1
   check_direct 0
   echo "agents.slice: redirected through scrim, redacted"
@@ -170,7 +168,8 @@ redirected() {
   echo "connections to the listener without an original destination: closed"
 
   systemctl stop scrim.service
-  agent https://api.anthropic.com/v1/messages && fail "a connection got through with scrim stopped"
+  agent https://api.anthropic.com/v1/messages --resolve api.anthropic.com:443:10.99.0.1 &&
+    fail "a connection got through with scrim stopped"
   check_redacted 0
   check_direct 0
   [ "$(ebpf_state /usr/local/bin/scrim)" = active ] || fail "the programs went away while scrim was stopped"
