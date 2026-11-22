@@ -417,13 +417,15 @@ impl InjectionPolicy for ToolGate {
                 req.secret.name = info.name.to_string();
                 req.secret.store = info.store.to_string();
                 info.class.as_str().clone_into(&mut req.secret.class);
-                req.secret.labels.clone_from(&info.labels);
+                if let Some(l) = &info.labels {
+                    req.secret.labels.clone_from(l);
+                }
             }
             req.dest.host.clone_from(&r.destination.host);
             req.dest.method.clone_from(&r.method);
             req.dest.path.clone_from(&r.path);
             who.apply(&mut req);
-            if info.is_none_or(|i| i.labels.is_empty()) {
+            if info.is_none_or(|i| i.labels.is_none()) {
                 // No labels from the control plane: a rule on them could match.
                 req.unknown = req.unknown.with(Field::SecretLabels);
             }
@@ -575,12 +577,14 @@ mod tests {
                 name: "".into(),
                 store: "vw".into(),
                 traits: ValueTraits::of(b"secret-bytes"),
-                labels: Arc::new(
-                    labels
-                        .into_iter()
-                        .map(|(k, v)| (k.to_owned(), v.to_owned()))
-                        .collect(),
-                ),
+                labels: (!labels.is_empty()).then(|| {
+                    Arc::new(
+                        labels
+                            .into_iter()
+                            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                            .collect(),
+                    )
+                }),
             });
         }
         let d = Arc::new(Decisions::new(1, &policy, None, ix, Hooks::default()).unwrap());

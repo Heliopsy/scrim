@@ -516,3 +516,68 @@ func TestSnapshotCarriesSigV4ShapeAndClientCertificate(t *testing.T) {
 		t.Fatalf("kind-admin = %v", c)
 	}
 }
+
+// TestSnapshotSendsOnlyLabelsRulesRead: a rule on
+// vaultwarden.collection.Prod sends that key and nothing else of each
+// value's labels; a policy change re-sends them on the next build.
+func TestSnapshotSendsOnlyLabelsRulesRead(t *testing.T) {
+	ref := stores.MustParseRef("vw://Prod/db#password")
+	src := &fakeValues{store: "vw", vals: []fakeValue{
+		{refresh.Source{Ref: ref, Labels: map[string]string{
+			"vaultwarden.collection": "Prod,Shared", "vaultwarden.collection.Prod": "true",
+			"vaultwarden.collection.Shared": "true", "vaultwarden.org": "Acme",
+		}}, secret.FromString(seed(t, "prod-"))},
+		{refresh.Source{Ref: stores.MustParseRef("vw://Dev/db#password"), Labels: map[string]string{
+			"vaultwarden.collection": "Dev", "vaultwarden.org": "Acme",
+		}}, secret.FromString(seed(t, "dev-"))},
+	}}
+	cfg := buildConfig(t, "")
+	rules := []string{}
+	set := stores.NewSet()
+	set.SetLabeling("vw", "vaultwarden", nil)
+	b := &SnapshotBuilder{
+		Config: func() *config.Config { return cfg }, Values: []ValueSource{src},
+		Labels: set.Labels,
+		Policy: func() *pb.Policy {
+			c := policy.Config{Default: "allow"}
+			for i, w := range rules {
+				c.Rules = append(c.Rules, policy.RuleSpec{Name: fmt.Sprintf("r%d", i), Decision: "deny", When: w})
+			}
+			rs, err := policy.Compile(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snap := rs.Snapshot(1, false)
+			return snap.Proto()
+		},
+	}
+	b.SetKeys(testRing(t))
+	build := func() map[string]map[string]string {
+		t.Helper()
+		s, err := b.Build(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !s.GetValueLabels() {
+			t.Fatal("value_labels not set")
+		}
+		out := map[string]map[string]string{}
+		for _, v := range s.GetValues() {
+			out[v.GetRef()] = v.GetLabels()
+		}
+		return out
+	}
+	for r, l := range build() {
+		if len(l) != 0 {
+			t.Fatalf("no label rule, yet %s carries %v", r, l)
+		}
+	}
+	rules = []string{`op == "restore" && "vaultwarden.collection.Prod" in secret.labels`}
+	got := build()
+	if l := got["vw://Prod/db#password"]; len(l) != 1 || l["vaultwarden.collection.Prod"] != "true" {
+		t.Fatalf("Prod value labels = %v", l)
+	}
+	if l := got["vw://Dev/db#password"]; len(l) != 0 {
+		t.Fatalf("Dev value labels = %v", l)
+	}
+}

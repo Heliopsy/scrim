@@ -52,9 +52,35 @@ pub struct ValueInfo {
     pub store: Arc<str>,
     /// Character classes of the value.
     pub traits: ValueTraits,
-    /// What rules see as `secret.labels` (`ValueEntry.labels`). Empty means the control plane
-    /// sent none, and rules on `secret.labels` are then unknown.
-    pub labels: Arc<HashMap<String, String>>,
+    /// The value's labels that the snapshot's policy reads (`ValueEntry.labels`). `None` when
+    /// the control plane sent no labels (`Snapshot.value_labels` false): rules on
+    /// `secret.labels` are then unknown. Identical maps are shared ([`LabelInterner`]).
+    pub labels: Option<Labels>,
+}
+
+/// A value's labels, shared between values whose maps are equal.
+pub type Labels = Arc<HashMap<String, String>>;
+
+/// Shares one allocation between values whose label maps are equal: a policy reads few label
+/// keys, so most values carry one of a handful of maps (often the empty one).
+#[derive(Default)]
+pub struct LabelInterner {
+    seen: HashMap<Vec<(String, String)>, Labels>,
+}
+
+impl LabelInterner {
+    /// The shared copy of `m`.
+    pub fn intern(&mut self, m: &HashMap<String, String>) -> Labels {
+        let mut key: Vec<(String, String)> =
+            m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        key.sort_unstable();
+        Arc::clone(self.seen.entry(key).or_insert_with(|| Arc::new(m.clone())))
+    }
+
+    /// `ValueInfo::labels` for an entry: `None` unless `known` (`Snapshot.value_labels`).
+    pub fn labels(&mut self, m: &HashMap<String, String>, known: bool) -> Option<Labels> {
+        known.then(|| self.intern(m))
+    }
 }
 
 /// Every value of a snapshot, by reference and by slug.
@@ -75,8 +101,10 @@ impl ValueIndex {
     /// that builds its scrim-redact entries with `EntryId(i)` can look them up with
     /// [`ValueIndex::by_position`]. The values are read once to compute their traits and not
     /// kept.
-    pub fn from_entries(entries: &[pb::ValueEntry]) -> ValueIndex {
+    /// `value_labels` is `Snapshot.value_labels`.
+    pub fn from_entries(entries: &[pb::ValueEntry], value_labels: bool) -> ValueIndex {
         let mut ix = ValueIndex::new();
+        let mut labels = LabelInterner::default();
         for e in entries {
             ix.push(ValueInfo {
                 reference: e.r#ref.as_str().into(),
@@ -85,7 +113,7 @@ impl ValueIndex {
                 name: e.name.as_str().into(),
                 store: e.store.as_str().into(),
                 traits: ValueTraits::of(&e.value),
-                labels: Arc::new(e.labels.clone()),
+                labels: labels.labels(&e.labels, value_labels),
             });
         }
         ix
@@ -152,11 +180,14 @@ mod tests {
             e.class = class as i32;
             e
         };
-        let ix = ValueIndex::from_entries(&[
-            e("bao://kv/a#x", "a", pb::ValueClass::Display),
-            e("bao://kv/b#x", "b", pb::ValueClass::Unspecified),
-            e("bao://kv/b2#x", "b", pb::ValueClass::Credential),
-        ]);
+        let ix = ValueIndex::from_entries(
+            &[
+                e("bao://kv/a#x", "a", pb::ValueClass::Display),
+                e("bao://kv/b#x", "b", pb::ValueClass::Unspecified),
+                e("bao://kv/b2#x", "b", pb::ValueClass::Credential),
+            ],
+            true,
+        );
         assert_eq!(ix.len(), 3);
         assert!(!ix.is_empty());
         assert_eq!(
@@ -178,5 +209,33 @@ mod tests {
         assert_eq!(ValueClass::Display.as_str(), "display");
         // The value never shows up in Debug output.
         assert!(!format!("{ix:?}").contains("value-bytes"));
+    }
+
+    #[test]
+    fn labels_are_shared_and_unknown_without_the_snapshot_flag() {
+        let e = |r: &str, labels: &[(&str, &str)]| {
+            let mut e = pb::ValueEntry::default();
+            e.r#ref = r.into();
+            e.slug = r.into();
+            e.value = b"value-bytes".to_vec();
+            e.labels = labels
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect();
+            e
+        };
+        let entries = [
+            e("a", &[("tier", "prod")]),
+            e("b", &[("tier", "prod")]),
+            e("c", &[]),
+            e("d", &[]),
+        ];
+        let ix = ValueIndex::from_entries(&entries, true);
+        let l = |i: usize| ix.by_position(i).unwrap().labels.clone().unwrap();
+        assert_eq!(l(0).get("tier").map(String::as_str), Some("prod"));
+        assert!(Arc::ptr_eq(&l(0), &l(1)));
+        assert!(l(2).is_empty() && Arc::ptr_eq(&l(2), &l(3)));
+        let old = ValueIndex::from_entries(&entries, false);
+        assert!(old.by_position(0).unwrap().labels.is_none());
     }
 }

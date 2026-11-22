@@ -84,6 +84,13 @@ pub struct Snapshot {
     /// reference or name also has a value in `values` is ignored.
     #[prost(message, repeated, tag = "12")]
     pub unavailable: ::prost::alloc::vec::Vec<ValueEntry>,
+    /// value_labels says every entry's `labels` holds each label of that value
+    /// a condition of `policy` reads (docs/policy.md "Labels from stores"), and
+    /// only those: a key missing from an entry is missing on the value, and an
+    /// empty map is a value without such labels. False (an older control
+    /// plane) means no labels were sent, and `secret.labels` is unknown.
+    #[prost(bool, tag = "13")]
+    pub value_labels: bool,
 }
 /// CaCertificate is one generation of the tool-proxy CA.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -215,12 +222,11 @@ pub struct ValueEntry {
     /// "Client certificates toward upstreams").
     #[prost(bool, tag = "15")]
     pub client_certificate: bool,
-    /// labels are what rules see as `secret.labels` for this value
-    /// (docs/policy.md "Labels from stores"): the store's native labels, the
-    /// generic `store.*` labels and the instance's derived labels. Metadata
-    /// only, never a value. The control plane always sends at least
-    /// `store.name`; an empty map means a control plane that sends no labels,
-    /// and the data plane then treats `secret.labels` as unknown.
+    /// labels are the value's labels (docs/policy.md "Labels from stores": the
+    /// store's native labels, the generic `store.*` labels and the instance's
+    /// derived labels) that a condition of the snapshot's policy reads, so a
+    /// policy without label conditions sends none. Metadata only, never a
+    /// value. Meaningful only with `Snapshot.value_labels`.
     #[prost(map = "string, string", tag = "16")]
     pub labels: ::std::collections::HashMap<
         ::prost::alloc::string::String,

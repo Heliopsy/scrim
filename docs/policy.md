@@ -197,7 +197,9 @@ and revocable like any other:
 `secret.labels` describes where a secret lives, in every backend's own terms, so a rule can follow a
 Vaultwarden collection, an OpenBao mount or an Infisical environment instead of a reference
 spelling. Every operation that names a secret carries them: `store.write`, `secret.gen`,
-`store.read`, grants, `inject` and `restore` (the data plane gets them in its snapshot).
+`store.read`, grants, `inject` and `restore`. The data plane gets, for each value, only the label
+keys some rule's condition reads, so rules without label conditions cost it nothing; a rule added
+on reload re-sends what it needs with the next snapshot.
 
 Run `scrim catalog labels <name|reference>` to see every label a secret has and where each comes
 from, and `scrim policy eval --label key=value` to try a rule against them.

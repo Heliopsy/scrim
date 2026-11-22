@@ -767,7 +767,13 @@ type Snapshot struct {
 	// toward their bound hosts with `credential_unavailable` instead of
 	// forwarding it as text. The redaction core ignores them. An entry whose
 	// reference or name also has a value in `values` is ignored.
-	Unavailable   []*ValueEntry `protobuf:"bytes,12,rep,name=unavailable,proto3" json:"unavailable,omitempty"`
+	Unavailable []*ValueEntry `protobuf:"bytes,12,rep,name=unavailable,proto3" json:"unavailable,omitempty"`
+	// value_labels says every entry's `labels` holds each label of that value
+	// a condition of `policy` reads (docs/policy.md "Labels from stores"), and
+	// only those: a key missing from an entry is missing on the value, and an
+	// empty map is a value without such labels. False (an older control
+	// plane) means no labels were sent, and `secret.labels` is unknown.
+	ValueLabels   bool `protobuf:"varint,13,opt,name=value_labels,json=valueLabels,proto3" json:"value_labels,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -884,6 +890,13 @@ func (x *Snapshot) GetUnavailable() []*ValueEntry {
 		return x.Unavailable
 	}
 	return nil
+}
+
+func (x *Snapshot) GetValueLabels() bool {
+	if x != nil {
+		return x.ValueLabels
+	}
+	return false
 }
 
 // CaCertificate is one generation of the tool-proxy CA.
@@ -1174,12 +1187,11 @@ type ValueEntry struct {
 	// the credential's placeholder certificate (credential-injection spec,
 	// "Client certificates toward upstreams").
 	ClientCertificate bool `protobuf:"varint,15,opt,name=client_certificate,json=clientCertificate,proto3" json:"client_certificate,omitempty"`
-	// labels are what rules see as `secret.labels` for this value
-	// (docs/policy.md "Labels from stores"): the store's native labels, the
-	// generic `store.*` labels and the instance's derived labels. Metadata
-	// only, never a value. The control plane always sends at least
-	// `store.name`; an empty map means a control plane that sends no labels,
-	// and the data plane then treats `secret.labels` as unknown.
+	// labels are the value's labels (docs/policy.md "Labels from stores": the
+	// store's native labels, the generic `store.*` labels and the instance's
+	// derived labels) that a condition of the snapshot's policy reads, so a
+	// policy without label conditions sends none. Metadata only, never a
+	// value. Meaningful only with `Snapshot.value_labels`.
 	Labels        map[string]string `protobuf:"bytes,16,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4115,7 +4127,7 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x03pid\x18\x03 \x01(\rR\x03pid\x128\n" +
 	"\x18applied_snapshot_version\x18\x04 \x01(\x04R\x16appliedSnapshotVersion\x12#\n" +
 	"\rmemory_locked\x18\x05 \x01(\bR\fmemoryLocked\x12\x1a\n" +
-	"\bdumpable\x18\x06 \x01(\bR\bdumpable\"\xbd\x05\n" +
+	"\bdumpable\x18\x06 \x01(\bR\bdumpable\"\xe0\x05\n" +
 	"\bSnapshot\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversion\x126\n" +
@@ -4129,7 +4141,8 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\arestore\x18\n" +
 	" \x01(\v2#.scrim.dataplane.v1.RestoreSettingsR\arestore\x12E\n" +
 	"\rtool_proxy_ca\x18\v \x03(\v2!.scrim.dataplane.v1.CaCertificateR\vtoolProxyCa\x12@\n" +
-	"\vunavailable\x18\f \x03(\v2\x1e.scrim.dataplane.v1.ValueEntryR\vunavailable\"]\n" +
+	"\vunavailable\x18\f \x03(\v2\x1e.scrim.dataplane.v1.ValueEntryR\vunavailable\x12!\n" +
+	"\fvalue_labels\x18\r \x01(\bR\vvalueLabels\"]\n" +
 	"\rCaCertificate\x12\x19\n" +
 	"\bcert_pem\x18\x01 \x01(\tR\acertPem\x12\x17\n" +
 	"\akey_pem\x18\x02 \x01(\fR\x06keyPem\x12\x18\n" +

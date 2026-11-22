@@ -21,7 +21,7 @@
 //!    ([`crate::Table::restricts`]). The agent identity is taken from the [`Caller`]; when it
 //!    is not known, conditions on it are unknown and a rule that depends on it keeps the
 //!    placeholder. `secret.labels` are the value's labels from the snapshot
-//!    (`ValueEntry.labels`); a value without labels (an older control plane) leaves them
+//!    (`ValueEntry.labels`); a snapshot without labels (an older control plane) leaves them
 //!    unknown, so a rule on them keeps the placeholder.
 //!
 //! [`RestoreEngine::decide`] answers for one placeholder without seeing its value (it uses
@@ -46,7 +46,7 @@ use crate::request::{Field, FieldSet, Request};
 use crate::table::{DecidedBy, Table, TableError};
 
 pub use tools::{BUILTIN_TOOLS, DisplayMode, Settings, SettingsError, ToolRole, ToolSpec};
-pub use values::{ValueClass, ValueIndex, ValueInfo};
+pub use values::{LabelInterner, Labels, ValueClass, ValueIndex, ValueInfo};
 
 #[cfg(feature = "llm")]
 pub use llm::LlmRestorePolicy;
@@ -267,7 +267,7 @@ impl RestoreEngine {
         Ok(RestoreEngine::new(
             settings,
             table,
-            ValueIndex::from_entries(&s.values),
+            ValueIndex::from_entries(&s.values, s.value_labels),
         ))
     }
 
@@ -319,10 +319,9 @@ impl RestoreEngine {
             }
             None => FieldSet::AGENT,
         };
-        if info.labels.is_empty() {
-            unknown = unknown.with(Field::SecretLabels);
-        } else {
-            req.secret.labels.clone_from(&info.labels);
+        match &info.labels {
+            Some(l) => req.secret.labels.clone_from(l),
+            None => unknown = unknown.with(Field::SecretLabels),
         }
         match &caller.provider {
             Some(p) => req.provider.clone_from(p),

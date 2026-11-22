@@ -54,9 +54,9 @@ pub use request::{Agent, Dest, Field, FieldSet, Request, Secret, Tool};
 #[cfg(feature = "llm")]
 pub use restore::LlmRestorePolicy;
 pub use restore::{
-    At, BlockPolicy, Caller, DisplayMode, KeepReason, RedactValues, ResolvedValue, RestoreEngine,
-    RestoreError, Restored, Settings, SettingsError, ToolRole, ToolSpec, ValueClass, ValueIndex,
-    ValueInfo, ValueSource, Verdict,
+    At, BlockPolicy, Caller, DisplayMode, KeepReason, LabelInterner, RedactValues, ResolvedValue,
+    RestoreEngine, RestoreError, Restored, Settings, SettingsError, ToolRole, ToolSpec, ValueClass,
+    ValueIndex, ValueInfo, ValueSource, Verdict,
 };
 pub use table::{
     AskReason, Clause, Condition, DEFAULT_RULE, DecidedBy, Decision, Effect, Matcher, Outcome,

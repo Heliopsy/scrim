@@ -5,6 +5,7 @@ package daemon
 import (
 	"context"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -68,42 +69,52 @@ func withLabels(t *testing.T, h *harness) (note, prod string) {
 }
 
 // TestSnapshotCarriesStoreLabels: every value in the snapshot carries the
-// labels rules see as secret.labels: the env store's native labels, the
-// generic store.* labels and the configured derived labels.
+// labels a rule's condition reads (here tier and store.kind, from a derived
+// label and the generic labels), and no others.
 func TestSnapshotCarriesStoreLabels(t *testing.T) {
 	h := newHarness(t, seed(t, "tok-"))
 	withLabels(t, h)
 	startDaemon(t, h)
 	want := map[string]map[string]string{
-		"testenv://SCRIMTEST_TOKEN#value": {
-			"store.name": "testenv", "store.kind": "env", "store.path": "SCRIMTEST_TOKEN", "store.container": "",
-			"store.field": "value", "env.variable": "SCRIMTEST_TOKEN", "env.prefix": "SCRIMTEST_",
-			"team": "ops", "variable": "SCRIMTEST_TOKEN",
-		},
-		"testenv://SCRIMTEST_PROD_NOTE#value": {"tier": "prod", "env.variable": "SCRIMTEST_PROD_NOTE"},
-		"testenv://SCRIMTEST_NOTE#value":      {"team": "ops"},
+		"testenv://SCRIMTEST_TOKEN#value":     {"store.kind": "env"},
+		"testenv://SCRIMTEST_PROD_NOTE#value": {"store.kind": "env", "tier": "prod"},
+		"testenv://SCRIMTEST_NOTE#value":      {"store.kind": "env"},
 	}
 	eventually(t, "labelled values in the snapshot", func() bool {
+		snap := h.snapshot(t)
+		if !snap.GetValueLabels() {
+			t.Fatal("snapshot does not say it carries value labels")
+		}
 		seen := 0
-		for _, v := range h.snapshot(t).GetValues() {
+		for _, v := range snap.GetValues() {
 			w, ok := want[v.GetRef()]
 			if !ok {
-				if v.GetLabels()["store.name"] == "" {
-					t.Fatalf("%s has no store.name label: %v", v.GetRef(), v.GetLabels())
-				}
 				continue
 			}
-			for k, val := range w {
-				if v.GetLabels()[k] != val {
-					return false
-				}
-			}
-			if v.GetRef() == "testenv://SCRIMTEST_NOTE#value" && v.GetLabels()["tier"] != "" {
-				t.Fatalf("SCRIMTEST_NOTE has a tier label: %v", v.GetLabels())
+			if !maps.Equal(v.GetLabels(), w) {
+				return false
 			}
 			seen++
 		}
 		return seen == len(want)
+	})
+}
+
+// TestSnapshotWithoutLabelRulesSendsNoLabels: with no rule reading
+// secret.labels no value carries any, and the snapshot still says labels
+// were sent (none are needed), so the data plane does not treat them as
+// unknown.
+func TestSnapshotWithoutLabelRulesSendsNoLabels(t *testing.T) {
+	h := newHarness(t, seed(t, "tok-"))
+	startDaemon(t, h)
+	eventually(t, "values in the snapshot", func() bool {
+		snap := h.snapshot(t)
+		for _, v := range snap.GetValues() {
+			if len(v.GetLabels()) != 0 {
+				t.Fatalf("%s carries labels without a label rule: %v", v.GetRef(), v.GetLabels())
+			}
+		}
+		return snap.GetValueLabels() && len(snap.GetValues()) > 0
 	})
 }
 

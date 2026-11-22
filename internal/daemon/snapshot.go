@@ -182,11 +182,13 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 	if b.Catalog != nil {
 		cat = b.Catalog()
 	}
-	snap.Values = b.values(cat)
+	keys := labelKeys(snap.Policy)
+	snap.ValueLabels = true
+	snap.Values = b.values(cat, keys)
 	snap.Unavailable = unavailable(cat, snap.Values)
 	for _, u := range snap.Unavailable {
 		if r, err := stores.ParseRef(u.GetRef()); err == nil {
-			u.Labels = b.labels(r, nil)
+			u.Labels = b.labels(keys, r, nil)
 		}
 	}
 
@@ -210,7 +212,7 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 // binding of its reference. Only a current value is bound: a retained
 // (rotated or deleted) value or a write in flight is redacted but never
 // injected, and a declared placeholder names only the current value.
-func (b *SnapshotBuilder) values(cat *catalog.Catalog) []*pb.ValueEntry {
+func (b *SnapshotBuilder) values(cat *catalog.Catalog, keys map[string]bool) []*pb.ValueEntry {
 	var out []*pb.ValueEntry
 	declared := map[string]bool{}
 	for _, src := range b.Values {
@@ -218,9 +220,9 @@ func (b *SnapshotBuilder) values(cat *catalog.Catalog) []*pb.ValueEntry {
 		src.EachValue(func(s refresh.Source, v secret.Value) {
 			e := &pb.ValueEntry{Store: store, Class: pb.ValueClass_VALUE_CLASS_CREDENTIAL}
 			if s.Ref.IsZero() {
-				e.Labels = b.labels(stores.Ref{Scheme: store}, nil)
+				e.Labels = b.labels(keys, stores.Ref{Scheme: store}, nil)
 			} else {
-				e.Labels = b.labels(s.Ref, s.Labels)
+				e.Labels = b.labels(keys, s.Ref, s.Labels)
 			}
 			if err := v.Expose(func(raw []byte) error { e.Value = slices.Clone(raw); return nil }); err != nil || len(e.Value) == 0 {
 				clear(e.Value)
@@ -258,21 +260,44 @@ func (b *SnapshotBuilder) values(cat *catalog.Catalog) []*pb.ValueEntry {
 	return uniqueNames(out)
 }
 
-// labels is what rules see as secret.labels for the value at ref. It is
-// never empty: the data plane reads an empty map as "no labels sent" and
-// treats secret.labels as unknown.
-func (b *SnapshotBuilder) labels(ref stores.Ref, native map[string]string) map[string]string {
-	var out map[string]string
-	if b.Labels != nil {
-		out = b.Labels(ref, native)
+// labels is the part of what rules see as secret.labels for the value at
+// ref that the snapshot's policy reads (keys); nil when it reads none. The
+// data plane needs nothing else, and sending every label of every value
+// costs memory per value in every data plane.
+func (b *SnapshotBuilder) labels(keys map[string]bool, ref stores.Ref, native map[string]string) map[string]string {
+	if len(keys) == 0 || b.Labels == nil {
+		return nil
 	}
-	if out[stores.LabelStoreName] == "" {
-		if out == nil {
-			out = map[string]string{}
+	var out map[string]string
+	for k, v := range b.Labels(ref, native) {
+		if keys[k] {
+			if out == nil {
+				out = make(map[string]string, len(keys))
+			}
+			out[k] = v
 		}
-		out[stores.LabelStoreName] = ref.Scheme
 	}
 	return out
+}
+
+// labelKeys are the secret.labels keys a condition of p reads, by index,
+// selection, `in` or has(), in decided and residual clauses alike: the data
+// plane evaluates the conditions of a residual clause too.
+func labelKeys(p *pb.Policy) map[string]bool {
+	var keys map[string]bool
+	for _, r := range p.GetTable() {
+		for _, c := range r.GetClauses() {
+			for _, cond := range c.GetConditions() {
+				if cond.GetField() == "secret.labels" && cond.GetKey() != "" {
+					if keys == nil {
+						keys = map[string]bool{}
+					}
+					keys[cond.GetKey()] = true
+				}
+			}
+		}
+	}
+	return keys
 }
 
 // bindExtras copies the placeholder format, the client certificate flag and

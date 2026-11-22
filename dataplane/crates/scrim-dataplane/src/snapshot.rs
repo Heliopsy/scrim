@@ -205,7 +205,7 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
             snap.version,
             &policy,
             snap.restore.as_ref(),
-            value_index(&snap.values, &slugs),
+            value_index(&snap.values, &slugs, snap.value_labels),
             hooks.clone(),
         )
         .map_err(|e| invalid(e.to_string()))?,
@@ -358,8 +358,13 @@ fn tool_proxy_snapshot(
 
 /// The restore engine's value index: entry `i` is `values[i]`, with the slug the redaction core
 /// uses for it, so placeholders map back to their entries by position and slug.
-fn value_index(values: &[v1::ValueEntry], slugs: &[rc::RefSlug]) -> scrim_policy::ValueIndex {
+fn value_index(
+    values: &[v1::ValueEntry],
+    slugs: &[rc::RefSlug],
+    value_labels: bool,
+) -> scrim_policy::ValueIndex {
     let mut ix = scrim_policy::ValueIndex::new();
+    let mut labels = scrim_policy::LabelInterner::default();
     for (e, slug) in values.iter().zip(slugs) {
         ix.push(scrim_policy::ValueInfo {
             reference: e.r#ref.as_str().into(),
@@ -368,7 +373,7 @@ fn value_index(values: &[v1::ValueEntry], slugs: &[rc::RefSlug]) -> scrim_policy
             name: e.name.as_str().into(),
             store: e.store.as_str().into(),
             traits: scrim_policy::escape::ValueTraits::of(&e.value),
-            labels: Arc::new(e.labels.clone()),
+            labels: labels.labels(&e.labels, value_labels),
         });
     }
     ix

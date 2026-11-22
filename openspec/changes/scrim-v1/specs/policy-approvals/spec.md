@@ -195,9 +195,15 @@ finds no such secret SHALL label the request as a new item instead.
 
 ### Requirement: Data plane decides on the same labels
 
-The control plane SHALL send each value's labels to the data plane in the snapshot, so `inject` and
-`restore` are decided on the labels the control plane would use, and SHALL evaluate a data plane ask
-on its own labels for the secret, not on labels the ask carries.
+The control plane SHALL send each value's labels that a policy condition reads to the data plane in
+the snapshot, so `inject` and `restore` are decided on the labels the control plane would use, and
+SHALL evaluate a data plane ask on its own labels for the secret, not on labels the ask carries.
+A snapshot whose policy reads no labels SHALL carry none.
+
+#### Scenario: Only the labels rules read
+
+- **WHEN** the only label condition is `"vaultwarden.collection.Prod" in secret.labels`
+- **THEN** each value in the snapshot carries at most that one label, and with no label condition none
 
 #### Scenario: Injection governed by an organisation
 

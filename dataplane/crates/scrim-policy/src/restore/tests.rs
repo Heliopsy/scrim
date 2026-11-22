@@ -411,12 +411,14 @@ fn restore_rules_see_value_labels() {
         name: "".into(),
         store: "vw".into(),
         traits: ValueTraits::of(b"alpha"),
-        labels: Arc::new(
-            labels
-                .iter()
-                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-                .collect(),
-        ),
+        labels: (!labels.is_empty()).then(|| {
+            Arc::new(
+                labels
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                    .collect(),
+            )
+        }),
     };
     let mut index = ValueIndex::new();
     index.push(labelled(
