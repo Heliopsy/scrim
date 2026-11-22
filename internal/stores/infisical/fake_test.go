@@ -61,6 +61,10 @@ type fake struct {
 	// denyValues refuses single reads that ask for the value with 403,
 	// as for an identity allowed to describe secrets but not read them.
 	denyValues bool
+	// maskValues answers single reads that ask for the value with the
+	// hidden mask and secretValueHidden, as Infisical does for an identity
+	// that may describe a secret but not read its value.
+	maskValues bool
 }
 
 type fakeSecret struct {
@@ -358,6 +362,9 @@ func (f *fake) get(w http.ResponseWriter, r *http.Request) {
 	f.gets = append(f.gets, q)
 	// Infisical defaults viewSecretValue to true.
 	view := q.Get("viewSecretValue") != "false" || f.ignoreView
+	if f.maskValues {
+		view = false
+	}
 	if view && f.denyValues {
 		apiErr(w, 403, "PermissionDenied", "You are not allowed to read the value of this secret")
 		return

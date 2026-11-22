@@ -157,15 +157,18 @@ func (l location) refFor(scheme, folder, key string) stores.Ref {
 // secretReminderNote are free text that may quote a value, so they are not
 // decoded at all.
 type apiSecret struct {
-	Name           string    `json:"secretKey"`
-	SecretValue    wire.Raw  `json:"secretValue"`
-	Version        int       `json:"version"`
-	Type           string    `json:"type"`
-	Environment    string    `json:"environment"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
-	SecretPath     string    `json:"secretPath"`
-	SecretMetadata []kv      `json:"secretMetadata"`
+	Name        string   `json:"secretKey"`
+	SecretValue wire.Raw `json:"secretValue"`
+	// SecretValueHidden is set when SecretValue holds Infisical's mask
+	// instead of the value.
+	SecretValueHidden bool      `json:"secretValueHidden"`
+	Version           int       `json:"version"`
+	Type              string    `json:"type"`
+	Environment       string    `json:"environment"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
+	SecretPath        string    `json:"secretPath"`
+	SecretMetadata    []kv      `json:"secretMetadata"`
 	// Tags is nil when the response has no tags field, empty when the
 	// secret has none.
 	Tags            []apiTag `json:"tags"`
@@ -343,6 +346,12 @@ func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, erro
 		return stores.Secret{}, err
 	}
 	defer got.secret.SecretValue.Wipe()
+	// Infisical answers an identity that may describe the secret but not
+	// read it with a mask in place of the value. The mask is never a value.
+	if got.secret.SecretValueHidden {
+		return stores.Secret{}, &stores.Error{Store: a.name, Op: stores.OpRead, Ref: ref, Kind: stores.ErrPermission,
+			Detail: "Infisical hid the value (secretValueHidden); the identity may describe this secret but not read its value"}
+	}
 	v, err := got.secret.SecretValue.Value()
 	if err != nil {
 		return stores.Secret{}, &stores.Error{Store: a.name, Op: stores.OpRead, Ref: ref, Kind: stores.ErrUnavailable, Detail: "secret value missing from the response"}

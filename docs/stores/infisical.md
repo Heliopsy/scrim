@@ -360,6 +360,7 @@ included when it does not contain a value involved in the request, and is withhe
 | 401, or 403 about the token | logs in again once, then permission denied |
 | login refused (bad client secret, identity or service account token), unreadable token file | permission denied |
 | 403 | permission denied |
+| `secretValueHidden: true` on a read (the identity may describe the secret, not read its value) | permission denied; the mask is wiped, never used as the value |
 | 404 (secret, version, folder, project or environment) | not found |
 | 400 "already exists" on a create-only write | conflict |
 | 429, 5xx, timeout, connection refused | store unavailable |
