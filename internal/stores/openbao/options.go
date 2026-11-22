@@ -33,6 +33,7 @@ const (
 	optWatchInterval   = "watch.interval"
 	optWatchMaxBackoff = "watch.max-backoff"
 	optWriteOnly       = "write-only-paths"
+	optLabelLookups    = "labels.lookups"
 )
 
 // Auth methods.
@@ -82,6 +83,9 @@ type Options struct {
 	// WriteOnly lists path prefixes (mount included) that scrim writes but
 	// never reads back from the store.
 	WriteOnly []string
+	// LabelLookups allows the optional requests that fill native labels:
+	// a secret's metadata on read and its mount's information.
+	LabelLookups bool
 }
 
 // ParseOptions decodes and validates raw instance options. Every problem is
@@ -114,6 +118,7 @@ func parseOptions(store string, raw map[string]any) (Options, error) {
 	o.ServerName = d.String(optServerName, "")
 	o.WatchInterval = d.Duration(optWatchInterval, DefaultWatchInterval)
 	o.WatchMaxBackoff = d.Duration(optWatchMaxBackoff, DefaultWatchMaxBackoff)
+	o.LabelLookups = d.Bool(optLabelLookups, true)
 	for _, p := range d.Strings(optWriteOnly) {
 		if p = strings.Trim(p, "/"); p != "" {
 			o.WriteOnly = append(o.WriteOnly, p)

@@ -311,6 +311,71 @@ update and patch without read.
 - **AND** scrim reports it as write-only and does not try to load it into the redaction set from the
   store, keeping only the value it just wrote
 
+### Requirement: OpenBao native labels
+
+The OpenBao adapter SHALL label every secret it reads, lists or writes with what OpenBao reports
+about it, under `openbao.<attribute>` keys: mount, engine, namespace, path and its folders and
+segments, versions and version settings, times, deletion state, and mount description, options and
+settings. A list attribute SHALL be stored comma-joined and as one presence key per value. Labels
+SHALL never hold a secret value.
+
+#### Scenario: Ancestor folders match
+
+- **WHEN** scrim reads `bao://kv-prod/prod/eu/db`
+- **THEN** its labels hold `openbao.mount: kv-prod`, `openbao.path: prod/eu/db`,
+  `openbao.ancestors: prod,prod/eu`, `openbao.ancestors.prod: "true"` and
+  `openbao.ancestors.prod/eu: "true"`
+- **AND** a rule matching `"openbao.ancestors.prod" in secret.labels` matches it
+
+#### Scenario: No value in labels
+
+- **WHEN** scrim reads, lists and writes a secret holding a generated value
+- **THEN** no label key or value contains that value
+
+### Requirement: OpenBao custom metadata labels cannot forge native keys
+
+The OpenBao adapter SHALL label KV v2 custom metadata as `openbao.meta.<key>` and, unless the key
+starts with `openbao.` or `store.`, under its own key as well. Custom metadata SHALL NOT overwrite a
+native key. Custom metadata keys SHALL be folded to lowercase ASCII letters, digits, `-` and `_` in
+dot-separated segments; presence keys SHALL carry their value verbatim.
+
+#### Scenario: Custom metadata cannot forge native keys
+
+- **WHEN** a secret under mount `kv-prod` has custom metadata `openbao.mount = kv-dev` and
+  `team = payments`
+- **THEN** its labels hold `openbao.mount: kv-prod`, `openbao.meta.openbao.mount: kv-dev`,
+  `openbao.meta.team: payments` and `team: payments`
+
+### Requirement: OpenBao label lookups are optional
+
+A request the OpenBao adapter makes only for labels (secret metadata on read, mount information)
+SHALL NOT fail the operation or force a new login when it is refused or fails; the labels that
+depended on it SHALL be left out. Configuration SHALL be able to turn these requests off.
+
+#### Scenario: Forbidden metadata lookups degrade
+
+- **WHEN** scrim's token may read a secret's data but not its metadata or its mount
+- **THEN** the read succeeds with the value
+- **AND** the labels that need metadata, such as `openbao.current_version` and
+  `openbao.max_versions`, are absent while `openbao.mount`, `openbao.path` and `openbao.version`
+  are present
+- **AND** scrim does not log in again because of the refusal
+
+#### Scenario: Label lookups turned off
+
+- **WHEN** `labels.lookups` is false
+- **THEN** a read makes no request besides the data read
+- **AND** its labels still hold the mount, path and version labels
+
+### Requirement: OpenBao scheduled deletion is not deletion
+
+The OpenBao adapter SHALL treat a version as deleted only once its deletion time has passed.
+
+#### Scenario: Scheduled deletion is not deletion
+
+- **WHEN** the current version has a deletion time in the future, set by `delete_version_after`
+- **THEN** it is read and listed as usual, with that time in `openbao.deletion_time`
+
 ### Requirement: Store login with the pod's Kubernetes service account
 
 When scrim runs in Kubernetes, the OpenBao adapter (`auth.method: kubernetes`) and the Infisical
