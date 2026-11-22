@@ -285,6 +285,8 @@ is out of date.
 | [`identity.peers`](#identitypeers) | map | `{}` | restart required |
 | [`identity.store-credentials`](#identitystore-credentials) | map | `{}` | restart required |
 | [`identity.store-login`](#identitystore-login) | map | `{}` | restart required |
+| [`interception.ebpf.cgroups`](#interceptionebpfcgroups) | list | `[]` | hot |
+| [`interception.ebpf.port`](#interceptionebpfport) | int | `9792` | hot |
 | [`log.format`](#logformat) | string | `text` | hot |
 | [`log.level`](#loglevel) | string | `info` | hot |
 | [`metrics.allow-unauthenticated-remote`](#metricsallow-unauthenticated-remote) | bool | `false` | restart required |
@@ -1361,6 +1363,32 @@ Per-agent store login, by store instance: `kubernetes role:<template> [mount:<pa
 | Environment | `SCRIM_IDENTITY_STORE_LOGIN` |
 | Flag | none |
 | Reload | restart required |
+
+### interception
+
+#### `interception.ebpf.cgroups`
+
+Control groups (cgroup v2 paths below /sys/fs/cgroup, such as agents.slice) the eBPF transparent mode covers (Linux): `sudo scrim ebpf attach` redirects their TCP connections to ports 80 and 443 to the transparent listener and denies their direct and QUIC egress. Status and doctor report each one that is not attached. Empty: the mode is off.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_INTERCEPTION_EBPF_CGROUPS` |
+| Flag | none |
+| Reload | hot |
+
+#### `interception.ebpf.port`
+
+Port of the transparent listener on 127.0.0.1 and ::1 that the eBPF transparent mode redirects to. It must match the port of proxy.transparent-listen; nothing listening there means covered connections fail, never go direct.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `9792` |
+| Environment | `SCRIM_INTERCEPTION_EBPF_PORT` |
+| Flag | none |
+| Reload | hot |
 
 ### log
 

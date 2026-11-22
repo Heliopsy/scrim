@@ -174,7 +174,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 
 ## 15. Remaining edge modes
 
-- [ ] 15.1 eBPF cgroup interception with a privileged loader; verify: per-cgroup redirect and direct-egress denial on a test kernel
+- [x] 15.1 eBPF cgroup interception with a privileged loader; verify: per-cgroup redirect and direct-egress denial on a test kernel (`scrim ebpf attach|detach|status`, internal/bpfredirect; `just ebpf-vm-test` boots a kernel in qemu and runs the kernel tests as root there, CI job `ebpf`; covered connections land on the 13.3 transparent listener, `proxy.transparent-listen`, whose routing is tested there; no end-to-end run of scrim under eBPF yet)
+- [ ] 15.1a `scrim install --ebpf`: attach at boot from a oneshot unit and detach on uninstall, with the 13.3 transparent listener drop-in; verify: the VM test covers install and uninstall
 - [x] 15.2 DNS override mode; verify: an agent resolving the provider host reaches scrim
 - [x] 15.3 Agent hooks mode reported as partial; verify: status shows partial protection
   - done: `scrim install --hooks`, `scrim hooks run`, local API `POST /v1/redact` over the data plane's new `Redact` call; `just e2e-agentmodes` runs Claude Code 2.1.330 against the fake provider with hooks only: `Bash` and `Read` results of a seeded `.env` reach it with placeholders, a prompt with the value is blocked, status reports partial. Codex hook unit-tested only
