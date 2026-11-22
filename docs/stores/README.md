@@ -9,6 +9,7 @@ value back.
 | OpenBao (and Vault-compatible KV v2) | `openbao` | [openbao.md](openbao.md) |
 | Infisical | `infisical` | [infisical.md](infisical.md) |
 | Bitwarden Secrets Manager | `bws` | [bws.md](bws.md) |
+| Kubernetes Secrets | `kubernetes` | [kubernetes.md](kubernetes.md) |
 | Environment variables, files | `env`, `file` | [local.md](local.md) |
 | SOPS-encrypted files | `sops` | [sops.md](sops.md) |
 | Memory (tests, throwaway runs) | `memory` | none |
@@ -18,19 +19,21 @@ value back.
 `scrim doctor` prints this matrix for the stores you configure. An operation a store does not
 support is refused before anything is attempted.
 
-| Kind        | read | list | watch | write | generate | dynamic |
-|-------------|------|------|-------|-------|----------|---------|
-| `openbao`   | yes  | yes  | yes   | yes   | no       | no      |
-| `infisical` | yes  | yes  | yes   | yes   | no       | no      |
-| `bws`       | yes  | yes  | yes   | yes   | no       | no      |
-| `env`       | yes  | yes  | no    | no    | no       | no      |
-| `file`      | yes  | yes  | yes   | no    | no       | no      |
-| `sops`      | yes  | yes  | yes   | no    | no       | no      |
-| `memory`    | yes  | yes  | yes   | yes   | no       | no      |
+| Kind         | read | list | watch | write  | generate | dynamic |
+|--------------|------|------|-------|--------|----------|---------|
+| `openbao`    | yes  | yes  | yes   | yes    | no       | no      |
+| `infisical`  | yes  | yes  | yes   | yes    | no       | no      |
+| `bws`        | yes  | yes  | yes   | yes    | no       | no      |
+| `kubernetes` | yes  | yes  | yes   | opt-in | no       | no      |
+| `env`        | yes  | yes  | no    | no     | no       | no      |
+| `file`       | yes  | yes  | yes   | no     | no       | no      |
+| `sops`       | yes  | yes  | yes   | no     | no       | no      |
+| `memory`     | yes  | yes  | yes   | yes    | no       | no      |
 
 Watch on OpenBao, Infisical and Bitwarden Secrets Manager polls version metadata. It never fetches
-values, so it stays cheap even with a short interval. Generated secrets are produced by scrim and
-then written, so generate needs write and no store-side support.
+values, so it stays cheap even with a short interval. Kubernetes uses the API server's own watch,
+metadata only, and writes only when the instance sets `writable: true`. Generated secrets are
+produced by scrim and then written, so generate needs write and no store-side support.
 
 ## Configuring an instance
 
@@ -64,7 +67,7 @@ its guide.
 | ----- | --------- | --------- |
 | `stores.<name>.kind` | required | Adapter kind. |
 | `stores.<name>.aliases` | none | Extra schemes that address this instance. |
-| `stores.<name>.redact` | none | References loaded into the redaction set at start and kept fresh. A reference ending in `/*` loads every secret under that folder; one ending in `*` right after part of a name (`APP_*`, `dir/app-*`) is a glob that loads every secret whose path starts with the text before the `*` (env and file stores only); a `#field` limits a single secret to one field. A `*` anywhere else is refused. References must use the instance name as their scheme. |
+| `stores.<name>.redact` | none | References loaded into the redaction set at start and kept fresh. A reference ending in `/*` loads every secret under that folder; one ending in `*` right after part of a name (`APP_*`, `dir/app-*`) is a glob that loads every secret whose path starts with the text before the `*` (stores that support glob listing, see each guide); a `#field` limits a single secret to one field. A `*` anywhere else is refused. References must use the instance name as their scheme. |
 | `stores.<name>.refresh.interval` | `5m` | Full refresh period, spread by ±20% jitter. |
 | `stores.<name>.refresh.retention` | `24h` | How long a rotated, deleted or overwritten value stays in the redaction set. |
 | `stores.<name>.refresh.staleness` | `15m` | How long a value confirmed by the store may still be injected without a newer confirmation, and how long the store may be unreachable before it is reported unhealthy. |
@@ -159,6 +162,9 @@ The local stores report:
 | `file` | `file.root` (the `root` option), `file.path` (absolute path of the file), `file.format` (`raw`, `dotenv` or `json`) |
 | `sops` | `sops.root`, `sops.path`, `sops.format`, `sops.version`, `sops.lastmodified`, `sops.key-type`, `sops.age-recipient` and more from the file's metadata ([sops.md](sops.md#labels)) |
 | `memory` | `memory.top` (first path segment, when the path has more than one) |
+
+Kubernetes Secrets report `kubernetes.namespace`, `kubernetes.name` and `kubernetes.type`, with
+labels and annotations under `kubernetes.meta.` ([kubernetes.md](kubernetes.md#labels)).
 
 `labels` derives names of your own from the labels above. Each entry is a label name and a source:
 a label to copy, `{value}` for a constant, `{from, value}` for a constant set when a label exists, or

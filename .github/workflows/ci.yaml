@@ -106,6 +106,45 @@ jobs:
           podman pod ps -q --filter name=scrim-stores- | xargs -r podman pod rm -f
           podman volume prune -f
 
+  # GitHub-hosted: the Kubernetes Secrets adapter against a real API server,
+  # a throwaway kind cluster (docker provider, as chart-kind) with its own
+  # kubeconfig file. kind and kubectl come from the chart's pinned tools;
+  # the node image is kind's default for that release.
+  stores-kubernetes:
+    name: Store conformance (Kubernetes on kind)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      KIND_CLUSTER: scrim-k8s-ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Install kind and kubectl
+        run: |
+          set -euo pipefail
+          deploy/helm/scrim/ci/tools.sh "$RUNNER_TEMP/tools" >/dev/null
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - name: Create the kind cluster
+        run: |
+          kind create cluster --name "$KIND_CLUSTER" --kubeconfig "$RUNNER_TEMP/kubeconfig" --wait 120s
+          timeout 30 kubectl --kubeconfig "$RUNNER_TEMP/kubeconfig" --context "kind-$KIND_CLUSTER" get --raw /readyz
+      # SCRIM_TEST_KUBERNETES=1 turns a missing cluster into a failure, so the
+      # conformance runs cannot be skipped silently.
+      - run: go test -race -count=1 -timeout 15m ./internal/stores/kubernetes/
+        env:
+          SCRIM_TEST_KUBERNETES: "1"
+          SCRIM_TEST_KUBECONFIG: ${{ runner.temp }}/kubeconfig
+          SCRIM_TEST_KUBE_CONTEXT: kind-${{ env.KIND_CLUSTER }}
+      - name: Delete the kind cluster
+        if: always()
+        run: kind delete cluster --name "$KIND_CLUSTER" --kubeconfig "$RUNNER_TEMP/kubeconfig"
+
   # GitHub-hosted, like the stores job: the events backends, rate limits and
   # audit sinks against real Valkey, NATS, PostgreSQL, Loki, an OpenTelemetry
   # collector and Redpanda, each in a memory-limited rootless container, then
