@@ -150,47 +150,187 @@ func (l location) refFor(scheme, folder, key string) stores.Ref {
 }
 
 // apiSecret is a secret as the v4 API returns it. SecretValue is wire.Raw
-// so it never becomes a Go string and prints as a marker.
+// so it never becomes a Go string and prints as a marker. secretComment and
+// secretReminderNote are free text that may quote a value, so they are not
+// decoded at all.
 type apiSecret struct {
-	SecretKey      string    `json:"secretKey"`
+	Name           string    `json:"secretKey"`
 	SecretValue    wire.Raw  `json:"secretValue"`
 	Version        int       `json:"version"`
+	Type           string    `json:"type"`
+	Environment    string    `json:"environment"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
 	SecretPath     string    `json:"secretPath"`
 	SecretMetadata []kv      `json:"secretMetadata"`
+	// Tags is nil when the response has no tags field, empty when the
+	// secret has none.
+	Tags            []apiTag `json:"tags"`
+	IsRotatedSecret *bool    `json:"isRotatedSecret"`
+	RotationID      string   `json:"rotationId"`
+	ReminderDays    optInt   `json:"secretReminderRepeatDays"`
 }
 
+// kv is one secret metadata entry. An encrypted entry (Infisical's
+// "encrypted metadata", meant for sensitive text) is returned decrypted, so
+// its value is never put in a label.
 type kv struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+	IsEncrypted bool   `json:"isEncrypted,omitempty"`
 }
 
-func (s *apiSecret) meta(ref stores.Ref) stores.Metadata {
+type apiTag struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+// optInt is a nullable number that remembers whether the field was present.
+type optInt struct {
+	set bool
+	n   *int
+}
+
+func (o *optInt) UnmarshalJSON(b []byte) error {
+	o.set = true
+	return json.Unmarshal(b, &o.n)
+}
+
+func (s *apiSecret) meta(ref stores.Ref, labels map[string]string) stores.Metadata {
 	m := stores.Metadata{
 		Ref:       ref.Secret(),
 		Fields:    []string{Field},
 		CreatedAt: s.CreatedAt,
 		UpdatedAt: s.UpdatedAt,
+		Labels:    labels,
 	}
 	if s.Version > 0 {
 		m.Version = strconv.Itoa(s.Version)
 	}
-	if len(s.SecretMetadata) > 0 {
-		m.Labels = make(map[string]string, len(s.SecretMetadata))
-		for _, e := range s.SecretMetadata {
-			m.Labels[e.Key] = e.Value
-		}
-	}
 	return m
 }
 
-func (a *Adapter) baseQuery(ctx context.Context, l location) (url.Values, error) {
+// labels builds the labels of s, found at folder of l (docs/stores/
+// infisical.md, "Policy labels"). Unencrypted secret metadata is copied as
+// is, as before native labels existed, minus keys in the infisical.
+// namespace; native attributes follow, then the metadata again under
+// infisical.meta., which never overwrites a key, so metadata cannot forge a
+// native label.
+func (a *Adapter) labels(p projectInfo, projectID string, l location, folder string, s *apiSecret) map[string]string {
+	out := map[string]string{}
+	var encrypted []string
+	for _, e := range s.SecretMetadata {
+		switch {
+		case e.IsEncrypted:
+			encrypted = append(encrypted, e.Key)
+		case !isReserved(e.Key):
+			out[e.Key] = e.Value
+		}
+	}
+	nativeLocation(out, p, projectID, l, folder, s.Name)
+	setNative(out, "encrypted-meta", encrypted...)
+	if s.Type != "" {
+		setNative(out, "type", s.Type)
+	}
+	if s.Version > 0 {
+		setNative(out, "version", strconv.Itoa(s.Version))
+	}
+	setTime(out, "created", s.CreatedAt)
+	setTime(out, "updated", s.UpdatedAt)
+	slugs := make([]string, 0, len(s.Tags))
+	for _, t := range s.Tags {
+		slugs = append(slugs, t.Slug)
+	}
+	setNative(out, "tag", slugs...)
+	if s.IsRotatedSecret != nil {
+		setBool(out, "rotation", *s.IsRotatedSecret)
+		if *s.IsRotatedSecret && s.RotationID != "" {
+			setNative(out, "rotation.id", s.RotationID)
+		}
+	}
+	if s.ReminderDays.set {
+		on := s.ReminderDays.n != nil && *s.ReminderDays.n > 0
+		setBool(out, "reminder", on)
+		if on {
+			setNative(out, "reminder.days", strconv.Itoa(*s.ReminderDays.n))
+		}
+	}
+	// A secret Infisical served through a secret import carries the
+	// environment and folder it was imported from.
+	srcEnv, srcPath := s.Environment, "/"+strings.Trim(s.SecretPath, "/")
+	imported := (srcEnv != "" && srcEnv != l.env) || (s.SecretPath != "" && srcPath != "/"+strings.Trim(folder, "/"))
+	setBool(out, "imported", imported)
+	if imported {
+		if srcEnv == "" {
+			srcEnv = l.env
+		}
+		setNative(out, "import.environment", srcEnv)
+		setNative(out, "import.path", srcPath)
+	}
+	for _, e := range s.SecretMetadata {
+		if !e.IsEncrypted {
+			userMeta(out, e.Key, e.Value)
+		}
+	}
+	return out
+}
+
+// nativeLocation sets the labels that follow from where a secret is: the
+// organisation, project and environment (names where the identity may read
+// the project), the folder and its ancestors, the key and the full path.
+func nativeLocation(out map[string]string, p projectInfo, projectID string, l location, folder, key string) {
+	switch {
+	case p.ok:
+		setNative(out, "project", p.Slug)
+		setNative(out, "project.id", p.ID)
+		setNative(out, "project.slug", p.Slug)
+		setNative(out, "project.name", p.Name)
+		if p.OrgID != "" {
+			setNative(out, "org.id", p.OrgID)
+		}
+	case uuidPattern.MatchString(l.project):
+		setNative(out, "project", l.project)
+		setNative(out, "project.id", l.project)
+	default:
+		setNative(out, "project", l.project)
+		setNative(out, "project.slug", l.project)
+		if projectID != "" {
+			setNative(out, "project.id", projectID)
+		}
+	}
+	setNative(out, "environment", l.env)
+	if name, id := p.env(l.env); name != "" {
+		setNative(out, "environment.name", name)
+		setNative(out, "environment.id", id)
+	}
+	folderKeys(out, folder)
+	setNative(out, "key", key)
+	setNative(out, "path", strings.TrimSuffix("/"+strings.Trim(folder, "/"), "/")+"/"+key)
+}
+
+// WriteLabels returns the native labels a secret written at ref would get,
+// without contacting Infisical, so store.write rules can match on project,
+// environment and folder before the secret exists. Project names come from
+// what earlier calls cached; until then the reference's own project segment
+// is used.
+func (a *Adapter) WriteLabels(ref stores.Ref) map[string]string {
+	l, ok := splitSecret(ref.Path)
+	if !ok {
+		return nil
+	}
+	p := a.c.cachedProject(l.project)
+	out := map[string]string{}
+	nativeLocation(out, p, p.ID, l, l.folder, l.key)
+	setNative(out, "type", "shared")
+	return out
+}
+
+func (a *Adapter) baseQuery(ctx context.Context, l location) (url.Values, string, error) {
 	id, err := a.c.projectID(ctx, l.project)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return url.Values{"projectId": {id}, "environment": {l.env}, "secretPath": {l.folder}}, nil
+	return url.Values{"projectId": {id}, "environment": {l.env}, "secretPath": {l.folder}}, id, nil
 }
 
 // Read implements stores.Adapter.
@@ -216,7 +356,7 @@ func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, erro
 		return stores.Secret{}, &stores.Error{Store: a.name, Op: stores.OpRead, Ref: ref, Kind: stores.ErrNotFound,
 			Detail: "Infisical secrets hold a single field named " + Field}
 	}
-	q, err := a.baseQuery(ctx, l)
+	q, id, err := a.baseQuery(ctx, l)
 	if err != nil {
 		return stores.Secret{}, a.fail(stores.OpRead, ref, err)
 	}
@@ -243,7 +383,12 @@ func (a *Adapter) Read(ctx context.Context, ref stores.Ref) (stores.Secret, erro
 	if err != nil {
 		return stores.Secret{}, &stores.Error{Store: a.name, Op: stores.OpRead, Ref: ref, Kind: stores.ErrUnavailable, Detail: "secret value missing from the response"}
 	}
-	return stores.Secret{Meta: resp.Secret.meta(ref), Fields: map[string]secret.Value{Field: v}}, nil
+	// A single read reports no reminder whether or not one is set
+	// (Infisical v0.167 joins reminders into listings only), so the
+	// reminder labels come from listings alone rather than say "false".
+	resp.Secret.ReminderDays = optInt{}
+	labels := a.labels(a.c.projectDetails(ctx, id), id, l, l.folder, &resp.Secret)
+	return stores.Secret{Meta: resp.Secret.meta(ref, labels), Fields: map[string]secret.Value{Field: v}}, nil
 }
 
 // List implements stores.Adapter. It never asks Infisical for values.
@@ -252,7 +397,7 @@ func (a *Adapter) List(ctx context.Context, prefix stores.Ref) ([]stores.Metadat
 	if !ok {
 		return nil, a.invalid(stores.OpList, prefix, "want <project>/<environment>[/<folder>...]")
 	}
-	q, err := a.baseQuery(ctx, l)
+	q, id, err := a.baseQuery(ctx, l)
 	if err != nil {
 		return nil, a.fail(stores.OpList, prefix, err)
 	}
@@ -279,6 +424,7 @@ func (a *Adapter) List(ctx context.Context, prefix stores.Ref) ([]stores.Metadat
 	if err != nil {
 		return nil, stores.NewError(a.name, stores.OpList, prefix, stores.ErrUnavailable, errors.New("malformed list response"))
 	}
+	p := a.c.projectDetails(ctx, id)
 	out := make([]stores.Metadata, 0, len(resp.Secrets))
 	for i := range resp.Secrets {
 		s := &resp.Secrets[i]
@@ -286,7 +432,7 @@ func (a *Adapter) List(ctx context.Context, prefix stores.Ref) ([]stores.Metadat
 		if folder == "" {
 			folder = l.folder
 		}
-		out = append(out, s.meta(l.refFor(prefix.Scheme, folder, s.SecretKey)))
+		out = append(out, s.meta(l.refFor(prefix.Scheme, folder, s.Name), a.labels(p, id, l, folder, s)))
 	}
 	slices.SortFunc(out, func(x, y stores.Metadata) int { return strings.Compare(x.Ref.Path, y.Ref.Path) })
 	return out, nil
@@ -321,16 +467,17 @@ func (a *Adapter) Write(ctx context.Context, ref stores.Ref, fields map[string]s
 		return stores.Metadata{}, a.fail(stores.OpWrite, ref, err)
 	}
 	involved := []secret.Value{v}
+	labels := writable(opts.Labels)
 
-	m, err := a.send(ctx, http.MethodPost, id, l, ref, v, opts.Labels, involved)
+	m, err := a.send(ctx, http.MethodPost, id, l, ref, v, labels, involved)
 	if err != nil && isNotFound(err) && a.s.createFolders && l.folder != "/" {
 		if ferr := a.ensureFolders(ctx, id, l); ferr != nil {
 			return stores.Metadata{}, a.fail(stores.OpWrite, ref, ferr)
 		}
-		m, err = a.send(ctx, http.MethodPost, id, l, ref, v, opts.Labels, involved)
+		m, err = a.send(ctx, http.MethodPost, id, l, ref, v, labels, involved)
 	}
 	if err != nil && errors.Is(err, stores.ErrConflict) && !opts.CreateOnly {
-		m, err = a.send(ctx, http.MethodPatch, id, l, ref, v, opts.Labels, involved)
+		m, err = a.send(ctx, http.MethodPatch, id, l, ref, v, labels, involved)
 	}
 	if err != nil {
 		return stores.Metadata{}, a.fail(stores.OpWrite, ref, err)
@@ -379,11 +526,39 @@ func (a *Adapter) send(ctx context.Context, method, projectID string, l location
 	if err != nil {
 		return stores.Metadata{}, &apiError{kind: stores.ErrUnavailable, msg: "malformed write response"}
 	}
-	m := resp.Secret.meta(ref)
-	if m.Labels == nil && labels != nil {
-		m.Labels = maps.Clone(labels)
+	if resp.Secret.SecretMetadata == nil && labels != nil {
+		// The response does not echo metadata: report what was written.
+		for _, k := range slices.Sorted(maps.Keys(labels)) {
+			resp.Secret.SecretMetadata = append(resp.Secret.SecretMetadata, kv{Key: k, Value: labels[k]})
+		}
 	}
-	return m, nil
+	if resp.Secret.Name == "" {
+		resp.Secret.Name = l.key
+	}
+	resp.Secret.ReminderDays = optInt{} // as in Read
+	return resp.Secret.meta(ref, a.labels(a.c.projectDetails(ctx, projectID), projectID, l, l.folder, &resp.Secret)), nil
+}
+
+// writable drops labels in the infisical. namespace from a write: they are
+// derived from Infisical's own attributes on every read and are not stored
+// as secret metadata, where they could only pose as native keys. An empty,
+// non-nil map still means "clear the metadata", as before.
+func writable(labels map[string]string) map[string]string {
+	if labels == nil {
+		return nil
+	}
+	out := make(map[string]string, len(labels))
+	for k, v := range labels {
+		if !isReserved(k) {
+			out[k] = v
+		}
+	}
+	if len(out) == 0 && len(labels) > 0 {
+		// Only derived keys: leave the stored metadata alone rather than
+		// replace it with nothing.
+		return nil
+	}
+	return out
 }
 
 // storable reports whether Infisical stores v unchanged. Its API trims

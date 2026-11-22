@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -238,6 +240,10 @@ func TestConformanceInfisical(t *testing.T) {
 		}
 	})
 
+	t.Run("Labels", func(t *testing.T) {
+		testLabelsLive(t, adm, main, newInf(t))
+	})
+
 	t.Run("UnknownEnvironment", func(t *testing.T) {
 		a := newInf(t)
 		defer func() { _ = a.Close() }()
@@ -247,4 +253,128 @@ func TestConformanceInfisical(t *testing.T) {
 		}
 		t.Logf("unknown environment: %v", err)
 	})
+}
+
+// testLabelsLive checks the native labels against a real server: tags,
+// folders, metadata (plain, forged and encrypted), reminders and imports.
+func testLabelsLive(t *testing.T, adm *admin, p project, a *Adapter) {
+	defer func() { _ = a.Close() }()
+	folder := func(env, path, name string) {
+		st := adm.call("POST", "/api/v1/folders", map[string]string{
+			"workspaceId": p.id, "projectId": p.id, "environment": env, "path": path, "name": name,
+		}, nil)
+		if st >= 300 && st != 400 {
+			t.Fatalf("create folder %s%s: HTTP %d", path, name, st)
+		}
+	}
+	folder("prod", "/", "db")
+	folder("prod", "/db", "Primary")
+	folder("prod", "/", "app")
+	folder("dev", "/", "shared")
+
+	var tag struct {
+		Tag struct{ ID string } `json:"tag"`
+	}
+	adm.must("POST", "/api/v1/projects/"+p.id+"/tags", map[string]string{"slug": "pci", "color": "#ff0000"}, &tag)
+
+	value, comment, enc := "v-"+randID(12), "c-"+randID(12), "e-"+randID(12)
+	body := map[string]any{
+		"projectId": p.id, "environment": "prod", "secretPath": "/db/Primary", "type": "shared",
+		"secretValue": value, "secretComment": comment, "tagIds": []string{tag.Tag.ID},
+		"secretReminderRepeatDays": 30, "secretReminderNote": comment,
+		"secretMetadata": []map[string]any{
+			{"key": "owner", "value": "payments"},
+			{"key": "infisical.environment", "value": "dev"},
+			{"key": "pin", "value": enc, "isEncrypted": true},
+		},
+	}
+	encrypted := true
+	if st := adm.call("POST", "/api/v4/secrets/DB_PASSWORD", body, nil); st >= 300 {
+		t.Logf("create with reminder and encrypted metadata: HTTP %d; retrying without", st)
+		encrypted = false
+		delete(body, "secretReminderRepeatDays")
+		delete(body, "secretReminderNote")
+		body["secretMetadata"] = body["secretMetadata"].([]map[string]any)[:2]
+		adm.must("POST", "/api/v4/secrets/DB_PASSWORD", body, nil)
+	}
+	adm.must("POST", "/api/v4/secrets/SHARED_KEY", map[string]any{
+		"projectId": p.id, "environment": "dev", "secretPath": "/shared", "type": "shared", "secretValue": "s-" + randID(8),
+	}, nil)
+	adm.must("POST", "/api/v2/secret-imports", map[string]any{
+		"projectId": p.id, "environment": "prod", "path": "/app",
+		"import": map[string]string{"environment": "dev", "path": "/shared"},
+	}, nil)
+
+	read := func(path string) map[string]string {
+		t.Helper()
+		s, err := a.Read(t.Context(), stores.Ref{Scheme: "inf", Path: path})
+		if err != nil {
+			t.Fatalf("Read %s: %v", path, err)
+		}
+		s.Wipe()
+		return s.Meta.Labels
+	}
+	got := read(p.slug + "/prod/db/Primary/DB_PASSWORD")
+	for _, k := range slices.Sorted(maps.Keys(got)) {
+		t.Logf("label %s = %q", k, got[k])
+	}
+	want := map[string]string{
+		"infisical.project": p.slug, "infisical.project.id": p.id, "infisical.project.slug": p.slug,
+		"infisical.org.id": adm.org, "infisical.environment": "prod", "infisical.environment.name": "Production",
+		"infisical.folder": "/db/Primary", "infisical.folder.db": "true", "infisical.folder.db.Primary": "true",
+		"infisical.key": "DB_PASSWORD", "infisical.path": "/db/Primary/DB_PASSWORD", "infisical.type": "shared",
+		"infisical.version": "1", "infisical.tag": "pci", "infisical.tag.pci": "true",
+		"infisical.meta.owner": "payments", "infisical.meta.infisical.environment": "dev", "owner": "payments",
+		"infisical.rotation": "false", "infisical.imported": "false",
+	}
+	if encrypted {
+		want["infisical.encrypted-meta"] = "pin"
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("label %s = %q, want %q", k, got[k], v)
+		}
+	}
+	for _, k := range []string{"infisical.created", "infisical.updated", "infisical.project.name", "infisical.environment.id"} {
+		if got[k] == "" {
+			t.Errorf("label %s missing", k)
+		}
+	}
+	ms, err := a.List(t.Context(), stores.Ref{Scheme: "inf", Path: p.slug + "/prod/db"})
+	if err != nil || len(ms) != 1 {
+		t.Fatalf("List: %v (%d secrets)", err, len(ms))
+	}
+	if encrypted {
+		// Reminders come with listings only.
+		want["infisical.reminder"] = "true"
+		want["infisical.reminder.days"] = "30"
+	}
+	for k, v := range want {
+		if ms[0].Labels[k] != v {
+			t.Errorf("List: label %s = %q, want %q", k, ms[0].Labels[k], v)
+		}
+	}
+	byID := read(p.id + "/prod/db/Primary/DB_PASSWORD")
+	if byID["infisical.project.slug"] != p.slug || byID["infisical.project.name"] == "" {
+		t.Errorf("by ID: project labels %q / %q", byID["infisical.project.slug"], byID["infisical.project.name"])
+	}
+	for where, l := range map[string]map[string]string{"Read": got, "List": ms[0].Labels, "by ID": byID} {
+		for k, v := range l {
+			for _, needle := range []string{value, comment, enc} {
+				if strings.Contains(k+"="+v, needle) {
+					t.Errorf("%s: label %s holds a value, comment or encrypted metadata", where, k)
+				}
+			}
+		}
+	}
+
+	imp := read(p.slug + "/prod/app/SHARED_KEY")
+	for k, v := range map[string]string{
+		"infisical.environment": "prod", "infisical.folder": "/app", "infisical.imported": "true",
+		"infisical.import.environment": "dev", "infisical.import.path": "/shared",
+	} {
+		if imp[k] != v {
+			t.Errorf("imported: label %s = %q, want %q", k, imp[k], v)
+		}
+	}
 }

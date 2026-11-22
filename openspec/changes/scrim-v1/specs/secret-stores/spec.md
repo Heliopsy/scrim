@@ -371,6 +371,62 @@ agents SHALL be enforced by scrim, so it SHALL NOT depend on Infisical's paid cu
 - **WHEN** scrim uses an Infisical machine identity with the built-in full-access role
 - **THEN** agents can create secrets through scrim but have no operation that reads them back
 
+### Requirement: Infisical native policy labels
+
+The Infisical adapter SHALL label every secret it reads or lists with Infisical's own attributes
+under `infisical.<attr>` (organisation, project, environment, folder with its ancestors, key, path,
+type, version, times, tags, rotation, reminder and import source), writing a multi-valued attribute
+as a comma-joined key plus one presence key per value.
+
+#### Scenario: Policy matches project, environment, folder and tag
+
+- **WHEN** a rule asks for secrets of project `payments` that are in environment `prod`, under folder
+  `/db` or tagged `pci`, and an agent reads `inf://payments/dev/db/primary/PASSWORD`
+- **THEN** the secret carries `infisical.project.slug = payments`, `infisical.environment = dev`,
+  `infisical.folder.db = true` and `infisical.folder.db.primary = true`, and the read asks
+
+#### Scenario: Imported secret
+
+- **WHEN** folder `/app` of `prod` imports `/shared` of `dev` and scrim reads
+  `inf://payments/prod/app/SHARED_KEY` from the import
+- **THEN** the secret carries `infisical.imported = true`, `infisical.import.environment = dev` and
+  `infisical.import.path = /shared`, while `infisical.environment` stays `prod`
+
+### Requirement: Infisical write targets are labelled before they exist
+
+The Infisical adapter SHALL report the labels a secret written at a reference would get, without
+contacting Infisical, so `store.write` rules can match on them.
+
+#### Scenario: Write rules see the target's labels
+
+- **WHEN** a rule asks for writes under `/db` and an agent creates `inf://payments/dev/db/NEW`
+- **THEN** the write is decided on `infisical.folder.db = true` before the secret exists, and asks
+
+### Requirement: Infisical metadata cannot forge native labels
+
+Unencrypted Infisical secret metadata SHALL appear under `infisical.meta.<key>` and under its own
+key. A user-supplied key in the `infisical.` namespace SHALL NOT set or override a native label, and
+a write SHALL NOT store such keys as metadata.
+
+#### Scenario: Metadata cannot forge a native label
+
+- **WHEN** a secret in `prod` carries metadata `infisical.environment = dev` and
+  `infisical.tag.pci = false`
+- **THEN** its labels say `infisical.environment = prod`, have no `infisical.tag.pci` key unless the
+  secret is tagged `pci`, and show the entries as `infisical.meta.infisical.environment` and
+  `infisical.meta.infisical.tag.pci`
+
+### Requirement: Infisical labels hold no value
+
+Labels from the Infisical adapter SHALL NOT contain a secret value, the secret comment, the reminder
+note or the value of an encrypted metadata entry.
+
+#### Scenario: Labels hold no value
+
+- **WHEN** a secret has a value, a comment, a reminder note and an encrypted metadata entry
+- **THEN** none of them appears in any label key or value, and the encrypted entry is listed by key
+  only in `infisical.encrypted-meta`
+
 ### Requirement: OpenBao adapter
 
 The system SHALL read and write OpenBao (and Vault-compatible) KV version 2 secrets, authenticating
