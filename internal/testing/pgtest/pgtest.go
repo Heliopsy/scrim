@@ -4,7 +4,8 @@
 // points them at an existing one (CI service containers); otherwise the
 // first [FreshDSN] starts a throwaway container with rootless podman, which
 // [Stop] removes. When neither is possible every caller skips with the
-// recorded reason. A package using it calls Stop from TestMain after m.Run.
+// recorded reason, or fails when SCRIM_TEST_PODMAN=1 (CI). A package using
+// it calls Stop from TestMain after m.Run.
 package pgtest
 
 import (
@@ -105,6 +106,9 @@ func FreshDSN(t testing.TB) string {
 	t.Helper()
 	once.Do(setup)
 	if adminDSN == "" {
+		if os.Getenv("SCRIM_TEST_PODMAN") == "1" {
+			t.Fatal("postgres unavailable but SCRIM_TEST_PODMAN=1 requires it: " + skipReason)
+		}
 		t.Skip("postgres unavailable: " + skipReason)
 	}
 	db, err := sql.Open("pgx", adminDSN)
