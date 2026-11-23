@@ -99,10 +99,13 @@ grafanaDashboard:
 agents:
   namespaces: [agents, ci]
   noProxy: [internal.example.com]
+edge:
+  enabled: true
 kyverno:
   enabled: true
 networkPolicy:
   enabled: true
+  agentEgress: [{ports: [{port: 22, protocol: TCP}]}]
   adminFrom: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ops}}}]
 objectMetadata:
   Service/ci-scrim: {annotations: {example.com/expose: "false"}}

@@ -267,6 +267,17 @@ is out of date.
 | [`dataplane.start-timeout`](#dataplanestart-timeout) | duration | `10s` | hot |
 | [`dataplane.upstream-ca-file`](#dataplaneupstream-ca-file) | string | `""` | restart required |
 | [`deployment.replicas`](#deploymentreplicas) | int | `1` | restart required |
+| [`edge-forwarder.api-socket`](#edge-forwarderapi-socket) | string | `""` | restart required |
+| [`edge-forwarder.ca-file`](#edge-forwarderca-file) | string | `/etc/scrim/trust/scrim-ca.pem` | restart required |
+| [`edge-forwarder.central`](#edge-forwardercentral) | string | `""` | restart required |
+| [`edge-forwarder.connect-timeout`](#edge-forwarderconnect-timeout) | duration | `10s` | restart required |
+| [`edge-forwarder.databases`](#edge-forwarderdatabases) | map | `{}` | restart required |
+| [`edge-forwarder.server-name`](#edge-forwarderserver-name) | string | `""` | restart required |
+| [`edge-forwarder.socket-permissions`](#edge-forwardersocket-permissions) | string | `0666` | restart required |
+| [`edge-forwarder.ssh-agent-socket`](#edge-forwarderssh-agent-socket) | string | `""` | restart required |
+| [`edge-forwarder.token-file`](#edge-forwardertoken-file) | string | `/var/run/secrets/scrim/token` | restart required |
+| [`edge.listen`](#edgelisten) | string | `""` | restart required |
+| [`edge.server-names`](#edgeserver-names) | list | `[]` | restart required |
 | [`entry.listen`](#entrylisten) | string | `127.0.0.1:0` | restart required |
 | [`events.backend`](#eventsbackend) | string | `local` | restart required |
 | [`events.nats.subject`](#eventsnatssubject) | string | `scrim.events` | restart required |
@@ -1162,6 +1173,142 @@ How many control plane replicas share this configuration and state. More than 1 
 | Type | int |
 | Default | `1` |
 | Environment | `SCRIM_DEPLOYMENT_REPLICAS` |
+| Flag | none |
+| Reload | restart required |
+
+### edge-forwarder
+
+#### `edge-forwarder.api-socket`
+
+Unix socket the forwarder serves the agent API on, the exec broker included (point SCRIM_API_SOCKET at it). Empty serves none.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_EDGE_FORWARDER_API_SOCKET` |
+| Flag | `--edge-forwarder-api-socket` |
+| Reload | restart required |
+
+#### `edge-forwarder.ca-file`
+
+PEM file of the CA the central scrim's certificate must chain to: scrim's CA. No system roots are used.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `/etc/scrim/trust/scrim-ca.pem` |
+| Environment | `SCRIM_EDGE_FORWARDER_CA_FILE` |
+| Flag | `--edge-forwarder-ca-file` |
+| Reload | restart required |
+
+#### `edge-forwarder.central`
+
+host:port of the central scrim's edge listener (edge.listen).
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_EDGE_FORWARDER_CENTRAL` |
+| Flag | `--edge-forwarder-central` |
+| Reload | restart required |
+
+#### `edge-forwarder.connect-timeout`
+
+How long the forwarder waits for the central scrim before it refuses the local connection.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `10s` |
+| Environment | `SCRIM_EDGE_FORWARDER_CONNECT_TIMEOUT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `edge-forwarder.databases`
+
+Databases to forward: the central scrim's database name to a loopback address in the pod (app: 127.0.0.1:5432).
+
+| | |
+|---|---|
+| Type | map of strings (env: JSON object or `k=v,k2=v2`; one entry: variable plus `_ENTRY`) |
+| Default | `{}` |
+| Environment | `SCRIM_EDGE_FORWARDER_DATABASES` |
+| Flag | none |
+| Reload | restart required |
+
+#### `edge-forwarder.server-name`
+
+Name the central scrim's certificate is verified for. Empty takes the host of edge-forwarder.central.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_EDGE_FORWARDER_SERVER_NAME` |
+| Flag | `--edge-forwarder-server-name` |
+| Reload | restart required |
+
+#### `edge-forwarder.socket-permissions`
+
+Permission bits of the forwarder's Unix sockets, octal. The default lets the agent's containers, which run as other users, connect; the sockets live in a volume only this pod mounts.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `0666` |
+| Environment | `SCRIM_EDGE_FORWARDER_SOCKET_PERMISSIONS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `edge-forwarder.ssh-agent-socket`
+
+Unix socket the forwarder serves the ssh-agent on (point SSH_AUTH_SOCK at it). Empty serves none.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_EDGE_FORWARDER_SSH_AGENT_SOCKET` |
+| Flag | `--edge-forwarder-ssh-agent-socket` |
+| Reload | restart required |
+
+#### `edge-forwarder.token-file`
+
+Projected service account token for scrim's audience, read again for every connection and sent to the central scrim only.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `/var/run/secrets/scrim/token` |
+| Environment | `SCRIM_EDGE_FORWARDER_TOKEN_FILE` |
+| Flag | `--edge-forwarder-token-file` |
+| Reload | restart required |
+
+### edge
+
+#### `edge.listen`
+
+Address of the edge listener the forwarders in agent pods connect to (TLS; callers present a Kubernetes service account token). Empty turns it off. Needs identity.kubernetes.enabled and edge.server-names.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_EDGE_LISTEN` |
+| Flag | `--edge-listen` |
+| Reload | restart required |
+
+#### `edge.server-names`
+
+Host names and IP addresses the edge listener's certificate carries, signed by scrim's CA, which forwarders already trust. Required with edge.listen.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_EDGE_SERVER_NAMES` |
 | Flag | none |
 | Reload | restart required |
 

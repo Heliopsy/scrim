@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The central scrim of the edge forwarder's end-to-end test: the image the
+# release recipe builds (BASE) plus the probe command the exec broker runs.
+# Built by test/k8s/edge-e2e.sh; never published.
+ARG BASE
+FROM ${BASE}
+COPY --chmod=0755 execprobe /usr/local/bin/execprobe

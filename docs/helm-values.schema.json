@@ -857,6 +857,113 @@
       },
       "additionalProperties": false
     },
+    "edge": {
+      "type": "object",
+      "description": "Edge forwarder (central mode): Kyverno adds a native sidecar running `scrim edge` to agent pods labelled `central`. It serves SSH_AUTH_SOCK, loopback database ports and the agent API socket (the exec broker included) in the pod and carries every connection to central scrim's edge listener over TLS, with the pod's projected identity token. Keys, database passwords and exec secrets stay in central scrim. Needs identity.kubernetes.enabled and kyverno.enabled (or the sidecar copied into the pod spec).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Serve the edge listener in central scrim (edge.listen) and inject the forwarder into agent pods labelled `central`."
+        },
+        "port": {
+          "type": "integer",
+          "description": "Port of the edge listener, on the scrim container and the Service.",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "socketDir": {
+          "type": "string",
+          "description": "Directory of the forwarder's sockets in agent containers, an in-memory emptyDir only this pod mounts.",
+          "pattern": "^/"
+        },
+        "sshAgent": {
+          "type": "boolean",
+          "description": "Serve scrim's ssh-agent at `<socketDir>/ssh-agent.sock` and point SSH_AUTH_SOCK at it."
+        },
+        "api": {
+          "type": "boolean",
+          "description": "Serve the agent API at `<socketDir>/api.sock` and point SCRIM_API_SOCKET at it (the exec broker, the database tool and the other agent tools)."
+        },
+        "databases": {
+          "type": "object",
+          "description": "Databases to forward: the name of a database in `config.databases` to the loopback port agent containers connect to, for example `{app: 5432}`.",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        "resources": {
+          "type": "object",
+          "description": "Resources of the forwarder container.",
+          "properties": {
+            "requests": {
+              "type": "object",
+              "properties": {
+                "cpu": {
+                  "type": "string"
+                },
+                "memory": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "memory": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "securityContext": {
+          "type": "object",
+          "description": "Security context of the forwarder container.",
+          "properties": {
+            "allowPrivilegeEscalation": {
+              "type": "boolean"
+            },
+            "readOnlyRootFilesystem": {
+              "type": "boolean"
+            },
+            "runAsNonRoot": {
+              "type": "boolean"
+            },
+            "runAsUser": {
+              "type": "integer"
+            },
+            "runAsGroup": {
+              "type": "integer"
+            },
+            "capabilities": {
+              "type": "object",
+              "properties": {
+                "drop": {
+                  "type": "array"
+                }
+              },
+              "additionalProperties": true
+            },
+            "seccompProfile": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
     "storeAuth": {
       "type": "object",
       "description": "Store authentication with scrim's own service account (OpenBao Kubernetes auth, Infisical kubernetes-auth), so no static store credential exists. Configure the store in `config.stores` with `auth.method: kubernetes` (OpenBao) or `kubernetes-auth` (Infisical) and `auth.kubernetes.token-file` set to `path`.",
@@ -1718,6 +1825,13 @@
         "apiServerEgress": {
           "type": "array",
           "description": "Egress to the Kubernetes API server, for TokenReview (identity.kubernetes) from central scrim and sidecar pods. Policies see the API server's endpoint port, often 6443, not the Service port. Narrow it with `to` (the API server's addresses) where you can.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "agentEgress": {
+          "type": "array",
+          "description": "Extra egress rules of central agent pods, for connections that do not go through scrim: SSH to git servers with the edge forwarder (scrim signs, the SSH session itself is direct). Empty: scrim and DNS only.",
           "items": {
             "type": "object"
           }

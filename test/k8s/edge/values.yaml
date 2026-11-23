@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Chart values of test/k8s/edge-e2e.sh. The script adds the images and the
+# namespaces with --set. No secret is in here: the SSH key and the database
+# password are files of the Secret edge-e2e, which only the central scrim
+# mounts; agent pods get the edge forwarder and nothing else.
+
+image:
+  pullPolicy: Never
+
+edge:
+  enabled: true
+  databases:
+    app: 5432
+
+secretMounts:
+  - name: edge
+    secretName: edge-e2e
+
+config:
+  stores:
+    files:
+      kind: file
+      root: /run/secrets/scrim/edge
+      redact: ["files://ssh-key", "files://db-password"]
+  catalog:
+    entries:
+      deploy:
+        ref: files://ssh-key
+        ssh_key: true
+      dbpw:
+        ref: files://db-password
+        placeholder: SCRIM_DB_PASSWORD
+        hosts: [postgres.scrim-edge-e2e.svc.cluster.local]
+  ssh-agent:
+    known-hosts: [/run/secrets/scrim/edge/known_hosts]
+  databases:
+    app:
+      kind: postgres
+      address: postgres.scrim-edge-e2e.svc.cluster.local:5432
+      user: app
+      # The same mounted file by a file: reference: a store reference
+      # (files://db-password) in databases.<name>.password is never resolved.
+      password: file:/run/secrets/scrim/edge/db-password
+      database: app
+      # The test database has no certificate; scrim still logs in with SCRAM.
+      tls: insecure-plaintext
+
+# The agents namespace may sign for user git on the git server and use the
+# database. Signatures for any other user, like everything else not provider
+# traffic, are denied by default.
+policyRules:
+  rules:
+    - name: edge-git
+      decision: allow
+      when: >-
+        op == "ssh.sign" && agent.labels.namespace == "agents" &&
+        ssh.user == "git" && dest.host == "gitserver"
+    - name: edge-database
+      decision: allow
+      when: op == "database.auth" && agent.labels.namespace == "agents" && dest.path == "/app"
+
+kyverno:
+  enabled: true
+
+networkPolicy:
+  enabled: true
+  # The SSH session to the git server is the agent's own; only its signatures
+  # go through scrim. PostgreSQL stays reachable through scrim only.
+  agentEgress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: scrim-edge-e2e
+          podSelector:
+            matchLabels:
+              app: gitserver
+      ports:
+        - {port: 22, protocol: TCP}
+  # PostgreSQL and the git server stand in for the outside world.
+  scrimEgress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: scrim-edge-e2e

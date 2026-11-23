@@ -157,7 +157,8 @@ forwarded channel, a key scrim does not hold) are recorded with rule `ssh-agent`
 - Parsed RSA and ECDSA keys live in Go big integers for the length of one request and cannot be
   wiped; ed25519 keys are wiped after use.
 - Encrypted (passphrase-protected) keys and security keys (`sk-*`) are not supported.
-- Agent pods in Kubernetes get the socket once the edge forwarder exists (tasks.md 12.5).
+- Agent pods in Kubernetes get the socket from the edge forwarder, which carries each connection to the
+  central scrim ([edge-forwarder.md](edge-forwarder.md)); the keyring and policy are the same.
 
 ## Tests
 

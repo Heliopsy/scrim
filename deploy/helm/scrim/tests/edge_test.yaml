@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: Edge forwarder (edge.*)
+templates:
+  - config.yaml
+  - deployment.yaml
+  - kyverno.yaml
+  - networkpolicy.yaml
+  - agents.yaml
+release:
+  name: rel
+  namespace: ns
+set:
+  edge.enabled: true
+  kyverno.enabled: true
+  networkPolicy.enabled: true
+  agents.namespaces: [agents]
+  config.databases.app: {kind: postgres, address: db.internal:5432, user: app, password: "file:/run/secrets/scrim/db/password"}
+  edge.databases.app: 5432
+tests:
+  - it: turns on the edge listener with the Service names in its certificate
+    template: config.yaml
+    asserts:
+      - matchRegex:
+          path: data["chart.yaml"]
+          pattern: "edge:\\n  listen: 0.0.0.0:9794\\n  server-names:\\n    - rel-scrim.ns.svc.cluster.local\\n    - rel-scrim.ns.svc\\n    - rel-scrim.ns\\n    - rel-scrim\\n"
+  - it: leaves the edge listener off by default
+    template: config.yaml
+    set:
+      edge.enabled: false
+      edge.databases: {}
+    asserts:
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: "edge:"}
+  - it: exposes the edge port on the container and the Service
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content: {name: edge, containerPort: 9794, protocol: TCP}
+        documentSelector: {path: kind, value: Deployment}
+      - contains:
+          path: spec.ports
+          content: {name: edge, port: 9794, targetPort: edge, protocol: TCP}
+        documentSelector: {path: kind, value: Service}
+  - it: injects the forwarder as a native sidecar of central pods
+    template: kyverno.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim-ns-inject-central}
+    asserts:
+      - matchRegex: {path: 'spec.variables[0].expression', pattern: '"name": "SSH_AUTH_SOCK",\s+"value": "/run/scrim-edge/ssh-agent.sock"'}
+      - matchRegex: {path: 'spec.variables[0].expression', pattern: '"name": "SCRIM_API_SOCKET",\s+"value": "/run/scrim-edge/api.sock"'}
+      - matchRegex: {path: 'spec.variables[2].expression', pattern: '"mountPath": "/run/scrim-edge",\s+"name": "scrim-edge"'}
+      - matchRegex: {path: 'spec.variables[4].expression', pattern: '"name": "scrim-edge"'}
+      - matchRegex: {path: 'spec.variables[6].expression', pattern: '"restartPolicy": "Always"'}
+      - matchRegex: {path: 'spec.variables[6].expression', pattern: '"name": "SCRIM_EDGE_FORWARDER_CENTRAL",\s+"value": "rel-scrim\.ns\.svc\.cluster\.local:9794"'}
+      - matchRegex: {path: 'spec.variables[6].expression', pattern: '"name": "SCRIM_EDGE_FORWARDER_DATABASES",\s+"value": "app=127\.0\.0\.1:5432"'}
+      - matchRegex: {path: 'spec.variables[6].expression', pattern: '"/usr/local/bin/scrim",\s+"edge",\s+"check"'}
+      # Nothing secret is mounted into the forwarder: the CA's public half and the pod's token.
+      - notMatchRegex: {path: 'spec.variables[6].expression', pattern: 'secretName|tls\.key|placeholder'}
+      - matchRegex: {path: 'spec.mutations[0].jsonPatch.expression', pattern: initContainers}
+  - it: lets central agent pods reach the edge port and nothing else new
+    template: networkpolicy.yaml
+    asserts:
+      - contains:
+          path: spec.egress[0].ports
+          content: {port: 9794, protocol: TCP}
+        documentSelector: {path: metadata.name, value: rel-scrim-agents-central}
+      - contains:
+          path: spec.ingress[0].ports
+          content: {port: 9794, protocol: TCP}
+        documentSelector: {path: metadata.name, value: rel-scrim}
+  - it: writes the socket variables into the agent env ConfigMap
+    template: agents.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim-agent-env}
+    asserts:
+      - equal: {path: data.SSH_AUTH_SOCK, value: /run/scrim-edge/ssh-agent.sock}
+      - equal: {path: data.SCRIM_API_SOCKET, value: /run/scrim-edge/api.sock}
+  - it: serves only what is turned on
+    template: kyverno.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim-ns-inject-central}
+    set:
+      edge.sshAgent: false
+      edge.api: false
+    asserts:
+      - notMatchRegex: {path: 'spec.variables[0].expression', pattern: 'SSH_AUTH_SOCK|SCRIM_API_SOCKET'}
+      - notMatchRegex: {path: 'spec.variables[6].expression', pattern: 'SSH_AGENT_SOCKET|API_SOCKET'}
+  - it: adds networkPolicy.agentEgress to central agent pods
+    template: networkpolicy.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim-agents-central}
+    set:
+      networkPolicy.agentEgress:
+        - ports: [{port: 22, protocol: TCP}]
+    asserts:
+      - contains:
+          path: spec.egress
+          content: {ports: [{port: 22, protocol: TCP}]}

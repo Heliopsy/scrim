@@ -496,6 +496,42 @@ unknown callers.
 - **WHEN** an identified agent calls a provider through the base URL
 - **THEN** neither the provider nor scrim's logs see the agent's token
 
+### Requirement: Edge forwarder in the chart
+
+With `edge.enabled` in central mode the chart SHALL turn on the central scrim's edge listener with
+the Service's names in its certificate and expose its port on the Service, and the central injection
+policy SHALL add the edge forwarder to every labelled agent pod as a native sidecar whose startup
+probe passes only once the central scrim accepts the pod's token, with `SSH_AUTH_SOCK` and
+`SCRIM_API_SOCKET` pointing at it.
+
+#### Scenario: Agent pod with the edge forwarder
+
+- **WHEN** a pod labelled for central mode is created with `edge.enabled`
+- **THEN** it starts with the forwarder sidecar and the two variables, and its agent containers
+  start only after the central scrim accepted the pod
+
+### Requirement: Edge forwarder mounts nothing secret
+
+The injected forwarder SHALL mount only the CA's public certificate, the pod's identity token and its
+socket volume, and the NetworkPolicies SHALL let central agent pods reach the edge port and nothing
+else new.
+
+#### Scenario: Forwarder volumes
+
+- **WHEN** the central injection policy is rendered with `edge.enabled`
+- **THEN** the forwarder container mounts no Secret, CA key or placeholder key
+
+### Requirement: Edge forwarder values checked
+
+The chart SHALL refuse `edge.enabled` without central mode, without Kubernetes identity, with
+nothing to forward, on a port another listener uses, or with a forwarded database the configuration
+does not have.
+
+#### Scenario: Edge without identity
+
+- **WHEN** `edge.enabled` is set with `identity.kubernetes.enabled` false
+- **THEN** the chart refuses to render and names the missing setting
+
 ### Requirement: Store login with the pod's service account
 
 The chart SHALL mount a projected token with the store's audience into central scrim and every

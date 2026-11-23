@@ -731,13 +731,71 @@ placeholder certificate no client certificate SHALL be presented upstream.
 Where scrim runs centrally, an edge component in the agent's pod or host SHALL expose the local
 endpoints tools expect (the ssh-agent socket, database ports on localhost, the exec broker) and
 forward them to the central instance over an authenticated, encrypted channel. The edge SHALL hold
-no secret values.
+no secret values: signing keys, database passwords and the secrets of brokered commands stay in the
+central instance.
 
 #### Scenario: ssh in a pod with central scrim
 
 - **WHEN** an agent pod runs `git push` over SSH and scrim runs as a central deployment
 - **THEN** the edge forwarder provides `SSH_AUTH_SOCK` in the pod and signatures are made by the
   central instance
+
+#### Scenario: Database through a forwarded port
+
+- **WHEN** a client in the pod connects to the forwarded localhost port of a configured database
+  with only a placeholder as its password
+- **THEN** the central instance decides `database.auth` for the pod's agent, logs in with the
+  password from its store and relays the session; the password never reaches the pod
+
+#### Scenario: Exec broker from a pod
+
+- **WHEN** an agent in the pod calls the exec broker through the forwarded agent API socket
+- **THEN** the command runs in the central instance with the real value and the pod receives the
+  output with the value replaced by its placeholder
+
+### Requirement: Edge channel identifies the pod
+
+The edge channel SHALL be TLS 1.3 to a listener whose certificate chains to scrim's CA, verified
+against that CA only. Every connection and agent API request SHALL carry the pod's projected service
+account token, read from its file each time; the central instance SHALL verify it with TokenReview,
+accept nothing else, and treat the verified agent as the caller for policy, approvals, grants and
+audit exactly as on the proxy.
+
+#### Scenario: Signature policy per pod
+
+- **WHEN** a pod's signature request is for a login no rule allows for its service account
+- **THEN** the central instance refuses the signature, the push fails and the refusal is audited as
+  that pod's agent
+
+#### Scenario: Token refused
+
+- **WHEN** the forwarder presents a token the cluster does not accept, a session token, or the token
+  of a service account no rule maps
+- **THEN** the central instance refuses the connection, audits the refusal without the token, and
+  nothing is forwarded to a key, database or command
+
+#### Scenario: Another certificate
+
+- **WHEN** the edge listener's address answers with a certificate scrim's CA did not sign, or one for
+  another name
+- **THEN** the forwarder does not send the token and refuses the local connection
+
+### Requirement: Edge forwarder fails closed
+
+When the central instance is unreachable, its certificate does not verify, or it refuses or cannot
+check the token, the edge forwarder SHALL refuse the local connection or request. Nothing SHALL be
+served locally instead.
+
+#### Scenario: Central scrim unreachable
+
+- **WHEN** the central instance cannot be reached
+- **THEN** the forwarder closes ssh-agent and database connections and answers agent API requests
+  with `unavailable`, and serves them again once it is back without a restart
+
+#### Scenario: TokenReview unreachable
+
+- **WHEN** the central instance cannot reach the cluster to verify the token
+- **THEN** it refuses the connection as unavailable instead of serving it unidentified
 
 ### Requirement: Environment overrides before file tricks
 

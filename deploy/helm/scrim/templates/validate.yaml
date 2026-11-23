@@ -21,6 +21,28 @@ would scrape the same pods. Here they never do: the ServiceMonitor scrapes
 central scrim, the PodMonitor the sidecars. What is refused instead is a
 monitor with nothing to scrape.
 */ -}}
+{{- if .Values.edge.enabled -}}
+{{- if not .Values.central.enabled -}}
+{{- fail "edge.enabled forwards agent pods to central scrim, which central.enabled=false does not deploy" -}}
+{{- end -}}
+{{- if not .Values.identity.kubernetes.enabled -}}
+{{- fail "edge.enabled needs identity.kubernetes.enabled: central scrim identifies each forwarder by its pod's projected service account token" -}}
+{{- end -}}
+{{- if not (or .Values.edge.sshAgent .Values.edge.api .Values.edge.databases) -}}
+{{- fail "edge.enabled with nothing to forward: turn on edge.sshAgent or edge.api, or list edge.databases" -}}
+{{- end -}}
+{{- $taken := list 9790 9791 (int .Values.metrics.port) -}}
+{{- if .Values.admin.tcp.enabled }}{{ $taken = append $taken (int .Values.admin.tcp.port) }}{{ end -}}
+{{- if has (int .Values.edge.port) $taken -}}
+{{- fail (printf "edge.port %v is taken by another scrim listener" .Values.edge.port) -}}
+{{- end -}}
+{{- $cfgDBs := default dict (index (default dict .Values.config) "databases") -}}
+{{- range $name, $port := .Values.edge.databases -}}
+{{- if and (not $.Values.existingConfigMap) (not (hasKey $cfgDBs $name)) -}}
+{{- fail (printf "edge.databases.%s: no database %q in config.databases" $name $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if and .Values.serviceMonitor.enabled (not .Values.central.enabled) -}}
 {{- fail "serviceMonitor.enabled scrapes central scrim, which central.enabled=false does not deploy; use podMonitor for sidecars" -}}
 {{- end -}}

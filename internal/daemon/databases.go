@@ -15,6 +15,7 @@ import (
 	"github.com/heliopsy/scrim/internal/catalog"
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/dbproxy"
+	"github.com/heliopsy/scrim/internal/edge"
 	"github.com/heliopsy/scrim/internal/gate"
 	"github.com/heliopsy/scrim/internal/identity"
 	"github.com/heliopsy/scrim/internal/localapi"
@@ -80,6 +81,7 @@ func (d *Daemon) startDatabases(ctx context.Context, cfg *config.Config) error {
 		log.Info("database proxy listening", "database", s.DB.Name, "kind", string(s.DB.Kind), "listen", e.listen)
 	}
 	d.runtime.SetDatabases(ds)
+	d.dbs = ds
 	return nil
 }
 
@@ -91,9 +93,13 @@ func listenDatabase(s dbproxy.Spec) (net.Listener, error) {
 }
 
 // identify establishes who is on a proxy connection from the transport
-// only: the kernel's peer credentials on a Unix socket, the owner of the
+// only: the agent the edge listener verified for a tunnel from an agent
+// pod, the kernel's peer credentials on a Unix socket, the owner of the
 // client socket on a loopback TCP connection, else nobody.
 func (ds *databases) identify(ctx context.Context, c net.Conn) (identity.Identity, error) {
+	if id, ok := edge.IdentityOf(c); ok {
+		return id, nil
+	}
 	var claim identity.TransportClaim
 	if p, err := identity.PeerOf(c); err == nil {
 		claim.UnixPeer, claim.Peer = true, p

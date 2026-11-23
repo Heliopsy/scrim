@@ -187,7 +187,7 @@ curl --unix-socket "$XDG_RUNTIME_DIR/scrim/llm.sock" http://scrim/anthropic/v1/m
 
 The socket is created with mode 0600 and removed when the listener stops. Neither Claude Code nor
 Codex documents a way to use a Unix socket as its base URL, so this listener is for your own
-clients, SDKs with a custom transport and edge forwarders. File permissions decide who can connect,
+clients and SDKs with a custom transport. File permissions decide who can connect,
 which a loopback port cannot do, and peer credentials can identify the caller (agent-identity spec,
 "Unix socket peer credentials").
 
@@ -707,8 +707,8 @@ when they are created: the base URL and proxy variables, the CA mounted into the
 projected service account token with a scrim audience, which scrim verifies with TokenReview to
 identify the pod as `namespace/serviceaccount` (the `scrim-exec` launcher sends it). A
 NetworkPolicy lets those pods reach only scrim and DNS, and lets scrim reach providers, stores and
-tool hosts. Agent images do not change. MCP registration in the pod waits for the edge forwarder
-(tasks.md 12.5).
+tool hosts. Agent images do not change. With `edge.enabled` the edge forwarder serves the ssh-agent,
+database ports and the agent API socket in the pod ([edge-forwarder.md](edge-forwarder.md)).
 
 For agents that ignore the injected variables, traffic could be redirected to scrim without them: an
 init container that installs redirect rules in the pod's network namespace (it needs `NET_ADMIN`),

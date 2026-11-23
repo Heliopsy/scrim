@@ -61,7 +61,8 @@ scrim database ls        # every database with its listener
 
 The user name and password the client sends are ignored; scrim logs in as `user`. A TCP listener
 (`listen: 127.0.0.1:15432`) must be on a loopback address. Agents in other pods or hosts reach the
-proxies through the edge forwarder (tasks.md 12.5), which hands connections to the same proxy.
+proxies through the edge forwarder ([edge-forwarder.md](edge-forwarder.md)), which hands each
+connection to the same proxy as the agent the cluster verified for the pod.
 
 ### Who is connecting
 
@@ -72,6 +73,7 @@ identifies:
 | --- | --- |
 | Unix socket | the kernel's peer credentials: the `scrim run` session whose process tree the client is in, else `identity.peers` |
 | Loopback TCP | the owner of the client socket from the kernel's socket table (Linux), and the process holding it when it runs as scrim's user; same mapping as a Unix socket |
+| Edge tunnel | the agent pod's service account, from the token its forwarder presented and the cluster verified ([edge-forwarder.md](edge-forwarder.md)) |
 | anything else | unknown |
 
 Policy sees `op == "database.auth"`, `dest.host` (the server's host), `dest.method == "connect"`,

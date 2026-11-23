@@ -137,6 +137,7 @@ type ctxKey int
 const (
 	peerKey ctxKey = iota
 	peerErrKey
+	callerKey
 )
 
 func (s *Server) logger() *slog.Logger {
@@ -161,6 +162,15 @@ func ConnContext(ctx context.Context, c net.Conn) context.Context {
 		return context.WithValue(ctx, peerErrKey, err)
 	}
 	return context.WithValue(ctx, peerKey, p)
+}
+
+// WithCaller marks a request whose caller another transport has already
+// identified: the edge listener, which verified the Kubernetes service account
+// token an agent pod's forwarder presented (internal/edge). The request is
+// served as id; its Authorization header and peer credentials are not
+// consulted.
+func WithCaller(ctx context.Context, id identity.Identity) context.Context {
+	return context.WithValue(ctx, callerKey, id)
 }
 
 // PeerFrom returns the peer credentials ConnContext recorded.
@@ -289,6 +299,9 @@ func withVersion(h http.Handler) http.Handler {
 
 // resolve establishes the caller's identity from the transport.
 func (s *Server) resolve(r *http.Request) (identity.Identity, error) {
+	if id, ok := r.Context().Value(callerKey).(identity.Identity); ok {
+		return id, nil
+	}
 	peer, ok := PeerFrom(r.Context())
 	if !ok {
 		return identity.Unknown(identity.Peer{}), nil

@@ -65,6 +65,10 @@ http://<fullname>.<namespace>.svc); the ServiceAccount is "<fullname>-proxy".
 {{- if $m.enabled -}}
   {{- $svcPorts = append $svcPorts (dict "name" "metrics" "port" (int $m.port) "targetPort" "health" "protocol" "TCP" "appProtocol" "http") -}}
 {{- end -}}
+{{- if .Values.edge.enabled -}}
+  {{- $ports = append $ports (dict "name" "edge" "containerPort" (int .Values.edge.port) "protocol" "TCP") -}}
+  {{- $svcPorts = append $svcPorts (dict "name" "edge" "port" (int .Values.edge.port) "targetPort" "edge" "protocol" "TCP") -}}
+{{- end -}}
 {{- if .Values.admin.tcp.enabled -}}
   {{- $ports = append $ports (dict "name" "admin" "containerPort" (int .Values.admin.tcp.port) "protocol" "TCP") -}}
   {{- $svcPorts = append $svcPorts (dict "name" "admin" "port" (int .Values.admin.tcp.port) "targetPort" "admin" "protocol" "TCP" "appProtocol" "http") -}}

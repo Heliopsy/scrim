@@ -5,7 +5,7 @@
 {{- if .Values.central.enabled }}
 {{- /*
 Central scrim, through chart.std.networkPolicy: agents reach the LLM and
-forward proxy ports, Prometheus the metrics port, adminFrom the admin port,
+forward proxy ports (and the edge listener with edge.enabled), Prometheus the metrics port, adminFrom the admin port,
 the helm test pods the listeners; scrim reaches DNS, the API server
 (TokenReview) and what networkPolicy.scrimEgress allows. central.networkPolicy
 adds to it.
@@ -15,7 +15,11 @@ adds to it.
 {{- if .Values.agents.namespaces -}}
   {{- $agentNs = dict "matchExpressions" (list (dict "key" "kubernetes.io/metadata.name" "operator" "In" "values" .Values.agents.namespaces)) -}}
 {{- end -}}
-{{- $ingress := list (dict "from" (list (dict "namespaceSelector" $agentNs "podSelector" (dict "matchLabels" (dict $label "central")))) "ports" $listen) -}}
+{{- $agentPorts := $listen -}}
+{{- if .Values.edge.enabled -}}
+  {{- $agentPorts = append $agentPorts (dict "port" (int .Values.edge.port) "protocol" "TCP") -}}
+{{- end -}}
+{{- $ingress := list (dict "from" (list (dict "namespaceSelector" $agentNs "podSelector" (dict "matchLabels" (dict $label "central")))) "ports" $agentPorts) -}}
 {{- if .Values.metrics.enabled -}}
   {{- $ingress = append $ingress (dict "from" (list (dict "namespaceSelector" $np.prometheus.namespaceSelector "podSelector" $np.prometheus.podSelector)) "ports" (list (dict "port" (int .Values.metrics.port) "protocol" "TCP"))) -}}
 {{- end -}}
@@ -61,7 +65,16 @@ spec:
           protocol: TCP
         - port: 9791
           protocol: TCP
+        {{- if $.Values.edge.enabled }}
+        # The edge forwarder.
+        - port: {{ $.Values.edge.port }}
+          protocol: TCP
+        {{- end }}
     {{- include "scrim.dnsEgress" $np.dns | nindent 4 }}
+    {{- with $np.agentEgress }}
+    # networkPolicy.agentEgress: connections that do not go through scrim.
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 {{- end }}
 {{- if $.Values.sidecar.enabled }}
 ---

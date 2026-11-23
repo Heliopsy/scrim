@@ -114,6 +114,8 @@ type Addrs struct {
 	// Databases are the database proxies' listeners by database name
 	// (unix:/path or host:port).
 	Databases map[string]string `json:"databases,omitempty"`
+	// Edge is the edge listener agent pods' forwarders connect to, host:port.
+	Edge string `json:"edge,omitempty"`
 }
 
 // Info describes a running daemon. It holds no secret.
@@ -177,7 +179,10 @@ type Daemon struct {
 	builder *SnapshotBuilder
 	catalog *catalog.Manager
 	runtime *agentapi.Runtime
-	tokens  *sessionTokens
+	// dbs are the database auth proxies, which the edge listener hands
+	// tunnels from agent pods to.
+	dbs    *databases
+	tokens *sessionTokens
 	// kubeTokens are the service account tokens scrim verified, redacted
 	// until they expire.
 	kubeTokens *sessionTokens
@@ -406,6 +411,10 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		return nil, err
 	}
 	if err := d.startDatabases(runCtx, cfg); err != nil {
+		d.runtime.Close()
+		return nil, err
+	}
+	if err := d.startEdge(runCtx, cfg, o.CA); err != nil {
 		d.runtime.Close()
 		return nil, err
 	}

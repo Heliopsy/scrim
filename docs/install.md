@@ -2,7 +2,7 @@
 
 scrim ships as one file per platform: the `scrim` binary is the Go control plane with the Rust data
 plane embedded, and runs the data plane as a child process (design D11). The data plane is also
-published on its own as `scrim-dataplane`, for Kubernetes sidecars and edge forwarders.
+published on its own as `scrim-dataplane`, for Kubernetes sidecars.
 
 | Platform | Archive |
 | --- | --- |

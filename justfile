@@ -297,6 +297,12 @@ helm-render-diff ref="origin/main":
 k8s-e2e:
     test/k8s/e2e.sh
 
+# Creates and deletes its own kind cluster, images and network (test/k8s/edge-e2e.sh).
+#
+# Edge forwarder end to end in kind on rootless podman: git push over SSH, psql and exec from an agent pod.
+edge-e2e:
+    test/k8s/edge-e2e.sh
+
 # ---------------------------------------------------------------- deployment examples
 
 deploy_tools := justfile_directory() / ".tools/deploy-examples"

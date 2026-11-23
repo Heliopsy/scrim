@@ -193,3 +193,32 @@ tests:
       config.valkey.addresses: ["v:6379"]
     asserts:
       - failedTemplate: {errorPattern: "config.valkey is set by the chart"}
+  - it: refuses the edge forwarder without Kubernetes identity
+    set:
+      edge.enabled: true
+      identity.kubernetes.enabled: false
+    asserts:
+      - failedTemplate: {errorPattern: "edge.enabled needs identity.kubernetes.enabled"}
+  - it: refuses the edge forwarder without central scrim
+    set:
+      edge.enabled: true
+      central.enabled: false
+      sidecar.enabled: true
+      sidecar.egressGuard.image: registry.example.com/nft:1
+    asserts:
+      - failedTemplate: {errorPattern: "edge.enabled forwards agent pods to central scrim"}
+  - it: refuses an edge forwarder with nothing to forward
+    set:
+      edge: {enabled: true, sshAgent: false, api: false}
+    asserts:
+      - failedTemplate: {errorPattern: "edge.enabled with nothing to forward"}
+  - it: refuses a forwarded database scrim does not configure
+    set:
+      edge: {enabled: true, databases: {app: 5432}}
+    asserts:
+      - failedTemplate: {errorPattern: 'edge.databases.app: no database "app" in config.databases'}
+  - it: refuses an edge port another listener uses
+    set:
+      edge: {enabled: true, port: 9790}
+    asserts:
+      - failedTemplate: {errorPattern: "edge.port 9790 is taken"}

@@ -1,0 +1,38 @@
+# Central mode with the edge forwarder: the edge listener, its Service port and NetworkPolicy rules,
+# and the forwarder injected into central agent pods with ssh-agent, the agent API and one database.
+edge:
+  enabled: true
+  databases:
+    app: 5432
+storeAuth:
+  serviceAccountToken:
+    enabled: true
+    audience: openbao
+config:
+  stores:
+    bao:
+      kind: openbao
+      address: https://bao.example.com:8200
+      auth:
+        method: kubernetes
+        kubernetes:
+          role: scrim
+          token-file: /var/run/secrets/scrim/store-token
+      redact: ["bao://kv/agents/*", "bao://kv/db/*"]
+  catalog:
+    entries:
+      deploy:
+        ref: bao://kv/agents/deploy#private_key
+        ssh_key: true
+  databases:
+    app:
+      kind: postgres
+      address: db.internal:5432
+      user: app_agent
+      password: bao://kv/db/app#password
+agents:
+  namespaces: [agents]
+kyverno:
+  enabled: true
+networkPolicy:
+  enabled: true

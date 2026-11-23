@@ -1,0 +1,4 @@
+# expect: edge.enabled needs identity.kubernetes.enabled
+edge: {enabled: true}
+identity:
+  kubernetes: {enabled: false}

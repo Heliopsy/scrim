@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net"
+	"net/http"
 	"os/user"
 	"strconv"
 	"sync"
@@ -190,6 +191,14 @@ func (r *Runtime) SetDatabases(d localapi.Databases) { r.api.Databases = d }
 // SetSSHAgent serves POST /v1/ssh/keys and /v1/ssh/sign with a, scrim's
 // ssh-agent keyring. Call it before Serve.
 func (r *Runtime) SetSSHAgent(a localapi.SSHAgent) { r.api.SSH = a }
+
+// SSHAgent is the keyring SetSSHAgent installed, nil without one.
+func (r *Runtime) SSHAgent() localapi.SSHAgent { return r.api.SSH }
+
+// Handler serves the local API's routes, for another listener that
+// identifies its callers itself and marks each request with
+// localapi.WithCaller (the edge listener).
+func (r *Runtime) Handler() http.Handler { return r.api.Handler() }
 
 // lookupGroup resolves api.group to a group ID; empty is 0 (unchanged).
 func lookupGroup(name string) (int, error) {
