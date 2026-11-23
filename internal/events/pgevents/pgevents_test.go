@@ -166,6 +166,9 @@ func TestNotifyAndCatchUp(t *testing.T) {
 		t.Fatalf("terminated %d listener backends: %v", killed, err)
 	}
 	waitUntil(t, "the listener notices", 5*time.Second, func() bool { return !bus.Listening() })
+	// Losing the listener wakes the bus for one catch-up read. Let it finish
+	// first, or it can pick up the events below and hide the reconnect path.
+	time.Sleep(300 * time.Millisecond)
 	emit(t, a, "grant.changed")
 	emit(t, a, "breakglass.changed")
 	time.Sleep(300 * time.Millisecond)
