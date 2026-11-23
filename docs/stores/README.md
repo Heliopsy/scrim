@@ -19,16 +19,16 @@ value back.
 `scrim doctor` prints this matrix for the stores you configure. An operation a store does not
 support is refused before anything is attempted.
 
-| Kind        | read | list | watch | write | generate | dynamic |
-|-------------|------|------|-------|-------|----------|---------|
-| `openbao`   | yes  | yes  | yes   | yes   | no       | no      |
-| `infisical` | yes  | yes  | yes   | yes   | no       | no      |
-| `onepassword` | yes | yes | yes | yes | no | no |
-| `bws`       | yes  | yes  | yes   | yes   | no       | no      |
-| `env`       | yes  | yes  | no    | no    | no       | no      |
-| `file`      | yes  | yes  | yes   | no    | no       | no      |
-| `sops`      | yes  | yes  | yes   | no    | no       | no      |
-| `memory`    | yes  | yes  | yes   | yes   | no       | no      |
+| Kind          | read | list | watch | write | generate | dynamic |
+|---------------|------|------|-------|-------|----------|---------|
+| `openbao`     | yes  | yes  | yes   | yes   | no       | no      |
+| `infisical`   | yes  | yes  | yes   | yes   | no       | no      |
+| `onepassword` | yes  | yes  | yes   | yes   | no       | no      |
+| `bws`         | yes  | yes  | yes   | yes   | no       | no      |
+| `env`         | yes  | yes  | no    | no    | no       | no      |
+| `file`        | yes  | yes  | yes   | no    | no       | no      |
+| `sops`        | yes  | yes  | yes   | no    | no       | no      |
+| `memory`      | yes  | yes  | yes   | yes   | no       | no      |
 
 Watch on OpenBao, Infisical, 1Password and Bitwarden Secrets Manager polls version metadata. It
 never fetches values, so it stays cheap even with a short interval. Generated secrets are produced
