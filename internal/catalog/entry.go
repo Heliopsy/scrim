@@ -137,6 +137,13 @@ type Entry struct {
 	// key, presented upstream when the agent presents its placeholder
 	// certificate.
 	ClientCertificate bool `yaml:"client_certificate,omitempty" json:"client_certificate,omitempty"`
+	// SSHKey marks a value holding an SSH private key (OpenSSH or PEM;
+	// ed25519, ECDSA or RSA), offered by scrim's ssh-agent. The key never
+	// leaves scrim: the agent signs with it.
+	SSHKey bool `yaml:"ssh_key,omitempty" json:"ssh_key,omitempty"`
+	// SSHCertificate is the store reference of an OpenSSH certificate for
+	// the key (one authorized_keys-format line), offered alongside it.
+	SSHCertificate string `yaml:"ssh_certificate,omitempty" json:"ssh_certificate,omitempty"`
 
 	// Source says where the entry came from. Not part of the file format.
 	Source Source `yaml:"-" json:"-"`
@@ -352,6 +359,9 @@ func validateEntry(e *Entry) error {
 			}
 		}
 	}
+	if err := validateSSHKey(e); err != nil {
+		return err
+	}
 	if e.Prefix != "" {
 		if e.Ref != "" || len(e.Profiles) > 0 || len(e.Variants) > 0 || e.Placeholder != "" {
 			return fmt.Errorf("%w: entry %q: a bulk entry (prefix) takes a template, not ref, profiles, variants or placeholder", ErrInvalid, n)
@@ -427,4 +437,32 @@ func whenKey(w map[string]string) string {
 		}
 	}
 	return strings.Join(parts, ",")
+}
+
+// validateSSHKey checks the ssh-agent keys of an entry: a key is signed with,
+// never injected, so it takes no hosts or injection locations.
+func validateSSHKey(e *Entry) error {
+	n := e.Name
+	if e.SSHCertificate != "" {
+		if !e.SSHKey {
+			return fmt.Errorf("%w: entry %q: ssh_certificate needs ssh_key", ErrInvalid, n)
+		}
+		if _, err := parseRef(n, "ssh_certificate", e.SSHCertificate); err != nil {
+			return err
+		}
+	}
+	if !e.SSHKey {
+		return nil
+	}
+	switch {
+	case len(e.Hosts) > 0 || len(e.Inject) > 0:
+		return fmt.Errorf("%w: entry %q: an ssh_key is used by scrim's ssh-agent, never injected; it takes no hosts or inject", ErrInvalid, n)
+	case e.ClientCertificate || e.AWSSigV4 != nil:
+		return fmt.Errorf("%w: entry %q: an ssh_key cannot also be a client certificate or an AWS secret", ErrInvalid, n)
+	case e.Prefix != "":
+		return fmt.Errorf("%w: entry %q: an ssh_key names one secret; it cannot be a bulk entry (prefix)", ErrInvalid, n)
+	case e.Class == ClassDisplay:
+		return fmt.Errorf("%w: entry %q: an ssh_key is a credential, not display data", ErrInvalid, n)
+	}
+	return nil
 }

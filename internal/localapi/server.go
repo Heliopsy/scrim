@@ -32,6 +32,7 @@ import (
 	"github.com/heliopsy/scrim/internal/agenttools"
 	"github.com/heliopsy/scrim/internal/identity"
 	"github.com/heliopsy/scrim/internal/secret"
+	"github.com/heliopsy/scrim/internal/sshagent"
 )
 
 // Version is the API version, the first path segment of every route.
@@ -74,6 +75,27 @@ type Server struct {
 	// SessionEnded, when set, is called with the ID of every session this
 	// API revokes or sweeps.
 	SessionEnded func(id string)
+	// SSH, when set, serves POST /v1/ssh/keys and POST /v1/ssh/sign: the
+	// control plane's side of scrim's ssh-agent. Neither returns key
+	// material: public keys and signatures only.
+	SSH SSHAgent
+}
+
+// SSHAgent lists ssh-agent keys and signs for a caller (sshkeys.Keyring).
+type SSHAgent interface {
+	Keys(ctx context.Context, id identity.Identity, bindings []sshagent.Binding) ([]sshagent.Key, error)
+	Sign(ctx context.Context, id identity.Identity, req sshagent.SignRequest) (sshagent.Signature, error)
+}
+
+// SSHKeysInput is the body of POST /v1/ssh/keys: the connection's session
+// bindings, so the host it talks to is known.
+type SSHKeysInput struct {
+	Bindings []sshagent.Binding `json:"bindings,omitempty"`
+}
+
+// SSHKeysOutput is the answer of POST /v1/ssh/keys.
+type SSHKeysOutput struct {
+	Keys []sshagent.Key `json:"keys"`
 }
 
 // NamedValue is one value registered for redaction. Name says where it was
@@ -244,6 +266,8 @@ func (s *Server) Handler() http.Handler {
 	authed("GET "+v+"/status/{id}", s.status)
 	authed("GET "+v+"/grants", s.grants)
 	authed("POST "+v+"/redact", s.redact)
+	authed("POST "+v+"/ssh/keys", s.sshKeys)
+	authed("POST "+v+"/ssh/sign", s.sshSign)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, agenttools.Errorf(agenttools.CodeNotFound, "no such route in API %s", Version))
 	})
@@ -581,6 +605,32 @@ func (s *Server) redact(w http.ResponseWriter, r *http.Request, id identity.Iden
 		s.audit(r.Context(), entry)
 	}
 	writeJSON(w, http.StatusOK, RedactOutput{Text: string(out.Text), Replacements: out.Replacements})
+}
+
+func (s *Server) sshKeys(w http.ResponseWriter, r *http.Request, id identity.Identity) {
+	if s.SSH == nil {
+		writeError(w, agenttools.Errorf(agenttools.CodeUnavailable, "this scrim process has no ssh-agent"))
+		return
+	}
+	var in SSHKeysInput
+	if decode(w, r, &in) {
+		keys, err := s.SSH.Keys(r.Context(), id, in.Bindings)
+		reply(w, SSHKeysOutput{Keys: keys}, err)
+	}
+}
+
+// sshSign may wait for a human: an ask rule holds the signature until the
+// approval settles.
+func (s *Server) sshSign(w http.ResponseWriter, r *http.Request, id identity.Identity) {
+	if s.SSH == nil {
+		writeError(w, agenttools.Errorf(agenttools.CodeUnavailable, "this scrim process has no ssh-agent"))
+		return
+	}
+	var in sshagent.SignRequest
+	if decode(w, r, &in) {
+		sig, err := s.SSH.Sign(r.Context(), id, in)
+		reply(w, sig, err)
+	}
 }
 
 // maxBody bounds a JSON request body.

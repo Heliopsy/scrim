@@ -72,6 +72,8 @@ entries:
 | `placeholder_format` | `shape`: a format-preserving placeholder that keeps the value's known prefix (`ghp_`, `AKIA`, `xoxb-`, ...), length and alphabet, for clients that check a token's shape. Credentials only; a value without a shape keeps the bracket form. |
 | `aws_sigv4` | On the entry holding an AWS secret access key: `access_key_id` (the entry holding the access key id), `regions` and `services` the request may be signed for. The tool proxy re-signs requests made with the placeholder keys. |
 | `client_certificate` | The value is a PEM client certificate and key; the tool proxy presents it upstream when the agent presents its placeholder certificate. |
+| `ssh_key` | The value is an SSH private key (OpenSSH or PEM; ed25519, ECDSA or RSA, without a passphrase) that scrim's ssh-agent signs with. Takes no `hosts` or `inject`: it is never injected. See [ssh-agent.md](ssh-agent.md). |
+| `ssh_certificate` | Store reference of an OpenSSH certificate for the `ssh_key`, offered alongside the key. |
 
 Entry names are lower-case words joined by dashes. Entries from a bulk prefix are named
 `<entry>/<NAME>`, for example `acme/API_KEY`.

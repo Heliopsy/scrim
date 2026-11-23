@@ -19,6 +19,7 @@ import (
 	"github.com/heliopsy/scrim/internal/agenttools"
 	"github.com/heliopsy/scrim/internal/identity"
 	"github.com/heliopsy/scrim/internal/secret"
+	"github.com/heliopsy/scrim/internal/sshagent"
 )
 
 // Client calls the local API over its Unix socket.
@@ -280,4 +281,24 @@ func (c *Client) Redact(ctx context.Context, text []byte) (RedactOutput, error) 
 	var out RedactOutput
 	err := c.do(ctx, http.MethodPost, "/redact", nil, bytes.NewReader(text), "application/octet-stream", &out)
 	return out, err
+}
+
+// SSHKeys lists the ssh-agent keys scrim offers this caller on a connection
+// with these session bindings. It makes Client an sshagent.Backend.
+func (c *Client) SSHKeys(ctx context.Context, bindings []sshagent.Binding) ([]sshagent.Key, error) {
+	var out SSHKeysOutput
+	if err := c.json(ctx, http.MethodPost, "/ssh/keys", SSHKeysInput{Bindings: bindings}, &out); err != nil {
+		return nil, err
+	}
+	return out.Keys, nil
+}
+
+// SSHSign asks scrim for a signature. It returns once policy decided, which
+// may wait for a human's approval.
+func (c *Client) SSHSign(ctx context.Context, req sshagent.SignRequest) (sshagent.Signature, error) {
+	var out sshagent.Signature
+	if err := c.json(ctx, http.MethodPost, "/ssh/sign", req, &out); err != nil {
+		return sshagent.Signature{}, err
+	}
+	return out, nil
 }

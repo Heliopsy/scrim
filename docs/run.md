@@ -21,7 +21,7 @@ Spec: `openspec/changes/scrim-v1/specs/interception` ("Wrapper mode") and
    (`POST /v1/sessions`). The token is bound to your Unix user and to this `scrim run` process and
    its descendants; see [identity.md](identity.md).
 3. **A session directory is created** under `$XDG_RUNTIME_DIR/scrim/run/` (mode 0700) for the CA
-   files and the MCP configuration.
+   files, the MCP configuration and the [ssh-agent](ssh-agent.md) socket.
 4. **Project files are scanned.** Secret values in the working directory's `.env*`, `*.tfvars`,
    application config and similar files are registered with scrim for this session and applied to the
    data plane before the agent starts, so they are redacted from its first request. See
@@ -44,6 +44,7 @@ name could be read as a flag. `scrim run` flags go before it:
 | `--run-placeholder-env=false` | Do not export declared placeholders (setting `run.placeholder-env`). |
 | `--run-scan-project=false` | Do not scan the working directory for secret values (setting `run.scan-project`). |
 | `--run-scan-interval 30s` | How often project files are rescanned while the agent runs; `0` scans once (setting `run.scan-interval`, default 10s). |
+| `--run-ssh-agent=false` | Do not serve scrim's ssh-agent to the session (setting `run.ssh-agent`). See [ssh-agent.md](ssh-agent.md). |
 | `--run-fs-view auto\|namespace\|home\|off` | Session filesystem view (setting `run.fs-view`). See [Filesystem view](#filesystem-view). |
 | `--run-allow-unredacted-start` | Weakening: start the agent even when scrim cannot serve it. See [Failing closed](#failing-closed). |
 
@@ -65,6 +66,7 @@ name could be read as a flag. `scrim run` flags go before it:
 | `SCRIM_SESSION_TOKEN` | the session token | Presented by `scrim mcp` and `scrim secret`. Never printed by `scrim run`. |
 | `SCRIM_SESSION_ID` | the session's public ID | For logs and scripts. |
 | declared placeholders | for example `SCRIM_GITHUB_TOKEN=SCRIM_GITHUB_TOKEN` | See [Declared placeholders](#declared-placeholders). |
+| `SSH_AUTH_SOCK` | `<session>/ssh-agent.sock` | ssh and git over SSH sign through scrim's ssh-agent, with keys from scrim's stores, a policy decision per signature and an audit entry each ([ssh-agent.md](ssh-agent.md)). An inherited agent is replaced and `SSH_AGENT_PID` removed. Not set with `run.ssh-agent: false`. |
 
 `ALL_PROXY` and `all_proxy` are removed, so nothing skips the forward proxy through them.
 

@@ -66,6 +66,7 @@ func (Commands) Run(e *Env) *cobra.Command {
 				ScanProject:     agentrun.ScanProject.Get(cfg),
 				ScanInterval:    agentrun.ScanInterval.Get(cfg),
 				FSView:          agentrun.FSViewOptions{Mode: fsview.Setting.Get(cfg), Hide: fsview.Hide.Get(cfg)},
+				SSHAgent:        agentrun.SSHAgent.Get(cfg),
 			}
 			if log, err := obs.LoggerFromConfig(e.Stderr, cfg, nil); err == nil {
 				o.Log = obs.WithComponent(log, "run")

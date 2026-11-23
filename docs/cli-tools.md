@@ -75,7 +75,8 @@ APIs, registries and private package indexes name their hosts themselves.
 - **gcloud**: access tokens live an hour; keep the store value fresh.
 - **az**: the access token Entra ID returns is a live credential and lands in the session's
   `AZURE_CONFIG_DIR` until the session ends. A capture rule keeps it a placeholder.
-- **psql, mysql, ssh** use the database proxy and the ssh agent, not profiles.
+- **psql, mysql, ssh** use the database proxy and the ssh agent ([ssh-agent.md](ssh-agent.md)), not
+  profiles.
 
 ## Credential helpers
 

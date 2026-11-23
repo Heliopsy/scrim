@@ -29,6 +29,15 @@ var (
 		Flag:        true,
 	})
 
+	// SSHAgent serves scrim's ssh-agent to the session.
+	SSHAgent = config.Register(config.Spec[bool]{
+		Key:     "run.ssh-agent",
+		Default: true,
+		Description: "Point SSH_AUTH_SOCK at scrim's ssh-agent for the session: ssh and git over ssh sign with the catalog's " +
+			"ssh_key entries, decided and audited by scrim, and an inherited agent with your own keys is not reachable through it.",
+		Flag: true,
+	})
+
 	// PlaceholderEnv exports declared catalog placeholders.
 	PlaceholderEnv = config.Register(config.Spec[bool]{
 		Key:         "run.placeholder-env",
