@@ -29,3 +29,4 @@ leak-report.json
 
 # Pinned tools of `just deploy-examples-check`
 /.tools/
+*.test
