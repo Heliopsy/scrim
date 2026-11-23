@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -55,17 +56,28 @@ func (k *keychain) run(ctx context.Context, args ...string) (stdout, stderr []by
 }
 
 func (k *keychain) read(ctx context.Context, service, account string) (item, secret.Value, error) {
+	// Attributes first: they answer without a dialog even when the
+	// keychain is locked, so a missing item never waits.
+	it, err := k.meta(ctx, service, account)
+	if err != nil {
+		return item{}, secret.Value{}, err
+	}
 	stdout, stderr, err := k.run(ctx, k.args(service, account, true)...)
 	defer secret.WipeBytes(stdout)
 	defer secret.WipeBytes(stderr)
 	if err != nil {
+		if ctx.Err() != nil {
+			// The item exists but security held the value back until
+			// the deadline: macOS is waiting for an unlock or an access
+			// approval in a dialog. scrim does not wait for a person.
+			return item{}, secret.Value{}, kerr(stores.ErrLocked, "keychain is locked or the item waits for approval in a dialog; unlock it and allow /usr/bin/security (scrim does not wait for prompts)", ctx.Err())
+		}
 		return item{}, secret.Value{}, keychainError(ctx, stderr, err)
 	}
 	v, err := parsePasswordLine(stderr)
 	if err != nil {
 		return item{}, secret.Value{}, kerr(stores.ErrUnavailable, "unexpected output from security: "+err.Error(), nil)
 	}
-	it := item{service: service, account: account, label: keychainAttr(stdout, "labl")}
 	return it, secret.Adopt(v), nil
 }
 
@@ -82,12 +94,16 @@ func (k *keychain) list(context.Context, string) ([]item, error) {
 	return nil, kerr(stores.ErrUnsupported, "the keychain backend cannot list", nil)
 }
 
+// health checks that security answers and the configured keychain is in
+// place, with calls that never open a dialog (show-keychain-info would ask
+// to unlock a locked keychain). A locked keychain is reported by the reads.
 func (k *keychain) health(ctx context.Context) error {
-	args := []string{"show-keychain-info"}
 	if k.cfg.Keychain != "" {
-		args = append(args, k.cfg.Keychain)
+		if _, err := os.Stat(k.cfg.Keychain); err != nil {
+			return kerr(stores.ErrUnavailable, "keychain file not found", err)
+		}
 	}
-	_, stderr, err := k.run(ctx, args...)
+	_, stderr, err := k.run(ctx, "list-keychains", "-d", "user")
 	if err != nil {
 		return keychainError(ctx, stderr, err)
 	}

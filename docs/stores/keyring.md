@@ -121,12 +121,15 @@ desktop session; scrim picks the values up at its next refresh.
 - Linux: scrim calls only `OpenSession`, `ReadAlias`, `SearchItems`, property reads and `GetSecret`
   on an unlocked item. It never calls `Unlock`, so no password dialog appears on your desktop because
   of scrim.
-- macOS: values are read with `/usr/bin/security`. A locked keychain is refused when the system
-  reports that user interaction is not allowed, which is the case for a background service. In a
-  logged-in desktop session, macOS itself may still show an unlock or "allow access" dialog for
-  `security`, which scrim cannot suppress through that tool. Keep the keychain unlocked and give
-  `/usr/bin/security` access to the items scrim reads (`security add-generic-password -T
-  /usr/bin/security ...`, or "Always Allow" once), and the dialog never appears.
+- macOS: values are read with `/usr/bin/security`. scrim first reads the item's attributes, which
+  needs no unlock and never opens a dialog, so a missing item is reported at once and label lookups
+  work on a locked keychain. Reading the value of an item in a locked keychain, or of an item that
+  does not trust `/usr/bin/security`, makes macOS ask in a dialog when a desktop session is logged
+  in. scrim does not wait for it: after `timeout` it stops `security` and reports the store as
+  locked. A background service without a session gets "User interaction is not allowed", which is
+  reported as locked straight away. Keep the keychain unlocked and give `/usr/bin/security` access
+  to the items scrim reads (`security add-generic-password -T /usr/bin/security ...`, or "Always
+  Allow" once), and no dialog appears. Health checks never ask to unlock.
 
 ## Headless Linux
 
