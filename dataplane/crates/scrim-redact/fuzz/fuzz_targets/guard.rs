@@ -24,7 +24,7 @@ fuzz_target!(|data: &[u8]| {
         && let Some((&sel, rest)) = rest.split_first()
     {
         let depth = 1 + usize::from(sel % 3);
-        let styles: Vec<u8> = (0..depth).map(|i| (sel >> (2 + 2 * i)) % 5).collect();
+        let styles: Vec<u8> = (0..depth).map(|i| (sel >> (2 + 2 * i)) % 6).collect();
         let form = common::json_nested(v, &styles);
         let mid = rest.len() / 2;
         let embedded = [&rest[..mid], b" ", &form, b" ", &rest[mid..]].concat();
@@ -36,7 +36,8 @@ fuzz_target!(|data: &[u8]| {
         assert!(s.guard().agrees_with_oracle(&embedded));
     }
     assert!(s.guard().agrees_with_oracle(body));
-    if let Some(p) = common::snapshot_threads(&vals, 8, EngineChoice::Auto, ValueClass::Credential, 3)
+    if let Some(p) =
+        common::snapshot_threads(&vals, 8, EngineChoice::Auto, ValueClass::Credential, 3)
     {
         assert!(p.guard().agrees_with_oracle(body));
     }

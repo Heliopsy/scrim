@@ -362,3 +362,127 @@ fn json_depth_is_validated() {
     }
     assert_eq!(Config::default().json_depth, DEFAULT_JSON_DEPTH);
 }
+
+/// The guard's check of `body` (a value escaped `styles` times inside one JSON string, nothing
+/// else escaped) with JSON unescaping to `depth` rounds: the value is found in the deepest view
+/// and the repaired body is clean.
+fn guard_finds_deep(v: &[u8], form: &[u8], depth: usize) {
+    let s = snapshot_with(
+        &[v],
+        ValueClass::Credential,
+        &Config {
+            json_depth: depth,
+            ..no_detectors()
+        },
+    );
+    let body = [&b"{\"content\":\""[..], form, b"\"}"].concat();
+    let mut gs = GuardScratch::new();
+    match s.guard().check(&body, &mut gs) {
+        Verdict::Repaired { bytes, findings } => {
+            assert!(
+                findings.iter().any(|f| f.view == GuardView::JsonDeep),
+                "{findings:?}"
+            );
+            let repaired = bytes.to_vec();
+            let mut gs = GuardScratch::new();
+            assert_eq!(s.guard().check(&repaired, &mut gs), Verdict::Clean);
+        }
+        other => panic!("missed at depth {depth}: {other:?}"),
+    }
+}
+
+/// A value made only of characters the first level escapes, then every character escaped: the
+/// second level's escapes decode to `\`, `u` and hex digits, none of them in the value, yet they
+/// spell the escapes the third round decodes into the value. The guard must not skip the second
+/// view because its escapes decode to bytes no value holds.
+#[test]
+fn guard_unescapes_escapes_that_spell_escapes() {
+    for (v, styles) in [
+        (
+            ">\t>\t>\t\u{2}\u{8}",
+            &[Style::Html, Style::All, Style::All][..],
+        ),
+        (
+            "\u{8}\u{1}\u{1}\n\n\u{1}\t\u{1}",
+            &[Style::Min, Style::All, Style::Ascii],
+        ),
+        (
+            "\t\n\u{1}\t\n\u{8}\u{1}\n\u{8}\u{8}\n\n",
+            &[Style::Min, Style::All, Style::Min],
+        ),
+    ] {
+        let form = styles.iter().fold(v.to_string(), |acc, &st| esc(&acc, st));
+        guard_finds_deep(v.as_bytes(), form.as_bytes(), DEFAULT_JSON_DEPTH);
+        // One more outer level, with the guard unescaping four times: the third round's parent
+        // must not be skipped either.
+        let form4 = esc(&form, Style::Min);
+        guard_finds_deep(v.as_bytes(), form4.as_bytes(), 4);
+    }
+}
+
+/// The `guard` fuzz target's finding (release fuzzing, 600 s): eight bytes that are not UTF-8,
+/// with NULs, escaped in Go, every-character and Python style, bytes from 0x80 copied as they are.
+#[test]
+fn guard_unescapes_escapes_that_spell_escapes_in_binary_values() {
+    let v: &[u8] = b"\xef\xf7\xf7\x92\xf7\x00\x00\xbf";
+    let level = |s: &[u8], f: &dyn Fn(u8) -> Option<String>| -> Vec<u8> {
+        s.iter()
+            .flat_map(|&b| f(b).map_or_else(|| vec![b], String::into_bytes))
+            .collect()
+    };
+    let go = level(v, &|b| (b < 0x20).then(|| format!("\\u{b:04x}")));
+    let all = level(&go, &|b| (b < 0x80).then(|| format!("\\u{b:04x}")));
+    let py = level(&all, &|b| (b == b'\\').then(|| "\\\\".to_string()));
+    guard_finds_deep(v, &py, DEFAULT_JSON_DEPTH);
+}
+
+/// The `variants` fuzz target's finding (release fuzzing, 600 s): a value with control characters
+/// nested three levels deep (Go, Go, minimal), right after four raw backslashes.
+///
+/// As the serialisers write it (`\n` and `\r` short), the form is one the redactor compiles and it
+/// is replaced whatever precedes it. The target had written `\n` as `\u000a`, a form no
+/// serialiser it names writes, so only the guard could find it; and the four backslashes before
+/// it pair with its own, so the value only appears after a fourth round of unescaping, past the
+/// default depth. With `json_depth` 4 the guard finds that form too.
+#[test]
+fn compiled_nested_form_is_redacted_after_backslashes() {
+    let v: &[u8] = b"\x0b\x0a\x0d\x0f\x17\xaa\xd9\x01\x00\x00\x00\xfe";
+    let level = |s: &[u8], short: bool| -> Vec<u8> {
+        s.iter()
+            .flat_map(|&b| match b {
+                b'\\' => b"\\\\".to_vec(),
+                b'\n' if short => b"\\n".to_vec(),
+                b'\r' if short => b"\\r".to_vec(),
+                0..0x20 => format!("\\u{b:04x}").into_bytes(),
+                _ => vec![b],
+            })
+            .collect()
+    };
+    let nest = |short| level(&level(&level(v, short), short), short);
+    let pre: &[u8] = b"#=s\\\\\\\\";
+    let post: &[u8] = b"\xcb#<#\x94\xd4\x94";
+
+    let s = snapshot_with(&[v], ValueClass::Credential, &no_detectors());
+    let compiled = nest(true);
+    let body = [pre, &compiled, post].concat();
+    let mut ws = Workspace::new();
+    let p = s.protect(&body, &mut ws).unwrap();
+    assert_eq!(p.bytes, [pre, &ph(&s, v), post].concat());
+    assert_eq!(p.guard, GuardOutcome::Clean);
+
+    let other = nest(false);
+    let body = [pre, &other, post].concat();
+    let deep = snapshot_with(
+        &[v],
+        ValueClass::Credential,
+        &Config {
+            json_depth: 4,
+            ..no_detectors()
+        },
+    );
+    let mut gs = GuardScratch::new();
+    assert!(matches!(
+        deep.guard().check(&body, &mut gs),
+        Verdict::Repaired { findings, .. } if findings.iter().any(|f| f.view == GuardView::JsonDeep)
+    ));
+}
