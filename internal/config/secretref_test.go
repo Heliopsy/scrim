@@ -133,7 +133,15 @@ func TestStoreReferences(t *testing.T) {
 		asked = append(asked, ref)
 		return secret.FromString(seeded), nil
 	})
-	r, err := c.ResolveStores(context.Background(), sr)
+	// Limited to other keys, nothing is resolved and nothing is asked.
+	r, err := c.ResolveStores(context.Background(), sr, "some.other-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.Secret(w.token); ok || len(asked) != 0 || len(r.Unresolved()) != 1 {
+		t.Fatalf("limited resolution: ok=%v asked=%v unresolved=%v", ok, asked, r.Unresolved())
+	}
+	r, err = c.ResolveStores(context.Background(), sr, "stores.openbao.token")
 	if err != nil {
 		t.Fatal(err)
 	}

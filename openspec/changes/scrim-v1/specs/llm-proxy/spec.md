@@ -89,6 +89,18 @@ cloud provider route SHALL NOT be chained.
 - **THEN** the built-in routes go through the chain and the Bedrock route sends its signed requests
   to Bedrock directly
 
+### Requirement: Cloud provider credentials load with their store
+
+Each cloud provider credential reference SHALL be a redact target of the store its scheme names,
+loaded at start-up and refreshed with that store, whether or not the store's `redact` list or a
+catalog entry covers it. A reference added by a reload SHALL be logged as loaded after a restart.
+
+#### Scenario: Credential no redact target covers
+
+- **WHEN** a Foundry route's `api-key` is `bao://kv/cloud#key` and no `redact` entry or catalog
+  entry names that secret
+- **THEN** the value is loaded with the `bao` store and the route authenticates with it
+
 ### Requirement: Routing by path
 
 The proxy SHALL route each incoming request to a provider by the request path prefix and SHALL
