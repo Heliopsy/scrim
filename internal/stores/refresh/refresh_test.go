@@ -491,6 +491,56 @@ func TestRunStopsAndRestartsTheStoreMidRun(t *testing.T) {
 	}
 }
 
+// TestWatchedChangeIsPublished: a secret the watch reports, new under a
+// prefix target or rotated in a single-secret target, is announced through
+// OnChange once it is in the set, without waiting for the next refresh.
+// OnChange is what pushes the set to the data plane; before, a watched
+// change was loaded but never announced, so it stayed unredacted until the
+// next full refresh (5 minutes by default).
+func TestWatchedChangeIsPublished(t *testing.T) {
+	s := memstore.New("mem")
+	seed(s, "agents/a", map[string]string{"token": gen(t)})
+	seed(s, "ci/deploy", map[string]string{"token": gen(t)})
+	added, rotated := gen(t), gen(t)
+	var r *refresh.Refresher
+	var sawAdded, sawRotated atomic.Bool
+	r = refresh.New(s, refresh.Config{
+		Targets: []refresh.Target{
+			{Ref: stores.MustParseRef("mem://agents"), Prefix: true},
+			{Ref: stores.MustParseRef("mem://ci/deploy")},
+		},
+		// No refresh after the first load: only the watch can bring the
+		// changes in.
+		Interval: time.Hour,
+		OnChange: func() {
+			vals := set(r)
+			if _, ok := vals[added]; ok {
+				sawAdded.Store(true)
+			}
+			if _, ok := vals[rotated]; ok {
+				sawRotated.Store(true)
+			}
+		},
+	})
+	defer r.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { r.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	waitFor(t, "first load", func() bool { return r.Ready(ctx) == nil })
+
+	seed(s, "agents/b", map[string]string{"token": added})
+	seed(s, "ci/deploy", map[string]string{"token": rotated})
+	waitFor(t, "the watched values in the set", func() bool {
+		vals := set(r)
+		_, a := vals[added]
+		_, b := vals[rotated]
+		return a && b
+	})
+	waitFor(t, "OnChange with the secret added under the prefix", sawAdded.Load)
+	waitFor(t, "OnChange with the rotated secret", sawRotated.Load)
+}
+
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

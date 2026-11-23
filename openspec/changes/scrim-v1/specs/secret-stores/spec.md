@@ -143,6 +143,13 @@ refreshed redaction set SHALL take effect for new requests without a restart.
 - **AND** the previous value stays in the redaction set for a configurable retention period
 - **AND** only the new value is injectable, and the data plane accepts the snapshot that carries both
 
+#### Scenario: Watched change takes effect before the next refresh
+
+- **WHEN** a store that can watch reports a secret added under a prefix redact target, or a new
+  value of a single-secret target
+- **THEN** within a few watch intervals the value is redacted in provider requests, without waiting
+  for the next full refresh
+
 #### Scenario: Refreshes are spread out
 
 - **WHEN** several replicas or stores refresh on the same interval

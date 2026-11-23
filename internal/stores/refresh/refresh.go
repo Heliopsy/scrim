@@ -439,8 +439,12 @@ func (r *Refresher) applyChange(ctx context.Context, t Target, c stores.Change) 
 		if !t.Prefix && !t.Glob {
 			ref = t.Ref
 		}
-		// A failure here is covered by the next full refresh.
-		_ = r.load(ctx, ref, stores.Metadata{})
+		// A failure here is covered by the next full refresh. A value that
+		// loaded is announced now, so it reaches the data plane without
+		// waiting for that refresh.
+		if err := r.load(ctx, ref, stores.Metadata{}); err == nil {
+			r.changed()
+		}
 	}
 }
 
