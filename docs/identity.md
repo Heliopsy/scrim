@@ -5,8 +5,8 @@ decision and audit entry name that agent. Identity comes only from the transport
 peer credentials, plus a session token when the caller has one. Nothing in a request body, header
 or tool argument can change it.
 
-This page covers local identity. Kubernetes service accounts, client certificates and scrim as an
-identity provider for stores are specified in `openspec/changes/scrim-v1/specs/agent-identity` and
+This page covers local identity, Kubernetes service accounts and scrim as an identity provider for
+stores. Client certificates are specified in `openspec/changes/scrim-v1/specs/agent-identity` and
 arrive later.
 
 ## Peer credentials
@@ -318,6 +318,92 @@ implements the check so far; Infisical and Vaultwarden are used with scrim's own
 Kubernetes auth, two scrim replicas on one PostgreSQL logging in to OpenBao with their own service
 account, and two agent pods whose service accounts get different outcomes from scrim's rules and
 from their OpenBao roles. It removes the cluster and its images when it ends.
+
+## scrim as an identity provider
+
+Stores and clouds that federate trust a JWT from an issuer they know through its OpenID Connect
+discovery document. scrim can be that issuer for its agents: it signs a short-lived token for an
+agent it has identified, presents it to the store on the agent's behalf, and the store applies its
+own role for that agent. The agent never sees the token.
+
+```yaml
+identity:
+  issuer:
+    url: https://scrim.example.com/idp   # the iss claim; stores fetch discovery from here
+    listen: 127.0.0.1:9795               # serves discovery and JWKS only; put TLS in front
+    token-ttl: 10m                       # 1m to 1h, never past the session's end
+    rotate-every: 24h
+```
+
+The listener answers two paths under the URL's path and nothing else, both public:
+
+| Path | Content |
+| --- | --- |
+| `<url>/.well-known/openid-configuration` | discovery document: `issuer`, `jwks_uri`, `RS256` |
+| `<url>/.well-known/jwks.json` | the published public keys |
+
+The URL must be https, or http on a loopback host. `identity.issuer.insecure-http` allows plain
+http elsewhere and is reported as weakening: a store fetching keys over plain http can be handed
+an attacker's keys and would then trust tokens the attacker signs.
+
+### Tokens
+
+Each token is an RS256 JWT for one audience (the store's), minted only for an identity scrim
+resolved from the transport. An unknown caller gets none.
+
+| Claim | Value |
+| --- | --- |
+| `iss` | `identity.issuer.url` |
+| `sub` | `agent:<name>`, or `k8s:<name>` for a Kubernetes agent; the same for every session of the agent |
+| `aud` | the store's audience |
+| `iat`, `nbf`, `exp`, `jti` | issue time, expiry (`token-ttl`, capped at the session's end), random ID |
+| `agent`, `agent_kind` | the agent name and how scrim identified it (`peer`, `session`, `k8s`) |
+| `session`, `session_name` | the `scrim run` session, when there is one |
+| `host` | the machine scrim runs on, for local agents |
+| `namespace`, `service_account`, `pod` | for Kubernetes agents |
+| `profile` | scrim's configuration profile |
+
+A store role binds on these, for example OpenBao JWT auth:
+
+```sh
+bao auth enable jwt
+bao write auth/jwt/config oidc_discovery_url=https://scrim.example.com/idp \
+  bound_issuer=https://scrim.example.com/idp
+bao write auth/jwt/role/claude-laptop role_type=jwt user_claim=sub bound_audiences=openbao \
+  bound_claims=agent=claude-laptop token_policies=claude-laptop token_ttl=5m
+```
+
+Every token scrim mints is added to the redaction set until it expires, redaction only (store
+`scrim-issuer`), so one that turned up in a store's error message or a log an agent reads reaches a
+provider as `⟦scrim:scrim-issuer-credential:...⟧`. A token for the same claims and audience is
+reused while two thirds of its life remain; tokens held for a session are dropped when it ends.
+
+### Signing keys
+
+By default scrim generates its keys in `identity.issuer.key-dir` (`~/.local/state/scrim/issuer`,
+mode 0700, one 0600 PKCS#8 file per key) and rotates them every `rotate-every`:
+
+- the next key is published one full period before it starts to sign, so a store that cached the
+  JWKS at any point since the last rotation already has it;
+- a replaced key stays published until the last token it signed has expired, plus five minutes for
+  verifiers' clock leeway, then its file is deleted;
+- a key set that is overdue (scrim was stopped for longer than a period) rotates at start-up.
+
+Keys are named by their RFC 7638 thumbprint (`kid`). Logs name keys by `kid` only; no log line,
+error, metric or response carries a private key.
+
+Replicas behind one URL must publish the same JWKS, so they cannot each generate keys. Give them
+operator-managed keys instead:
+
+```yaml
+identity:
+  issuer:
+    signing-keys: file:/run/secrets/scrim-issuer/keys.pem   # one or more PKCS#8 RSA keys
+```
+
+The first key signs and all are published; scrim does not rotate them. To rotate, put a new key
+first and keep the old one second, roll the replicas, wait one token lifetime plus the stores' JWKS
+cache time, then remove the old key.
 
 ## What this does not protect against
 

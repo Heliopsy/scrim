@@ -27,10 +27,12 @@ type sessionTokens struct {
 	onChange func()
 }
 
-// Store names for the two token sets.
+// Store names for the token sets.
 const (
 	sessionTokenStore = "scrim-sessions"
 	kubeTokenStore    = "scrim-kubernetes"
+	// issuedTokenStore holds the identity tokens scrim's issuer signed.
+	issuedTokenStore = "scrim-issuer"
 )
 
 // kubeTokenTTL is how long a service account token without an expiry stays
@@ -76,6 +78,13 @@ func (t *sessionTokens) addKube(tok []byte, expires time.Time) {
 	if t.onChange != nil {
 		t.onChange()
 	}
+}
+
+// addValue takes ownership of v, an identity token scrim signed, and holds
+// it until it expires.
+func (t *sessionTokens) addValue(v secret.Value, expires time.Time) {
+	defer v.Wipe()
+	_ = v.Expose(func(b []byte) error { t.addKube(b, expires); return nil })
 }
 
 // add takes ownership of v.

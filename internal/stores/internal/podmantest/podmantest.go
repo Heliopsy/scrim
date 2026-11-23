@@ -110,9 +110,26 @@ type Container struct {
 func Run(t testing.TB, what, image string, containerPort int, env map[string]string, args ...string) *Container {
 	t.Helper()
 	c := &Container{Name: Name(t, what), Port: FreePort(t)}
+	run(t, c, []string{"-p", fmt.Sprintf("127.0.0.1:%d:%d", c.Port, containerPort)}, image, env, args...)
+	return c
+}
+
+// RunHostNetwork starts image like [Run] but in the host's network
+// namespace, for a store that must reach a server the test runs on
+// 127.0.0.1 (scrim's identity provider). Port is a free host port the
+// caller passes to the store in args, such as a listen address.
+func RunHostNetwork(t testing.TB, what, image string, env map[string]string, args func(port int) []string) *Container {
+	t.Helper()
+	c := &Container{Name: Name(t, what), Port: FreePort(t)}
+	run(t, c, []string{"--network", "host"}, image, env, args(c.Port)...)
+	return c
+}
+
+func run(t testing.TB, c *Container, netArgs []string, image string, env map[string]string, args ...string) {
+	t.Helper()
 	cmdArgs := []string{"run", "-d", "--rm=false", "--name", c.Name,
-		"--label", "app.kubernetes.io/part-of=scrim-stores-test",
-		"-p", fmt.Sprintf("127.0.0.1:%d:%d", c.Port, containerPort)}
+		"--label", "app.kubernetes.io/part-of=scrim-stores-test"}
+	cmdArgs = append(cmdArgs, netArgs...)
 	// `-e NAME` without a value makes podman copy NAME from its own
 	// environment, so values never appear on a command line.
 	procEnv := os.Environ()
@@ -132,7 +149,6 @@ func Run(t testing.TB, what, image string, containerPort int, env map[string]str
 		t.Fatalf("podman run %s: %v: %s", image, err, strings.TrimSpace(stderr.String()))
 	}
 	t.Cleanup(func() { Remove(t, c.Name) })
-	return c
 }
 
 // Remove force-removes a container and its anonymous volumes.

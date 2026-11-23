@@ -415,6 +415,41 @@ after scrim's rules allow it asks the store, as the agent, whether it may read t
 `sys/capabilities-self`, after a Kubernetes login with the pod's own token for passthrough). The
 value is still loaded with scrim's identity, so redaction never depends on the agent's.
 
+### D15. scrim signs its own identity tokens
+
+Stores and clouds that federate (OpenBao and Vault JWT auth, AWS `AssumeRoleWithWebIdentity`,
+Google workload identity federation, Entra ID federated credentials, Infisical OIDC) all take a JWT
+from an issuer they trust through its discovery document. On a laptop or for `scrim run` sessions
+there is no such issuer for an agent, so scrim is one (`internal/identity/issuer`):
+
+- **Tokens.** RS256, one audience each, `sub` = `agent:<name>` (or `k8s:<name>`), stable across
+  sessions so a trust policy can name it exactly (Entra ID matches the subject verbatim), with
+  `agent`, `agent_kind`, `session`, `host` or `namespace`/`service_account`/`pod`, and `profile`
+  claims to bind roles on. Lifetime `identity.issuer.token-ttl` (10 minutes), capped at the session's
+  end. Minted only for an identity scrim resolved from the transport and only for scrim's own use
+  toward a store, never returned to an agent. Each new token goes into the redaction set (store
+  `scrim-issuer`, redaction only) until it expires; a token is reused for the same claims while two
+  thirds of its life remain, so a burst of store calls is one snapshot push, not many.
+- **Why RS256 and not ES256.** Entra ID accepts RSA keys only; every other verifier takes both.
+  One algorithm keeps the JWKS and the docs simple. Keys are 2048 bits, like the issuers of the
+  managed Kubernetes services.
+- **Keys and rotation.** Generated keys live in `identity.issuer.key-dir` (0700, `keys.json` plus
+  one PKCS#8 file per key, `keys.json` replaced atomically as the commit point, like the CA). The
+  key set is always current, next and retiring: the next key is published a full
+  `identity.issuer.rotate-every` before it signs, so any JWKS a verifier cached since the last
+  rotation already holds it; a replaced key stays published for one token lifetime plus five minutes
+  of leeway, then its file is deleted. Key IDs are RFC 7638 thumbprints. A private key never
+  formats as anything but its key ID.
+- **Replicas.** Each replica generating its own keys would publish a different JWKS behind one URL.
+  Replicas instead share operator-managed keys by reference (`identity.issuer.signing-keys`,
+  first signs, all published); the operator rotates by prepending a new key, waiting a token
+  lifetime plus the verifiers' JWKS cache, then removing the old one. Private keys are values, so
+  they are not put in the state backend (D9).
+- **Serving.** A listener of its own (`identity.issuer.listen`) serves the discovery document and
+  JWKS and nothing else, so exposing it to stores exposes no other API. The URL must be https or
+  loopback http; plain http elsewhere is the weakening `identity.issuer.insecure-http`, because a
+  verifier that fetches keys over plain http can be handed an attacker's keys.
+
 ## Risks / Trade-offs
 
 - [An agent invents a transform the guard does not decode] → the bypass matrix grows with every

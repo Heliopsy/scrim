@@ -331,16 +331,124 @@ identity allow it. Neither side SHALL be able to widen what the other denies.
 
 ### Requirement: scrim as an identity provider for agents
 
-scrim SHALL be able to issue short-lived signed identity tokens for each agent session, with claims
-for agent name, session, host or namespace, profile and audience, and SHALL publish standard
-discovery and signing keys so stores and clouds can trust it as an identity provider. Signing keys
-SHALL rotate without breaking live sessions.
+scrim SHALL be able to issue short-lived signed identity tokens (RS256 JWTs) for an agent identity
+it established from the transport, one audience per token, and SHALL publish an OpenID Connect
+discovery document and a JWKS under the issuer URL so stores and clouds can trust it as an identity
+provider. Tokens SHALL be presented by scrim to stores on the agent's behalf and SHALL NOT be handed
+to agents. An unknown caller SHALL get no token.
 
 #### Scenario: OpenBao trusts scrim's tokens
 
 - **WHEN** OpenBao's JWT auth is configured with scrim's discovery URL and a role bound to
   `agent=claude-laptop`
 - **THEN** scrim logs in to OpenBao for that agent with a scrim-issued token and gets only that role's policy
+
+#### Scenario: Another agent's token
+
+- **WHEN** a token scrim signed for agent `intruder` is presented at the role bound to
+  `agent=claude-laptop`
+- **THEN** OpenBao refuses the login
+
+#### Scenario: Wrong audience
+
+- **WHEN** a token scrim signed for another audience is presented to OpenBao
+- **THEN** OpenBao refuses the login
+
+#### Scenario: Expired token
+
+- **WHEN** a token scrim signed has expired
+- **THEN** OpenBao refuses the login
+
+#### Scenario: Unknown caller
+
+- **WHEN** a token is requested for a caller scrim could not identify
+- **THEN** no token is minted
+
+### Requirement: Identity token claims
+
+A token SHALL carry the agent name, how the agent was identified (`agent_kind`), the session, the
+host for a local agent or the namespace, service account and pod for a Kubernetes agent, scrim's
+profile and the audience. Its subject SHALL name the agent the same way in every session:
+`agent:<name>`, or `k8s:<name>` for a Kubernetes agent.
+
+#### Scenario: Two sessions of one agent
+
+- **WHEN** tokens are minted for two `scrim run` sessions of agent `claude-laptop`
+- **THEN** both have the subject `agent:claude-laptop` and each names its own session
+
+### Requirement: The issuer listener serves discovery only
+
+`identity.issuer.listen` SHALL serve the discovery document and the JWKS under the issuer URL's path
+and nothing else. Both SHALL hold public keys only.
+
+#### Scenario: Another path
+
+- **WHEN** a client requests any other path on the issuer listener
+- **THEN** it gets 404
+
+### Requirement: Identity tokens are short-lived and redacted
+
+An identity token SHALL expire after `identity.issuer.token-ttl` (between one minute and one hour,
+ten minutes by default) and never after the session it names. Every token scrim mints SHALL enter
+the redaction set when it is minted, for redaction only (never injectable), and SHALL leave it when
+it expires. A token minted for the same claims and audience SHALL be reused while two thirds of its
+lifetime remain, and tokens held for a session SHALL be dropped when the session ends.
+
+#### Scenario: Token in a tool result
+
+- **WHEN** a token scrim minted appears in text an agent sends to a provider
+- **THEN** the provider receives scrim's placeholder for it
+
+#### Scenario: Session ends first
+
+- **WHEN** a token is minted for a session that ends in five minutes
+- **THEN** the token expires when the session does
+
+#### Scenario: Session ended
+
+- **WHEN** a session ends while a token minted for it is cached
+- **THEN** the cached token is never handed out again
+
+### Requirement: Signing keys rotate without breaking tokens
+
+scrim SHALL generate its signing keys in a private directory (mode 0700, key files 0600) and rotate
+them every `identity.issuer.rotate-every`, and at start-up when overdue. The key that signs next
+SHALL be published one rotation period before it signs. A replaced key SHALL stay published until
+the last token it signed has expired plus five minutes, and then be deleted.
+
+#### Scenario: Rotation with a live token
+
+- **WHEN** the signing key rotates while a token it signed is still valid
+- **THEN** the JWKS still holds the old key, OpenBao accepts both that token and a token from the new
+  key, and the old key leaves the JWKS once the token has expired
+
+### Requirement: Operator-managed signing keys
+
+With `identity.issuer.signing-keys` set, scrim SHALL sign with the first of the operator's keys,
+publish all of them and never rotate them, so replicas that share the reference agree on the JWKS.
+
+#### Scenario: Replicas with operator keys
+
+- **WHEN** two replicas share the same `identity.issuer.signing-keys` reference
+- **THEN** both publish the same JWKS and sign with the same key
+
+### Requirement: Signing keys are never disclosed
+
+A signing key's private part SHALL NOT appear in any log line, error, metric, snapshot, API response
+or the JWKS; logs and errors SHALL name keys only by their key ID (the RFC 7638 thumbprint). The
+issuer URL SHALL be https, or http on a loopback host; plain http elsewhere SHALL require
+`identity.issuer.insecure-http`, a weakening setting, since a verifier fetching keys over plain
+http can be handed someone else's keys.
+
+#### Scenario: Keys formatted for a log
+
+- **WHEN** the issuer or one of its keys is formatted, logged or marshalled
+- **THEN** the output holds the key ID and no private key material
+
+#### Scenario: Plain http issuer
+
+- **WHEN** `identity.issuer.url` is `http://scrim.example.test` without `identity.issuer.insecure-http`
+- **THEN** scrim refuses to start and names both settings
 
 ### Requirement: Token exchange per store
 
