@@ -105,7 +105,8 @@ and 13.2. Everything else stays open for later releases; v1.0.0 is group 16.
 - [x] 10.2b Substitution in URL, headers, cookies, form, JSON and multipart bodies with decompression, length, digest and re-signing; verify: gzip, chunked and HTTP/2 fixtures reach the fake upstream valid and unsupported encodings are refused
 - [x] 10.2c Redaction of tool-proxy responses, including streamed and compressed bodies; verify: an echoing fake API and a create-resource fake return only placeholders to the agent
 - [x] 10.3 Response capture rules; verify: a token returned by a fake API is stored and the agent sees a placeholder
-- [ ] 10.4 Exec broker as a separate identity with allowlisted commands; verify: an allowed command runs with the secret, a transform command is blocked
+- [x] 10.4 Exec broker as a separate identity with allowlisted commands; verify: an allowed command runs with the secret, a transform command is blocked
+  - verified: `internal/execbroker` tests check the secret reached the process by hash, transforms and shells are refused and audited, redacted and withheld output, exit codes, approvals; `TestExecBrokerRealDataPlane` redacts through the real data plane with the leak checker over answers, log and audit; `just exec-user-test` runs the broker as root in podman with `exec.user` and shows the agent's user cannot read the command's environment
 
 ## 10a. Command-line tools
 

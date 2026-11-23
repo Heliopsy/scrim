@@ -263,6 +263,11 @@ service-vm-test:
 service-transparent-test:
     test/service/transparent-test.sh
 
+# The exec broker running commands as exec.user, as root in a throwaway rootless podman container
+# (test/exec/separate-user.sh): the agent's user cannot read the command's environment.
+exec-user-test:
+    test/exec/separate-user.sh
+
 clean:
     rm -rf bin/ dist/ {{embed}}
     cd dataplane && cargo clean

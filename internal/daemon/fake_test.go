@@ -34,6 +34,9 @@ func TestMain(m *testing.M) {
 	if os.Getenv("SCRIM_FAKE_DP") == "1" {
 		os.Exit(fakeDataPlane())
 	}
+	if len(os.Args) > 1 && os.Args[1] == execHelperArg {
+		os.Exit(execHelper(os.Args[2:]))
+	}
 	code := testhome.Run(m)
 	pgtest.Stop()
 	valkeySvc.Stop()

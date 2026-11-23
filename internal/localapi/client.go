@@ -283,6 +283,13 @@ func (c *Client) Redact(ctx context.Context, text []byte) (RedactOutput, error) 
 	return out, err
 }
 
+// Exec asks the exec broker to run a command with the secrets its
+// placeholders name. The output comes back redacted.
+func (c *Client) Exec(ctx context.Context, in agenttools.ExecInput) (agenttools.ExecOutput, error) {
+	var out agenttools.ExecOutput
+	return out, c.json(ctx, http.MethodPost, "/exec", in, &out)
+}
+
 // SSHKeys lists the ssh-agent keys scrim offers this caller on a connection
 // with these session bindings. It makes Client an sshagent.Backend.
 func (c *Client) SSHKeys(ctx context.Context, bindings []sshagent.Binding) ([]sshagent.Key, error) {

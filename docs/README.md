@@ -66,6 +66,7 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 | [edge-forwarder.md](edge-forwarder.md) | Agent pods with a central scrim: ssh-agent, database ports and the agent API forwarded over TLS with the pod's token |
 | [providers/README.md](providers/README.md) | Cloud provider routes: Bedrock, Claude Platform on AWS, Foundry and Vertex, authenticated by scrim after redaction |
 | [agent-tools.md](agent-tools.md) | The MCP server, `scrim secret` commands and the human entry page |
+| [exec-broker.md](exec-broker.md) | `secret_exec` and `scrim exec`: allowed commands run as another user with a secret, output redacted |
 | [identity.md](identity.md) | How scrim knows which agent is calling: peer credentials and session tokens |
 
 ## Policy

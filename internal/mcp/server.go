@@ -34,13 +34,20 @@ type API interface {
 	Grants(ctx context.Context) (agenttools.GrantsOutput, error)
 }
 
+// ExecAPI is the exec broker, which the local API client offers. A test
+// API without it gets no secret_exec tool.
+type ExecAPI interface {
+	Exec(ctx context.Context, in agenttools.ExecInput) (agenttools.ExecOutput, error)
+}
+
 // Instructions is what the server tells a client about itself.
 const Instructions = "Tools for scrim, which keeps secret values away from the model while you keep working. " +
 	"You never see a secret value: tools take and return references (such as bao://kv/agents/github) and " +
 	"placeholders, which scrim swaps for the real value only where the value is used. " +
 	"Use secrets_list to find secrets, secret_request for time-limited access (poll approval_status while pending), " +
 	"secret_gen to create a password or key, secret_capture to store a token a command prints without seeing it, " +
-	"and secret_ask_human when only a person has the value. Never paste a secret value into a tool argument."
+	"secret_ask_human when only a person has the value, and secret_exec to run an allowed command that needs a secret " +
+	"with its placeholder. Never paste a secret value into a tool argument."
 
 // DefaultAskWait is how long secret_ask_human waits for the human when the
 // call does not say.
@@ -122,6 +129,18 @@ func NewServer(api API, version string) *sdk.Server {
 	sdk.AddTool(srv, &sdk.Tool{Name: agenttools.ToolGrantsList, Annotations: read,
 		Description: "List your active grants with reference, scope, expiry and remaining uses."},
 		handle(func(ctx context.Context, _ GrantsInput) (agenttools.GrantsOutput, error) { return api.Grants(ctx) }))
+
+	if ex, ok := api.(ExecAPI); ok {
+		sdk.AddTool(srv, &sdk.Tool{Name: agenttools.ToolSecretExec, Annotations: &sdk.ToolAnnotations{OpenWorldHint: boolp(true)},
+			Description: "Run a command scrim allows (for example git push, kubectl apply, terraform plan, psql) with a secret it " +
+				"needs, without you holding the secret. Put the secret's placeholder in env (or in args or stdin where the " +
+				"command allows it); scrim runs the command outside your process as another user, with the real value, and " +
+				"returns exit_code, stdout and stderr with every secret replaced by its placeholder. Shells, interpreters and " +
+				"commands that print or encode their input are refused."},
+			handle(func(ctx context.Context, in agenttools.ExecInput) (agenttools.ExecOutput, error) {
+				return ex.Exec(ctx, in)
+			}))
+	}
 	if d, ok := api.(DatabaseAPI); ok {
 		addDatabaseTools(srv, d)
 	}
