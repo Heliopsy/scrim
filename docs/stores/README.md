@@ -25,62 +25,32 @@ value back.
 `scrim doctor` prints this matrix for the stores you configure. An operation a store does not
 support is refused before anything is attempted.
 
-| Kind        | read | list | watch | write | generate | dynamic |
-|-------------|------|------|-------|-------|----------|---------|
-| `openbao`   | yes  | yes  | yes   | yes   | no       | no      |
-| `infisical` | yes  | yes  | yes   | yes   | no       | no      |
-| `doppler`   | yes  | yes  | yes   | yes   | no       | no      |
-| `awssm`     | yes  | yes  | yes   | yes   | no       | no      |
-| `ssm`       | yes  | yes  | yes   | yes   | no       | no      |
-| `bws`       | yes  | yes  | yes   | yes   | no       | no      |
-| `gcpsm`     | yes  | yes  | yes   | yes   | no       | no      |
-| `azkv`      | yes  | yes  | yes   | yes   | no       | no      |
-| `env`       | yes  | yes  | no    | no    | no       | no      |
-| `file`      | yes  | yes  | yes   | no    | no       | no      |
-| `sops`      | yes  | yes  | yes   | no    | no       | no      |
-| `keyring`   | yes  | yes  | no    | no    | no       | no      |
-| `memory`    | yes  | yes  | yes   | yes   | no       | no      |
-| Kind         | read | list | watch | write  | generate | dynamic |
-|--------------|------|------|-------|--------|----------|---------|
-| `openbao`    | yes  | yes  | yes   | yes    | no       | no      |
-| `infisical`  | yes  | yes  | yes   | yes    | no       | no      |
-| `bws`        | yes  | yes  | yes   | yes    | no       | no      |
-| `kubernetes` | yes  | yes  | yes   | opt-in | no       | no      |
-| `env`        | yes  | yes  | no    | no     | no       | no      |
-| `file`       | yes  | yes  | yes   | no     | no       | no      |
-| `sops`       | yes  | yes  | yes   | no     | no       | no      |
-| `memory`     | yes  | yes  | yes   | yes    | no       | no      |
+| Kind          | read | list | watch | write  | generate | dynamic |
+|---------------|------|------|-------|--------|----------|---------|
+| `openbao`     | yes  | yes  | yes   | yes    | no       | no      |
+| `infisical`   | yes  | yes  | yes   | yes    | no       | no      |
+| `doppler`     | yes  | yes  | yes   | yes    | no       | no      |
+| `onepassword` | yes  | yes  | yes   | yes    | no       | no      |
+| `awssm`       | yes  | yes  | yes   | yes    | no       | no      |
+| `ssm`         | yes  | yes  | yes   | yes    | no       | no      |
+| `bws`         | yes  | yes  | yes   | yes    | no       | no      |
+| `gcpsm`       | yes  | yes  | yes   | yes    | no       | no      |
+| `azkv`        | yes  | yes  | yes   | yes    | no       | no      |
+| `kubernetes`  | yes  | yes  | yes   | opt-in | no       | no      |
+| `env`         | yes  | yes  | no    | no     | no       | no      |
+| `file`        | yes  | yes  | yes   | no     | no       | no      |
+| `sops`        | yes  | yes  | yes   | no     | no       | no      |
+| `keyring`     | yes  | yes  | no    | no     | no       | no      |
+| `memory`      | yes  | yes  | yes   | yes    | no       | no      |
 
-Watch on OpenBao, Infisical, Bitwarden Secrets Manager, Google Secret Manager and Azure Key Vault
-polls version metadata. It never fetches values, so it stays cheap even with a short interval.
+Watch on OpenBao, Infisical, 1Password, Bitwarden Secrets Manager, the AWS stores, Google Secret
+Manager and Azure Key Vault polls version metadata. It never fetches values, so it stays cheap even
+with a short interval. Watch on Doppler polls the config download with its ETag: an unchanged
+config is answered without values, a changed one is fingerprinted and wiped. Kubernetes watches
+Secrets through the API server, and writes there are off unless the instance enables them. The
+keyring source lists on Linux only (Secret Service); on macOS and Windows it reads single secrets.
 Generated secrets are produced by scrim and then written, so generate needs write and no
-The keyring source lists on Linux only (Secret Service); on macOS and Windows it reads single
-secrets.
-
-Watch on OpenBao, Infisical and Bitwarden Secrets Manager polls version metadata. It never fetches
-values, so it stays cheap even with a short interval. Watch on Doppler polls the config download
-with its ETag: an unchanged config is answered without values, a changed one is fingerprinted and
-wiped. Generated secrets are produced by scrim and then written, so generate needs write and no
 store-side support.
-| Kind          | read | list | watch | write | generate | dynamic |
-|---------------|------|------|-------|-------|----------|---------|
-| `openbao`     | yes  | yes  | yes   | yes   | no       | no      |
-| `infisical`   | yes  | yes  | yes   | yes   | no       | no      |
-| `onepassword` | yes  | yes  | yes   | yes   | no       | no      |
-| `bws`         | yes  | yes  | yes   | yes   | no       | no      |
-| `env`         | yes  | yes  | no    | no    | no       | no      |
-| `file`        | yes  | yes  | yes   | no    | no       | no      |
-| `sops`        | yes  | yes  | yes   | no    | no       | no      |
-| `memory`      | yes  | yes  | yes   | yes   | no       | no      |
-
-Watch on OpenBao, Infisical, 1Password and Bitwarden Secrets Manager polls version metadata. It
-never fetches values, so it stays cheap even with a short interval. Generated secrets are produced
-by scrim and then written, so generate needs write and no store-side support.
-Watch on OpenBao, Infisical, Bitwarden Secrets Manager and the AWS stores polls version metadata.
-It never fetches values, so it stays cheap even with a short interval. Generated secrets are
-values, so it stays cheap even with a short interval. Kubernetes uses the API server's own watch,
-metadata only, and writes only when the instance sets `writable: true`. Generated secrets are
-produced by scrim and then written, so generate needs write and no store-side support.
 
 ## Configuring an instance
 
@@ -114,7 +84,6 @@ its guide.
 | ----- | --------- | --------- |
 | `stores.<name>.kind` | required | Adapter kind. |
 | `stores.<name>.aliases` | none | Extra schemes that address this instance. |
-| `stores.<name>.redact` | none | References loaded into the redaction set at start and kept fresh. A reference ending in `/*` loads every secret under that folder; one ending in `*` right after part of a name (`APP_*`, `dir/app-*`) is a glob that loads every secret whose path starts with the text before the `*` (env, file and doppler stores only); a `#field` limits a single secret to one field. A `*` anywhere else is refused. References must use the instance name as their scheme. |
 | `stores.<name>.redact` | none | References loaded into the redaction set at start and kept fresh. A reference ending in `/*` loads every secret under that folder; one ending in `*` right after part of a name (`APP_*`, `dir/app-*`) is a glob that loads every secret whose path starts with the text before the `*` (stores that support glob listing, see each guide); a `#field` limits a single secret to one field. A `*` anywhere else is refused. References must use the instance name as their scheme. |
 | `stores.<name>.refresh.interval` | `5m` | Full refresh period, spread by ±20% jitter. |
 | `stores.<name>.refresh.retention` | `24h` | How long a rotated, deleted or overwritten value stays in the redaction set. |
@@ -127,12 +96,10 @@ and dashes turned into `_` (`stores.bao.secret-id` becomes `SCRIM_STORES_BAO_SEC
 instance has to be declared in a file, or the whole collection set as JSON in `SCRIM_STORES`.
 
 Credential fields (`token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password`,
-`credentials`, `certificate`) take a reference instead of a literal: `env:NAME`, `file:/path`,
-`cred:NAME` (a systemd credential), or a reference into another configured store. They are
-resolved at start; a reference that cannot be resolved stops start-up, and no store is contacted
-`access-key-id`, `secret-access-key`) take a reference instead of a literal: `env:NAME`,
-`file:/path`, `cred:NAME` (a systemd credential), or a reference into another configured store. They
-are resolved at start; a reference that cannot be resolved stops start-up, and no store is contacted
+`unlock`, `age-identity`, `credentials`, `certificate`, `access-key-id`, `secret-access-key`) take
+a reference instead of a literal: `env:NAME`, `file:/path`, `cred:NAME` (a systemd credential), or
+a reference into another configured store. They are resolved at start; a reference that cannot be
+resolved stops start-up, and no store is contacted
 with an empty credential. `scrim config show` masks them. A literal still works, but scrim logs a
 warning naming the field. scrim also adds the credentials it holds, and the session tokens a store
 issues at login, to the redaction set.

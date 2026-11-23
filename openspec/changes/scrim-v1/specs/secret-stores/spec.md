@@ -1346,6 +1346,7 @@ and resource tags under `<kind>.meta.<key>`, and SHALL return the same labels wi
 through DescribeSecret, or DescribeParameters and ListTagsForResource. A tag SHALL NOT set a native
 label, and only tags under `scrim.` SHALL set a label outside the `meta` namespace.
 
+#### Scenario: Tag cannot forge a native label
 
 - **WHEN** a secret carries the tag `awssm.name = forged` and the tag `team = payments`
 - **THEN** its labels say `awssm.name` = its real name, `awssm.meta.awssm.name = forged` and
