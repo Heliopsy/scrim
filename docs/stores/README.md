@@ -16,6 +16,7 @@ value back.
 | Azure Key Vault | `azkv` | [azure.md](azure.md) |
 | Environment variables, files | `env`, `file` | [local.md](local.md) |
 | SOPS-encrypted files | `sops` | [sops.md](sops.md) |
+| OS keyring (Secret Service, Keychain, Credential Manager) | `keyring` | [keyring.md](keyring.md) |
 | Memory (tests, throwaway runs) | `memory` | none |
 
 ## Capabilities
@@ -36,11 +37,15 @@ support is refused before anything is attempted.
 | `env`       | yes  | yes  | no    | no    | no       | no      |
 | `file`      | yes  | yes  | yes   | no    | no       | no      |
 | `sops`      | yes  | yes  | yes   | no    | no       | no      |
+| `keyring`   | yes  | yes  | no    | no    | no       | no      |
 | `memory`    | yes  | yes  | yes   | yes   | no       | no      |
 
 Watch on OpenBao, Infisical, Bitwarden Secrets Manager, Google Secret Manager and Azure Key Vault
 polls version metadata. It never fetches values, so it stays cheap even with a short interval.
 Generated secrets are produced by scrim and then written, so generate needs write and no
+The keyring source lists on Linux only (Secret Service); on macOS and Windows it reads single
+secrets.
+
 Watch on OpenBao, Infisical and Bitwarden Secrets Manager polls version metadata. It never fetches
 values, so it stays cheap even with a short interval. Watch on Doppler polls the config download
 with its ETag: an unchanged config is answered without values, a changed one is fingerprinted and

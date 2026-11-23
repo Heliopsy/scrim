@@ -945,6 +945,43 @@ matrix of every configured store.
 - **THEN** the call is refused with an error saying the env source is read-only
 - **AND** nothing is generated or stored
 
+### Requirement: OS keyring source
+
+The system SHALL provide a read-only `keyring` source over the OS keyring (Secret Service, Keychain,
+Credential Manager), addressed as `<instance>://<service>/<account>`. It SHALL read only the services
+its required `services` option lists, never write, unlock or prompt, and keep user-editable item
+attributes under `keyring.meta.`.
+
+#### Scenario: Read from the Secret Service
+
+- **WHEN** the login collection holds an item with attributes `service=scrim` and
+  `username=github-token`, and `services` lists `scrim`
+- **THEN** `kr://scrim/github-token` reads its value into the redaction set over an encrypted
+  session
+- **AND** `kr://browser/me` reads as not found without a call to the Secret Service, because
+  `browser` is not in `services`
+- **AND** an item with the same attributes in another collection is not visible
+
+#### Scenario: Write to the keyring refused as read-only
+
+- **WHEN** a rule targets `kr://scrim/new` for `secret_gen` or `secret_capture`
+- **THEN** the call is refused with an error saying the keyring source is read-only, before the
+  keyring is contacted
+- **AND** nothing is generated or stored
+
+#### Scenario: Locked keyring refused without prompting
+
+- **WHEN** the collection holding `kr://scrim/github-token` is locked
+- **THEN** the read, list, label lookup and health check fail at once with the locked error kind
+- **AND** no unlock is requested and the collection is still locked afterwards
+
+#### Scenario: Keyring labels cannot be forged
+
+- **WHEN** an item carries attributes named `collection` and `keyring.backend`
+- **THEN** they appear as `keyring.meta.collection` and `keyring.meta.keyring.backend`
+- **AND** `keyring.collection` and `keyring.backend` keep the values scrim derived from its
+  configuration
+
 ### Requirement: HashiCorp Vault adapter
 
 The Vault adapter SHALL support KV versions 1 and 2, namespaces, and the token, AppRole, Kubernetes,
