@@ -415,6 +415,50 @@ after scrim's rules allow it asks the store, as the agent, whether it may read t
 `sys/capabilities-self`, after a Kubernetes login with the pod's own token for passthrough). The
 value is still loaded with scrim's identity, so redaction never depends on the agent's.
 
+### D15. Plugins are processes speaking the boundary protocol over an inherited socket
+
+A store or notifier plugin is a separate executable scrim starts with one end of a socketpair as fd 3
+and talks gRPC to, schema in `proto/scrim/plugin/v1`, the same shape as the data plane boundary
+(D12): the plugin serves, scrim is the only client, nothing else can reach the socket, and every
+message carries the protocol version. The lifecycle is Handshake (protocol, kind, capabilities),
+Configure (options as JSON, credentials resolved by scrim), then the kind's own service. Validation
+runs a throwaway copy with ValidateConfig and no credential values, called from the collection's
+validate hook (`stores` with `kind: plugin`, `notify.plugins`), so `scrim config validate` reports a
+plugin's own option errors.
+
+Alternatives considered:
+
+- **Go `plugin` packages or WebAssembly in process.** Rejected: a plugin bug or crash would be a
+  crash of the process that holds every value, and Go plugins need the exact toolchain and module
+  versions of the scrim build. A separate process confines a fault to one store.
+- **JSON lines over stdio.** Simpler to write by hand in any language, but Go's encoder copies
+  values into pooled buffers nobody wipes, a stray `print` in the plugin corrupts the channel, and a
+  stream needs its own framing for watch. gRPC has generated servers in every common language, the
+  repository already generates and checks protobuf code, and a codec can zero the messages that
+  carry values.
+- **A Unix socket the plugin listens on (go-plugin style).** Rejected: a path in the file system
+  is a second thing to protect and clean up; an inherited socketpair has no name.
+
+The plugin inherits nothing but fd 3, stdin and stdout on `/dev/null`, stderr relayed into the
+scrubbing log, and an environment of its own `env` map plus `SCRIM_PLUGIN_*`, so it sees only the
+configuration of its instance. Before every start scrim checks the binary: absolute path, regular
+executable, it and every directory above it owned by root or scrim's user and writable by no one
+else (sticky directories excepted), and an optional pinned SHA-256. The check and the exec are not
+atomic; the ownership rule is what makes that safe.
+
+scrim fails closed on every fault: a start that does not complete within `start-timeout`, a
+protocol or kind mismatch, an exit, a call past `timeout` (the process group is killed), or an
+answer out of contract (another path, a listing outside the prefix, an unconfirmed watch) fails the
+call as unavailable, naming the plugin and what happened. A plugin's status message is never shown,
+only its code, because a store's own message can echo request data. The next call restarts the
+plugin after a backoff that doubles from 1s to 30s, re-resolving the credentials; the refresher keeps
+the last known values meanwhile, as for any outage. Capabilities that change across a restart stop
+it. The Go SDK in `pkg/plugin` (public, so plugins live outside this repository) zeroes credentials
+and values once used; the codec zeroes the copies scrim makes and the marshalled bytes, with gRPC's
+transport buffers out of reach as at the data plane boundary. Store plugins pass the store
+conformance suite and notifier plugins the notifier contract suite (`internal/notify/notifytest`)
+through the bridge, against the example plugins in `examples/plugins`.
+
 ## Risks / Trade-offs
 
 - [An agent invents a transform the guard does not decode] → the bypass matrix grows with every

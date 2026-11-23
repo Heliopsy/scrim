@@ -20,6 +20,7 @@ value back.
 | SOPS-encrypted files | `sops` | [sops.md](sops.md) |
 | OS keyring (Secret Service, Keychain, Credential Manager) | `keyring` | [keyring.md](keyring.md) |
 | Memory (tests, throwaway runs) | `memory` | none |
+| Anything else, through an out-of-process plugin | `plugin` | [../plugins.md](../plugins.md) |
 
 ## Capabilities
 
@@ -44,6 +45,9 @@ support is refused before anything is attempted.
 | `sops`        | yes  | yes  | yes   | no     | no       | no      |
 | `keyring`     | yes  | yes  | no    | no     | no       | no      |
 | `memory`      | yes  | yes  | yes   | yes    | no       | no      |
+| `plugin`      | (1)  | (1)  | (1)   | (1)    | no       | no      |
+
+(1) What the plugin declares, narrowed by the instance's `capabilities` field.
 
 Watch on OpenBao, Vault (KV v2), Infisical, 1Password, Bitwarden Secrets Manager, the AWS stores,
 Google Secret Manager and Azure Key Vault polls version metadata. It never fetches values, so it
@@ -232,11 +236,11 @@ collection named `id`).
 
 ## Conformance
 
-Every adapter passes the shared conformance suite in `internal/stores/storetest`, which covers
-read, field and version selectors, value fidelity, list, write, create-only, rejected writes,
-write-only paths, labels, watch (including deletes and recovery after an outage), health, outage
-and concurrent use. It also checks that no value ever appears in an error, metadata or change
-notification. The suite is itself tested against deliberately broken adapters.
+Every adapter, built-in or [plugin](../plugins.md), passes the shared conformance suite in
+`internal/stores/storetest`, which covers read, field and version selectors, value fidelity, list,
+write, create-only, rejected writes, write-only paths, labels, watch (including deletes and recovery
+after an outage), health, outage and concurrent use. It also checks that no value ever appears in an
+error, metadata or change notification. The suite is itself tested against deliberately broken adapters.
 
 The integration runs start each store in rootless podman, and docker is not supported:
 

@@ -405,6 +405,7 @@ is out of date.
 | [`catalog.entries.<name>.*`](#catalogentriesname) | collection | empty | hot |
 | [`databases.<name>.*`](#databasesname) | collection | empty | restart required |
 | [`exec.commands.<name>.*`](#execcommandsname) | collection | empty | hot |
+| [`notify.plugins.<name>.*`](#notifypluginsname) | collection | empty | restart required |
 | [`providers.<name>.*`](#providersname) | collection | empty | hot |
 | [`redaction.placeholder-keys.<name>.*`](#redactionplaceholder-keysname) | collection | empty | hot |
 | [`restore.tools.<name>.*`](#restoretoolsname) | collection | empty | hot |
@@ -444,6 +445,18 @@ Commands the exec broker may run with secrets, by the name agents call them: `pa
 | Environment | `SCRIM_EXEC_COMMANDS` (JSON object of instances, replaces the collection); `SCRIM_EXEC_COMMANDS_<NAME>_<FIELD>` for one field |
 | Required fields | `path`, `secrets` |
 | Reload | hot |
+
+### `notify.plugins.<name>`
+
+Notifier plugins by name (docs/plugins.md): `command` (absolute path of the plugin binary, owned by root or scrim's user and writable by no one else), `args`, `env` (the plugin's environment; never a credential), `options` (the plugin's own settings, validated by the plugin), `sha256` (pins the binary), `timeout` (per delivery, default 10s), `start-timeout` (default 5s), and the credential fields `token`, `password`, `secret` and `credentials` (references, resolved at every start and sent only to the plugin).
+
+| | |
+|---|---|
+| Type | collection of named instances (names: lower-case words with dashes) |
+| Environment | `SCRIM_NOTIFY_PLUGINS` (JSON object of instances, replaces the collection); `SCRIM_NOTIFY_PLUGINS_<NAME>_<FIELD>` for one field |
+| Required fields | `command` |
+| Secret fields | `token`, `password`, `secret`, `credentials` (references; a literal is warned about) |
+| Reload | restart required |
 
 ### `providers.<name>`
 

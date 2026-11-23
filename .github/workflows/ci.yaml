@@ -107,6 +107,30 @@ jobs:
           podman pod ps -q --filter name=scrim-stores- | xargs -r podman pod rm -f
           podman volume prune -f
 
+  # Store and notifier plugins (tasks.md 15.6): the example plugins in
+  # examples/plugins pass the store conformance suite and the notifier
+  # contract suite through the plugin bridge, and the supervisor fails closed
+  # on crashing, hanging and hostile plugins. The tests build the plugins with
+  # the Go toolchain; no container.
+  plugins:
+    name: Plugin contract
+    runs-on: ho-z10
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - run: go build ./examples/plugins/...
+      - run: >-
+          go test -race -count=1 -v
+          ./internal/plugin/... ./internal/stores/plugin/ ./internal/stores/storetest/
+          ./internal/notify/... ./pkg/plugin/...
+
   # GitHub-hosted: the Kubernetes Secrets adapter against a real API server,
   # a throwaway kind cluster (docker provider, as chart-kind) with its own
   # kubeconfig file. kind and kubectl come from the chart's pinned tools;
