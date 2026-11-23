@@ -1,0 +1,4 @@
+# expect: config.identity.issuer is set by the chart
+config:
+  identity:
+    issuer: {url: https://scrim.example.com}

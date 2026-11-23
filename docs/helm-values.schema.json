@@ -809,7 +809,7 @@
     },
     "identity": {
       "type": "object",
-      "description": "Kubernetes identity (identity.kubernetes.*): agent pods present a projected service account token for `audience`, which scrim verifies with TokenReview. Per-agent store login (identity.store-login) goes in `config.identity`.",
+      "description": "Kubernetes identity (identity.kubernetes.*): agent pods present a projected service account token for `audience`, which scrim verifies with TokenReview. The identity issuer (identity.issuer.*): scrim signs tokens for agents that stores trust. Per-agent store login (identity.store-login) goes in `config.identity`.",
       "properties": {
         "kubernetes": {
           "type": "object",
@@ -850,6 +850,127 @@
                 "derive",
                 "unknown"
               ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "issuer": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Turn the issuer on (central scrim). Needs `url`. More than one replica (replicaCount, the HPA, global.ha) needs `signingKeys.existingSecret`: replicas behind one URL must publish the same keys."
+            },
+            "url": {
+              "type": "string",
+              "description": "Issuer URL (identity.issuer.url, the `iss` claim), without a trailing slash. https, terminated by an Ingress or Gateway in front of the Service `<fullname>-issuer`; plain http needs insecureHTTP.",
+              "pattern": "^(https?://[^/?#]+(/[^?#]*[^/?#])?)?$"
+            },
+            "port": {
+              "type": "integer",
+              "description": "Port of the discovery and JWKS listener (identity.issuer.listen on the pod IP), on the container and on the issuer Service.",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "insecureHTTP": {
+              "type": "boolean",
+              "description": "Allow an http:// url on a host other than loopback (identity.issuer.insecure-http, a weakening scrim logs at start-up): anyone between a store and scrim could substitute the keys, and the store would trust tokens they sign."
+            },
+            "tokenTTL": {
+              "type": "string",
+              "description": "Lifetime of each token (identity.issuer.token-ttl), 1m to 1h, never past the session's end.",
+              "pattern": "^([0-9]+(s|m|h))+$"
+            },
+            "rotateEvery": {
+              "type": "string",
+              "description": "How often generated keys rotate (identity.issuer.rotate-every), at least 1h. Not used with signingKeys.existingSecret.",
+              "pattern": "^([0-9]+(s|m|h))+$"
+            },
+            "signingKeys": {
+              "type": "object",
+              "description": "Operator-managed signing keys (identity.issuer.signing-keys). scrim never rotates them.",
+              "properties": {
+                "existingSecret": {
+                  "type": "string",
+                  "description": "Secret holding one or more PKCS#8 PEM RSA private keys (2048 bits or more) under `key`. The first signs and all are published. Required with more than one replica. Empty: scrim generates and rotates its keys in `keyStore`."
+                },
+                "key": {
+                  "type": "string",
+                  "description": "Key of the PEM bundle in existingSecret.",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            },
+            "keyStore": {
+              "type": "object",
+              "description": "Where generated keys live (identity.issuer.key-dir) when signingKeys.existingSecret is empty, one replica only. emptyDir: the keys live as long as the pod; a new pod (rollout, reschedule) signs with a new key, and tokens the old pod signed stop verifying once a store refetches the JWKS. pvc: the keys and their rotation survive restarts; only one pod may use the directory at a time, so it needs central.strategy.type Recreate.",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "emptyDir or pvc.",
+                  "enum": [
+                    "emptyDir",
+                    "pvc"
+                  ]
+                },
+                "existingClaim": {
+                  "type": "string",
+                  "description": "pvc: an existing PersistentVolumeClaim. Empty: the chart creates `<fullname>-issuer-keys`."
+                },
+                "size": {
+                  "type": "string",
+                  "description": "pvc: size of the created claim (the keys take a few KiB)."
+                },
+                "storageClassName": {
+                  "type": "string",
+                  "description": "pvc: storageClassName of the created claim (empty: the cluster default)."
+                },
+                "accessModes": {
+                  "type": "array",
+                  "description": "pvc: access modes of the created claim.",
+                  "items": {
+                    "enum": [
+                      "ReadWriteOnce",
+                      "ReadWriteOncePod",
+                      "ReadWriteMany"
+                    ]
+                  },
+                  "minItems": 1
+                },
+                "annotations": {
+                  "type": "object",
+                  "description": "pvc: annotations of the created claim.",
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": false
+            },
+            "service": {
+              "type": "object",
+              "description": "The Service `<fullname>-issuer`, with the issuer port only.",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Service type. ClusterIP behind an Ingress or Gateway that terminates TLS.",
+                  "enum": [
+                    "ClusterIP",
+                    "NodePort",
+                    "LoadBalancer"
+                  ]
+                },
+                "annotations": {
+                  "type": "object",
+                  "description": "Service annotations.",
+                  "additionalProperties": true
+                },
+                "labels": {
+                  "type": "object",
+                  "description": "Service labels.",
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
@@ -1872,6 +1993,13 @@
         "adminFrom": {
           "type": "array",
           "description": "Peers allowed to the admin TCP port (NetworkPolicy `from` entries).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "issuerFrom": {
+          "type": "array",
+          "description": "Peers allowed to the issuer port with identity.issuer.enabled (NetworkPolicy `from` entries: the Ingress controller, in-cluster stores). Empty allows every source: the port serves public keys only.",
           "items": {
             "type": "object"
           }

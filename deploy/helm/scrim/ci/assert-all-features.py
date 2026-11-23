@@ -82,6 +82,22 @@ want(cfg["state"]["backend"] == "postgres" and cfg["events"]["backend"] == "post
 want(cfg["identity"]["kubernetes"]["agents"] == {"reviewer": "sa:agents/reviewer"}, "identity.kubernetes.agents")
 want(cfg["metrics"]["auth"]["token"].startswith("file:/run/secrets/scrim/metrics/"), "metrics.auth.token")
 
+iss = cfg["identity"].get("issuer", {})
+want(iss.get("url") == "https://scrim.example.com/idp" and iss.get("listen") == "0.0.0.0:9795" and iss.get("token-ttl") == "5m",
+     "identity.issuer url, listen and token-ttl")
+want(iss.get("signing-keys") == "file:/run/secrets/scrim/issuer-keys/keys.pem" and "key-dir" not in iss,
+     "identity.issuer.signing-keys from the Secret, no key-dir with several replicas")
+want(any(v["name"] == "issuer-keys" and v.get("secret", {}).get("secretName") == "scrim-issuer-keys" for v in spec.get("volumes", [])),
+     "issuer signing keys Secret volume")
+want({"name": "issuer", "containerPort": 9795, "protocol": "TCP"} in main.get("ports", []), "issuer container port")
+want(not any(p["name"] == "issuer" for p in svc.get("spec", {}).get("ports", [])), "the central Service does not expose the issuer")
+isvc = one("Service", "ci-scrim-issuer")
+want([p["port"] for p in isvc.get("spec", {}).get("ports", [])] == [9795], "issuer Service with the issuer port only")
+want(isvc.get("metadata", {}).get("annotations", {}).get("example.com/public") == "true", "identity.issuer.service.annotations")
+want(any(r.get("ports") == [{"port": 9795, "protocol": "TCP"}] and
+         r.get("from", [{}])[0].get("namespaceSelector", {}).get("matchLabels", {}).get("kubernetes.io/metadata.name") == "ingress-nginx"
+         for r in np.get("spec", {}).get("ingress", [])), "networkPolicy.issuerFrom on the issuer port")
+
 for f in fails:
     print(f"FAIL: all-features: {f}", file=sys.stderr)
 print(f"all-features: {len(fails)} failed assertion(s)")

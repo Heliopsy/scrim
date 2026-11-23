@@ -222,3 +222,69 @@ tests:
       edge: {enabled: true, port: 9790}
     asserts:
       - failedTemplate: {errorPattern: "edge.port 9790 is taken"}
+  - it: refuses config.identity.issuer
+    set:
+      config.identity.issuer: {url: https://scrim.example.com}
+    asserts:
+      - failedTemplate: {errorPattern: "config.identity.issuer is set by the chart"}
+  - it: refuses the issuer without a URL
+    set:
+      identity.issuer.enabled: true
+    asserts:
+      - failedTemplate: {errorPattern: "identity.issuer.enabled needs identity.issuer.url"}
+  - it: refuses the issuer without central scrim
+    set:
+      identity.issuer: {enabled: true, url: https://scrim.example.com}
+      central.enabled: false
+      sidecar: {enabled: true, egressGuard: {image: nft:1}}
+    asserts:
+      - failedTemplate: {errorPattern: "identity.issuer.enabled runs in central scrim"}
+  - it: refuses a plain http issuer URL without insecureHTTP
+    set:
+      identity.issuer: {enabled: true, url: http://scrim.example.com/idp}
+    asserts:
+      - failedTemplate: {errorPattern: "is plain http: use https"}
+  - it: accepts a plain http issuer URL with insecureHTTP
+    set:
+      identity.issuer: {enabled: true, url: http://scrim.example.com/idp, insecureHTTP: true}
+    asserts:
+      - notFailedTemplate: {}
+  - it: refuses an issuer URL ending in a slash (schema)
+    set:
+      identity.issuer: {enabled: true, url: https://scrim.example.com/idp/}
+    asserts:
+      - failedTemplate: {errorPattern: "/identity/issuer/url"}
+  - it: refuses generated issuer keys with two replicas
+    set:
+      identity.issuer: {enabled: true, url: https://scrim.example.com}
+      postgres.enabled: true
+      secrets.existing.postgres: pg
+      central.replicaCount: 2
+    asserts:
+      - failedTemplate: {errorPattern: "needs identity.issuer.signingKeys.existingSecret"}
+  - it: refuses generated issuer keys with the HPA
+    set:
+      identity.issuer: {enabled: true, url: https://scrim.example.com}
+      postgres.enabled: true
+      secrets.existing.postgres: pg
+      central.autoscaling.enabled: true
+    asserts:
+      - failedTemplate: {errorPattern: "needs identity.issuer.signingKeys.existingSecret"}
+  - it: refuses generated issuer keys with global.ha
+    set:
+      identity.issuer: {enabled: true, url: https://scrim.example.com}
+      postgres.enabled: true
+      secrets.existing.postgres: pg
+      global.ha.enabled: true
+    asserts:
+      - failedTemplate: {errorPattern: "needs identity.issuer.signingKeys.existingSecret"}
+  - it: refuses a key PVC with a rolling update
+    set:
+      identity.issuer: {enabled: true, url: https://scrim.example.com, keyStore: {type: pvc}}
+    asserts:
+      - failedTemplate: {errorPattern: "keyStore.type pvc needs central.strategy.type=Recreate"}
+  - it: refuses an issuer port another listener uses
+    set:
+      identity.issuer: {enabled: true, url: https://scrim.example.com, port: 9792}
+    asserts:
+      - failedTemplate: {errorPattern: "identity.issuer.port 9792 is taken"}
