@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.2](https://github.com/Heliopsy/scrim/compare/v0.6.1...v0.6.2) (2026-11-23)
+
+
+### Bug Fixes
+
+* **redaction:** replace a longer value whole around a value nested in it ([#135](https://github.com/Heliopsy/scrim/issues/135)) ([b6c3b3e](https://github.com/Heliopsy/scrim/commit/b6c3b3e70803c7e7b3c4bb0dc160df7efe18d8a0)). With a short value such as `test` inside a longer secret, hex dumps (`xxd`, `hexdump -C`, wrapped hex) of the longer secret could leak most of it.
+* **stores:** push values a store watch reports to the data plane ([#133](https://github.com/Heliopsy/scrim/issues/133)) ([e046d01](https://github.com/Heliopsy/scrim/commit/e046d01074ce2dec47e8767cec03597af68af7cf)). A new or rotated secret found by a watch was not redacted until the next full refresh.
+
 ## [0.6.1](https://github.com/Heliopsy/scrim/compare/v0.6.0...v0.6.1) (2026-11-23)
 
 

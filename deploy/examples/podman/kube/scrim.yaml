@@ -62,7 +62,7 @@ spec:
   restartPolicy: Always
   containers:
     - name: scrim
-      image: ghcr.io/heliopsy/scrim:0.6.1 # x-release-please-version
+      image: ghcr.io/heliopsy/scrim:0.6.2 # x-release-please-version
       args: ["proxy"]
       env:
         - name: XDG_RUNTIME_DIR
