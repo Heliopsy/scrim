@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.6.0](https://github.com/Heliopsy/scrim/compare/v0.5.0...v0.6.0) (2026-11-23)
+
+
+### Features
+
+* **database:** PostgreSQL and MySQL auth proxies and a read-only database tool ([#114](https://github.com/Heliopsy/scrim/issues/114)) ([a41a5a2](https://github.com/Heliopsy/scrim/commit/a41a5a2fa0904b2bb199e7689afc6ad66ce80f16))
+* **edge:** edge forwarder for ssh-agent, database ports and the agent API in agent pods ([#121](https://github.com/Heliopsy/scrim/issues/121)) ([ce986f9](https://github.com/Heliopsy/scrim/commit/ce986f9cac3ff319228ed10ba8ccbf9c0629a74d))
+* **exec:** run allow-listed commands with secrets as another user ([#108](https://github.com/Heliopsy/scrim/issues/108)) ([d51eb3a](https://github.com/Heliopsy/scrim/commit/d51eb3ace5ef8088b8c4ddc25e7132b46fbf20bd))
+* **llm:** Bedrock, Claude Platform on AWS and Foundry routes signed after redaction ([#116](https://github.com/Heliopsy/scrim/issues/116)) ([349723e](https://github.com/Heliopsy/scrim/commit/349723e4925035712f7419c1cf2b13cd075a97da))
+* **llm:** Gemini generateContent codec and route ([#107](https://github.com/Heliopsy/scrim/issues/107)) ([a6b50fb](https://github.com/Heliopsy/scrim/commit/a6b50fba34107cd7d933749a52a693666b906326))
+* **llm:** Vertex AI and Foundry Entra ID routes with minted tokens ([#117](https://github.com/Heliopsy/scrim/issues/117)) ([48473a2](https://github.com/Heliopsy/scrim/commit/48473a2b08379186c9df30066f5b6a7ae5ac6739))
+* **sshagent:** ssh-agent with keys from stores and a policy decision per signature ([#112](https://github.com/Heliopsy/scrim/issues/112)) ([3bfc553](https://github.com/Heliopsy/scrim/commit/3bfc553066e2a7c501d7e8e4a2ec9c5bc40c3556))
+* **stores:** Bitwarden Secrets Manager adapter ([#104](https://github.com/Heliopsy/scrim/issues/104)) ([dce71b0](https://github.com/Heliopsy/scrim/commit/dce71b08a4c469aed07fe3cd3ee4b96b4653e14c))
+* **stores:** Doppler, 1Password, AWS, OS keyring and Kubernetes Secrets adapters ([#119](https://github.com/Heliopsy/scrim/issues/119)) ([ea97293](https://github.com/Heliopsy/scrim/commit/ea97293b2192224a058b85f1692096f800a8d88a))
+* **stores:** Google Secret Manager and Azure Key Vault adapters ([#109](https://github.com/Heliopsy/scrim/issues/109)) ([275e9fe](https://github.com/Heliopsy/scrim/commit/275e9fea4dfd9ade99839d27ec299f816baccc71))
+* **stores:** HashiCorp Vault adapter with leases held per grant ([#113](https://github.com/Heliopsy/scrim/issues/113)) ([5cdb3ab](https://github.com/Heliopsy/scrim/commit/5cdb3aba863432f736d30b82a377dcb14eab39f8))
+* **stores:** SOPS file source ([#111](https://github.com/Heliopsy/scrim/issues/111)) ([3273c3e](https://github.com/Heliopsy/scrim/commit/3273c3ef2aef02fac9d89443e51c214e85f82145))
+
+
+### Bug Fixes
+
+* **database:** resolve store references in database passwords ([#122](https://github.com/Heliopsy/scrim/issues/122)) ([b762003](https://github.com/Heliopsy/scrim/commit/b762003aa126a4b261956f250b18ecbde3811f48))
+
 ## [0.5.0](https://github.com/Heliopsy/scrim/compare/v0.4.0...v0.5.0) (2026-11-22)
 
 
