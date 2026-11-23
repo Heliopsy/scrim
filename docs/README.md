@@ -52,6 +52,11 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 | [stores/onepassword.md](stores/onepassword.md) | 1Password through a Connect server |
 | [stores/vaultwarden.md](stores/vaultwarden.md) | Vaultwarden and Bitwarden-compatible servers, client-side decryption |
 | [stores/aws.md](stores/aws.md) | AWS Secrets Manager and SSM Parameter Store, ambient identity |
+| [stores/doppler.md](stores/doppler.md) | Doppler |
+| [stores/bws.md](stores/bws.md) | Bitwarden Secrets Manager |
+| [stores/kubernetes.md](stores/kubernetes.md) | Kubernetes Secrets, opt-in writes |
+| [stores/sops.md](stores/sops.md) | SOPS-encrypted files |
+| [stores/keyring.md](stores/keyring.md) | The OS keyring: Secret Service, Keychain |
 | [stores/local.md](stores/local.md) | Environment variables and files |
 | [plugins.md](plugins.md) | Store and notifier plugins: the contract, configuration, binary checks, failure handling, the Go SDK and examples |
 | [catalog.md](catalog.md) | Logical names, host bindings, declared placeholders, profiles and bulk mapping |
@@ -67,8 +72,9 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 | [edge-forwarder.md](edge-forwarder.md) | Agent pods with a central scrim: ssh-agent, database ports and the agent API forwarded over TLS with the pod's token |
 | [providers/README.md](providers/README.md) | Cloud provider routes: Bedrock, Claude Platform on AWS, Foundry and Vertex, authenticated by scrim after redaction |
 | [agent-tools.md](agent-tools.md) | The MCP server, `scrim secret` commands and the human entry page |
+| [databases.md](databases.md) | PostgreSQL and MySQL auth proxies and the read-only database tool |
 | [exec-broker.md](exec-broker.md) | `secret_exec` and `scrim exec`: allowed commands run as another user with a secret, output redacted |
-| [identity.md](identity.md) | How scrim knows which agent is calling: peer credentials and session tokens |
+| [identity.md](identity.md) | How scrim knows which agent is calling (peer credentials, session tokens, Kubernetes service accounts), scrim as identity provider, per-agent store identity by token exchange, and the redaction identity |
 
 ## Policy
 
@@ -83,6 +89,7 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 | --- | --- |
 | [state-and-observability.md](state-and-observability.md) | State backends, the audit log, metrics, traces, health, `scrim status` and `scrim doctor` |
 | [monitoring.md](monitoring.md) | Prometheus metrics behind `metrics.enabled`, every metric, alert runbooks, the Grafana dashboard, scrape config and endpoint security |
-| [leak-assurance.md](leak-assurance.md) | The leak suite, the bypass matrix, running it yourself and known limitations |
+| [leak-assurance.md](leak-assurance.md) | The leak suite, the bypass matrix, the end-to-end matrix, running it yourself and the results each release publishes |
+| [limitations.md](limitations.md) | What scrim does not protect against: redaction gaps, implementation limits, identity trade-offs and what the tests do not cover |
 
 Security issues go through [SECURITY.md](../SECURITY.md), not public issues.

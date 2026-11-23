@@ -322,20 +322,49 @@ SCRIM_MATRIX_CELLS="transparent/vault/bedrock mcp-only/vault" test/e2e/matrix/ru
 
 Not in the matrix: the eBPF connect hooks land on the same transparent listener, and
 `just ebpf-install-vm-test` runs scrim behind them in a VM; DNS override mode is covered by
-`just service-transparent-test`. The other stores have no local server or emulator here (Google
-Secret Manager, Azure Key Vault, Infisical, Vaultwarden, 1Password, Doppler, Bitwarden Secrets
-Manager): their adapters run the conformance suite against fakes or containers in the store jobs,
-and they reach the data plane through the same redaction set as the stores above.
+`just service-transparent-test`. The other stores are not in the matrix: Google Secret Manager,
+Azure Key Vault, Infisical, Vaultwarden, 1Password, Doppler and Bitwarden Secrets Manager have no
+emulator here, and SSM, Kubernetes, SOPS, the keyring, `env` and plugins were left out to keep the
+matrix to one CI job per store. Their adapters run the conformance suite against fakes or
+containers in the store jobs (Kubernetes in kind), and they reach the data plane through the same
+redaction set as the stores above.
+
+## Published results
+
+Every release runs the leak gates again on the commit it releases, with the linux-amd64 binaries it
+ships, and attaches the results to the GitHub release next to the archives:
+
+| File | What it is |
+| --- | --- |
+| `scrim_<version>_results.md` | Summary: leak suite totals, every documented limitation that leaked, each matrix cell, fuzzing time and the latency gate |
+| `scrim_<version>_results_leak-report.json` | `scrim audit run` against `scrim proxy` (the report described under [Running it](#running-it)) |
+| `scrim_<version>_results_leak-control.json` | The same suite against a pass-through proxy, which must fail: evidence that the checker finds leaks |
+| `scrim_<version>_results_e2e-matrix.json` | One result per [end-to-end matrix](#end-to-end-matrix) cell of the `file`, `openbao`, `vault` and `awssm` stores |
+| `scrim_<version>_results_fuzz.json` | Seconds and runs per cargo-fuzz target, run from an empty corpus for the release |
+| `scrim_<version>_results_latency-gate.md` | The LLM proxy latency gate against `budget.json`, with the machine it ran on |
+| `scrim_<version>_results_redact-bench.txt` | The `scrim-redact` benchmarks: throughput and latency per secret set and body size |
+
+The release fails, and nothing is published, when the leak gate or a matrix cell fails, the
+pass-through control does not leak, a fuzz target finds a crash or a p99 exceeds its budget. The
+result files are listed in the signed `checksums.txt` and carry SLSA provenance like the archives,
+so they are checked the same way ([install.md](install.md#check-the-published-results)). The
+reports name seeds by kind, length and a short hash only; the seeds are generated for the run.
+
+The Kubernetes cell of the matrix and the multi-replica load test run in CI, not in the release.
+`scripts/release/results.sh` holds the commands, so you can produce the same files on your own
+machine.
 
 ## Known limitations
 
-These are outside what scrim protects. The matrix runs a row for each one it can express, marked
+These are the redaction limits the matrix can express. The matrix runs a row for each one, marked
 `limitation`, so the report shows whether a given setup happens to contain it.
+[limitations.md](limitations.md) has the full list, including limits of the implementation, of
+identity and of test coverage.
 
 | Limitation | Matrix rows | Mitigation |
 | --- | --- | --- |
 | The agent's local transcripts, memory and history files hold real values: scrim protects the wire, not the agent's disk. | none | Keep agent state on an encrypted disk; restored values only reach tools the tool policy names. |
-| Images, PDFs and other binary parts pass unscanned under the default `pass` binary policy, including text in image metadata. In the Gemini API that is every `inlineData` part, a `text/plain` document included, so the matrix has no Gemini `document-text` row. | `image-metadata` | Set the binary policy to `block`; the status command reports the current policy. |
+| Images, PDFs and other binary parts pass unscanned, including text in image metadata. In the Gemini API that is every `inlineData` part, a `text/plain` document included, so the matrix has no Gemini `document-text` row. scrim 1.0 has no setting to block them. | `image-metadata` | Keep secrets out of images and documents the agent attaches. |
 | Look-alike Unicode substitution (Cyrillic or fullwidth letters) is not matched: confusable tables are unbounded and no shell tool produces it. | `homoglyphs`, `fullwidth` | none yet |
 | Values spelled out in words (NATO alphabet) are not matched: any language or alphabet would do. | `nato-spelling` | none yet |
 | Compressed content (`gzip`, `zlib`) is not decompressed: decompression is unbounded work per byte. | `gzip-base64` | none yet |
@@ -344,5 +373,5 @@ These are outside what scrim protects. The matrix runs a row for each one it can
 | Values shorter than the minimum length (default 8 bytes) are matched only whole and in their encoded forms, never as fragments. Truncations of short values pass as `repaired`. | truncation rows for short seeds | Raise the minimum only with care; `scrim status` lists short values. |
 | Transforms not in the matrix, and secrets unknown to every store and missed by the fallback detectors, are not protected. | none | Add stores for every secret source; report new transforms as issues so they become matrix rows. |
 
-Each release publishes its audit report, matrix status and fuzzing hours, including every
-uncontained transform with its tracking issue.
+Each release publishes its audit report, matrix results and fuzzing time; the summary lists every
+limitation row that leaked in that run ([Published results](#published-results)).

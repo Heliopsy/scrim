@@ -1,4 +1,4 @@
-# dev: follows the newest 0.1.x image. Flux image automation rewrites the tag
+# dev: follows the newest 1.x image. Flux image automation rewrites the tag
 # below (the marker comment names its ImagePolicy); staging and prod move only
 # through reviewed commits.
 apiVersion: kustomize.config.k8s.io/v1beta1

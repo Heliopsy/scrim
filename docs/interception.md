@@ -6,16 +6,16 @@ provider. There are seven methods. They differ in what has to be configured, who
 and whether an agent that misbehaves can go around scrim. Managed agent settings are not a method
 of their own: they are an add-on that keeps methods 1 and 2 from being skipped.
 
-| # | Method | Status | Coverage | Can the agent bypass it? |
+| # | Method | Set up with | Coverage | Can the agent bypass it? |
 | --- | --- | --- | --- | --- |
-| 1 | [Wrapper (`scrim run`)](#1-wrapper-scrim-run), with base URL underneath | v0.1.0 | full | yes, by ignoring or clearing its environment |
-| 2 | [Forward proxy](#2-forward-proxy) (`HTTPS_PROXY` and CA) | v0.1.0 | full | yes, by ignoring the proxy variables |
-| 3 | [Transparent, machine-wide](#3-transparent-machine-wide) (nftables; eBPF variant) | on `main` (`scrim install --transparent`; eBPF variant: `scrim install --ebpf` or `scrim ebpf attach`) | full | no, inside the covered users or cgroups |
-| 4 | [DNS override](#4-dns-override) | on `main` (`scrim install --dns`) | full for connections by name | yes, by connecting to an IP address |
-| 5 | [Kubernetes transparent](#5-kubernetes-transparent) | on `main` (Helm chart, Kyverno injection, NetworkPolicy) | full | no, while NetworkPolicy is enforced |
-| 6 | [Hooks only](#6-hooks-only) | on `main` (`scrim install --hooks`) | partial: tool results and prompts only | yes; model traffic never passes scrim |
-| 7 | [MCP only](#7-mcp-only) | v0.1.0 (`scrim mcp` is on `main`) | requests only: nothing is intercepted | not applicable |
-| + | [Managed agent settings](#managed-agent-settings-enforcement-add-on) | on `main` (`scrim install --managed-settings`) | add-on to 1 and 2 | not through the agent's own settings |
+| 1 | [Wrapper (`scrim run`)](#1-wrapper-scrim-run), with base URL underneath | `scrim run` | full | yes, by ignoring or clearing its environment |
+| 2 | [Forward proxy](#2-forward-proxy) (`HTTPS_PROXY` and CA) | `proxy.forward-listen` | full | yes, by ignoring the proxy variables |
+| 3 | [Transparent, machine-wide](#3-transparent-machine-wide) (nftables; eBPF variant) | `scrim install --transparent`; eBPF variant: `scrim install --ebpf` or `scrim ebpf attach` | full | no, inside the covered users or cgroups |
+| 4 | [DNS override](#4-dns-override) | `scrim install --dns` | full for connections by name | yes, by connecting to an IP address |
+| 5 | [Kubernetes transparent](#5-kubernetes-transparent) | Helm chart, Kyverno injection, NetworkPolicy | full | no, while NetworkPolicy is enforced |
+| 6 | [Hooks only](#6-hooks-only) | `scrim install --hooks` | partial: tool results and prompts only | yes; model traffic never passes scrim |
+| 7 | [MCP only](#7-mcp-only) | `scrim mcp` | requests only: nothing is intercepted | not applicable |
+| + | [Managed agent settings](#managed-agent-settings-enforcement-add-on) | `scrim install --managed-settings` | add-on to 1 and 2 | not through the agent's own settings |
 
 Full coverage means every model request from the covered agent is redacted, and with the forward
 proxy its tool traffic gets credential injection and response redaction. Methods 1 and 2 rely on
@@ -30,8 +30,9 @@ Spec: `openspec/changes/scrim-v1/specs/interception`, with design D5, D8 and D11
 
 ## One engine, several listeners
 
-Every method feeds the same engine (design D8). The data plane has five listener kinds, `BASE_URL`,
-`UNIX`, `FORWARD_PROXY`, `TOOL_PROXY` and `TRANSPARENT` (`proto/scrim/dataplane/v1/dataplane.proto`),
+Every method feeds the same engine (design D8). The data plane has six listener kinds, `BASE_URL`,
+`UNIX`, `FORWARD_PROXY`, `TOOL_PROXY`, `TRANSPARENT` and `SNI`
+(`proto/scrim/dataplane/v1/dataplane.proto`),
 and all of them hand provider requests to the same codecs in `scrim-llm`, which redact, guard and
 forward. The methods add the plumbing that puts traffic on one of those listeners and, for the
 enforcing ones, keep it from going anywhere else.
@@ -43,18 +44,16 @@ These settings come up throughout. Each has a config key, a `SCRIM_*` variable a
 | --- | --- | --- |
 | `proxy.listen` | `127.0.0.1:9790` | LLM proxy base URL listener. Agents use `http://127.0.0.1:9790/anthropic`, `http://127.0.0.1:9790/openai/v1` and `http://127.0.0.1:9790/gemini` |
 | `proxy.socket` | empty (off) | the same LLM proxy on a Unix socket |
-| `proxy.forward-listen` | empty (off) | forward proxy (`CONNECT` with TLS interception) |
+| `proxy.forward-listen` | `127.0.0.1:9791` | forward proxy (`CONNECT` with TLS interception); empty turns it off |
 | `tool-proxy.listen` | empty (off) | the HTTPS tool proxy on its own |
 | `api.socket` | `$XDG_RUNTIME_DIR/scrim/api.sock` | local agent API, used by `scrim mcp` and `scrim secret` |
 | `proxy.upstream.anthropic` | `https://api.anthropic.com` | where redacted Anthropic requests go |
 | `proxy.upstream.openai` | `https://api.openai.com` | where redacted OpenAI requests go |
 | `proxy.upstream.gemini` | `https://generativelanguage.googleapis.com` | where redacted Gemini API requests go |
 
-The data plane on `main` serves every kind except `TRANSPARENT`, and the forward proxy hands
-provider hosts to the LLM proxy. A listener that cannot be bound, or whose kind is not implemented,
-reports itself unbound, which keeps the data plane not ready, so nothing is forwarded unredacted.
-The listener settings above and `scrim proxy`, which turns them into data plane listeners, land
-with the daemon (v0.1.0).
+The forward proxy hands provider hosts to the LLM proxy. A listener that cannot be bound reports
+itself unbound, which keeps the data plane not ready, so nothing is forwarded unredacted.
+`scrim proxy` turns the listener settings above into data plane listeners.
 
 The built-in routes are `/anthropic`, `/openai` and `/gemini`. The prefix is stripped and the rest
 of the path is appended to the upstream, so `/anthropic/v1/messages` goes to
@@ -103,9 +102,6 @@ scrim run -- codex exec "fix the failing test"
 scrim run --print-env -- claude      # show what would be set, start nothing
 ```
 
-(`scrim run` is on `main`, but it needs the daemon, which lands in v0.1.0. Until then it has no
-scrim to start and refuses with status 125.)
-
 `scrim run` finds the scrim already running for your user or starts one, waits until its data
 plane is ready to redact, mints a session token bound to its own process tree, creates a session
 directory under `$XDG_RUNTIME_DIR/scrim/run/` and starts the agent. When the agent exits the
@@ -144,7 +140,7 @@ yourself. scrim redacts the request, forwards it to the real provider and restor
 the response. The agent keeps its own API key or login; scrim passes the agent's authentication
 through.
 
-Start the daemon (lands with the daemon, v0.1.0):
+Start the daemon:
 
 ```sh
 scrim proxy
@@ -260,8 +256,8 @@ flowchart LR
 
 ### Setup
 
-Pick a free loopback port for the forward proxy; it has no default. Trust scrim's CA for your user
-and start the daemon (`scrim proxy` and `scrim ca` land with the daemon, v0.1.0):
+The forward proxy listens on `127.0.0.1:9791` unless you set another address. Trust scrim's CA for
+your user and start the daemon:
 
 ```sh
 scrim ca install --user --dry-run   # show what would change
@@ -336,7 +332,7 @@ With scrim down, `CONNECT` to the proxy address fails and nothing goes direct.
 
 ## 3. Transparent, machine-wide
 
-On `main` (tasks.md 13.3). On Linux, `scrim install --system --transparent` adds nftables rules that
+On Linux, `scrim install --system --transparent` adds nftables rules that
 match outgoing TCP connections to ports 80 and 443 from selected users or control groups and
 redirect them to a `TRANSPARENT` listener. That listener recovers the original destination, reads
 the TLS server name (SNI), terminates TLS with scrim's CA and hands the request to the route for
@@ -458,7 +454,7 @@ truststores and `nft list ruleset` match the snapshot taken before.
 
 ### Variant: eBPF cgroup hooks
 
-On `main` (tasks.md 15.1): `scrim ebpf attach`, `detach` and `status`. Instead of packet filter
+`scrim ebpf attach`, `detach` and `status`. Instead of packet filter
 rules, a privileged loader attaches eBPF programs to selected cgroup v2 control groups. They do per
 control group what the nftables rules do per user:
 
@@ -628,7 +624,7 @@ should show scrim's CA as the issuer.
 
 ## 4. DNS override
 
-On `main` (tasks.md 15.2). Provider host names resolve to scrim through a block in `/etc/hosts`.
+Provider host names resolve to scrim through a block in `/etc/hosts`.
 The agent connects to scrim on port 443 believing it is the provider, scrim reads the server name
 from the TLS handshake (SNI), serves a certificate for that name from its CA, picks the route by
 host and forwards the redacted request. This is the `SNI` listener of design D8.
@@ -898,7 +894,7 @@ flowchart LR
 
 ### Setup
 
-The MCP server and the agent API are on `main`:
+The MCP server and the agent API:
 
 ```sh
 scrim api serve
@@ -1063,7 +1059,7 @@ start.
 
 Every method that terminates TLS (2 to 5, and the wrapper when the forward proxy is on) needs the
 client to trust scrim's CA. `scrim ca export` prints the certificate; `scrim ca install --user`
-writes `~/.local/share/scrim/scrim-ca.pem` and `ca-bundle.pem` (lands with the daemon, v0.1.0).
+writes `~/.local/share/scrim/scrim-ca.pem` and `ca-bundle.pem`.
 `scrim run` builds the same two files per session.
 
 | Runtime | How it trusts scrim's CA |
@@ -1099,9 +1095,8 @@ are not ([ca.md](ca.md)).
 | Agent you cannot route at all | 6, hooks, knowing they are partial | none available |
 | Only deliberate secret work for now | 7, MCP, with read-deny rules | move to 1 or 2 |
 
-Only methods 1, 2 and 7 exist in v0.1.0. On `main`, `scrim install --managed-settings` is the closest
-thing to enforcement on one machine until transparent mode lands, and `scrim install --hooks` covers
-agents that cannot be routed.
+Where transparent mode is not possible on one machine, `scrim install --managed-settings` is the
+closest thing to enforcement, and `scrim install --hooks` covers agents that cannot be routed.
 
 ## Combining methods
 
@@ -1154,7 +1149,7 @@ to a directory (mode 0700). Agent credentials in headers are masked.
 scrim proxy --capture="$HOME/scrim-capture"
 ```
 
-(Lands with the daemon, v0.1.0. The flag takes a directory; `proxy.capture.dir` is the setting and
+(The flag takes a directory; `proxy.capture.dir` is the setting and
 `proxy.capture.retention` deletes old files, 7 days by default.) Run a session that reads a file
 holding a secret, then search the capture directory for the value. It should be absent, with its
 placeholder in its place.

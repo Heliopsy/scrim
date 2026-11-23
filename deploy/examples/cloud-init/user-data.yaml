@@ -163,7 +163,7 @@ write_files:
       # Download a scrim release, check its signature and checksum, and install the
       # binary into ~/.local/bin (or $PREFIX/bin).
       #
-      #   VERSION=0.1.0 ./install.sh
+      #   VERSION=1.0.0 ./install.sh
       #
       # Needs curl, cosign 2.4 or later, tar and sha256sum (shasum on macOS). Nothing
       # is installed unless cosign verifies checksums.txt against the release

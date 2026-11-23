@@ -6,8 +6,8 @@ peer credentials, plus a session token when the caller has one. Nothing in a req
 or tool argument can change it.
 
 This page covers local identity, Kubernetes service accounts and scrim as an identity provider for
-stores. Client certificates are specified in `openspec/changes/scrim-v1/specs/agent-identity` and
-arrive later.
+stores. scrim 1.0 does not accept client certificates as an agent identity, although the
+agent-identity spec describes them.
 
 ## Peer credentials
 
@@ -440,10 +440,13 @@ identity:
     gsm: "gcp-workload-identity provider://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/scrim/providers/scrim service-account:{agent_slug}@proj.iam.gserviceaccount.com"
     akv: "azure-federated tenant:00000000-0000-0000-0000-000000000000 client-id:11111111-1111-1111-1111-111111111111"
     inf: "infisical-oidc identity-id:22222222-2222-2222-2222-222222222222 audience:infisical"
-  # Static fallback: a store token per agent, by reference.
+  # Static fallback: a store token per agent, by reference (store/agent).
   store-credentials:
-    vw/laptop: file:/run/secrets/vw-laptop-token
+    bao/laptop: file:/run/secrets/bao-laptop-token
 ```
+
+Static credentials work with the store kinds in the table below; any other store configured for a
+per-agent identity refuses every use as unsupported.
 
 In templates `{agent}`, `{agent_slug}` (the agent name with anything outside `[A-Za-z0-9_.-]`
 replaced by `-`, so `agents/reviewer` becomes `agents-reviewer`), `{namespace}` and

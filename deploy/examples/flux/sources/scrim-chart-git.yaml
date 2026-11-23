@@ -10,7 +10,7 @@ spec:
   interval: 1h
   url: https://github.com/Heliopsy/scrim
   ref:
-    semver: ">=0.2.0 <1.0.0"
+    semver: ">=1.0.0 <2.0.0"
   ignore: |
     /*
     !/deploy/helm/scrim/

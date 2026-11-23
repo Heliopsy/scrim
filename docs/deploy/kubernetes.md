@@ -175,8 +175,8 @@ Change the image tag (or digest) and apply. The Deployment rolls one pod at a ti
 (`maxUnavailable: 0`), and a pod is ready only once its data plane holds a snapshot.
 
 ```sh
-kubectl --context "$CONTEXT" -n scrim set image deploy/scrim scrim=ghcr.io/heliopsy/scrim:0.1.1   # raw
-kustomize edit set image ghcr.io/heliopsy/scrim:0.1.1   # in the overlay directory, then apply -k
+kubectl --context "$CONTEXT" -n scrim set image deploy/scrim scrim=ghcr.io/heliopsy/scrim:1.0.1   # raw
+kustomize edit set image ghcr.io/heliopsy/scrim:1.0.1   # in the overlay directory, then apply -k
 kubectl --context "$CONTEXT" -n scrim rollout undo deploy/scrim                                    # roll back
 ```
 

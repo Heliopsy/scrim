@@ -12,7 +12,7 @@ spec:
   interval: 1h
   url: oci://ghcr.io/heliopsy/scrim
   ref:
-    semver: ">=0.1.0 <1.0.0"
+    semver: ">=1.0.0 <2.0.0"
   layerSelector:
     mediaType: application/vnd.oci.image.layer.v1.tar+gzip
     operation: copy

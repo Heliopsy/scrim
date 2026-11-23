@@ -91,7 +91,7 @@ default client-side diff then shows them OutOfSync after every sync.
 sources:
   - repoURL: ghcr.io/heliopsy/charts
     chart: scrim
-    targetRevision: 0.2.0
+    targetRevision: 1.0.0
     helm:
       valueFiles:
         - $values/scrim/helm/values.yaml
@@ -103,7 +103,7 @@ sources:
 
 To take the chart from git instead, replace the first source's `chart` with `path:
 deploy/helm/scrim`, its `repoURL` with `https://github.com/Heliopsy/scrim` and `targetRevision`
-with a release tag such as `v0.2.0`.
+with a release tag such as `v1.0.0`.
 
 ## Kustomize Application and ApplicationSet
 
@@ -126,7 +126,7 @@ after dev and staging are healthy with it. Promotion between environments that p
 ## Image updates
 
 [`image-updater.yaml`](../../deploy/examples/argocd/image-updater.yaml) is an `ImageUpdater` for
-Argo CD Image Updater 1.x. It watches `ghcr.io/heliopsy/scrim` for `0.x` releases and commits the
+Argo CD Image Updater 1.x. It watches `ghcr.io/heliopsy/scrim` for `1.x` releases and commits the
 new tag to `scrim/overlays/dev` in fleet (git write-back), for the Application `scrim-dev` only.
 
 Image Updater verifies cosign signatures only against a public key, and scrim releases are signed

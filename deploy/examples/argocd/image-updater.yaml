@@ -1,5 +1,5 @@
 # Argo CD Image Updater 1.x: bumps the scrim image of the dev Application to
-# the newest 0.x release and commits the change to the dev overlay in your
+# the newest 1.x release and commits the change to the dev overlay in your
 # fleet repository. staging and prod follow by pull request (or Renovate).
 #
 # Image Updater verifies cosign signatures only against a public key, and scrim
@@ -20,8 +20,8 @@ spec:
     - namePattern: scrim-dev
       images:
         - alias: scrim
-          # The tag is the semver constraint: any 0.x release.
-          imageName: ghcr.io/heliopsy/scrim:0.x
+          # The tag is the semver constraint: any 1.x release.
+          imageName: ghcr.io/heliopsy/scrim:1.x
           commonUpdateSettings:
             updateStrategy: semver
             allowTags: 'regexp:^0\.[0-9]+\.[0-9]+$'

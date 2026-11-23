@@ -1,8 +1,8 @@
 # Architecture
 
-This page shows how scrim is put together and how a request moves through it. It describes the
-v0.1.0 design. The normative contract is the OpenSpec change in
-[`openspec/changes/scrim-v1`](../openspec/changes/scrim-v1/): the decisions D1 to D13 are in
+This page shows how scrim is put together and how a request moves through it. It describes scrim
+1.0. The normative contract is the OpenSpec change in
+[`openspec/changes/scrim-v1`](../openspec/changes/scrim-v1/): the decisions D1 to D17 are in
 [`design.md`](../openspec/changes/scrim-v1/design.md), the requirements in its `specs/` directory.
 Where this page and the specs disagree, the specs win.
 
@@ -13,8 +13,7 @@ responses and injects credentials into tool traffic. The control plane pushes ev
 plane needs as a snapshot, so the data plane decides on its own and calls back only when a rule
 asks for a human.
 
-Some parts are not on `main` yet. Each diagram has a status line under it naming them. The
-diagrams show the design those branches implement.
+The notes under each diagram name the packages and crates that implement it.
 
 ## System context
 
@@ -25,8 +24,8 @@ flowchart LR
   scrim["scrim<br>control plane + data plane"]
   provider["LLM provider APIs"]
   toolapis["Tool APIs<br>api.github.com, ..."]
-  stores[("Secret stores<br>OpenBao, Infisical,<br>Vaultwarden, env, file")]
-  approvers["Approvers<br>ntfy, webhook, terminal"]
+  stores[("Secret stores<br>OpenBao, Vault, cloud,<br>password managers, files,<br>plugins")]
+  approvers["Approvers<br>ntfy, webhook,<br>terminal, plugins"]
 
   agent -- "model requests" --> scrim
   scrim -- "placeholders only" --> provider
@@ -63,7 +62,7 @@ Approvers get a message with names and references only, and decide through a sig
 operator configures scrim with files, `SCRIM_*` variables and flags (D10) and works through the
 admin API.
 
-Status: everything in this picture is on `main` for v0.1.0. `scrim proxy` runs the control plane,
+In the code: `scrim proxy` runs the control plane,
 the data plane and every socket, and `scrim run` starts or reuses it for one agent.
 
 ## Components
@@ -174,8 +173,8 @@ values. Every message carries the protocol version, and a mismatch stops the sup
 forward proxy is one listener in front of both engines: provider hosts go to the LLM proxy, every
 other host to the tool proxy (D8).
 
-Status: all of this is on `main`. The data plane binds base URL (TCP and Unix socket),
-forward-proxy and tool-proxy listeners; provider hosts reached through the forward proxy go to
+In the code: the data plane binds base URL (TCP and Unix socket), forward-proxy, transparent,
+SNI and tool-proxy listeners; provider hosts reached through the forward proxy go to
 `scrim-llm`, everything else to the tool proxy. `scrim proxy` runs the snapshot builder, the admin,
 agent API, entry page, decision-link and metrics listeners. The data plane decides with
 `scrim-policy` (decision table and restore policy from the snapshot, `policy_engine` `table/v1`).
@@ -249,7 +248,7 @@ be restored with escaping for the shell, SQL, JSON or YAML it lands in, while a 
 restored into a command, file edit or tool argument (D5). A placeholder that cannot be resolved
 stays a placeholder, which is safe and visible.
 
-Status: on `main`. The LLM proxy, codecs, restorer and fail-closed handling live in `scrim-llm`,
+In the code: the LLM proxy, codecs, restorer and fail-closed handling live in `scrim-llm`,
 the redactor and guard in `scrim-redact`, and the data plane wires them behind the base URL
 listener. Request headers and the request target are redacted and guarded as well as the body. The
 data plane restores under
@@ -330,8 +329,8 @@ to the control plane, which writes it to the store and adds it to the redaction 
 answering, and the agent receives the placeholder. A response the proxy cannot scan is withheld,
 and so is a captured field whose store write fails.
 
-Status: the tool proxy, CA, bindings, injection, capture and response redaction are on `main` in
-`scrim-toolproxy`, and the supervisor's capture stream is on `main`. After the binding checks, every
+In the code: the tool proxy, CA, bindings, injection, capture and response redaction are in
+`scrim-toolproxy`. After the binding checks, every
 injection is decided by the decision table (`op == "inject"`), asking the control plane where a rule
 says so, and a denial is `403 policy_denied`. The control plane handles captures (stored through
 the gate as `store.write`) and holds the CA, which it pushes in the snapshot.
@@ -407,15 +406,14 @@ expiry and notifier. A held request that times out is denied. The approval stays
 it is approved the grant it leaves behind lets the agent's retry through. Approvals deny on
 timeout, and break-glass denies everything except redaction.
 
-Status: the gate, approvals, signed links, notifiers, grants and break-glass are on `main`, as is
-the Go reference evaluator for the decision table. The data plane evaluates the table with
+In the code: the gate, approvals, signed links, notifiers, grants and break-glass are in the
+control plane, with the Go reference evaluator for the decision table. The data plane evaluates the table with
 `scrim-policy` for every injection and provider request and sends asks over the `Asks` stream,
 bounded by `Policy.ask_timeout_millis` (denied on timeout or with the stream down, grants never
 cached). An ask carries what the transport said about the caller (`AskCaller`: the session a
-request names, Unix peer credentials), since the data plane cannot verify sessions. Connecting the
-supervisor's ask stream to the gate, the decision links and the admin API are on `main`. Resolving
-`AskCaller` to a verified agent, filling `ask_timeout_millis` from `approvals.timeout`, and `scrim
-run` naming its session on every request are in progress on `feat/control-plane-decisions`.
+request names with its per-ask proof, Unix peer credentials, a Kubernetes token), and the control
+plane resolves it to a verified agent (D14) before the gate decides. `ask_timeout_millis` comes from
+`approvals.timeout`.
 
 ## Snapshot lifecycle
 
@@ -473,7 +471,7 @@ A written or captured value joins the set before the write is reported. If the d
 the supervisor marks scrim not ready, so health checks fail and nothing is served, then restarts
 it with backoff.
 
-Status: on `main`. The daemon builds the full snapshot (values with their bindings, placeholder
+In the code: the daemon builds the full snapshot (values with their bindings, placeholder
 keys, decision table, restore settings, routes, listeners, capture rules and CA), pushes it after
 every relevant change, debounced, and the data plane applies it as one bundle swapped atomically.
 
@@ -542,8 +540,6 @@ references and counts. Display values do reach the agent where the restore polic
 The agent's own transcript on disk is outside scrim's protection: the user's machine is trusted,
 and a file the agent reads locally is in that transcript before scrim sees any traffic.
 
-Status: all of this is on `main` for the components that exist there.
-
 ## Deployments
 
 ```mermaid
@@ -558,15 +554,15 @@ flowchart TB
     lcp --- lsq[("SQLite file")]
   end
 
-  subgraph vm["VM or workstation: local service, M2"]
+  subgraph vm["VM or workstation: local service"]
     direction LR
     unit["systemd unit or Quadlet<br>dedicated user"] --> vcp["scrim proxy"]
     vcp --> vdp["data plane child"]
-    nft["nftables per UID<br>transparent mode, M2"] -.-> vdp
+    nft["nftables or eBPF<br>transparent mode"] -.-> vdp
     vag["agents"] --> vdp
   end
 
-  subgraph k8s["Kubernetes: M2, scaling parts M3"]
+  subgraph k8s["Kubernetes"]
     direction LR
     subgraph agentpod["Agent pod, labelled"]
       kag["agent"]
@@ -608,9 +604,9 @@ process only: provider base URLs, the forward proxy, a CA bundle, the MCP regist
 token. Nothing persistent changes, and if the data plane is not ready the agent is not started.
 SQLite is the local state default and refuses a second process on the same file.
 
-A local service (M2) runs `scrim proxy` under a dedicated user from a systemd unit or Quadlet, and
-`scrim uninstall` reverts every change. Transparent mode with nftables (M2) or eBPF (M3) catches
-agents that were not configured to use scrim. In Kubernetes (M2) a central Deployment serves agent
+A local service runs `scrim proxy` under a dedicated user from a systemd unit or Quadlet, and
+`scrim uninstall` reverts every change. Transparent mode with nftables or eBPF catches
+agents that were not configured to use scrim. In Kubernetes a central Deployment serves agent
 pods, a NetworkPolicy keeps them from reaching providers directly, an admission policy configures
 labelled pods without changing their images, and replicas share PostgreSQL so approvals and grants
 agree everywhere. Placeholders need no shared lookup table across replicas because they are an HMAC
@@ -618,15 +614,12 @@ of the value (D3). The edge forwarder exposes the ssh-agent socket, localhost da
 the agent API in the pod and carries each connection to the central scrim over TLS with the pod's
 projected token; it holds no values ([edge-forwarder.md](edge-forwarder.md)). A sidecar (a full
 `scrim proxy` per pod) holds the dictionary in every pod, so the central deployment is the default.
-Valkey and NATS events and extra audit sinks are M3.
+Replicas exchange events through PostgreSQL notify, Valkey or NATS, and the audit log can also go
+to OTLP, Loki or Kafka.
 
-Status: v0.1.0 ships the laptop path and the forward proxy; `scrim run` and `scrim proxy` are on
-`main`. The Helm chart with central and sidecar modes, the NetworkPolicies and the Kyverno admission
-policy are on `main` ([kubernetes.md](kubernetes.md)); the sidecar is a full `scrim proxy`, not
-the standalone data plane. TokenReview identity, Postgres notify events and the local service are on
-`main` too, and so are the transparent mode (nftables), the DNS override and the edge forwarder.
-Valkey and NATS are M3. The eBPF transparent mode's loader (`scrim ebpf`), the
-PostgreSQL state backend and the standalone `scrim-dataplane` image are on `main`.
+The Helm chart with central and sidecar modes, the NetworkPolicies and the Kyverno admission policy
+are described in [kubernetes.md](kubernetes.md); the sidecar is a full `scrim proxy`, not the
+standalone data plane, which has its own image for locked-down hosts.
 
 ## Where to find it in the code
 
@@ -636,14 +629,20 @@ PostgreSQL state backend and the standalone `scrim-dataplane` image are on `main
 | Command line | `internal/cli` | | [agent-tools.md](agent-tools.md) |
 | Settings | `internal/config` | D10 | [configuration.md](configuration.md) |
 | Secret value type | `internal/secret` | D9 | |
-| Store adapters | `internal/stores/{openbao,infisical,vaultwarden,env,file}` | D6 | [stores/README.md](stores/README.md) |
+| Store adapters | `internal/stores/<kind>` | D6 | [stores/README.md](stores/README.md) |
+| Plugins (stores, notifiers) and their SDK | `internal/plugin`, `internal/stores/plugin`, `internal/notify/plugin`, `pkg/plugin` | D17 | [plugins.md](plugins.md) |
 | Refresh and outages | `internal/stores/refresh` | D6 | [stores/README.md](stores/README.md#freshness-and-outages) |
 | Catalog and bindings | `internal/catalog` | D5 | [catalog.md](catalog.md) |
 | Policy and decision table | `internal/policy` | D7 | [policy.md](policy.md#how-the-data-plane-decides) |
 | Decision path | `internal/gate` | D7 | [policy.md](policy.md) |
 | Approvals, grants, break-glass | `internal/approval`, `internal/grant`, `internal/breakglass` | D7 | [approvals.md](approvals.md) |
-| Notifiers | `internal/notify/{ntfy,webhook,terminal}` | D7 | [approvals.md](approvals.md#notifiers) |
-| Agent identity | `internal/identity` | | [identity.md](identity.md) |
+| Notifiers | `internal/notify/{ntfy,webhook,terminal,plugin}` | D7 | [approvals.md](approvals.md#notifiers) |
+| Agent identity, issuer, per-agent store identity | `internal/identity`, `internal/agentstore`, `internal/redactscope` | D14, D15, D16 | [identity.md](identity.md) |
+| ssh-agent | `internal/sshagent`, `internal/sshkeys` | | [ssh-agent.md](ssh-agent.md) |
+| Database proxies | `internal/dbproxy` | | [databases.md](databases.md) |
+| Exec broker | `internal/execbroker` | | [exec-broker.md](exec-broker.md) |
+| Edge forwarder | `internal/edge` | | [edge-forwarder.md](edge-forwarder.md) |
+| Interception installs, eBPF | `internal/install`, `internal/bpfredirect` | D8 | [interception.md](interception.md) |
 | Agent tools | `internal/agenttools`, `internal/localapi`, `internal/mcp`, `internal/entrypage`, `internal/agentapi` | D6 | [agent-tools.md](agent-tools.md) |
 | State backends | `internal/state/{memstate,sqlite,postgres}` | D9 | [state-and-observability.md](state-and-observability.md) |
 | Audit | `internal/audit`, `internal/auditlog` | D9 | [state-and-observability.md](state-and-observability.md#audit-log) |

@@ -384,10 +384,13 @@ such values.
 - Secret imports are not followed when listing. Reference the source project directly. A read that
   Infisical answers from an import is labelled `infisical.imported`.
 - Dynamic secrets are not read, so there are no labels for them.
-- OIDC token exchange for per-agent identities and Infisical's own approval workflows are not used
-  yet. Per-agent store identity (`identity.store-login`, `identity.store-credentials`, see
-  [Agent identity](../identity.md#store-identity-per-agent)) is not implemented for Infisical: a
-  store configured for it refuses every use. Infisical stores are used with scrim's own identity.
+- Per-agent store identity ([Agent identity](../identity.md#store-identity-per-agent)) works with a
+  static Infisical access token per agent (`identity.store-credentials`) or with `infisical-oidc`,
+  which logs in to a machine identity's OIDC Auth with an identity token scrim signs for the agent.
+  Infisical has no call that reports an identity's permissions, so the per-agent check is the read
+  itself, with the value wiped unread, and writes cannot be checked per agent: they are refused for
+  an agent credential. Kubernetes passthrough is not supported; use `infisical-oidc`.
+- Infisical's own approval workflows are not used.
 
 ## Testing against a local Infisical
 
