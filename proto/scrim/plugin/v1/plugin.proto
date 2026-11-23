@@ -1,0 +1,270 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// The contract between scrim and an out-of-process store or notifier plugin,
+// design D15 and docs/plugins.md.
+//
+// Transport: gRPC over one end of a socketpair scrim creates and the plugin
+// inherits as file descriptor 3 (SCRIM_PLUGIN_FD names it), the same shape
+// as the data plane boundary (D12). The plugin is the gRPC server; scrim is
+// the only client. Nothing else can reach the socket. stdin and stdout are
+// /dev/null; stderr is relayed into scrim's scrubbing log. The plugin exits
+// when the socket closes.
+//
+// Lifecycle: Handshake first, then Configure, then the kind's own service.
+// ValidateConfig is called on a separate, short-lived process during
+// configuration loading and never carries credential values.
+//
+// Versioning: every top-level message carries `protocol` as field 1. Each side
+// refuses a message whose protocol differs from its own (status
+// FAILED_PRECONDITION), and scrim refuses a plugin whose Handshake reports a
+// different one. Adding a field or an optional call is compatible. A change
+// an older peer would misread bumps PROTOCOL_VERSION_CURRENT.
+//
+// Errors: a store call fails with a gRPC status whose code is the error kind:
+// NOT_FOUND, PERMISSION_DENIED, UNIMPLEMENTED (operation outside the declared
+// capabilities, or a value the store cannot hold byte for byte), UNAVAILABLE,
+// ALREADY_EXISTS (create-only write of an existing secret), FAILED_PRECONDITION
+// (store locked) and INVALID_ARGUMENT (reference or selector the plugin cannot
+// honour). Any other code is read as UNAVAILABLE. scrim never prints, logs or
+// returns the status message, because a store's message can echo request
+// data; a plugin that wants to explain logs to stderr.
+//
+// Secrets: Field.value and ConfigureRequest.secrets are the only fields that
+// hold secret material. Neither side may log them, echo them in a status, or
+// keep them past the call except where the call's purpose is to store them.
+syntax = "proto3";
+
+package scrim.plugin.v1;
+
+option go_package = "github.com/heliopsy/scrim/pkg/plugin/pluginv1;pluginv1";
+
+// ProtocolVersion is the plugin protocol version.
+enum ProtocolVersion {
+  PROTOCOL_VERSION_UNSPECIFIED = 0;
+  // PROTOCOL_VERSION_CURRENT is the version this build speaks.
+  PROTOCOL_VERSION_CURRENT = 1;
+}
+
+// Kind is what a plugin provides.
+enum Kind {
+  KIND_UNSPECIFIED = 0;
+  KIND_STORE = 1;
+  KIND_NOTIFIER = 2;
+}
+
+// Capability is one store operation a plugin may support.
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+  CAPABILITY_READ = 1;
+  CAPABILITY_LIST = 2;
+  CAPABILITY_WATCH = 3;
+  CAPABILITY_WRITE = 4;
+  // CAPABILITY_GLOB: List and Watch accept a prefix ending in `*` right after
+  // part of a name and match every secret whose path starts with the text
+  // before it.
+  CAPABILITY_GLOB = 5;
+}
+
+// Plugin is served by every plugin.
+service Plugin {
+  // Handshake is the first call. The plugin answers with its protocol, kind
+  // and capabilities; scrim stops it on a mismatch.
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+
+  // ValidateConfig checks the instance's options without contacting
+  // anything. secrets holds the names of the credential fields that are set,
+  // each with an empty value.
+  rpc ValidateConfig(ConfigRequest) returns (ValidateConfigResponse);
+
+  // Configure applies the options and credentials. It must not contact the
+  // store or the notification service; Health does. A failure is
+  // INVALID_ARGUMENT.
+  rpc Configure(ConfigRequest) returns (ConfigureResponse);
+}
+
+message HandshakeRequest {
+  uint32 protocol = 1;
+  // kind is what scrim configured the plugin as.
+  Kind kind = 2;
+  // instance is the configured instance name (the store's scheme).
+  string instance = 3;
+}
+
+message HandshakeResponse {
+  uint32 protocol = 1;
+  Kind kind = 2;
+  // name and version identify the plugin build in status and logs.
+  string name = 3;
+  string version = 4;
+  // capabilities a store plugin supports. CAPABILITY_READ is required.
+  repeated Capability capabilities = 5;
+}
+
+message ConfigRequest {
+  uint32 protocol = 1;
+  string instance = 2;
+  // options_json is the instance's `options` object, as JSON.
+  bytes options_json = 3;
+  // secrets maps each configured credential field (token, password, ...) to
+  // its resolved value. Secret material, Configure only.
+  map<string, bytes> secrets = 4;
+}
+
+message ValidateConfigResponse {
+  uint32 protocol = 1;
+  // problems describe each invalid option by name. Empty means valid. They
+  // are shown to the operator and must not quote option values.
+  repeated string problems = 2;
+}
+
+message ConfigureResponse {
+  uint32 protocol = 1;
+}
+
+// Store is served by store plugins.
+service Store {
+  // Read returns the secret at ref. With ref.field set, only that field;
+  // NOT_FOUND if it does not exist.
+  rpc Read(ReadRequest) returns (ReadResponse);
+  // List returns metadata of the secrets under prefix, recursively.
+  rpc List(ListRequest) returns (ListResponse);
+  // Watch streams changes under prefix. The first message has ready set and
+  // is sent once the watch is established: every change after it is
+  // reported. The stream ends when scrim cancels it.
+  rpc Watch(WatchRequest) returns (stream WatchEvent);
+  // Write stores fields as a new version of the secret at path.
+  rpc Write(WriteRequest) returns (WriteResponse);
+  // Health checks the store is reachable and the credentials work.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// Ref names a secret inside the instance. The scheme is scrim's business.
+message Ref {
+  string path = 1;
+  string field = 2;
+  // selectors is the raw query (`version=3`). A plugin refuses a selector it
+  // does not understand with INVALID_ARGUMENT.
+  string selectors = 3;
+}
+
+// Metadata describes a secret without its value.
+message Metadata {
+  string path = 1;
+  repeated string fields = 2;
+  string version = 3;
+  int64 created_unix_nano = 4;
+  int64 updated_unix_nano = 5;
+  // labels are store metadata. Never a value.
+  map<string, string> labels = 6;
+  bool write_only = 7;
+}
+
+// Field is one named value of a secret.
+message Field {
+  string name = 1;
+  // value is secret material.
+  bytes value = 2;
+}
+
+message ReadRequest {
+  uint32 protocol = 1;
+  Ref ref = 2;
+}
+
+message ReadResponse {
+  uint32 protocol = 1;
+  Metadata meta = 2;
+  repeated Field fields = 3;
+}
+
+message ListRequest {
+  uint32 protocol = 1;
+  string prefix = 2;
+}
+
+message ListResponse {
+  uint32 protocol = 1;
+  repeated Metadata entries = 2;
+}
+
+message WatchRequest {
+  uint32 protocol = 1;
+  string prefix = 2;
+}
+
+// ChangeKind says what happened to a watched secret.
+enum ChangeKind {
+  CHANGE_KIND_UNSPECIFIED = 0;
+  CHANGE_KIND_CHANGED = 1;
+  CHANGE_KIND_DELETED = 2;
+}
+
+message WatchEvent {
+  uint32 protocol = 1;
+  // ready marks the first message, sent once the watch is established.
+  bool ready = 2;
+  string path = 3;
+  ChangeKind kind = 4;
+}
+
+message WriteRequest {
+  uint32 protocol = 1;
+  string path = 2;
+  repeated Field fields = 3;
+  bool create_only = 4;
+  map<string, string> labels = 5;
+}
+
+message WriteResponse {
+  uint32 protocol = 1;
+  Metadata meta = 2;
+}
+
+message HealthRequest {
+  uint32 protocol = 1;
+}
+
+message HealthResponse {
+  uint32 protocol = 1;
+}
+
+// Notifier is served by notifier plugins. A notifier only delivers:
+// decisions come back through scrim's single-use decision links or
+// `scrim approve`, never through this service.
+service Notifier {
+  rpc Notify(NotifyRequest) returns (NotifyResponse);
+}
+
+// SummaryField is one labelled line of an approval summary.
+message SummaryField {
+  string label = 1;
+  string value = 2;
+}
+
+message NotifyRequest {
+  uint32 protocol = 1;
+  string approval_id = 2;
+  string agent = 3;
+  string action = 4;
+  // reference is the secret involved, if any (`bao://kv/app`).
+  string reference = 5;
+  // destination is method, host and path without its query.
+  string destination = 6;
+  string tool = 7;
+  string rule = 8;
+  string reason = 9;
+  int64 expires_unix = 10;
+  // approve_url and deny_url are single-use signed decision links, empty
+  // when the decision page is not reachable from a notifier. Treat them as
+  // credentials: whoever opens one decides the request.
+  string approve_url = 11;
+  string deny_url = 12;
+  // title and fields are scrim's rendering of the request, the same lines
+  // the built-in notifiers show.
+  string title = 13;
+  repeated SummaryField fields = 14;
+}
+
+message NotifyResponse {
+  uint32 protocol = 1;
+}

@@ -16,6 +16,7 @@ import (
 	"github.com/heliopsy/scrim/internal/grant"
 	"github.com/heliopsy/scrim/internal/notify"
 	"github.com/heliopsy/scrim/internal/notify/ntfy"
+	notifyplugin "github.com/heliopsy/scrim/internal/notify/plugin"
 	"github.com/heliopsy/scrim/internal/notify/terminal"
 	"github.com/heliopsy/scrim/internal/notify/webhook"
 	"github.com/heliopsy/scrim/internal/obs"
@@ -31,6 +32,8 @@ type Policy struct {
 	Approvals  *approval.Service
 	Gate       *gate.Gate
 	Notifiers  []notify.Notifier
+	// plugins are the notifier plugins, closed with the app.
+	plugins []*notifyplugin.Notifier
 }
 
 // initPolicy builds the rule set, break-glass switch, grants, notifiers,
@@ -85,6 +88,14 @@ func (a *App) initPolicy(ctx context.Context, cfg *config.Config) error {
 			return err
 		}
 		p.Notifiers = append(p.Notifiers, n)
+	}
+	plugins, err := notifyplugin.FromConfig(cfg, a.Log)
+	if err != nil {
+		return err
+	}
+	for _, n := range plugins {
+		p.Notifiers = append(p.Notifiers, n)
+		p.plugins = append(p.plugins, n)
 	}
 
 	var metrics *obs.Metrics

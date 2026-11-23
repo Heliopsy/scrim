@@ -121,14 +121,15 @@ proto:
       --plugin=protoc-gen-go-grpc="$(go tool -n protoc-gen-go-grpc)" \
       --go_out=. --go_opt=module={{module}} \
       --go-grpc_out=. --go-grpc_opt=module={{module}} \
-      proto/scrim/dataplane/v1/dataplane.proto
+      proto/scrim/dataplane/v1/dataplane.proto proto/scrim/plugin/v1/plugin.proto
     cd dataplane/tools/protogen && cargo run --quiet --locked
 
 import "scripts/release/release.just"
 
 # Fail when the committed generated code differs from what proto/ produces.
 proto-check: proto
-    git diff --exit-code -- internal/dataplane/dataplanev1 dataplane/crates/scrim-proto/src/gen
+    git diff --exit-code -- internal/dataplane/dataplanev1 pkg/plugin/pluginv1 dataplane/crates/scrim-proto/src/gen
+    test -z "$(git status --porcelain -- internal/dataplane/dataplanev1 pkg/plugin/pluginv1)"
 
 # Regenerate the committed eBPF objects of internal/bpfredirect from bpf/redirect.c. bpf2go runs
 # here; clang and llvm-strip run in rootless podman from scripts/bpf/Containerfile.
