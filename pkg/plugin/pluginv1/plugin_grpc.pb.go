@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The contract between scrim and an out-of-process store or notifier plugin,
-// design D15 and docs/plugins.md.
+// design D17 and docs/plugins.md.
 //
 // Transport: gRPC over one end of a socketpair scrim creates and the plugin
 // inherits as file descriptor 3 (SCRIM_PLUGIN_FD names it), the same shape

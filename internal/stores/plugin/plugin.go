@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package plugin is the `plugin` store kind: a store adapter served by an
-// out-of-process plugin (design D15, docs/plugins.md, specs/secret-stores
+// out-of-process plugin (design D17, docs/plugins.md, specs/secret-stores
 // "Store plugins").
 //
 //	stores:

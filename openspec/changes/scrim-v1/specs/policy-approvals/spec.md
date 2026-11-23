@@ -255,7 +255,7 @@ buttons, Telegram, Slack, a generic signed webhook using submit-then-poll, the t
 ### Requirement: Notifier plugins
 
 The system SHALL deliver approval requests through notifier plugins configured in `notify.plugins`
-under the plugin contract (docs/plugins.md, design D15), with the request summary and decision links
+under the plugin contract (docs/plugins.md, design D17), with the request summary and decision links
 and no value. A plugin failure SHALL fail that delivery with an error naming the plugin and holding
 no decision link, and SHALL NOT approve anything.
 

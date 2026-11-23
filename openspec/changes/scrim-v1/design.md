@@ -499,7 +499,8 @@ proxy and every other path keep the whole dictionary, so every gap falls on the 
 Alternatives: per-agent dictionaries loaded with each agent's identity would need a refresher per
 agent and store and would put agent credentials on the redaction path; filtering matches in the
 redaction core would make the guard and the redactor share a caller-dependent rule.
-### D15. Plugins are processes speaking the boundary protocol over an inherited socket
+
+### D17. Plugins are processes speaking the boundary protocol over an inherited socket
 
 A store or notifier plugin is a separate executable scrim starts with one end of a socketpair as fd 3
 and talks gRPC to, schema in `proto/scrim/plugin/v1`, the same shape as the data plane boundary

@@ -1477,7 +1477,7 @@ suite SHALL run in CI against each store or a compatible emulator.
 ### Requirement: Store plugins
 
 The system SHALL load additional store adapters as plugins through a documented, versioned contract
-covering read, list, watch, write and health (docs/plugins.md, design D15). A plugin SHALL run with
+covering read, list, watch, write and health (docs/plugins.md, design D17). A plugin SHALL run with
 only the configuration of its own store, and a plugin crash SHALL be reported as that store being
 degraded without stopping scrim.
 

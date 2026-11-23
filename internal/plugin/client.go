@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package plugin runs out-of-process store and notifier plugins (design
-// D15, docs/plugins.md, specs/secret-stores "Store plugins").
+// D17, docs/plugins.md, specs/secret-stores "Store plugins").
 //
 // A plugin is a separate executable that scrim starts with one end of a
 // socketpair as file descriptor 3 and talks gRPC to, schema in
