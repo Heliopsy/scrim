@@ -41,6 +41,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/internal/agentcache"
 	"github.com/heliopsy/scrim/internal/stores/internal/flatname"
 	"github.com/heliopsy/scrim/internal/stores/internal/poll"
 	"github.com/heliopsy/scrim/internal/stores/internal/wire"
@@ -71,6 +72,9 @@ type Adapter struct {
 	c     *client
 	names flatname.Mapper
 	polls atomic.Uint64
+	// agents caches the access tokens agents' own identities were
+	// exchanged for (agent.go).
+	agents *agentcache.Cache[secret.Value]
 }
 
 var (
@@ -92,7 +96,7 @@ func New(_ context.Context, inst stores.Instance) (stores.Adapter, error) {
 		return nil, &stores.Error{Store: inst.Name, Op: "configure", Kind: stores.ErrInvalidRef, Detail: err.Error()}
 	}
 	return &Adapter{
-		name: inst.Name, s: s, c: c,
+		name: inst.Name, s: s, c: c, agents: agentcache.New(copyValue, secret.Value.Wipe),
 		names: flatname.Mapper{Sep: s.sep, MaxLen: maxName, Valid: func(b byte) bool {
 			return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '-'
 		}},
@@ -116,6 +120,7 @@ func (a *Adapter) Credentials() []secret.Value { return a.c.credentials() }
 
 // Close implements stores.Adapter.
 func (a *Adapter) Close() error {
+	a.agents.Close()
 	a.c.close()
 	return nil
 }

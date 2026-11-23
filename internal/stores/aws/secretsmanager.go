@@ -44,7 +44,7 @@ func NewSecretsManager(_ context.Context, inst stores.Instance) (stores.Adapter,
 	if err != nil {
 		return nil, configError(inst.Name, err)
 	}
-	return &SecretsManager{base{name: inst.Name, kind: KindSecretsManager, s: s, c: newClient(s, "secretsmanager", "secretsmanager")}}, nil
+	return &SecretsManager{base{name: inst.Name, kind: KindSecretsManager, s: s, c: newClient(s, "secretsmanager", "secretsmanager"), agents: newAgentCache()}}, nil
 }
 
 // smName matches a secret name, or a secret ARN.

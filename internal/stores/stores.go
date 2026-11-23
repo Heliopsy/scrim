@@ -175,9 +175,9 @@ type Adapter interface {
 
 // AgentCredential is an agent's own identity toward a store (specs/
 // agent-identity "Agents act on stores with their own identity"). Exactly
-// one of KubernetesJWT and Token is set. The adapter borrows the values and
-// never keeps them past the call, except a login token derived from them,
-// which it may cache for the agent until it expires.
+// one of KubernetesJWT, Token and Federation is set. The adapter borrows the
+// values and never keeps them past the call, except a login token derived
+// from them, which it may cache for the agent until it expires.
 type AgentCredential struct {
 	// Agent is the agent's principal, used as a cache key and in errors.
 	Agent string
@@ -189,6 +189,80 @@ type AgentCredential struct {
 	Mount         string
 	// Token is a static store credential held for this agent.
 	Token secret.Value
+	// Federation exchanges an identity token scrim signs for the agent for
+	// a short-lived store credential (specs/agent-identity "Token exchange
+	// per store").
+	Federation *Federation
+}
+
+// Federation methods, as identity.store-login names them.
+const (
+	// FederationJWT is Vault and OpenBao JWT auth.
+	FederationJWT = "jwt"
+	// FederationAWS is AWS STS AssumeRoleWithWebIdentity.
+	FederationAWS = "aws-web-identity"
+	// FederationGCP is Google workload identity federation (STS token
+	// exchange, optionally impersonating a service account).
+	FederationGCP = "gcp-workload-identity"
+	// FederationAzure is an Entra ID federated credential (client
+	// assertion).
+	FederationAzure = "azure-federated"
+	// FederationInfisical is an Infisical OIDC machine identity.
+	FederationInfisical = "infisical-oidc"
+)
+
+// Federation is an agent's identity token exchanged for a store
+// credential: scrim signs a token for the agent (its identity issuer) and
+// the store trades it for a credential of its own, so the store's policy
+// for that agent applies and its audit names the agent.
+type Federation struct {
+	// Method is one of the Federation* constants.
+	Method string
+	// Params are the method's options with the agent's placeholders
+	// rendered: role, mount, role-arn, duration, provider, service-account,
+	// tenant, client-id, authority, identity-id.
+	Params map[string]string
+	// Audience is what the identity token is minted for.
+	Audience string
+	// SessionName names the agent where the store records one (the AWS
+	// RoleSessionName, shown in CloudTrail): derived from the agent's
+	// principal, 2 to 64 characters of [A-Za-z0-9+=,.@_-].
+	SessionName string
+	// Key identifies the agent identity and parameters; adapters cache the
+	// exchanged credential by it.
+	Key string
+	// Session is the scrim session the agent runs in, empty for peer and
+	// Kubernetes agents. Credentials cached for it are dropped when it ends
+	// ([SessionForgetter]).
+	Session string
+	// Token mints the agent's identity token for Audience. The caller
+	// wipes it.
+	Token func() (secret.Value, error)
+}
+
+// Param returns a federation parameter, or def when it is unset.
+func (f *Federation) Param(name, def string) string {
+	if v := f.Params[name]; v != "" {
+		return v
+	}
+	return def
+}
+
+// LoginKubernetes is Kubernetes passthrough as identity.store-login names
+// it: the agent pod's own service account token.
+const LoginKubernetes = "kubernetes"
+
+// AgentFederation is implemented by adapters that log agents in with their
+// own identity, naming the identity.store-login methods they accept:
+// [LoginKubernetes] and the Federation* constants.
+type AgentFederation interface {
+	FederationMethods() []string
+}
+
+// SessionForgetter is implemented by adapters that cache per-agent store
+// credentials, so a scrim session's credentials are dropped when it ends.
+type SessionForgetter interface {
+	ForgetSession(id string)
 }
 
 // AgentAccess is implemented by adapters that can check what an agent's own

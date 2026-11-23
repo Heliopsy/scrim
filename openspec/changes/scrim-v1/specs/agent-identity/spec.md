@@ -452,15 +452,72 @@ http can be handed someone else's keys.
 
 ### Requirement: Token exchange per store
 
-Each adapter that supports federated login SHALL exchange the agent's identity token for a
-short-lived store credential: Vault and OpenBao JWT/OIDC auth, AWS AssumeRoleWithWebIdentity, Google
-Workload Identity Federation, Azure federated credentials, Infisical OIDC machine identities. Store
-credentials SHALL be cached per agent session and dropped when it ends.
+Each adapter that supports federated login SHALL exchange an identity token scrim signs for the
+agent for a short-lived store credential, as `identity.store-login` configures per store: `jwt`
+(Vault and OpenBao JWT auth), `aws-web-identity` (AssumeRoleWithWebIdentity),
+`gcp-workload-identity` (Google STS, optionally impersonating a service account), `azure-federated`
+(Entra ID client assertion) or `infisical-oidc` (Infisical OIDC machine identities).
 
 #### Scenario: AWS role per agent
 
 - **WHEN** the IAM role `agent-claude-laptop` trusts scrim's identity provider for that agent's claims
-- **THEN** scrim assumes that role for the agent and AWS CloudTrail shows the agent's session name
+- **THEN** scrim assumes that role for the agent with the session name `claude-laptop.<session>` and
+  AWS CloudTrail shows the agent's session name
+
+#### Scenario: OpenBao role per agent
+
+- **WHEN** OpenBao's JWT auth trusts scrim's issuer, the role for `claude-laptop` may read
+  `kv/agents/shared/*` and the role for `intruder` may not, and scrim's rules allow both to use
+  `bao://kv/agents/shared/db`
+- **THEN** the use by `claude-laptop` passes and the use by `intruder` is refused with OpenBao's denial
+
+### Requirement: Exchanged store credentials are cached per agent
+
+Store credentials obtained by token exchange SHALL be cached per agent identity, and per pod for a
+Kubernetes agent, until two thirds of their lifetime has passed, and SHALL be wiped when the agent's
+`scrim run` session ends.
+
+#### Scenario: Session ends
+
+- **WHEN** a `scrim run` session whose agent logged in to a store ends
+- **THEN** the store credential cached for it is wiped and a later session of that agent logs in again
+
+### Requirement: Store checks as the agent
+
+After scrim's rules allow a use of a governed store's secret, the control plane SHALL check it with
+the agent's own store identity, so the store's policy and audit apply to the agent. Where the store
+can say what an identity may do (Vault and OpenBao `sys/capabilities-self`, Google Secret Manager
+`testIamPermissions`) the value SHALL NOT be read with the agent's identity; elsewhere (AWS, Azure
+Key Vault, Infisical) the check SHALL read it as the agent and wipe it unused.
+
+#### Scenario: AWS role without access
+
+- **WHEN** the role an agent assumes may not read the secret
+- **THEN** the use is refused with the store's denial, although scrim's rules allow it
+
+#### Scenario: Google principal without access
+
+- **WHEN** the federated principal of an agent lacks `secretmanager.versions.access` on the secret
+- **THEN** the use is refused without the value being read
+
+### Requirement: Token exchange is configured safely
+
+scrim SHALL refuse to start when `identity.store-login` names a store that does not exist or does
+not take the method, or a token exchange method while `identity.issuer.url` is empty, naming the
+setting. Options outside a method's list, a placeholder outside a templated option and malformed
+values SHALL be refused the same way. `scrim doctor` SHALL report each agent of such a store as
+`federated` with the method and options, which hold no credential.
+
+#### Scenario: Method the store does not take
+
+- **WHEN** `identity.store-login.bao` is `aws-web-identity role-arn:...` for an OpenBao store
+- **THEN** scrim refuses to start and says the store takes `jwt`
+
+#### Scenario: Issuer off
+
+- **WHEN** a store logs agents in with `jwt` and `identity.issuer.url` is empty
+- **THEN** scrim refuses to start and `scrim doctor` fails the store with a fix naming
+  `identity.issuer.url`
 
 ### Requirement: Kubernetes identity passed through
 
@@ -497,8 +554,8 @@ sent to the control plane, whatever the rules say, so the agent's store identity
 
 For stores without federated login, the system SHALL support a separate store credential per agent,
 held by scrim and given by reference in `identity.store-credentials`, and SHALL report in `scrim doctor`,
-per store and agent, which identity applies: passthrough, static, shared (a store without per-agent
-identity) or none. An agent with no usable identity for a store that has per-agent identity SHALL be
+per store and agent, which identity applies: passthrough, federated (token exchange), static,
+shared (a store without per-agent identity) or none. An agent with no usable identity for a store that has per-agent identity SHALL be
 refused for it.
 
 #### Scenario: Vaultwarden per agent

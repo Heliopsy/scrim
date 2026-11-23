@@ -285,32 +285,10 @@ scrim reads its own token from `identity.kubernetes.token-file` and the API serv
 server through `KUBERNETES_SERVICE_HOST` unless `identity.kubernetes.api-server` is set. Agent
 pods need no RBAC: any pod can get a projected token for its own service account.
 
-### Store identity per agent
+### Store identity for pods
 
-scrim loads the redaction set with its own store identity, so a value an agent may not use is
-still redacted. Using a value can also be checked against the agent's own store identity, so the
-store's permissions and scrim's rules are intersected:
-
-```yaml
-identity:
-  # Kubernetes passthrough: log in to OpenBao with the calling pod's own token at the role
-  # the template names; {namespace}, {service_account} and {agent} are replaced.
-  store-login:
-    bao: "kubernetes role:{namespace}-{service_account} mount:kubernetes"
-  # Static fallback: a store token per agent, by reference.
-  store-credentials:
-    bao/laptop: file:/run/secrets/bao-laptop-token
-```
-
-For a store listed in either setting, every injection or restore of its secrets goes to the
-control plane. After scrim's rules allow it, the control plane asks the store, as the agent, for
-its capabilities on the secret's path (OpenBao `sys/capabilities-self`), and refuses the request
-when the agent's identity may not read it. The value itself is never read with the agent's
-identity. An agent with neither a passthrough login nor a static credential is refused for that
-store. A store in neither setting is used with scrim's own identity. OpenBao is the only store that
-implements the check so far; Infisical and Vaultwarden are used with scrim's own identity.
-`scrim doctor` lists, per store and agent, which identity applies (`kubernetes`, `static`,
-`shared`, or `none` for refused).
+A pod can also act on OpenBao with its own service account (`kubernetes` in
+`identity.store-login`); see [Store identity per agent](#store-identity-per-agent).
 
 ### Testing in a cluster
 
@@ -404,6 +382,59 @@ identity:
 The first key signs and all are published; scrim does not rotate them. To rotate, put a new key
 first and keep the old one second, roll the replicas, wait one token lifetime plus the stores' JWKS
 cache time, then remove the old key.
+
+## Store identity per agent
+
+scrim loads the redaction set with its own store identity, so a value an agent may not use is
+still redacted. Using a value can also be checked against the agent's own store identity, so an
+operation succeeds only when both scrim's rules and the store's policy for that agent allow it.
+Neither side can widen what the other denies: scrim refuses what its rules deny without asking the
+store, and the store refuses what its policy denies for that agent although scrim's rules allow it.
+
+```yaml
+identity:
+  store-login:
+    # Kubernetes passthrough: the calling pod's own service account token, at the role the
+    # template names (OpenBao and Vault Kubernetes auth).
+    bao-cluster: "kubernetes role:{namespace}-{service_account} mount:kubernetes"
+    # Token exchange: a token scrim's issuer signs for the agent (see above).
+    bao: "jwt role:agent-{agent_slug} audience:openbao mount:jwt"
+    aws: "aws-web-identity role-arn:arn:aws:iam::123456789012:role/agent-{agent_slug}"
+    gsm: "gcp-workload-identity provider://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/scrim/providers/scrim service-account:{agent_slug}@proj.iam.gserviceaccount.com"
+    akv: "azure-federated tenant:00000000-0000-0000-0000-000000000000 client-id:11111111-1111-1111-1111-111111111111"
+    inf: "infisical-oidc identity-id:22222222-2222-2222-2222-222222222222 audience:infisical"
+  # Static fallback: a store token per agent, by reference.
+  store-credentials:
+    vw/laptop: file:/run/secrets/vw-laptop-token
+```
+
+In templates `{agent}`, `{agent_slug}` (the agent name with anything outside `[A-Za-z0-9_.-]`
+replaced by `-`, so `agents/reviewer` becomes `agents-reviewer`), `{namespace}` and
+`{service_account}` are replaced per agent.
+
+| Method | Store kinds | Options (defaults) | How the agent's permission is checked |
+| --- | --- | --- | --- |
+| `kubernetes` | `openbao`, `vault` | `role`, `mount` (`kubernetes`) | `sys/capabilities-self` on the secret's API path |
+| `jwt` | `openbao`, `vault` | `role`, `audience`, `mount` (`jwt`) | `sys/capabilities-self` on the secret's API path |
+| `aws-web-identity` | `awssm`, `ssm` | `role-arn`, `audience` (`sts.amazonaws.com`), `duration` (`15m`, up to `12h`) | the read itself with the assumed role, value wiped; CloudTrail shows `assumed-role/<role>/<agent>.<session>` |
+| `gcp-workload-identity` | `gcpsm` | `provider` (`//iam.googleapis.com/...`), `service-account`, `audience` (`https:` + provider) | `testIamPermissions` for `secretmanager.versions.access` |
+| `azure-federated` | `azkv` | `tenant`, `client-id`, `audience` (`api://AzureADTokenExchange`), `authority` (`https://login.microsoftonline.com`) | the read itself with the agent's token, value wiped |
+| `infisical-oidc` | `infisical` | `identity-id`, `audience` | the read itself with the agent's token, value wiped |
+
+For a store listed in either setting, every injection or restore of its secrets goes to the control
+plane. After scrim's rules allow it, the control plane checks with the store, as the agent, and
+refuses the request when the agent's identity may not read the secret. An agent with no usable
+identity for the store (a local agent under `kubernetes`, any agent without a static credential) is
+refused for it. A store in neither setting is used with scrim's own identity.
+
+Store credentials obtained for an agent are cached per agent identity (per pod for Kubernetes
+agents) until two thirds of their lifetime has passed, and a `scrim run` session's are dropped when
+the session ends. scrim refuses to start when a store does not take the method its login names, or
+when a token exchange method is configured without `identity.issuer.url`.
+
+`scrim doctor` lists, per store and agent, which identity applies (`kubernetes`, `federated`,
+`static`, `shared`, or `none` for refused), and fails a token exchange login while the issuer is
+off.
 
 ## What this does not protect against
 

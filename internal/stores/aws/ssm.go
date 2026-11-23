@@ -40,7 +40,7 @@ func NewParameterStore(_ context.Context, inst stores.Instance) (stores.Adapter,
 	if err != nil {
 		return nil, configError(inst.Name, err)
 	}
-	return &ParameterStore{base{name: inst.Name, kind: KindParameterStore, s: s, c: newClient(s, "ssm", "AmazonSSM")}}, nil
+	return &ParameterStore{base{name: inst.Name, kind: KindParameterStore, s: s, c: newClient(s, "ssm", "AmazonSSM"), agents: newAgentCache()}}, nil
 }
 
 var (

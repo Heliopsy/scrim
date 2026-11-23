@@ -338,12 +338,25 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	// Per-agent store identity: the gate checks it on every use of a
 	// governed store's secrets, and the snapshot sends those uses to the
 	// control plane.
-	access, err := agentstore.New(agentstore.Options{
+	ao := agentstore.Options{
 		Login: agentstore.Login.Get(cfg), Credentials: agentstore.Credentials.Get(cfg), Lookup: a.Stores.Lookup,
 		Resolve: func(ctx context.Context, ref config.SecretRef) (secret.Value, error) {
 			return a.Config.Current().ResolveRef(ctx, ref)
 		},
-	})
+		RequireIssuer: true,
+		Adapter: func(name string) (stores.Adapter, bool) {
+			for _, ad := range a.Stores.Adapters() {
+				if ad.Name() == name {
+					return ad, true
+				}
+			}
+			return nil, false
+		},
+	}
+	if d.issuer != nil {
+		ao.Issuer = d.issuer
+	}
+	access, err := agentstore.New(ao)
 	if err != nil {
 		return nil, err
 	}
@@ -858,10 +871,15 @@ func (d *Daemon) sweepSessions(ctx context.Context) {
 }
 
 // sessionEnded drops what scrim holds for a session that ended: identity
-// tokens cached for it are never handed out again.
+// tokens and store credentials cached for it are never used again.
 func (d *Daemon) sessionEnded(id string) {
 	if d.issuer != nil {
 		d.issuer.Forget(id)
+	}
+	for _, a := range d.app.Stores.Adapters() {
+		if f, ok := a.(stores.SessionForgetter); ok {
+			f.ForgetSession(id)
+		}
 	}
 }
 

@@ -72,6 +72,19 @@ type fake struct {
 	stsSeen  int
 	impSeen  int
 	metaSeen int
+
+	// Agents' own identities: STS accepts each subject token in
+	// agentSubjects for stsAud and issues a token for its principal;
+	// impersonation issues one for "sa:<account>". grants maps a principal
+	// to the secret ID prefix it holds versions.access on (addGrants:
+	// versions.add); testIamPermissions answers from them. stsForms keeps
+	// every STS request's form.
+	agentSubjects map[string]string
+	tokenWho      map[string]string
+	grants        map[string]string
+	addGrants     map[string]string
+	stsForms      []url.Values
+	tipSeen       int
 }
 
 type fakeSecret struct {
@@ -113,6 +126,11 @@ func newFake(t *testing.T) *fake {
 		pageSize: 7,
 		saEmail:  "scrim@scrim-test.iam.gserviceaccount.com",
 		impAllow: map[string]bool{},
+
+		agentSubjects: map[string]string{},
+		tokenWho:      map[string]string{},
+		grants:        map[string]string{},
+		addGrants:     map[string]string{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/", f.auth(f.api))
@@ -230,6 +248,8 @@ func (f *fake) api(w http.ResponseWriter, r *http.Request) {
 		f.list(w, r, parent)
 	case len(rest) == 1 && r.Method == http.MethodPost:
 		f.create(w, r, parent, regional)
+	case len(rest) == 2 && verb == "testIamPermissions" && r.Method == http.MethodPost:
+		f.testIamPermissions(w, r, parent, rest[1])
 	case len(rest) == 2 && verb == "addVersion" && r.Method == http.MethodPost:
 		f.addVersion(w, r, parent, rest[1])
 	case len(rest) == 2 && verb == "" && r.Method == http.MethodGet:
@@ -615,6 +635,20 @@ func (f *fake) sts(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.stsSeen++
+	f.stsForms = append(f.stsForms, r.PostForm)
+	if who, ok := f.agentSubjects[r.Form.Get("subject_token")]; ok {
+		if r.Form.Get("audience") != f.stsAud || r.Form.Get("subject_token_type") != "urn:ietf:params:oauth:token-type:jwt" ||
+			r.Form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:token-exchange" ||
+			r.Form.Get("requested_token_type") != "urn:ietf:params:oauth:token-type:access_token" || r.Form.Get("scope") != scope {
+			writeJSON(w, 400, map[string]string{"error": "invalid_grant", "error_description": "The audience in the token does not match."})
+			return
+		}
+		tok := f.issueLocked()
+		f.tokenWho[tok] = who
+		writeJSON(w, 200, map[string]any{"access_token": tok, "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+			"token_type": "Bearer", "expires_in": 3600})
+		return
+	}
 	if r.Form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:token-exchange" ||
 		r.Form.Get("audience") != f.stsAud || r.Form.Get("subject_token") != f.stsToken ||
 		!strings.Contains(r.Form.Get("scope"), scope) {
@@ -660,7 +694,41 @@ func (f *fake) generateAccessToken(w http.ResponseWriter, r *http.Request) {
 		gErr(w, 400, "INVALID_ARGUMENT", "Scope is required.")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"accessToken": f.issueLocked(), "expireTime": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
+	issued := f.issueLocked()
+	f.tokenWho[issued] = "sa:" + acct
+	writeJSON(w, 200, map[string]any{"accessToken": issued, "expireTime": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
+}
+
+// testIamPermissions answers which of the asked permissions the caller's
+// principal holds on a secret, from grants and addGrants.
+func (f *fake) testIamPermissions(w http.ResponseWriter, r *http.Request, parent, id string) {
+	f.tipSeen++
+	if f.secret(w, parent, id) == nil {
+		return
+	}
+	tok, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	who := f.tokenWho[tok]
+	var body struct {
+		Permissions []string `json:"permissions"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		gErr(w, 400, "INVALID_ARGUMENT", "Invalid JSON payload received.")
+		return
+	}
+	held := []string{}
+	for _, p := range body.Permissions {
+		switch {
+		case p == "secretmanager.versions.access" && who != "" && f.grants[who] != "" && strings.HasPrefix(id, f.grants[who]):
+			held = append(held, p)
+		case p == "secretmanager.versions.add" && who != "" && f.addGrants[who] != "" && strings.HasPrefix(id, f.addGrants[who]):
+			held = append(held, p)
+		}
+	}
+	out := map[string]any{}
+	if len(held) > 0 {
+		out["permissions"] = held
+	}
+	writeJSON(w, 200, out)
 }
 
 // metadata is the GCE/GKE metadata server's token and project endpoints.
