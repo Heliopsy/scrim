@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -38,11 +39,13 @@ const (
 // mx://...
 const StoreName = "mx"
 
-// Static credentials of the emulators. LocalStack accepts any key; the
-// OpenBao and Vault dev servers get a root token generated per run.
-const (
-	awsTestKeyID  = "test"
-	awsTestSecret = "test"
+// Credentials of the emulators, generated per run like the OpenBao and
+// Vault root tokens. LocalStack accepts any key; scrim redacts a store's own
+// credentials too, so they are shaped like real AWS keys rather than
+// LocalStack's usual "test", a substring of the api-key seeds.
+var (
+	awsTestKeyID  = "AKIA" + strings.ToUpper(podtest.RandHex(8))
+	awsTestSecret = podtest.RandHex(20)
 )
 
 // storeServer is the store's server as the sandboxed side reaches it: an
