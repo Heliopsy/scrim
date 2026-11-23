@@ -45,6 +45,7 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 | --- | --- |
 | [stores/README.md](stores/README.md) | Store adapters, the capability matrix, references, freshness and outages |
 | [stores/openbao.md](stores/openbao.md) | OpenBao and Vault-compatible KV v2 |
+| [stores/vault.md](stores/vault.md) | HashiCorp Vault: KV v1 and v2, namespaces, dynamic secrets leased per grant |
 | [stores/infisical.md](stores/infisical.md) | Infisical |
 | [stores/gcp.md](stores/gcp.md) | Google Secret Manager, workload identity |
 | [stores/azure.md](stores/azure.md) | Azure Key Vault, workload identity |

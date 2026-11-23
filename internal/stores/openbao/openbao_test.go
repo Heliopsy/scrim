@@ -99,7 +99,7 @@ func TestParseOptions(t *testing.T) {
 }
 
 func TestSplitMounts(t *testing.T) {
-	a := &Adapter{c: &client{opts: Options{Mounts: []string{"teams/kv", "teams/kv/deep"}}}}
+	a := &Adapter{opts: Options{Mounts: []string{"teams/kv", "teams/kv/deep"}}}
 	cases := map[string][2]string{
 		"kv/agents/github":  {"kv", "agents/github"},
 		"teams/kv/x":        {"teams/kv", "x"},
@@ -363,7 +363,7 @@ func TestAppRoleTokenReplacedBeforeExpiry(t *testing.T) {
 	defer srv.Close()
 	a := approleAdapter(t, srv)
 	now := time.Now()
-	a.c.now = func() time.Time { return now }
+	a.c.Now = func() time.Time { return now }
 	ref := stores.MustParseRef("bao://kv/x")
 	read := func() {
 		t.Helper()

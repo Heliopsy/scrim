@@ -58,7 +58,7 @@ jobs:
         env:
           SCRIM_TEST_PODMAN: "0"
 
-  # GitHub-hosted: the store adapters are tested against real OpenBao,
+  # GitHub-hosted: the store adapters are tested against real OpenBao, Vault,
   # Infisical and Vaultwarden containers, and the ho-z10 pods have no podman.
   # Every container is published on a free port and named scrim-stores-*.
   stores:
