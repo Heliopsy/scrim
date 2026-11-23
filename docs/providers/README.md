@@ -56,8 +56,9 @@ providers:
 
 Credential fields are store references, never values; a literal is rejected when the
 configuration loads. A reference without a field names the secret's default field. The values
-must be in the store's redaction set (they are when the store loads every secret, the default). A route whose credentials are not loaded refuses every request
-with `503` and the code `credential_unavailable`, naming the missing reference, and sends nothing.
+must be in the store's redaction set (they are when the store loads every secret, the default).
+A route whose credentials are not loaded refuses every request with `503` and the code
+`credential_unavailable`, naming the missing reference, and sends nothing.
 
 The credentials are used toward the route's upstream only. A provider route is never chained
 (`proxy.chain.url` applies to the built-in routes only), because the chained proxy would receive
