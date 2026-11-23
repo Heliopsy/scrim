@@ -48,6 +48,7 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 | [stores/infisical.md](stores/infisical.md) | Infisical |
 | [stores/gcp.md](stores/gcp.md) | Google Secret Manager, workload identity |
 | [stores/azure.md](stores/azure.md) | Azure Key Vault, workload identity |
+| [stores/onepassword.md](stores/onepassword.md) | 1Password through a Connect server |
 | [stores/vaultwarden.md](stores/vaultwarden.md) | Vaultwarden and Bitwarden-compatible servers, client-side decryption |
 | [stores/local.md](stores/local.md) | Environment variables and files |
 | [catalog.md](catalog.md) | Logical names, host bindings, declared placeholders, profiles and bulk mapping |

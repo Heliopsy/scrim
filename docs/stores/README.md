@@ -9,6 +9,7 @@ value back.
 | OpenBao (and Vault-compatible KV v2) | `openbao` | [openbao.md](openbao.md) |
 | Infisical | `infisical` | [infisical.md](infisical.md) |
 | Doppler | `doppler` | [doppler.md](doppler.md) |
+| 1Password (through Connect) | `onepassword` | [onepassword.md](onepassword.md) |
 | Bitwarden Secrets Manager | `bws` | [bws.md](bws.md) |
 | Google Secret Manager | `gcpsm` | [gcp.md](gcp.md) |
 | Azure Key Vault | `azkv` | [azure.md](azure.md) |
@@ -42,6 +43,20 @@ values, so it stays cheap even with a short interval. Watch on Doppler polls the
 with its ETag: an unchanged config is answered without values, a changed one is fingerprinted and
 wiped. Generated secrets are produced by scrim and then written, so generate needs write and no
 store-side support.
+| Kind          | read | list | watch | write | generate | dynamic |
+|---------------|------|------|-------|-------|----------|---------|
+| `openbao`     | yes  | yes  | yes   | yes   | no       | no      |
+| `infisical`   | yes  | yes  | yes   | yes   | no       | no      |
+| `onepassword` | yes  | yes  | yes   | yes   | no       | no      |
+| `bws`         | yes  | yes  | yes   | yes   | no       | no      |
+| `env`         | yes  | yes  | no    | no    | no       | no      |
+| `file`        | yes  | yes  | yes   | no    | no       | no      |
+| `sops`        | yes  | yes  | yes   | no    | no       | no      |
+| `memory`      | yes  | yes  | yes   | yes   | no       | no      |
+
+Watch on OpenBao, Infisical, 1Password and Bitwarden Secrets Manager polls version metadata. It
+never fetches values, so it stays cheap even with a short interval. Generated secrets are produced
+by scrim and then written, so generate needs write and no store-side support.
 
 ## Configuring an instance
 
