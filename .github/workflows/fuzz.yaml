@@ -10,23 +10,22 @@ name: Fuzz
 #
 # GitHub-hosted: libFuzzer with AddressSanitizer needs no podman but does
 # need the runner's full address space, which the ho-z10 pods do not promise.
-# The nightly toolchain is pinned by date (Renovate's custom.rust-nightly
-# datasource, renovate.json) and installed through rustup, which
-# scripts/ci-setup-rust.sh provides; cargo-fuzz is its release binary,
-# checked by sha256.
-#
-# The release workflow calls this one for the commit it releases, with its own
-# time per target; each target then also writes a result (seconds, runs,
-# pass or fail) that the release publishes (scripts/release/results.sh).
+# scripts/fuzz.sh pins the nightly toolchain by date (Renovate's
+# custom.rust-nightly datasource, renovate.json), installed through rustup,
+# which scripts/ci-setup-rust.sh provides, and cargo-fuzz as its release
+# binary, checked by sha256. The release workflow fuzzes the commit it releases
+# with the same script.
 on:
   pull_request:
     paths:
       - dataplane/**
+      - scripts/fuzz.sh
       - .github/workflows/fuzz.yaml
   push:
     branches: [main]
     paths:
       - dataplane/**
+      - scripts/fuzz.sh
       - .github/workflows/fuzz.yaml
   schedule:
     - cron: '17 3 * * 0'
@@ -35,33 +34,15 @@ on:
       seconds:
         description: Seconds per target
         default: "900"
-  workflow_call:
-    inputs:
-      ref:
-        description: The commit to fuzz.
-        required: true
-        type: string
-      seconds:
-        description: Seconds per target.
-        required: true
-        type: string
 
 permissions: read-all
 
 concurrency:
-  # github.workflow is the caller's name when called, so a release never
-  # shares a group with this workflow's own runs.
-  group: fuzz-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: fuzz-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
-  # renovate: datasource=custom.rust-nightly depName=rust-nightly versioning=regex:^(?<major>\d{4})-(?<minor>\d{2})-(?<patch>\d{2})$
-  RUST_NIGHTLY_DATE: "2026-11-20"
-  # renovate: datasource=github-releases depName=rust-fuzz/cargo-fuzz
-  CARGO_FUZZ_VERSION: 0.13.2
-  # sha256: https://github.com/rust-fuzz/cargo-fuzz/releases/download/{version}/cargo-fuzz-{version}-x86_64-unknown-linux-musl.tar.gz
-  CARGO_FUZZ_SHA256: b5b704018b63e0f151c17a057ac53b5111e1db545d1b9f72fee79f08a545931c
 
 jobs:
   fuzz:
@@ -73,9 +54,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Keep in step with the [[bin]] entries of each fuzz crate; the
-        # "Targets match" step fails when they differ (expected: every target
-        # of that crate, sorted).
+        # Keep in step with the [[bin]] entries of each fuzz crate, and with
+        # the results-fuzz job of release.yaml; the "Targets match" step fails
+        # when they differ (expected: every target of that crate, sorted).
         include:
           - {crate: scrim-redact, target: engines, expected: engines guard restore shaped variants}
           - {crate: scrim-redact, target: variants, expected: engines guard restore shaped variants}
@@ -89,7 +70,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          ref: ${{ inputs.ref || '' }}
           persist-credentials: false
       - name: Set up rustup
         working-directory: .
@@ -97,64 +77,27 @@ jobs:
       - name: Nightly toolchain and cargo-fuzz
         run: |
           set -euo pipefail
-          rustup toolchain install "nightly-${RUST_NIGHTLY_DATE}" --profile minimal
-          name="cargo-fuzz-${CARGO_FUZZ_VERSION}-x86_64-unknown-linux-musl"
-          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/$name.tar.gz" \
-            "https://github.com/rust-fuzz/cargo-fuzz/releases/download/${CARGO_FUZZ_VERSION}/$name.tar.gz"
-          echo "$CARGO_FUZZ_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/bin"
-          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP/bin" cargo-fuzz
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$GITHUB_WORKSPACE/scripts/fuzz.sh" tools "$RUNNER_TEMP/fuzz-tools"
+          echo "$RUNNER_TEMP/fuzz-tools/bin" >> "$GITHUB_PATH"
           # AddressSanitizer's shadow memory does not fit the default 32-bit
           # mmap randomisation of Ubuntu 24.04 runners.
           sudo sysctl -w vm.mmap_rnd_bits=28
       - name: Targets match
         env:
+          CRATE: ${{ matrix.crate }}
           EXPECTED: ${{ matrix.expected }}
         run: |
           set -euo pipefail
-          cargo "+nightly-${RUST_NIGHTLY_DATE}" fuzz list | tee "$RUNNER_TEMP/targets"
-          [ "$(sort "$RUNNER_TEMP/targets" | tr '\n' ' ')" = "$EXPECTED " ] || {
-            echo "::error::the fuzz targets changed; update the matrix in fuzz.yaml"; exit 1; }
-      - run: cargo "+nightly-${RUST_NIGHTLY_DATE}" fetch --locked
+          got=$("$GITHUB_WORKSPACE/scripts/fuzz.sh" list "$CRATE")
+          echo "$got"
+          [ "$got" = "$EXPECTED" ] || {
+            echo "::error::the fuzz targets changed; update the matrix in fuzz.yaml and release.yaml"; exit 1; }
       - name: Fuzz
-        id: fuzz
-        env:
-          TARGET: ${{ matrix.target }}
-          SECONDS_PER_TARGET: ${{ github.event_name == 'schedule' && '900' || inputs.seconds || '60' }}
-        run: |
-          set -euo pipefail
-          # cargo-fuzz's release binary is built for musl and defaults to
-          # its own triple; the toolchain has the gnu standard library.
-          cargo "+nightly-${RUST_NIGHTLY_DATE}" fuzz run --target x86_64-unknown-linux-gnu "$TARGET" -- \
-            -max_total_time="$SECONDS_PER_TARGET" -timeout=30 -rss_limit_mb=2048 2>&1 \
-            | tee "$RUNNER_TEMP/fuzz.log"
-      # libFuzzer's last line is "Done <runs> runs in <seconds> second(s)".
-      - name: Result for the release
-        if: always() && inputs.ref != ''
         env:
           CRATE: ${{ matrix.crate }}
           TARGET: ${{ matrix.target }}
-          OUTCOME: ${{ steps.fuzz.outcome }}
-        run: |
-          set -euo pipefail
-          done_line=$(grep -E '^Done [0-9]+ runs in [0-9]+ second' "$RUNNER_TEMP/fuzz.log" | tail -n 1 || true)
-          runs=$(echo "$done_line" | awk '{print $2}')
-          secs=$(echo "$done_line" | awk '{print $5}')
-          result=$([ "$OUTCOME" = success ] && [ -n "$done_line" ] && echo pass || echo fail)
-          mkdir -p "$RUNNER_TEMP/fuzz-result"
-          jq -n --arg crate "$CRATE" --arg target "$TARGET" --argjson runs "${runs:-0}" \
-            --argjson seconds "${secs:-0}" --arg result "$result" \
-            '{crate: $crate, target: $target, seconds: $seconds, runs: $runs, result: $result}' \
-            | tee "$RUNNER_TEMP/fuzz-result/$TARGET.json"
-      - name: Upload the result for the release
-        if: always() && inputs.ref != ''
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        with:
-          name: results-fuzz-${{ matrix.target }}
-          path: ${{ runner.temp }}/fuzz-result/
-          if-no-files-found: error
-          retention-days: 1
+          SECONDS_PER_TARGET: ${{ github.event_name == 'schedule' && '900' || inputs.seconds || '60' }}
+        run: '"$GITHUB_WORKSPACE/scripts/fuzz.sh" run "$CRATE" "$TARGET" "$SECONDS_PER_TARGET"'
       - name: Upload the reproducer
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2

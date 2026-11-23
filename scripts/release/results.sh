@@ -28,7 +28,7 @@
 #       and rewrites checksums.txt over every release file. RESULTS_DIR holds
 #       the output of leak and bench at its top, one directory per store with
 #       the matrix cells under matrix/, and one JSON per target under fuzz/
-#       (written by .github/workflows/fuzz.yaml when the release calls it).
+#       (written by scripts/fuzz.sh run in the release's fuzzing jobs).
 #
 # No file written here holds a secret: every seed is generated for the run, and
 # the reports name seeds by kind, length and a short SHA-256 only.

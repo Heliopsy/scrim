@@ -71,7 +71,7 @@ on:
       - scripts/release/**
       - Containerfile
       - Containerfile.dataplane
-      - .github/workflows/fuzz.yaml
+      - scripts/fuzz.sh
       - test/leak/start-proxy.sh
       - test/e2e/matrix/run.sh
 
@@ -478,16 +478,53 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # Every cargo-fuzz target from an empty corpus, as in fuzz.yaml (keep the
+  # matrix in step with it), with each target's time, runs and outcome kept
+  # for the published results.
   results-fuzz:
-    name: Results (fuzzing)
+    name: Results (fuzz ${{ matrix.target }})
     needs: plan
     if: inputs.chart-only != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
     permissions:
       contents: read
-    uses: ./.github/workflows/fuzz.yaml
-    with:
-      ref: ${{ needs.plan.outputs.commit }}
-      seconds: "600"
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - {crate: scrim-redact, target: engines}
+          - {crate: scrim-redact, target: variants}
+          - {crate: scrim-redact, target: guard}
+          - {crate: scrim-redact, target: restore}
+          - {crate: scrim-redact, target: shaped}
+          - {crate: scrim-toolproxy, target: sigv4}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+      - name: Set up rustup
+        run: scripts/ci-setup-rust.sh
+      - name: Nightly toolchain and cargo-fuzz
+        run: |
+          set -euo pipefail
+          scripts/fuzz.sh tools "$RUNNER_TEMP/fuzz-tools"
+          echo "$RUNNER_TEMP/fuzz-tools/bin" >> "$GITHUB_PATH"
+          # AddressSanitizer's shadow memory does not fit the default 32-bit
+          # mmap randomisation of Ubuntu 24.04 runners.
+          sudo sysctl -w vm.mmap_rnd_bits=28
+      - name: Fuzz for 10 minutes
+        env:
+          CRATE: ${{ matrix.crate }}
+          TARGET: ${{ matrix.target }}
+        run: scripts/fuzz.sh run "$CRATE" "$TARGET" 600 "dist/results/$TARGET.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: results-fuzz-${{ matrix.target }}
+          path: dist/results/
+          if-no-files-found: error
+          retention-days: 1
 
   results:
     name: Results
