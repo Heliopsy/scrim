@@ -206,7 +206,8 @@ func (c *capped) Write(p []byte) (int, error) {
 		// Let append size the new buffer (the length stays within limit, p was
 		// cut above), then wipe the one left behind.
 		old := c.b
-		c.b = append(old[:len(old):len(old)], p...)
+		c.b = c.b[:len(c.b):len(c.b)] // full: the append below must copy
+		c.b = append(c.b, p...)
 		secret.WipeBytes(old[:cap(old)])
 		return n, nil
 	}
