@@ -38,6 +38,12 @@ restart to change; a reload that changes the password's value takes effect on th
 
 - The password is a secret-valued setting: give a reference, not a literal. scrim reads it only to log
   in and adds it to the redaction set, so it is redacted from provider requests like any store value.
+- A store reference (`bao://kv/db/app#password`, `files://db-password`) is loaded with its store
+  at start-up, as if it were in the store's `redact` list, and refreshed with it. Each login reads
+  the current value through the store, so a rotated password is used once the store has refreshed,
+  and the previous value stays redacted for the store's retention. A reference that names no
+  configured store stops start-up, and so does one the store cannot find on its first load unless
+  `redaction.allow-empty-targets` is set.
 - `tls: verify-full` requires TLS and verifies the certificate chain and host name. With
   `insecure-plaintext` scrim still never sends the password in clear (SCRAM, MD5 and the MySQL
   scrambles carry proofs, not the password), and refuses logins that would (a PostgreSQL cleartext

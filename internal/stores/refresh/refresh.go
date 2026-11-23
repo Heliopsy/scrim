@@ -130,8 +130,8 @@ func (t Target) listRef() stores.Ref {
 	return r
 }
 
-// covers reports whether ref (a whole secret) is under t.
-func (t Target) covers(ref stores.Ref) bool {
+// Covers reports whether ref (a whole secret) is under t.
+func (t Target) Covers(ref stores.Ref) bool {
 	switch {
 	case t.Prefix:
 		return ref.Path == t.Ref.Path || strings.HasPrefix(ref.Path, t.Ref.Path+"/")
@@ -418,7 +418,7 @@ func (r *Refresher) watch(ctx context.Context, t Target) {
 		}
 		backoff = time.Second
 		for c := range ch {
-			if !t.covers(c.Ref) {
+			if !t.Covers(c.Ref) {
 				continue
 			}
 			r.applyChange(ctx, t, c)
@@ -524,7 +524,7 @@ func (r *Refresher) refresh(ctx context.Context) error {
 			// nothing is known to be gone.
 			r.mu.RLock()
 			for k, e := range r.entries {
-				if t.covers(e.meta.Ref) {
+				if t.Covers(e.meta.Ref) {
 					seen[k] = true
 				}
 			}
@@ -532,7 +532,7 @@ func (r *Refresher) refresh(ctx context.Context) error {
 			continue
 		}
 		for _, m := range ms {
-			if !t.covers(m.Ref) {
+			if !t.Covers(m.Ref) {
 				continue
 			}
 			seen[key(m.Ref)] = true
@@ -664,12 +664,12 @@ func (r *Refresher) targetCountsLocked() []TargetStatus {
 	for _, t := range r.cfg.Targets {
 		n := 0
 		for _, e := range r.entries {
-			if t.covers(e.meta.Ref) {
+			if t.Covers(e.meta.Ref) {
 				n += t.fieldCount(e.fields)
 			}
 		}
 		for _, x := range r.retired {
-			if t.covers(x.ref) && (t.Ref.Field == "" || t.Ref.Field == x.field) {
+			if t.Covers(x.ref) && (t.Ref.Field == "" || t.Ref.Field == x.field) {
 				n++
 			}
 		}
