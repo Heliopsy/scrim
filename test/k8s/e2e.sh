@@ -155,7 +155,7 @@ if [ "${SCRIM_K8S_REUSE:-0}" = 1 ] && kind get clusters 2>/dev/null | grep -qx "
   log "reuse cluster $name"
   kind get kubeconfig --name "$name" > "$kubeconfig"
 else
-  log "create cluster $name (rootless podman)"
+  log "create cluster $name ($KIND_EXPERIMENTAL_PROVIDER)"
   "$node_engine" network inspect kind >/dev/null 2>&1 || created_network=1
   kind create cluster --name "$name" --config "$here/kind.yaml" --kubeconfig "$kubeconfig" --wait 0s
   curl -fsSL -o "$work/calico.yaml" "https://raw.githubusercontent.com/projectcalico/calico/$calico_version/manifests/calico.yaml"

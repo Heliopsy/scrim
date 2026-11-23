@@ -126,10 +126,11 @@ func waitLoaded(t *testing.T, target matrix.Target, up matrix.Upstream, checker 
 	}
 	deadline := time.Now().Add(90 * time.Second)
 	runner := &matrix.Runner{Target: target, Upstream: up, Checker: checker}
+	var last matrix.Result
 	for {
 		ok := true
 		for _, s := range seeds {
-			if r := runner.RunRow(t.Context(), row[0], s); r.Outcome != matrix.OutcomeRedacted {
+			if last = runner.RunRow(t.Context(), row[0], s); last.Outcome != matrix.OutcomeRedacted {
 				ok = false
 				break
 			}
@@ -138,7 +139,8 @@ func waitLoaded(t *testing.T, target matrix.Target, up matrix.Upstream, checker 
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("scrim did not load the seeds from OpenBao within 90s")
+			t.Fatalf("scrim did not redact every seed within 90s; last: %s statuses=%v forwarded=%d error=%q",
+				last.Describe(), last.Statuses, last.Forwarded, last.Error)
 		}
 		time.Sleep(2 * time.Second)
 	}
