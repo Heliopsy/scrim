@@ -153,6 +153,14 @@ A reference that cannot be resolved (missing file, unset variable, empty value, 
 start-up or rejects the reload, naming the setting and the reference. scrim never falls back to an
 empty value.
 
+A store reference is read from the store instance its scheme names each time the configuration is
+built: at start-up, so the store has to be reachable then, and on every reload, so a rotated value
+applies with the next reload (or the next restart, for a setting that needs one). Commands that
+send one of these values to the daemon or a backend (`scrim approve` and the other admin commands,
+`scrim status`, `scrim ca` with the operator CA key) read it from the store themselves. A store's
+own credentials can be references into another store, but not into the store itself or around a
+cycle of stores; see [stores](stores/README.md).
+
 A literal value is accepted with a warning naming the setting, except for settings marked
 "literals rejected" in the reference, which refuse it. Outputs never contain a resolved value:
 `scrim config show` prints `[scrim:redacted]` with the reference form, and a literal appears as
@@ -160,7 +168,8 @@ A literal value is accepted with a warning naming the setting, except for settin
 `***@`.
 
 `scrim config validate` resolves `env:`, `file:` and `cred:` references and checks store references
-for syntax only; it does not contact stores.
+for syntax, and store credentials for references into themselves or cycles; it does not contact
+stores.
 
 ## Profiles
 

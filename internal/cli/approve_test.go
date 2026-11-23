@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -148,5 +149,32 @@ func TestAdminUnreachable(t *testing.T) {
 	}
 	if code, _, errs := runAdmin(t, "ftp://x", "approvals", "list"); code != 1 || !strings.Contains(errs, "admin.url") {
 		t.Fatalf("%d %q", code, errs)
+	}
+}
+
+// TestAdminTokenFromStore: an admin.token given as a store reference is
+// read from its store and sent; the CLI builds its configuration without
+// stores, so before this the request went out without a token.
+func TestAdminTokenFromStore(t *testing.T) {
+	r := newAdminRig(t)
+	tok := "adm-" + strings.Repeat("x", 24)
+	t.Setenv("SCRIMCLI_ADMIN_TOKEN", tok)
+	inner := approval.AdminHandler(r.svc, r.gs, r.bg, func(req *http.Request) (string, bool) {
+		return "alice", req.Header.Get("Authorization") == "Bearer "+tok
+	})
+	srv := httptest.NewServer(inner)
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "scrim.yaml")
+	if err := os.WriteFile(cfg, []byte("apiVersion: scrim.dev/v1\nkind: Config\nstores:\n  local:\n    kind: env\n    prefix: SCRIMCLI_\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e, out, errb := newEnv("SCRIM_CONFIG="+cfg, "HOME="+dir, "SCRIM_ADMIN_URL="+srv.URL,
+		"SCRIM_ADMIN_TOKEN=local://SCRIMCLI_ADMIN_TOKEN")
+	if code := Run(context.Background(), e, []string{"approvals", "list"}); code != 0 {
+		t.Fatalf("approvals list with the token from the store: %d %q %q", code, out, errb)
+	}
+	if strings.Contains(out.String()+errb.String(), tok) {
+		t.Fatal("the token reached the output")
 	}
 }

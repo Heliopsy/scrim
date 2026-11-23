@@ -27,8 +27,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/secret"
@@ -76,6 +78,7 @@ var Collection = config.RegisterCollection(config.CollectionSpec{
 	RequiredFields:  []string{FieldKind},
 	RestartRequired: true,
 	Validate:        func(inst config.Instance) error { return Validate(stores.DefaultRegistry, inst) },
+	ValidateAll:     checkCredentialGraph,
 })
 
 // labelsSchema is the JSON schema of the labels field.
@@ -146,6 +149,9 @@ func Validate(reg *stores.Registry, inst config.Instance) error {
 	if err != nil {
 		return err
 	}
+	if err := checkSelfRefs(inst, aliases); err != nil {
+		return err
+	}
 	if !slices.Contains(reg.Kinds(), kind) {
 		return fmt.Errorf("%w %q (known: %s)", stores.ErrUnknownKind, kind, strings.Join(reg.Kinds(), ", "))
 	}
@@ -177,6 +183,97 @@ func Validate(reg *stores.Registry, inst config.Instance) error {
 	return a.Close()
 }
 
+// credentialRefs returns the credential fields of inst that are store
+// references, by field.
+func credentialRefs(inst config.Instance) map[string]config.SecretRef {
+	out := map[string]config.SecretRef{}
+	for _, f := range SecretFields {
+		if s, ok := inst.Fields[f].(string); ok {
+			if ref := config.SecretRef(s); ref.Kind() == config.RefStore {
+				out[f] = ref
+			}
+		}
+	}
+	return out
+}
+
+// checkSelfRefs refuses a credential that is a store reference into the
+// instance itself: the store would need to read it to open.
+func checkSelfRefs(inst config.Instance, aliases []string) error {
+	var errs []error
+	for _, f := range slices.Sorted(maps.Keys(credentialRefs(inst))) {
+		ref := config.SecretRef(inst.Fields[f].(string))
+		if s := ref.Scheme(); s == inst.Name || slices.Contains(aliases, s) {
+			errs = append(errs, fmt.Errorf("%s: %s refers to this store; a store's own credentials cannot come from itself, "+
+				"use an env:, file: or cred: reference or another store", f, ref.Display()))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// checkCredentialGraph checks the credentials that are references into
+// other stores: each names a configured store, and no chain of them leads
+// back to where it started (a store would need its own credential to read
+// it). Called before any credential is resolved.
+func checkCredentialGraph(insts []config.Instance) error {
+	byScheme := map[string]string{}
+	for _, inst := range insts {
+		byScheme[inst.Name] = inst.Name
+		if _, aliases, _, _, err := split(inst); err == nil {
+			for _, a := range aliases {
+				byScheme[a] = inst.Name
+			}
+		}
+	}
+	var errs []error
+	deps := map[string][]string{}
+	for _, inst := range insts {
+		refs := credentialRefs(inst)
+		for _, f := range slices.Sorted(maps.Keys(refs)) {
+			target, ok := byScheme[refs[f].Scheme()]
+			switch {
+			case !ok:
+				errs = append(errs, fmt.Errorf("%s.%s: %s names no configured store", inst.Name, f, refs[f].Display()))
+			case target != inst.Name && !slices.Contains(deps[inst.Name], target):
+				deps[inst.Name] = append(deps[inst.Name], target)
+			}
+		}
+	}
+	// Depth-first search for a cycle; each one is reported once, from its
+	// alphabetically first store.
+	const (
+		unseen = iota
+		active
+		done
+	)
+	mark := map[string]int{}
+	var path []string
+	var visit func(n string)
+	visit = func(n string) {
+		mark[n] = active
+		path = append(path, n)
+		for _, d := range deps[n] {
+			switch mark[d] {
+			case active:
+				i := slices.Index(path, d)
+				cycle := append(slices.Clone(path[i:]), d)
+				errs = append(errs, fmt.Errorf("store credentials form a cycle (%s): each store needs the next one open to "+
+					"read its credential; give one of them an env:, file: or cred: reference", strings.Join(cycle, " -> ")))
+			case unseen:
+				visit(d)
+			}
+		}
+		path = path[:len(path)-1]
+		mark[n] = done
+	}
+	for _, n := range slices.Sorted(maps.Keys(deps)) {
+		if mark[n] == unseen {
+			visit(n)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // checkTargets refuses a glob target on a store that cannot expand one: it
 // would load nothing.
 func checkTargets(a stores.Adapter, rc refresh.Config) error {
@@ -191,8 +288,11 @@ func checkTargets(a stores.Adapter, rc refresh.Config) error {
 
 // Instance builds the stores.Instance for one configured instance, with a
 // Resolve that returns the collection's resolved secret fields and resolves
-// any other reference through cfg.
-func Instance(cfg *config.Config, inst config.Instance) (stores.Instance, refresh.Config, error) {
+// any other reference through cfg. A credential that is a reference into
+// another store is read through set at each use (each login), so the
+// store's credential follows rotation in the other store; the collection
+// check guarantees the chain of such references ends.
+func Instance(cfg *config.Config, inst config.Instance, set *stores.Set) (stores.Instance, refresh.Config, error) {
 	kind, aliases, aopts, ropts, err := split(inst)
 	if err != nil {
 		return stores.Instance{}, refresh.Config{}, fmt.Errorf("store %s: %w", inst.Name, err)
@@ -204,6 +304,13 @@ func Instance(cfg *config.Config, inst config.Instance) (stores.Instance, refres
 	return stores.Instance{
 		Name: inst.Name, Kind: kind, Aliases: aliases, Options: aopts,
 		Resolve: func(ctx context.Context, ref config.SecretRef) (secret.Value, error) {
+			if ref.Kind() == config.RefStore && set != nil {
+				v, err := set.ResolveSecret(ctx, string(ref))
+				if err != nil {
+					return secret.Value{}, fmt.Errorf("reference %s: %w", ref.Display(), err)
+				}
+				return v, nil
+			}
 			for _, f := range SecretFields {
 				if s, ok := inst.Fields[f].(string); ok && s == string(ref) {
 					if v, ok := cfg.SecretAt(inst.Key(Key, f)); ok {
@@ -284,7 +391,7 @@ func OpenWith(ctx context.Context, cfg *config.Config, reg *stores.Registry, opt
 		all  []opened
 	)
 	for _, ci := range Collection.Get(cfg) {
-		inst, rc, err := Instance(cfg, ci)
+		inst, rc, err := Instance(cfg, ci, o.Set)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -362,4 +469,51 @@ func copyValue(v secret.Value) secret.Value {
 		return nil
 	})
 	return out
+}
+
+// Resolver resolves store references in configuration values
+// (config.StoreResolver) by reading them from a store Set. The Set can be
+// replaced: the daemon resolves through stores opened for start-up until
+// its running stores are open, then through those.
+type Resolver struct{ set atomic.Pointer[stores.Set] }
+
+// Use makes r read through s.
+func (r *Resolver) Use(s *stores.Set) { r.set.Store(s) }
+
+// ResolveSecret implements config.StoreResolver. Errors name the reference,
+// never a value.
+func (r *Resolver) ResolveSecret(ctx context.Context, ref string) (secret.Value, error) {
+	s := r.set.Load()
+	if s == nil {
+		return secret.Value{}, errors.New("no secret stores are open")
+	}
+	return s.ResolveSecret(ctx, ref)
+}
+
+// Resolved returns cfg with the store references of the settings named by
+// keys (all of them when keys is empty) read from the stores cfg
+// configures. It is for a client, such as the CLI, that builds its
+// configuration without stores and needs one of these values. It returns
+// cfg itself when none of the settings holds an unresolved store
+// reference. done closes the stores it opened; the returned Config keeps
+// the values it read.
+func Resolved(ctx context.Context, cfg *config.Config, reg *stores.Registry, keys ...string) (_ *config.Config, done func(), _ error) {
+	need := false
+	for _, k := range cfg.Unresolved() {
+		need = need || len(keys) == 0 || slices.Contains(keys, k)
+	}
+	if !need {
+		return cfg, func() {}, nil
+	}
+	o, err := Open(ctx, cfg, reg)
+	if err != nil {
+		return nil, nil, err
+	}
+	done = func() { _ = o.Close() }
+	n, err := cfg.ResolveStores(ctx, o.Set, keys...)
+	if err != nil {
+		done()
+		return nil, nil, err
+	}
+	return n, done, nil
 }

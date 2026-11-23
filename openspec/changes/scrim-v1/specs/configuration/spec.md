@@ -154,6 +154,45 @@ empty value, SHALL stop start-up or reload, never fall back to an empty value.
 - **THEN** scrim refuses to start and names the setting and its source
 - **AND** the error does not contain the literal
 
+### Requirement: Store references in settings
+
+A store reference in a secret-valued setting SHALL be read from the store instance its scheme names
+whenever the configuration is built, at start-up and on every reload, so a rotated value applies
+with the next reload, or the next restart for a setting that needs one. A command that builds its
+configuration without stores SHALL read the store reference of a setting it sends (the admin token,
+the state DSN, the CA key) from its store.
+
+#### Scenario: Setting from a store reference
+
+- **WHEN** `admin.token` is `bao://kv/scrim#admin-token` and the `bao` store holds it
+- **THEN** the daemon guards its admin listener with the stored token
+- **AND** `scrim approve` reads the token from the store and sends it
+- **AND** after the secret is rotated, the next reload or restart uses the new value
+
+#### Scenario: Store reference that does not resolve
+
+- **WHEN** `notify.webhook.secret` names a secret the store does not have, or a scheme no store has
+- **THEN** scrim refuses to start, or rejects the reload and keeps the running value, naming the
+  setting and the reference
+
+### Requirement: Store credentials from another store
+
+A credential field of a store instance (`stores.<name>.token` and the like) SHALL accept a reference
+into another configured store, read through that store each time the instance logs in. A reference
+into the instance itself (by name or alias), into no configured store, or a chain of such references
+that returns to a store already in it SHALL be rejected naming the field or the stores involved.
+
+#### Scenario: Credential from another store
+
+- **WHEN** `stores.team.age-identity` is `keys://age` and the `keys` store holds the age key
+- **THEN** the `team` store decrypts with the key it reads from `keys` and holds it for redaction
+
+#### Scenario: Credential cycle
+
+- **WHEN** `stores.bao.token` is `bao://kv/scrim#token`, or `stores.a.token` names store `b` whose
+  token names store `a`
+- **THEN** the configuration is rejected naming the field or the cycle, and no store is contacted
+
 ### Requirement: Published JSON Schema
 
 Each release SHALL publish a JSON Schema for every supported `apiVersion`, generated from the same

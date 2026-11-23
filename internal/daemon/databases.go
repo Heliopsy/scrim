@@ -300,6 +300,9 @@ func (p databasePasswords) EachValue(fn func(refresh.Source, secret.Value)) {
 		return
 	}
 	for _, inst := range dbproxy.Databases.Get(cfg) {
+		if config.SecretRef(inst.String("password")).Kind() == config.RefStore {
+			continue
+		}
 		if v, ok := cfg.SecretAt(inst.Key(dbproxy.CollectionKey, "password")); ok && !v.IsZero() {
 			fn(refresh.Source{}, v)
 		}

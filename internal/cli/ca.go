@@ -217,6 +217,9 @@ func installer(e *Env, cmd *cobra.Command, dir string, dryRun bool) (*ca.Install
 // only resolved when publicOnly is false.
 func openCA(cmd *cobra.Command, e *Env, publicOnly bool) (*ca.Manager, error) {
 	cfg, err := e.Config()
+	if !publicOnly && err == nil {
+		cfg, err = e.resolvedConfig(cmd.Context(), ca.KeySetting.Name())
+	}
 	if err != nil {
 		return nil, err
 	}
