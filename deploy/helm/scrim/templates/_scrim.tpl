@@ -168,8 +168,12 @@ refuses them so a values file never carries a secret.
 {{- if hasKey . "kubernetes" -}}
 {{- fail "config.identity.kubernetes is set by the chart; use the identity.kubernetes values" -}}
 {{- end -}}
+{{- if hasKey . "issuer" -}}
+{{- fail "config.identity.issuer is set by the chart; use the identity.issuer values" -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
+{{- include "scrim.checkIssuer" . -}}
 {{- range $section := list "state" "events" "deployment" "valkey" "nats" -}}
 {{- if hasKey $cfg $section -}}
 {{- fail (printf "config.%s is set by the chart; use the postgres, events, valkey and nats values and central.replicaCount" $section) -}}
@@ -248,7 +252,7 @@ metrics:
 {{- end }}
 {{- end -}}
 
-{{/* identity.kubernetes.*. .tokenFile and .caFile override scrim's own API credentials. */}}
+{{/* identity.kubernetes.*, and identity.issuer.* with .issuer (central). .tokenFile and .caFile override scrim's own API credentials. */}}
 {{- define "scrim.identitySettings" -}}
 {{- $k := .root.Values.identity.kubernetes -}}
 identity:
@@ -268,6 +272,78 @@ identity:
       {{- toYaml . | nindent 6 }}
 {{- end }}
 {{- end }}
+{{- if and .issuer .root.Values.identity.issuer.enabled }}
+  {{- include "scrim.issuerSettings" .root | nindent 2 }}
+{{- end }}
+{{- end -}}
+
+{{/*
+identity.issuer.*, central scrim only. The listener serves discovery and the
+JWKS on the pod IP; generated keys go in a directory scrim creates with mode
+0700 inside the key volume (emptyDir or PVC roots are group-writable, which
+scrim refuses), operator keys come from a Secret mount.
+*/}}
+{{- define "scrim.issuerSettings" -}}
+{{- $i := .Values.identity.issuer -}}
+issuer:
+  url: {{ $i.url | quote }}
+  listen: 0.0.0.0:{{ $i.port }}
+  token-ttl: {{ $i.tokenTTL }}
+{{- if $i.insecureHTTP }}
+  insecure-http: true
+{{- end }}
+{{- if $i.signingKeys.existingSecret }}
+  signing-keys: file:/run/secrets/scrim/issuer-keys/{{ $i.signingKeys.key }}
+{{- else }}
+  key-dir: {{ include "scrim.issuerKeyDir" . }}
+  rotate-every: {{ $i.rotateEvery }}
+{{- end }}
+{{- end -}}
+
+{{- define "scrim.issuerKeyMount" -}}/var/lib/scrim-issuer{{- end -}}
+{{- define "scrim.issuerKeyDir" -}}{{ include "scrim.issuerKeyMount" . }}/keys{{- end -}}
+
+{{- define "scrim.issuerClaimName" -}}
+{{- default (printf "%s-issuer-keys" (include "scrim.fullname" .)) .Values.identity.issuer.keyStore.existingClaim -}}
+{{- end -}}
+
+{{/* Path of the issuer URL, under which the listener serves its two documents. */}}
+{{- define "scrim.issuerPath" -}}
+{{- (urlParse .Values.identity.issuer.url).path | trimSuffix "/" -}}
+{{- end -}}
+
+{{/* identity.issuer values the schema cannot check. */}}
+{{- define "scrim.checkIssuer" -}}
+{{- $i := .Values.identity.issuer -}}
+{{- if $i.enabled -}}
+{{- if not .Values.central.enabled -}}
+{{- fail "identity.issuer.enabled runs in central scrim, which central.enabled=false does not deploy" -}}
+{{- end -}}
+{{- if not $i.url -}}
+{{- fail "identity.issuer.enabled needs identity.issuer.url: the https URL stores fetch the discovery document from (an Ingress or Gateway in front of the Service <fullname>-issuer)" -}}
+{{- end -}}
+{{- $u := urlParse $i.url -}}
+{{- if or (not (has $u.scheme (list "https" "http"))) (not $u.host) $u.query $u.fragment $u.userinfo (hasSuffix "/" $i.url) -}}
+{{- fail (printf "identity.issuer.url %q must be an absolute https URL without query, fragment, user info or trailing slash" $i.url) -}}
+{{- end -}}
+{{- if and (eq $u.scheme "http") (not $i.insecureHTTP) -}}
+{{- fail (printf "identity.issuer.url %q is plain http: use https (terminate TLS in front of the issuer Service), or set identity.issuer.insecureHTTP=true and accept that anyone between a store and scrim can substitute the signing keys" $i.url) -}}
+{{- end -}}
+{{- $c := include "scrim.central" . | fromJson -}}
+{{- $several := or (gt (int (include "scrim.maxReplicas" .)) 1) $c.autoscaling.enabled -}}
+{{- if and $several (not $i.signingKeys.existingSecret) -}}
+{{- fail "identity.issuer with more than one replica needs identity.issuer.signingKeys.existingSecret: replicas behind one issuer URL must publish the same keys, and generated keys are per pod" -}}
+{{- end -}}
+{{- if and (not $i.signingKeys.existingSecret) (eq $i.keyStore.type "pvc") (ne (toString (dig "strategy" "type" "" $c)) "Recreate") -}}
+{{- fail "identity.issuer.keyStore.type pvc needs central.strategy.type=Recreate: two pods must not rotate keys in one directory, and a rolling update runs the old and the new pod together" -}}
+{{- end -}}
+{{- $taken := list 9790 9791 (int .Values.metrics.port) -}}
+{{- if .Values.admin.tcp.enabled }}{{ $taken = append $taken (int .Values.admin.tcp.port) }}{{ end -}}
+{{- if .Values.edge.enabled }}{{ $taken = append $taken (int .Values.edge.port) }}{{ end -}}
+{{- if has (int $i.port) $taken -}}
+{{- fail (printf "identity.issuer.port %v is taken by another scrim listener" $i.port) -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{/* Where the sidecar's own API token and the API server CA are mounted (TokenReview). */}}

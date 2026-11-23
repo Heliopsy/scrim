@@ -959,7 +959,8 @@ impl Guard {
         vh: &mut Vec<(usize, usize, u32)>,
         out: &mut Vec<RawHit>,
     ) {
-        if has_json1 && self.json_escapes_matter(&json1.bytes) {
+        // json2 is round two; more follow when the depth goes past it.
+        if has_json1 && self.json_escapes_matter(&json1.bytes, self.json_depth > 2) {
             json_unescape(&json1.bytes, json2);
             vh.clear();
             self.scan_near_units(json2, true, vh);
@@ -1282,7 +1283,8 @@ impl Guard {
         for k in 0..extra {
             let (done, rest) = deeper.split_at_mut(k);
             let parent = done.last().unwrap_or(json2);
-            if !self.json_escapes_matter(&parent.bytes) {
+            // This view is round 3 + k.
+            if !self.json_escapes_matter(&parent.bytes, 3 + k < self.json_depth) {
                 break;
             }
             let view = &mut rest[0];
@@ -1452,12 +1454,17 @@ impl Guard {
         });
     }
 
-    /// Whether any escape in `b` decodes to a byte some value contains.
-    fn json_escapes_matter(&self, b: &[u8]) -> bool {
+    /// Whether unescaping `b` once more can show a value: some escape in `b` decodes to a byte a
+    /// value contains, or, when `more` rounds follow, the unescaped view can hold an escape `b`
+    /// does not have. A decoded backslash starts one (`\` `u` `0`... spells
+    /// `\u0000`, every byte of it outside the value), and so does a `\u` that is not an escape
+    /// yet because escapes stand where its hex digits go.
+    fn json_escapes_matter(&self, b: &[u8], more: bool) -> bool {
         let w = |c: u8| self.byte_width[usize::from(c)] != 0;
         memchr::memchr_iter(b'\\', b).any(|i| match b.get(i + 1) {
             Some(b'"') => w(b'"'),
-            Some(b'\\') => w(b'\\'),
+            Some(b'\\') => more || w(b'\\'),
+            Some(b'u') if more && builds_escape(&b[i + 2..]) => true,
             Some(b'/') => w(b'/'),
             Some(b'n') => w(b'\n'),
             Some(b'r') => w(b'\r'),
@@ -1904,6 +1911,20 @@ fn b64_inner_mask(v: &[u8], k: usize) -> u8 {
         mask |= CLASS[usize::from(ch)] & CLASS_MASK;
     }
     mask
+}
+
+/// Whether `\u` followed by `rest` can become an escape after one more round of unescaping: it
+/// decodes to a backslash, or its hex digits are cut short by a backslash that may start an
+/// escape decoding to one.
+fn builds_escape(rest: &[u8]) -> bool {
+    match hex4(rest) {
+        Some(cp) => cp == u32::from(b'\\'),
+        None => rest
+            .iter()
+            .take(4)
+            .find(|&&c| HEXV[usize::from(c)] == 0xFF)
+            .is_some_and(|&c| c == b'\\'),
+    }
 }
 
 fn has_json_escape(b: &[u8]) -> bool {

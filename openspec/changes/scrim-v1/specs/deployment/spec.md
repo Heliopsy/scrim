@@ -496,6 +496,48 @@ unknown callers.
 - **WHEN** an identified agent calls a provider through the base URL
 - **THEN** neither the provider nor scrim's logs see the agent's token
 
+### Requirement: Identity issuer in the chart
+
+With `identity.issuer.enabled` the chart SHALL run scrim's identity issuer in central scrim, expose
+its discovery and JWKS listener on a Service of its own that carries no other port, admit it in the
+central NetworkPolicy, and keep generated signing keys in a directory scrim creates below a volume
+root.
+
+#### Scenario: Operator keys on several replicas
+
+- **WHEN** the issuer is enabled on several replicas with a signing key Secret
+- **THEN** every replica mounts that Secret and its configuration names it as
+  `identity.issuer.signing-keys`, with no key directory
+
+#### Scenario: Only public documents published
+
+- **WHEN** the issuer is enabled
+- **THEN** the Service `<fullname>-issuer` carries the issuer port only, the central Service does not
+  carry it, and `helm test` fetches the discovery document and a JWKS with a key through it
+
+#### Scenario: Generated keys on a single replica
+
+- **WHEN** the issuer is enabled on one replica without a signing key Secret
+- **THEN** scrim generates its keys in a directory it creates with mode 0700 inside an `emptyDir`
+  (or, with `keyStore.type` pvc and a Recreate strategy, a PersistentVolumeClaim)
+
+### Requirement: Identity issuer values checked
+
+The chart SHALL refuse to render the issuer without a URL, without central scrim, with a plain http
+URL unless the insecure-http weakening is set, with generated keys on more than one replica, and
+with generated keys on a persistent volume under a rolling update.
+
+#### Scenario: Several replicas need operator keys
+
+- **WHEN** the issuer is enabled with more than one replica (replica count, autoscaler or the HA
+  preset) and no signing key Secret
+- **THEN** the chart refuses to render and names `identity.issuer.signingKeys.existingSecret`
+
+#### Scenario: Plain http issuer URL
+
+- **WHEN** the issuer URL is `http://` and `insecureHTTP` is off
+- **THEN** the chart refuses to render
+
 ### Requirement: Edge forwarder in the chart
 
 With `edge.enabled` in central mode the chart SHALL turn on the central scrim's edge listener with

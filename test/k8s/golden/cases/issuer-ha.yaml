@@ -1,0 +1,43 @@
+# The issuer on several replicas: operator-managed signing keys from a Secret, so every replica
+# publishes the same JWKS; the issuer port admits the Ingress controller only.
+global:
+  ha: {enabled: true, replicas: 3}
+postgres:
+  enabled: true
+secrets:
+  existing:
+    postgres: scrim-pg
+identity:
+  issuer:
+    enabled: true
+    url: https://scrim.example.com/idp
+    tokenTTL: 5m
+    signingKeys:
+      existingSecret: scrim-issuer-keys
+    service:
+      annotations: {example.com/public: "true"}
+config:
+  stores:
+    bao:
+      kind: openbao
+      address: https://bao.example.com:8200
+      auth:
+        method: kubernetes
+        kubernetes:
+          role: scrim
+          token-file: /var/run/secrets/scrim/store-token
+      redact: ["bao://kv/agents/*"]
+  identity:
+    store-login:
+      bao: "jwt role:agent-{agent_slug} audience:openbao mount:jwt"
+storeAuth:
+  serviceAccountToken:
+    enabled: true
+    audience: openbao
+networkPolicy:
+  enabled: true
+  issuerFrom:
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: ingress-nginx}
+agents:
+  namespaces: [agents]

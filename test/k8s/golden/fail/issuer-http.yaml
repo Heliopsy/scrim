@@ -1,0 +1,2 @@
+# expect: is plain http: use https
+identity: {issuer: {enabled: true, url: "http://scrim.example.com/idp"}}

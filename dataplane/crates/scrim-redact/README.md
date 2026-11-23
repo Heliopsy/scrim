@@ -135,14 +135,19 @@ byte; runs whose character classes cannot hold any value's encoding are not deco
 decoded once into its bit stream and the other alignments are read from it at a bit offset; values
 containing a backslash (which only the raw bytes show) are found from the backslash positions the
 JSON pass records; and the second JSON view and the URL view are only scanned near decoded units,
-within the longest value containing a byte those units produced. Bodies of at least
+within the longest value containing a byte those units produced. A further round of JSON
+unescaping is skipped only when no escape of the previous view decodes to a byte a value contains
+and, before the last round, none decodes to a backslash or is a `\u` whose hex digits are cut
+short by one: those spell the next round's escapes (`\u005c\u0075\u0030\u0030\u0030\u0030` is
+`\u0000`, though no value holds `\`, `u` or `0`). Bodies of at least
 `parallel_min_bytes` (512 KiB) are split into up to `parallel_threads` (4) regions checked on scoped
 threads, with region ends where no base64 run can cross; the verdict is the same as on one
 thread. Findings are mapped back to the outgoing bytes and replaced with the value's placeholder;
 the repaired body is checked again. A value still present, or more findings than
 `guard_max_repairs`, withholds the request. The guard as it was before these optimisations is kept
-as a test oracle (`guard_oracle.rs`, feature `oracle`): property tests and the `guard` fuzz target
-check that both reach the same verdict, repaired bytes and findings.
+as a test oracle (`guard_oracle.rs`, feature `oracle`), except that it unescapes every JSON round up
+to the depth while escapes remain: property tests and the `guard` fuzz target check that both reach
+the same verdict, repaired bytes and findings.
 
 **Detectors (`detect.rs`).** Pattern rules for AWS access keys, GitHub (classic and fine-grained),
 Anthropic, OpenAI, GitLab, Slack, Stripe, Google API keys, npm tokens, JWTs and private key blocks
@@ -161,6 +166,9 @@ explicit primitive for injection at the network edge.
   inside longer base64 streams.
 * Base64 or hex of a JSON-escaped form (a base64-encoded JSON file holding the value with a
   quote) is not compiled, and the guard does not JSON-unescape decoded base64.
+* JSON nested more deeply than `json_depth` is not unescaped further, and backslashes written just
+  before an escaped value pair with its own and count as a level. Set `json_depth` 4 for deeper
+  tool chains.
 * The guard folds ASCII case only. Transforms other than the listed encodings (reversal, rot13,
   spacing, compression) are out of scope here; the leak checker and the bypass matrix cover them.
 * `aho-corasick` keeps its own copy of patterns that this crate cannot wipe. Pattern bytes owned by
@@ -214,3 +222,7 @@ cargo +nightly fuzz run variants -- -max_total_time=300   # encoded values never
 cargo +nightly fuzz run guard    -- -max_total_time=300   # repairs leave nothing, no panics
 cargo +nightly fuzz run restore  -- -max_total_time=300   # chunked restore equals whole, no credential
 ```
+
+`fuzz/regressions/<target>` holds earlier findings, each also a unit test. CI reads them first,
+as a second corpus directory; locally, `cargo +nightly fuzz run guard corpus/guard
+regressions/guard`. A finding goes there with a name saying what it found.

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# A second case ct installs on a bare kind cluster (kind-test.sh): central
+# scrim with the identity issuer on generated keys in an emptyDir. helm test
+# fetches the discovery document and the JWKS through the issuer Service, so
+# the key directory has to come up with the permissions scrim accepts.
+identity:
+  issuer:
+    enabled: true
+    url: https://scrim-issuer.example.test/idp
+central:
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 512Mi}

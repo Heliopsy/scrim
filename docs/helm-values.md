@@ -173,7 +173,7 @@ kubernetes-replicator (`global.replication`).
 | auditSinks.kafka.policy | string | `"drop"` | block or drop. |
 | auditSinks.kafka.timeout | string | `"5s"` | With block, how long an audited operation waits for queue room. |
 | auditSinks.kafka.queueSize | int | `10000` | Entries waiting for the sink at most. |
-| identity | object | See the keys below. | Kubernetes identity (identity.kubernetes.*): agent pods present a projected service account token for `audience`, which scrim verifies with TokenReview. Per-agent store login (identity.store-login) goes in `config.identity`. |
+| identity | object | See the keys below. | Kubernetes identity (identity.kubernetes.*): agent pods present a projected service account token for `audience`, which scrim verifies with TokenReview. The identity issuer (identity.issuer.*): scrim signs tokens for agents that stores trust. Per-agent store login (identity.store-login) goes in `config.identity`. |
 | identity.kubernetes.enabled | bool | `true` | Identify agent pods by their projected token. Renders the TokenReview RBAC, mounts scrim's own API token and gives agent pods the token, SCRIM_K8S_TOKEN_FILE and the scrim-exec launcher. Off: every agent pod is an unknown caller, which the built-in rules do not inject credentials for. |
 | identity.kubernetes.audience | string | `"scrim"` | Audience of the projected agent token (identity.kubernetes.audience); tokens with another audience, such as the pod's default API token, are refused. |
 | identity.kubernetes.expirationSeconds | int | `3600` | Lifetime of the projected agent token in seconds. The kubelet rotates the file, but scrim-exec reads it when the agent starts: an agent process that runs longer than this loses its identity (injection is refused) until it is restarted. |
@@ -181,6 +181,26 @@ kubernetes-replicator (`global.replication`).
 | identity.kubernetes.tokenReviewRBAC | bool | `true` | Create a ClusterRole that may only create TokenReviews and bind it to scrim's service account (central) and to the service accounts of agents.namespaces (sidecar). |
 | identity.kubernetes.agents | object | `{}` | Agents by service account (identity.kubernetes.agents): agent name to selectors `sa:NAMESPACE/NAME` (globs allowed), `scope:`, `label:K=V`. |
 | identity.kubernetes.unmapped | string | `"derive"` | What a service account no rule maps becomes: derive (NAMESPACE/NAME) or unknown. |
+| identity.issuer.enabled | bool | `false` | Turn the issuer on (central scrim). Needs `url`. More than one replica (replicaCount, the HPA, global.ha) needs `signingKeys.existingSecret`: replicas behind one URL must publish the same keys. |
+| identity.issuer.url | string | `""` | Issuer URL (identity.issuer.url, the `iss` claim), without a trailing slash. https, terminated by an Ingress or Gateway in front of the Service `<fullname>-issuer`; plain http needs insecureHTTP. |
+| identity.issuer.port | int | `9795` | Port of the discovery and JWKS listener (identity.issuer.listen on the pod IP), on the container and on the issuer Service. |
+| identity.issuer.insecureHTTP | bool | `false` | Allow an http:// url on a host other than loopback (identity.issuer.insecure-http, a weakening scrim logs at start-up): anyone between a store and scrim could substitute the keys, and the store would trust tokens they sign. |
+| identity.issuer.tokenTTL | string | `"10m"` | Lifetime of each token (identity.issuer.token-ttl), 1m to 1h, never past the session's end. |
+| identity.issuer.rotateEvery | string | `"24h"` | How often generated keys rotate (identity.issuer.rotate-every), at least 1h. Not used with signingKeys.existingSecret. |
+| identity.issuer.signingKeys | object | See the keys below. | Operator-managed signing keys (identity.issuer.signing-keys). scrim never rotates them. |
+| identity.issuer.signingKeys.existingSecret | string | `""` | Secret holding one or more PKCS#8 PEM RSA private keys (2048 bits or more) under `key`. The first signs and all are published. Required with more than one replica. Empty: scrim generates and rotates its keys in `keyStore`. |
+| identity.issuer.signingKeys.key | string | `"keys.pem"` | Key of the PEM bundle in existingSecret. |
+| identity.issuer.keyStore | object | See the keys below. | Where generated keys live (identity.issuer.key-dir) when signingKeys.existingSecret is empty, one replica only. emptyDir: the keys live as long as the pod; a new pod (rollout, reschedule) signs with a new key, and tokens the old pod signed stop verifying once a store refetches the JWKS. pvc: the keys and their rotation survive restarts; only one pod may use the directory at a time, so it needs central.strategy.type Recreate. |
+| identity.issuer.keyStore.type | string | `"emptyDir"` | emptyDir or pvc. |
+| identity.issuer.keyStore.existingClaim | string | `""` | pvc: an existing PersistentVolumeClaim. Empty: the chart creates `<fullname>-issuer-keys`. |
+| identity.issuer.keyStore.size | string | `"64Mi"` | pvc: size of the created claim (the keys take a few KiB). |
+| identity.issuer.keyStore.storageClassName | string | `""` | pvc: storageClassName of the created claim (empty: the cluster default). |
+| identity.issuer.keyStore.accessModes | list | `["ReadWriteOnce"]` | pvc: access modes of the created claim. |
+| identity.issuer.keyStore.annotations | object | `{}` | pvc: annotations of the created claim. |
+| identity.issuer.service | object | See the keys below. | The Service `<fullname>-issuer`, with the issuer port only. |
+| identity.issuer.service.type | string | `"ClusterIP"` | Service type. ClusterIP behind an Ingress or Gateway that terminates TLS. |
+| identity.issuer.service.annotations | object | `{}` | Service annotations. |
+| identity.issuer.service.labels | object | `{}` | Service labels. |
 | edge | object | See the keys below. | Edge forwarder (central mode): Kyverno adds a native sidecar running `scrim edge` to agent pods labelled `central`. It serves SSH_AUTH_SOCK, loopback database ports and the agent API socket (the exec broker included) in the pod and carries every connection to central scrim's edge listener over TLS, with the pod's projected identity token. Keys, database passwords and exec secrets stay in central scrim. Needs identity.kubernetes.enabled and kyverno.enabled (or the sidecar copied into the pod spec). |
 | edge.enabled | bool | `false` | Serve the edge listener in central scrim (edge.listen) and inject the forwarder into agent pods labelled `central`. |
 | edge.port | int | `9794` | Port of the edge listener, on the scrim container and the Service. |
@@ -310,6 +330,7 @@ kubernetes-replicator (`global.replication`).
 | networkPolicy.sidecarEgress | list | `[{"ports":[{"port":443,"protocol":"TCP"}]}]` | Egress rules of sidecar agent pods besides DNS (what the in-pod scrim must reach). |
 | networkPolicy.prometheus | object | `{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}},"podSelector":{}}` | Where Prometheus scrapes from (used when metrics.enabled). |
 | networkPolicy.adminFrom | list | `[]` | Peers allowed to the admin TCP port (NetworkPolicy `from` entries). |
+| networkPolicy.issuerFrom | list | `[]` | Peers allowed to the issuer port with identity.issuer.enabled (NetworkPolicy `from` entries: the Ingress controller, in-cluster stores). Empty allows every source: the port serves public keys only. |
 | networkPolicy.labels | object | `{}` | Labels on every NetworkPolicy the chart renders (tpl). |
 | networkPolicy.annotations | object | `{}` | Annotations on every NetworkPolicy the chart renders. |
 | sidecar | object | See the keys below. | Sidecar mode: an in-pod `scrim proxy` on loopback for pods labelled `sidecar`. |

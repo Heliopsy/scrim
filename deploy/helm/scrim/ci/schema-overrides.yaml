@@ -96,3 +96,12 @@ sidecar.egressGuard.pullPolicy: {enum: [Always, IfNotPresent, Never]}
 image.pullPolicy: {enum: [Always, IfNotPresent, Never]}
 tests.retries: {minimum: 1}
 grafanaDashboard.json: {type: string}
+identity.issuer.url: {pattern: "^(https?://[^/?#]+(/[^?#]*[^/?#])?)?$"}
+identity.issuer.port: {minimum: 1, maximum: 65535}
+identity.issuer.tokenTTL: {pattern: "^([0-9]+(s|m|h))+$"}
+identity.issuer.rotateEvery: {pattern: "^([0-9]+(s|m|h))+$"}
+identity.issuer.signingKeys.key: {minLength: 1}
+identity.issuer.keyStore.type: {enum: [emptyDir, pvc]}
+identity.issuer.keyStore.accessModes: {items: {enum: [ReadWriteOnce, ReadWriteOncePod, ReadWriteMany]}, minItems: 1}
+identity.issuer.service.type: {enum: [ClusterIP, NodePort, LoadBalancer]}
+networkPolicy.issuerFrom: {items: {type: object}}

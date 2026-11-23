@@ -167,6 +167,17 @@ A literal value is accepted with a warning naming the setting, except for settin
 `<literal>`. User information in a store reference (`postgres://user:pass@host`) is masked as
 `***@`.
 
+Every value a secret-valued setting or collection field resolves to is in the redaction set, so an
+agent that finds one of scrim's own credentials (the admin or metrics token, a notifier or audit
+sink credential, the Valkey, NATS or PostgreSQL password, a signing key) cannot send it to a model
+provider. The password inside `state.postgres.dsn` and each key of a PEM bundle are redacted on
+their own too, and so are the JWT and seed in `nats.credentials-file` and, with Kubernetes identity
+on, scrim's service account token in `identity.kubernetes.token-file`. They are redacted under the
+`scrim-config` slug and never injected. A reload replaces a rotated value; the two files are read
+again when they change, and the previous value stays redacted until the next change. A value
+shorter than 8 bytes is left out, since it would be replaced wherever those bytes occur, and a
+warning names the setting.
+
 `scrim config validate` resolves `env:`, `file:` and `cred:` references and checks store references
 for syntax, and store credentials for references into themselves or cycles; it does not contact
 stores.

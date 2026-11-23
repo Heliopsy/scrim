@@ -43,6 +43,7 @@ whose chart refuses to upgrade while a ClusterPolicy remains.
 | NetworkPolicies | `networkPolicy.enabled` | scrim's ingress and egress, agent pods' egress |
 | ServiceMonitor, PodMonitor, PrometheusRule, dashboard ConfigMap | their `enabled` values, with `metrics.enabled` | Prometheus Operator and Grafana |
 | ClusterRole and ClusterRoleBinding `<release>-scrim-<namespace>-tokenreview` | `identity.kubernetes.enabled` (default) | create TokenReviews only, for scrim's service account and, in sidecar mode, the service accounts of the agent namespaces |
+| Service `<release>-scrim-issuer`, PersistentVolumeClaim `<release>-scrim-issuer-keys` | `identity.issuer.enabled`; the claim with `identity.issuer.keyStore.type: pvc` and no `existingClaim` | the issuer's discovery document and JWKS (public keys only) on `identity.issuer.port`, for an Ingress or Gateway to publish; the generated signing keys |
 | Secret `<release>-scrim-metrics` | `metrics.enabled`, no `secrets.existing.metrics` | the generated metrics bearer token, kept |
 | ExternalSecrets `<release>-scrim-<slot>` | `secrets.externalSecrets` | the Secret slots from your secret store |
 | ConfigMaps `<release>-scrim-<key>`, `extraObjects` | `extraConfigMaps`, `extraObjects` | your own objects, rendered through tpl |
@@ -131,6 +132,13 @@ password of the proxy user `k8s` in `HTTPS_PROXY` and the other proxy variables,
 TokenReview, so the built-in rule injects credentials toward their bound hosts for that agent. A
 process started without it is an unknown caller: redaction applies, injection does not. It needs
 `/bin/sh` in the agent image.
+
+## Identity issuer
+
+`identity.issuer.enabled` makes central scrim an OpenID Connect issuer whose tokens stores trust
+for per-agent token exchange. Publish the Service `<release>-scrim-issuer` at `identity.issuer.url`
+over TLS. More than one replica needs `identity.issuer.signingKeys.existingSecret`; with generated
+keys in the default `emptyDir`, every new pod means new keys. See docs/kubernetes.md, "Identity issuer".
 
 ## Built from the chart template
 

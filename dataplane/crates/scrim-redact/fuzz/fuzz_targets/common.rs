@@ -103,8 +103,11 @@ pub fn contains_outside(s: &Snapshot, b: &[u8], n: &[u8]) -> bool {
         .any(|seg| contains(seg, n))
 }
 
-/// JSON string escaping of one level, in one of five styles: 0 minimal, 1 Go (`<>&`), 2 Python
-/// (non-ASCII), 3 escaped slash, 4 every character. Invalid UTF-8 is copied as is.
+/// JSON string escaping of one level, in one of six styles: 0 minimal (serde_json,
+/// `JSON.stringify`), 1 Go (`<>&`), 2 Python (non-ASCII), 3 escaped slash, 4 every character,
+/// 5 minimal with every control character as `\u00XX`. Styles 0 to 3 write `\b`, `\f`, `\n`,
+/// `\r` and `\t` short, as those serialisers do and as the redactor compiles them; 5 is a
+/// serialiser the redactor does not compile, for the guard. Invalid UTF-8 is copied as is.
 pub fn json_level(s: &[u8], style: u8) -> Vec<u8> {
     fn u4(o: &mut Vec<u8>, x: u32) {
         o.extend_from_slice(format!("\\u{x:04x}").as_bytes());
@@ -113,7 +116,7 @@ pub fn json_level(s: &[u8], style: u8) -> Vec<u8> {
     let text = std::str::from_utf8(s).ok();
     let one = |o: &mut Vec<u8>, c: char, bytes: &[u8]| {
         let mut b16 = [0u16; 2];
-        match (style % 5, c) {
+        match (style % 6, c) {
             (4, c) => c
                 .encode_utf16(&mut b16)
                 .iter()
@@ -126,6 +129,11 @@ pub fn json_level(s: &[u8], style: u8) -> Vec<u8> {
                 .encode_utf16(&mut b16)
                 .iter()
                 .for_each(|&x| u4(o, u32::from(x))),
+            (0..=3, '\u{8}') => o.extend_from_slice(b"\\b"),
+            (0..=3, '\u{c}') => o.extend_from_slice(b"\\f"),
+            (0..=3, '\n') => o.extend_from_slice(b"\\n"),
+            (0..=3, '\r') => o.extend_from_slice(b"\\r"),
+            (0..=3, '\t') => o.extend_from_slice(b"\\t"),
             (_, c) if (c as u32) < 0x20 => u4(o, c as u32),
             _ => o.extend_from_slice(bytes),
         }

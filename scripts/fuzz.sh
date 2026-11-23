@@ -60,9 +60,16 @@ cmd_run() {
   (
     cd "$root/dataplane/crates/$crate/fuzz" || exit 1
     cargo "$nightly" fetch --locked
+    # Committed findings are read first, from a directory libFuzzer does not
+    # write to (new inputs go to the first one).
+    corpus=()
+    if [ -d "regressions/$target" ]; then
+      mkdir -p "corpus/$target"
+      corpus=("corpus/$target" "regressions/$target")
+    fi
     # cargo-fuzz's release binary is built for musl and defaults to its own
     # triple; the toolchain has the gnu standard library.
-    cargo "$nightly" fuzz run --target x86_64-unknown-linux-gnu "$target" -- \
+    cargo "$nightly" fuzz run --target x86_64-unknown-linux-gnu "$target" "${corpus[@]}" -- \
       -max_total_time="$seconds" -timeout=30 -rss_limit_mb=2048
   ) 2>&1 | tee "$log" || status=$?
   if [ -n "$result" ]; then

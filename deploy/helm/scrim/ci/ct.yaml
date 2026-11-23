@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # chart-testing (ct). ct lint reads every ci/*-values.yaml as one case;
 # ct install (ci/kind-test.sh) runs on a copy of the chart that keeps only
-# install-values.yaml, the one case that comes up on a bare kind cluster.
+# install-values.yaml and install-issuer-values.yaml, the cases that come up
+# on a bare kind cluster.
 target-branch: main
 remote: origin
 chart-dirs:

@@ -6,6 +6,7 @@
 {{- /*
 Central scrim, through chart.std.networkPolicy: agents reach the LLM and
 forward proxy ports (and the edge listener with edge.enabled), Prometheus the metrics port, adminFrom the admin port,
+issuerFrom (every source when empty) the issuer port with identity.issuer.enabled,
 the helm test pods the listeners; scrim reaches DNS, the API server
 (TokenReview) and what networkPolicy.scrimEgress allows. central.networkPolicy
 adds to it.
@@ -26,8 +27,17 @@ adds to it.
 {{- if and .Values.admin.tcp.enabled $np.adminFrom -}}
   {{- $ingress = append $ingress (dict "from" $np.adminFrom "ports" (list (dict "port" (int .Values.admin.tcp.port) "protocol" "TCP"))) -}}
 {{- end -}}
+{{- $iss := .Values.identity.issuer -}}
+{{- if $iss.enabled -}}
+  {{- /* Public keys only: open to every source unless issuerFrom narrows it. */ -}}
+  {{- $rule := dict "ports" (list (dict "port" (int $iss.port) "protocol" "TCP")) -}}
+  {{- with $np.issuerFrom }}{{ $_ := set $rule "from" . }}{{ end -}}
+  {{- $ingress = append $ingress $rule -}}
+{{- end -}}
 {{- if .Values.tests.enabled -}}
-  {{- $ingress = append $ingress (dict "from" (list (include "chart.netpolTestPeer" . | fromYaml)) "ports" (append $listen (dict "port" (int .Values.metrics.port) "protocol" "TCP"))) -}}
+  {{- $testPorts := append $listen (dict "port" (int .Values.metrics.port) "protocol" "TCP") -}}
+  {{- if $iss.enabled }}{{ $testPorts = append $testPorts (dict "port" (int $iss.port) "protocol" "TCP") }}{{ end -}}
+  {{- $ingress = append $ingress (dict "from" (list (include "chart.netpolTestPeer" . | fromYaml)) "ports" $testPorts) -}}
 {{- end -}}
 {{- $egress := list (include "chart.netpolDNSEgress" . | fromYaml) -}}
 {{- if .Values.identity.kubernetes.enabled -}}
