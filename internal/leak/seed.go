@@ -185,7 +185,11 @@ func Generate(kind Kind) Seed {
 		b.WriteString("-----END PRIVATE KEY-----")
 		return NewSeed(name, kind, b.String(), "-----BEGIN PRIVATE KEY-----\n", "\n-----END PRIVATE KEY-----")
 	case KindShort:
-		return NewSeed(name, kind, randString(alnum, 8))
+		// A digit at both ends: the matrix truncates a value to six of its
+		// eight bytes inside a frame of letters (API_TOKEN=... LOG_LEVEL),
+		// and a short value whose dropped end the frame happens to spell
+		// (one in about a thousand ends in "lo") would read as a leak.
+		return NewSeed(name, kind, randString(digits, 1)+randString(alnum, 6)+randString(digits, 1))
 	default:
 		panic("leak: unknown seed kind " + string(kind))
 	}

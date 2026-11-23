@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/heliopsy/scrim/internal/leak"
@@ -74,6 +76,27 @@ func TestSeedsInAndNaiveRedactsRaw(t *testing.T) {
 	}
 	if !rep.Pass || len(rep.Seeds) != 2 || rep.Matrix.Totals.Cases != 4 {
 		t.Fatalf("report %+v", rep.Summary)
+	}
+}
+
+// TestWrapUpstream puts a front end before the fake provider: requests
+// pass through it, results are still read from the fake.
+func TestWrapUpstream(t *testing.T) {
+	var seen atomic.Int32
+	rep, err := Run(context.Background(), Options{
+		Proxy: BuiltinNaive, Suites: []string{SuiteMatrix}, Rows: []string{"anthropic-messages/tool-result/raw"},
+		WrapUpstream: func(s *fp.Server) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen.Add(1)
+				s.ServeHTTP(w, r)
+			})
+		},
+	})
+	if err != nil || !rep.Pass {
+		t.Fatalf("naive stub behind a front end: %v", err)
+	}
+	if n := int(seen.Load()); n == 0 || n != rep.Matrix.Totals.Cases {
+		t.Errorf("the front end saw %d requests for %d cases", n, rep.Matrix.Totals.Cases)
 	}
 }
 

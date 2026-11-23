@@ -12,6 +12,14 @@
 # - the command runs as the calling user again (a nested user namespace maps
 #   the namespace's root back to the caller's uid and gid).
 #
+# Two optional additions, for the end-to-end matrix (test/e2e/matrix):
+#
+# - SCRIM_SANDBOX_HOSTS names a file whose lines are appended to /etc/hosts;
+# - SCRIM_SANDBOX_NFT names an nftables rule file loaded into the network
+#   namespace before the command starts (while the namespace's root still
+#   holds CAP_NET_ADMIN there), for example a redirect to a transparent
+#   listener.
+#
 # Nothing outside the namespaces changes. Needs unprivileged user namespaces
 # (util-linux unshare 2.38 or later); on Ubuntu 24.04 with AppArmor's
 # restriction on, run `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` first.
@@ -29,6 +37,9 @@ if [ "${1:-}" = "--inner" ]; then
   shift 3
   ip link set lo up
   sysctl -q -w net.ipv4.ip_unprivileged_port_start=0
+  if [ -n "${SCRIM_SANDBOX_NFT:-}" ]; then
+    nft -f "$SCRIM_SANDBOX_NFT"
+  fi
   mount --bind "$hosts" /etc/hosts
   exec unshare --user --map-user="$uid" --map-group="$gid" -- env SCRIM_E2E_SANDBOX=1 "$@"
 fi
@@ -53,6 +64,9 @@ cat > "$dir/hosts" <<HOSTS
 127.0.0.10 upload.pypi.org crates.io index.crates.io static.crates.io api.hetzner.cloud
 127.0.0.10 api.digitalocean.com k8s.scrim.test registry.scrim.test pypi.scrim.test
 HOSTS
+if [ -n "${SCRIM_SANDBOX_HOSTS:-}" ]; then
+  cat "$SCRIM_SANDBOX_HOSTS" >> "$dir/hosts"
+fi
 chmod 0644 "$dir/hosts"
 self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 unshare --user --map-root-user --net --mount -- "$self" --inner "$dir/hosts" "$(id -u)" "$(id -g)" "$@"

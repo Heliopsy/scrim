@@ -26,7 +26,11 @@
 #   - the image signature example (deploy/examples/kyverno) admits the signed
 #     release image, rewritten to its digest, and refuses an unsigned
 #     artifact of the same repository (needs ghcr.io and Rekor);
-#   - `helm test` passes through the NetworkPolicy.
+#   - `helm test` passes through the NetworkPolicy;
+#   - the leak suite's bypass matrix, run through the central scrim and through
+#     the sidecar with its seeds in OpenBao, reaches the provider with zero
+#     gated leaks (TestMatrixKubernetes in test/e2e/matrix, the Kubernetes cell
+#     of the end-to-end matrix).
 #
 # It never touches another cluster or your kubeconfig: the cluster's
 # kubeconfig lives in a temporary directory and every command names it.
@@ -38,12 +42,12 @@
 #   SCRIM_K8S_KEEP=1           keep the cluster and images for debugging
 #   SCRIM_K8S_REUSE=1          reuse a running cluster of that name (implies a
 #                              cluster you created with this script)
-#   SCRIM_K8S_DATAPLANE_IMAGE  image to take the data plane from when
-#                              internal/dataplane/embedded/scrim-dataplane is
-#                              missing (default the release's scrim-dataplane)
+#   (internal/dataplane/embedded/scrim-dataplane is built with
+#   scripts/release/dataplane.sh when it is missing, and removed again)
 #   SCRIM_K8S_MIN_FREE_GB      refuse to start below this much free disk (6)
 #   SCRIM_K8S_KYVERNO_CHART    Kyverno chart version (default the pinned one;
 #                              3.7.2 is the oldest the chart supports, Kyverno 1.17)
+#   KIND_EXPERIMENTAL_PROVIDER podman (default) locally; CI sets docker
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -55,7 +59,6 @@ tag="e2e-$(date +%s)"
 img_scrim="localhost/scrim-k8s-scrim:$tag"
 img_testbin="localhost/scrim-k8s-testbin:$tag"
 img_tools="localhost/scrim-k8s-tools:$tag"
-dp_image="${SCRIM_K8S_DATAPLANE_IMAGE:-ghcr.io/heliopsy/scrim-dataplane:0.6.0}" # x-release-please-version
 # renovate: datasource=github-releases depName=projectcalico/calico
 calico_version="v3.33.1"
 # sha256: https://raw.githubusercontent.com/projectcalico/calico/{version}/manifests/calico.yaml
@@ -67,7 +70,9 @@ kyverno_chart_version="${SCRIM_K8S_KYVERNO_CHART:-$kyverno_chart_version}"
 openbao_image="quay.io/openbao/openbao:2.7.3@sha256:ba4b133eb9586630024e71a617e66f37f29cc3534cdd46a6233e098ceded8dc9"
 embed="$root/internal/dataplane/embedded/scrim-dataplane"
 
-export KIND_EXPERIMENTAL_PROVIDER=podman
+export KIND_EXPERIMENTAL_PROVIDER="${KIND_EXPERIMENTAL_PROVIDER:-podman}"
+# Images are always built with podman; kind's node runs on its provider.
+node_engine="$KIND_EXPERIMENTAL_PROVIDER"
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/scrim-k8s.XXXXXX")"
 kubeconfig="$work/kubeconfig"
@@ -90,6 +95,7 @@ hl() { timeout 300 helm --kubeconfig "$kubeconfig" --kube-context "$ctx" "$@"; }
 cleanup() {
   local rc=$?
   set +e
+  if [ -s "$work/port-forward.pids" ]; then xargs -r kill <"$work/port-forward.pids" 2>/dev/null; fi
   if [ "$failed" = 1 ] && [ -s "$kubeconfig" ]; then
     log "diagnostics"
     k get pods -A -o wide
@@ -98,12 +104,12 @@ cleanup() {
     k get events -A --sort-by=.lastTimestamp 2>/dev/null | tail -30
   fi
   if [ "${SCRIM_K8S_KEEP:-0}" = 1 ]; then
-    log "kept cluster $name (kubeconfig $kubeconfig) and images; delete with: KIND_EXPERIMENTAL_PROVIDER=podman kind delete cluster --name $name"
+    log "kept cluster $name (kubeconfig $kubeconfig) and images; delete with: KIND_EXPERIMENTAL_PROVIDER=$KIND_EXPERIMENTAL_PROVIDER kind delete cluster --name $name"
   else
     log "cleanup"
     kind delete cluster --name "$name" --kubeconfig "$kubeconfig" >/dev/null 2>&1
     podman rmi -f "$img_scrim" "$img_testbin" "$img_tools" >/dev/null 2>&1
-    if [ "$created_network" = 1 ]; then podman network rm kind >/dev/null 2>&1; fi
+    if [ "$created_network" = 1 ]; then "$node_engine" network rm kind >/dev/null 2>&1; fi
     rm -rf "$work"
   fi
   if [ "$created_embed" = 1 ]; then rm -f "$embed"; fi
@@ -111,14 +117,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for tool in kind kubectl helm podman openssl go jq curl; do
+for tool in kind kubectl helm podman "$node_engine" openssl go jq curl; do
   command -v "$tool" >/dev/null || fail "$tool is not installed"
 done
 free_kb="$(df -Pk "$HOME" | awk 'NR==2 {print $4}')"
 if [ "$free_kb" -lt $(( ${SCRIM_K8S_MIN_FREE_GB:-6} * 1024 * 1024 )) ]; then
   fail "less than ${SCRIM_K8S_MIN_FREE_GB:-6} GB free under $HOME"
 fi
-if [ "$(podman info --format '{{.Host.Security.Rootless}}')" != true ]; then
+if [ "$node_engine" = podman ] && [ "$(podman info --format '{{.Host.Security.Rootless}}')" != true ]; then
   fail "podman is not rootless; this test only runs on rootless podman"
 fi
 
@@ -126,12 +132,10 @@ fi
 
 log "build images"
 if [ ! -s "$embed" ]; then
-  # The data plane of a release is byte-identical to the one embedded in its
-  # scrim binary (deployment spec), so the published image can stand in for a
-  # local `cargo build --release` as long as the boundary protocol matches.
-  cid="$(podman create --name "scrim-k8s-dp-$$" "$dp_image")"
-  podman cp "$cid:/usr/local/bin/scrim-dataplane" "$embed"
-  podman rm -f "$cid" >/dev/null
+  # Built from this tree: a released data plane may predate the snapshot this
+  # control plane sends.
+  command -v cargo >/dev/null || fail "$embed is missing and cargo is not installed to build it"
+  "$root/scripts/release/dataplane.sh" linux-amd64 "$embed"
   created_embed=1
 fi
 mkdir -p "$work/stage/linux-amd64" "$work/stage/state" "$work/testbin"
@@ -151,8 +155,8 @@ if [ "${SCRIM_K8S_REUSE:-0}" = 1 ] && kind get clusters 2>/dev/null | grep -qx "
   log "reuse cluster $name"
   kind get kubeconfig --name "$name" > "$kubeconfig"
 else
-  log "create cluster $name (rootless podman)"
-  podman network exists kind || created_network=1
+  log "create cluster $name ($KIND_EXPERIMENTAL_PROVIDER)"
+  "$node_engine" network inspect kind >/dev/null 2>&1 || created_network=1
   kind create cluster --name "$name" --config "$here/kind.yaml" --kubeconfig "$kubeconfig" --wait 0s
   curl -fsSL -o "$work/calico.yaml" "https://raw.githubusercontent.com/projectcalico/calico/$calico_version/manifests/calico.yaml"
   echo "$calico_sha256  $work/calico.yaml" | sha256sum -c --quiet -
@@ -231,6 +235,27 @@ printf %s "$tool_token" | k -n scrim-e2e exec -i deploy/openbao -- sh -c \
   'BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN="$(cat /run/secrets/bao/token)" bao kv put -mount=secret e2e/tool token=-' >/dev/null
 printf %s "$llm_secret" | k -n scrim-e2e exec -i deploy/openbao -- sh -c \
   'BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN="$(cat /run/secrets/bao/token)" bao kv put -mount=secret e2e/llm value=-' >/dev/null
+
+# kubectl port-forward on a free local port; prints the port.
+port_forward() {
+  local logf="$work/port-forward-$RANDOM.log" p
+  timeout 1800 kubectl --kubeconfig "$kubeconfig" --context "$ctx" -n "$1" port-forward "$2" ":$3" >"$logf" 2>&1 &
+  echo "$!" >>"$work/port-forward.pids"
+  for _ in $(seq 1 100); do
+    p="$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9]*\) .*/\1/p' "$logf" | head -n1)"
+    if [ -n "$p" ]; then echo "$p"; return 0; fi
+    sleep 0.2
+  done
+  fail "port-forward to $1/$2 did not start: $(cat "$logf")"
+}
+# The leak matrix's seeds go into OpenBao before scrim starts, so it loads
+# them like the secrets above (TestMatrixKubernetes, seed step).
+bao_port="$(port_forward scrim-e2e deploy/openbao 8200)"
+(cd "$root" && SCRIM_MATRIX_K8S_PHASE=seed SCRIM_MATRIX_K8S_SEEDS="$work/matrix-seeds.json" \
+  SCRIM_MATRIX_K8S_BAO="http://127.0.0.1:$bao_port" SCRIM_MATRIX_K8S_BAO_TOKEN="$bao_token" \
+  go test -count=1 -timeout 5m -run '^TestMatrixKubernetes$' ./test/e2e/matrix/ >/dev/null) || fail "could not write the leak matrix seeds"
+xargs -r kill <"$work/port-forward.pids" 2>/dev/null || true
+: >"$work/port-forward.pids"
 
 # ---------------------------------------------------------------- chart
 
@@ -337,6 +362,18 @@ for mode in central sidecar; do
   fi
   pass "$mode: refused toward an unbound host"
 done
+
+log "leak matrix (test/e2e/matrix, TestMatrixKubernetes)"
+fake_port="$(port_forward scrim-e2e svc/fakeprovider 18089)"
+central_port="$(port_forward scrim deploy/scrim 9790)"
+sidecar_port="$(port_forward agents pod/agent-sidecar 9790)"
+(cd "$root" && SCRIM_MATRIX_K8S_SEEDS="$work/matrix-seeds.json" SCRIM_MATRIX_K8S_FAKE="http://127.0.0.1:$fake_port" \
+  SCRIM_MATRIX_K8S_TARGETS="central=http://127.0.0.1:$central_port,sidecar=http://127.0.0.1:$sidecar_port" \
+  SCRIM_MATRIX_K8S_APIS="central=anthropic-messages,sidecar=openai-chat" \
+  go test -count=1 -timeout 25m -run '^TestMatrixKubernetes$' -v ./test/e2e/matrix/) || fail "leak matrix in the cluster"
+pass "leak matrix through the central scrim and the sidecar: zero gated leaks"
+xargs -r kill <"$work/port-forward.pids" 2>/dev/null || true
+: >"$work/port-forward.pids"
 
 log "logs and admission"
 logs="$(k -n scrim logs deploy/scrim --tail=-1; k -n agents logs agent-sidecar -c scrim --tail=-1)"

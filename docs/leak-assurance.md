@@ -259,6 +259,67 @@ grown. Lower-case base32, look-alike Unicode, spelling alphabets, compression, t
 and ciphers beyond rot13 and rot47 are not decoded: none is a common shell tool's output, and each
 is either unbounded work or an alphabet that cannot be delimited in ordinary text.
 
+## End-to-end matrix
+
+`scrim audit run` checks one proxy URL. The end-to-end matrix (`test/e2e/matrix`, CI job
+`e2e-matrix`) runs the same gate through every way an agent's traffic reaches scrim, with the
+secrets in real stores and every provider route. Each cell starts the real `scrim proxy` with the
+real data plane, writes freshly generated seeds into the cell's store (and, for a cloud route, the
+cloud credentials scrim signs with), and runs an agent process that sends the matrix through its
+interception mode. The gate is the one above: every row at its expected outcome, zero gated leaks,
+no errors. Cells for the four native APIs run the scenario corpus as well. A cell also fails when a
+seed appears in scrim's own log.
+
+| Axis | Values |
+| --- | --- |
+| Interception mode | `run-base-url`: the agent runs under `scrim run` and uses the base URLs it sets. `run-forward-proxy`: under `scrim run`, the agent sends to the provider's own host through `HTTPS_PROXY`, trusting the CA bundle scrim run hands it. `transparent`: the agent has no configuration and connects to the provider's host on port 443; an nftables redirect in the test's network namespace sends it to the transparent listener, as `scrim install --transparent` does. `mcp-only`: the agent uses `scrim mcp` and sends its model requests to the provider itself. |
+| Store | `file`; `openbao` and `vault` (dev servers); `awssm` (AWS Secrets Manager on LocalStack). All but the file store run in rootless podman. |
+| Provider | `anthropic`, `openai-chat`, `openai-responses`, `gemini` (built-in routes); `bedrock` (SigV4 with a session token), `bedrock-mantle` (Bedrock API key), `anthropic-aws` (SigV4), `foundry` (API key), `foundry-entra` (Entra ID client credentials), `vertex` (service account) as cloud routes. |
+
+A cloud cell sends the Anthropic Messages rows in that provider's wire format (Bedrock InvokeModel,
+Vertex `rawPredict`, Foundry under `/anthropic`) to a fake of the provider that refuses any request
+scrim did not authenticate with the credentials from the store under test, and the cell fails on
+any unauthenticated request. The MCP-only cell lists the seeded secrets, generates one, captures
+one from a command's output and requests a grant, then sends every tool result to the provider: no
+tool result and nothing the provider received may hold a seeded, generated or captured value. On the
+read-only file store generation and capture must be refused.
+
+The full product is 4 modes x 4 stores x 10 providers. The matrix runs a covering design instead:
+provider `p` runs with store `s` in mode `(p + s) mod 3` of the three traffic modes, so every pair
+of values from two axes runs together at least once (`TestPlanCoversEveryPair` checks it), plus one
+MCP-only cell per store: 44 cells, one CI job of 11 per store.
+
+| Provider | `file` | `openbao` | `vault` | `awssm` |
+| --- | --- | --- | --- | --- |
+| `anthropic` | base URL | forward proxy | transparent | base URL |
+| `openai-chat` | forward proxy | transparent | base URL | forward proxy |
+| `openai-responses` | transparent | base URL | forward proxy | transparent |
+| `gemini` | base URL | forward proxy | transparent | base URL |
+| `bedrock` | forward proxy | transparent | base URL | forward proxy |
+| `bedrock-mantle` | transparent | base URL | forward proxy | transparent |
+| `anthropic-aws` | base URL | forward proxy | transparent | base URL |
+| `foundry` | forward proxy | transparent | base URL | forward proxy |
+| `foundry-entra` | transparent | base URL | forward proxy | transparent |
+| `vertex` | base URL | forward proxy | transparent | base URL |
+| (none) | MCP only | MCP only | MCP only | MCP only |
+
+In Kubernetes, `test/k8s/e2e.sh` (CI job `e2e-matrix-kubernetes`) runs the matrix through the
+chart's central scrim (Anthropic Messages) and an agent pod's sidecar (OpenAI Chat Completions) on
+kind, with the seeds in the cluster's OpenBao, which scrim reads with its own service account token.
+The edge forwarder's own end-to-end test is `test/k8s/edge-e2e.sh`.
+
+```sh
+test/e2e/matrix/run.sh openbao            # the 11 cells of one store
+SCRIM_MATRIX_CELLS="transparent/vault/bedrock mcp-only/vault" test/e2e/matrix/run.sh vault
+```
+
+Not in the matrix: the eBPF connect hooks land on the same transparent listener, and
+`just ebpf-install-vm-test` runs scrim behind them in a VM; DNS override mode is covered by
+`just service-transparent-test`. The other stores have no local server or emulator here (Google
+Secret Manager, Azure Key Vault, Infisical, Vaultwarden, 1Password, Doppler, Bitwarden Secrets
+Manager): their adapters run the conformance suite against fakes or containers in the store jobs,
+and they reach the data plane through the same redaction set as the stores above.
+
 ## Known limitations
 
 These are outside what scrim protects. The matrix runs a row for each one it can express, marked

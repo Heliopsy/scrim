@@ -545,6 +545,105 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: test/k8s/edge-e2e.sh
 
+  # The end-to-end matrix (tasks.md 16.1, test/e2e/matrix): real traffic from
+  # an agent process through each interception mode into the real scrim proxy
+  # and data plane, the seeds in a real store, every provider route, and the
+  # leak suite's gate per cell. One job per store, each running a slice of a
+  # covering design over modes x stores x providers (docs/leak-assurance.md,
+  # "End-to-end matrix"). GitHub-hosted: the store servers run in rootless
+  # podman (scrim-matrix-*) and the cells in test/e2e/sandbox.sh, whose user
+  # and network namespaces the ho-z10 pods do not allow.
+  e2e-matrix:
+    name: E2E matrix (${{ matrix.store }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        store: [file, openbao, vault, awssm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - run: rustup toolchain install && cargo --version
+        working-directory: dataplane
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          workspaces: dataplane
+          save-if: false
+      - name: Allow unprivileged user namespaces, install nft
+        run: |
+          set -euo pipefail
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          command -v nft >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends nftables; }
+          podman version --format '{{.Client.Version}}'
+      - name: Cells of the ${{ matrix.store }} store
+        env:
+          STORE: ${{ matrix.store }}
+          SCRIM_MATRIX_RESULTS: ${{ runner.temp }}/matrix-results
+        run: test/e2e/matrix/run.sh "$STORE"
+      - name: Upload the cell results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: e2e-matrix-${{ matrix.store }}
+          path: ${{ runner.temp }}/matrix-results
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Remove leftover containers
+        if: always()
+        run: |
+          podman ps -a --filter name=scrim-matrix- --format '{{.Names}}'
+          podman ps -aq --filter name=scrim-matrix- | xargs -r podman rm -f -v
+          podman volume prune -f
+
+  # The Kubernetes cell of the end-to-end matrix: test/k8s/e2e.sh (the chart,
+  # Calico, Kyverno, OpenBao and the fake provider on kind) ends with the
+  # bypass matrix through the central scrim and an agent pod's sidecar, the
+  # seeds in the cluster's OpenBao. Images are built with podman from this
+  # commit (the data plane too); kind runs its node on the runner's Docker, as
+  # in the edge job.
+  e2e-matrix-kubernetes:
+    name: E2E matrix (Kubernetes on kind)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Set up rustup
+        run: scripts/ci-setup-rust.sh
+      - name: Install musl tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends musl-tools
+      - name: Build the data plane
+        env:
+          SCRIM_RELEASE_NO_AUDITABLE: "1"
+          CARGO_TARGET_DIR: ${{ runner.temp }}/target
+        run: |
+          set -euo pipefail
+          scripts/release/dataplane.sh linux-amd64 internal/dataplane/embedded/scrim-dataplane
+          rm -rf "$CARGO_TARGET_DIR"
+      - name: Install tools
+        run: |
+          set -euo pipefail
+          deploy/helm/scrim/ci/tools.sh "$RUNNER_TEMP/tools" >/dev/null
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - name: e2e.sh
+        env:
+          KIND_EXPERIMENTAL_PROVIDER: docker
+          TMPDIR: ${{ runner.temp }}
+        run: test/k8s/e2e.sh
+
   # GitHub-hosted: test/e2e/sandbox.sh needs unprivileged user and network
   # namespaces, which the ho-z10 pods do not allow. Real curl, git (with git
   # http-backend behind TLS), Node.js fetch and Python requests under
