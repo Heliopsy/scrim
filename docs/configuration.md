@@ -375,6 +375,7 @@ is out of date.
 | [`ratelimit.backend`](#ratelimitbackend) | string | `local` | restart required |
 | [`ratelimit.valkey.prefix`](#ratelimitvalkeyprefix) | string | `scrim:rl:` | restart required |
 | [`redaction.allow-empty-targets`](#redactionallow-empty-targets) | bool | `false` | restart required |
+| [`redaction.limit-to-agent-identity`](#redactionlimit-to-agent-identity) | bool | `false` | restart required |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
 | [`restore.allow-reveal-credentials`](#restoreallow-reveal-credentials) | list | `[]` | hot |
@@ -2456,6 +2457,19 @@ Start even when a store's redact target matches no secret on the first load. Off
 | Type | bool |
 | Default | `false` |
 | Environment | `SCRIM_REDACTION_ALLOW_EMPTY_TARGETS` |
+| Flag | none |
+| Reload | restart required |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `redaction.limit-to-agent-identity`
+
+Leave out of the redaction of an agent's provider requests the values that agent's own store identity cannot read. Off (the default), the redaction set is loaded with each store's own credentials and covers every value, whatever each agent may use, so a value an agent reads by accident is still redacted. On, scrim checks each value of a store with per-agent identity (identity.store-credentials) as each such agent, and the provider requests of that agent's `scrim run` sessions are no longer redacted for the values its store refused it. Kubernetes callers, peers, the tool proxy and every value not yet checked keep the whole redaction set.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_REDACTION_LIMIT_TO_AGENT_IDENTITY` |
 | Flag | none |
 | Reload | restart required |
 | Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |

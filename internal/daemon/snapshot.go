@@ -64,6 +64,10 @@ type SnapshotBuilder struct {
 	// Labels composes the labels rules see for a value from the labels its
 	// store reported (stores.Set.Labels); nil sends store.name only.
 	Labels func(ref stores.Ref, native map[string]string) map[string]string
+	// RedactionScopes narrows the redaction of some sessions, from the
+	// entries of the snapshot being built; nil (the default, and always
+	// unless redaction.limit-to-agent-identity is on) sends none.
+	RedactionScopes func(values []*pb.ValueEntry) []*pb.RedactionScope
 
 	mu   sync.Mutex
 	keys *placeholder.Ring
@@ -229,6 +233,9 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 	snap.ValueLabels = true
 	snap.Values = b.values(cat, keys)
 	b.bindProviderRefs(snap.Routes)
+	if b.RedactionScopes != nil {
+		snap.RedactionScopes = b.RedactionScopes(snap.Values)
+	}
 	snap.Unavailable = unavailable(cat, snap.Values)
 	for _, u := range snap.Unavailable {
 		if r, err := stores.ParseRef(u.GetRef()); err == nil {

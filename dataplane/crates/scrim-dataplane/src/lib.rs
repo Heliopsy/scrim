@@ -43,6 +43,7 @@ pub mod inherit;
 pub mod listeners;
 pub mod metrics;
 pub mod policy;
+pub mod scopes;
 pub mod server;
 pub mod settings;
 pub mod snapshot;

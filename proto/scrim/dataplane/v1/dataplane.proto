@@ -155,6 +155,31 @@ message Snapshot {
   // empty map is a value without such labels. False (an older control
   // plane) means no labels were sent, and `secret.labels` is unknown.
   bool value_labels = 13;
+  // redaction_scopes narrow the redaction set for some callers, written only
+  // while the weakening setting `redaction.limit-to-agent-identity` is on
+  // (agent-identity spec, "Redaction coverage is separate from use"). Empty,
+  // every caller's traffic is redacted with the whole dictionary. A data
+  // plane that does not know the field redacts with the whole dictionary,
+  // which is the safe side.
+  repeated RedactionScope redaction_scopes = 14;
+}
+
+// RedactionScope is the redaction set of one agent's sessions: the whole
+// dictionary minus the values whose store refused that agent's own identity.
+// It applies to provider requests on the LLM proxy only; every other path
+// redacts with the whole dictionary.
+message RedactionScope {
+  // agent names the agent, for logs. Safe to log.
+  string agent = 1;
+  // sessions are the session ids this scope applies to. A request is in the
+  // scope only when it carried the session's token, checked against the
+  // token of that id among the values of store `scrim-sessions` (reference
+  // `store:scrim-sessions`); a bare session id, a token of another session,
+  // a peer or a Kubernetes caller gets the whole dictionary.
+  repeated string sessions = 2;
+  // exempt_refs are references whose entries are left out of the redactor
+  // and the guard for these sessions. Safe to log.
+  repeated string exempt_refs = 3;
 }
 
 // CaCertificate is one generation of the tool-proxy CA.

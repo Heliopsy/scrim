@@ -572,12 +572,45 @@ refused for it.
 
 ### Requirement: Redaction coverage is separate from use
 
-The redaction set SHALL be loaded with scrim's own read identity and SHALL cover secrets the agent
-cannot use, so a value an agent sees by accident is still redacted. Per-agent identities SHALL govern
-use and writes only. A stricter option SHALL limit the redaction set to what the agent's identity can
-read, and SHALL be reported as weakening.
+The redaction set SHALL be loaded with scrim's own read identity, the credentials of each store
+instance, and SHALL cover secrets the agent cannot use, so a value an agent sees by accident is still
+redacted. Per-agent identities SHALL govern use and writes only and SHALL never load the redaction
+set. A stricter option SHALL limit the redaction set to what the agent's identity can read, and
+SHALL be reported as weakening.
 
 #### Scenario: Agent reads a file with someone else's secret
 
 - **WHEN** an agent without access to `prod/payments` reads a log containing its value
 - **THEN** the value is still redacted before reaching the provider
+
+#### Scenario: Redaction never uses the agent's identity
+
+- **WHEN** store `bao` has a static credential for agent `agent-a` whose policy reads only
+  `kv/agents/a`, scrim's own `bao` credential reads `kv/prod/payments` and `kv/agents/a`, and both
+  are redact targets
+- **THEN** both values are loaded with scrim's credential and redacted from `agent-a`'s provider
+  requests
+
+### Requirement: Stricter per-agent redaction is weakening
+
+The stricter option, `redaction.limit-to-agent-identity`, SHALL be off by default and reported as
+weakening in logs, `scrim status` and `scrim doctor`. It SHALL leave out only values the store
+refused that agent's identity, and only for provider requests carrying a token of that agent's
+session; every other caller and path SHALL keep the whole redaction set.
+
+#### Scenario: Stricter option narrows only proven sessions
+
+- **WHEN** `redaction.limit-to-agent-identity` is on and OpenBao refuses `agent-a`'s credential
+  for `kv/prod/payments`
+- **THEN** a provider request from a session of `agent-a` that carries its token is not redacted
+  for the payments value and is still redacted for `kv/agents/a`
+- **AND** the same request with no session, a bare session id or a token of that session id with
+  another secret is redacted for both
+- **AND** start-up logs a warning naming the setting, and `scrim status` and `scrim doctor` report
+  it as weakened
+
+#### Scenario: Unknown answers stay redacted
+
+- **WHEN** `redaction.limit-to-agent-identity` is on and the check of a value as `agent-a` fails or
+  has not run yet
+- **THEN** the value is redacted from `agent-a`'s sessions

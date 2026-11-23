@@ -170,7 +170,8 @@ fn strip(headers: &mut HeaderMap, names: &[&str]) {
 }
 
 /// Runs the snapshot's request gate, if any. Returns the snapshot the request uses from here
-/// on: the same one with the restore policy bound to this request's caller.
+/// on: the same one with the restore policy bound to this request's caller, and the caller's
+/// narrower redactor and guard when the gate returned them.
 async fn admit(
     snap: Arc<Snapshot>,
     route: &Route,
@@ -186,9 +187,13 @@ async fn admit(
         extensions: &parts.extensions,
     };
     match gate.admit(info).await {
-        Admission::Forward { policy } => {
+        Admission::Forward { policy, redaction } => {
             let mut s = (*snap).clone();
             s.policy = policy;
+            if let Some(r) = redaction {
+                s.redactor = r.redactor;
+                s.guard = r.guard;
+            }
             s.gate = None;
             Ok(Arc::new(s))
         }

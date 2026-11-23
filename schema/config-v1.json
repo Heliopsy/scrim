@@ -1953,6 +1953,14 @@
           "x-scrim-restart-required": true,
           "x-scrim-weakening": true
         },
+        "limit-to-agent-identity": {
+          "default": false,
+          "description": "Leave out of the redaction of an agent's provider requests the values that agent's own store identity cannot read. Off (the default), the redaction set is loaded with each store's own credentials and covers every value, whatever each agent may use, so a value an agent reads by accident is still redacted. On, scrim checks each value of a store with per-agent identity (identity.store-credentials) as each such agent, and the provider requests of that agent's `scrim run` sessions are no longer redacted for the values its store refused it. Kubernetes callers, peers, the tool proxy and every value not yet checked keep the whole redaction set.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_REDACTION_LIMIT_TO_AGENT_IDENTITY",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": true
+        },
         "min-value-length": {
           "default": 8,
           "description": "Shortest value matched in free text; shorter values are matched only in exact and encoded forms.",

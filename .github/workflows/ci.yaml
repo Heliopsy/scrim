@@ -255,8 +255,9 @@ jobs:
       - run: podman version
       - run: rustup toolchain install && cargo build --locked -p scrim-dataplane
         working-directory: dataplane
+      # Also the redaction identity end to end against OpenBao (12.2d).
       - name: Proxies and tool against real servers, daemon end to end
-        run: go test -race -count=1 -timeout 20m -v ./internal/dbproxy/ ./internal/daemon/ -run 'TestPostgres|TestMySQL|TestQueryTool|TestPrepare|TestDatabaseProxy'
+        run: go test -race -count=1 -timeout 20m -v ./internal/dbproxy/ ./internal/daemon/ -run 'TestPostgres|TestMySQL|TestQueryTool|TestPrepare|TestDatabaseProxy|TestEndToEndRealDataPlaneRedactionIdentity'
         env:
           SCRIM_TEST_PODMAN: "1"
           SCRIM_TEST_CONTAINER_PREFIX: scrim-db

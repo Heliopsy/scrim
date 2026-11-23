@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package plugin delivers approval requests through out-of-process notifier
-// plugins (design D15, docs/plugins.md), configured in the `notify.plugins`
+// plugins (design D17, docs/plugins.md), configured in the `notify.plugins`
 // collection:
 //
 //	notify:

@@ -482,7 +482,25 @@ Role names, ARNs, client and identity IDs are templates over `{agent}`, `{agent_
 - **Writes.** The gate checks reads (inject and restore). Of the stores above only OpenBao, Vault
   and Google can check a write without performing it; the others report it as unsupported.
 
-### D15. Plugins are processes speaking the boundary protocol over an inherited socket
+Redaction reads with its own identity: the refreshers load `redact` targets with each store
+instance's credentials, and nothing in the per-agent path (store login, static credentials, the
+token exchange to come) touches them. The stricter option, `redaction.limit-to-agent-identity`
+(weakening), is built at that boundary instead of in the refreshers. `internal/redactscope` asks an
+`AgentReader` whether each agent's own identity can read each value of the redaction set; the
+static credentials of `internal/agentstore` implement it with `sys/capabilities-self`, and a
+federated per-agent identity implements the same two methods. Answers are cached for five minutes
+and computed off the snapshot path; anything unknown stays redacted. The snapshot carries
+`redaction_scopes` (an additive field, protocol 1): per agent, its live session ids and the
+references it cannot read. The data plane builds one more redaction core per scope, without those
+entries and with the same entry ids, and the LLM gate swaps the redactor and guard for a request
+whose session token matches a token of that id among the `scrim-sessions` values it already holds
+for redaction. A data plane that ignores the field, a caller without a verified session, the tool
+proxy and every other path keep the whole dictionary, so every gap falls on the redacting side.
+Alternatives: per-agent dictionaries loaded with each agent's identity would need a refresher per
+agent and store and would put agent credentials on the redaction path; filtering matches in the
+redaction core would make the guard and the redactor share a caller-dependent rule.
+
+### D17. Plugins are processes speaking the boundary protocol over an inherited socket
 
 A store or notifier plugin is a separate executable scrim starts with one end of a socketpair as fd 3
 and talks gRPC to, schema in `proto/scrim/plugin/v1`, the same shape as the data plane boundary

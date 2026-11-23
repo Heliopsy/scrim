@@ -91,6 +91,35 @@ pub struct Snapshot {
     /// plane) means no labels were sent, and `secret.labels` is unknown.
     #[prost(bool, tag = "13")]
     pub value_labels: bool,
+    /// redaction_scopes narrow the redaction set for some callers, written only
+    /// while the weakening setting `redaction.limit-to-agent-identity` is on
+    /// (agent-identity spec, "Redaction coverage is separate from use"). Empty,
+    /// every caller's traffic is redacted with the whole dictionary. A data
+    /// plane that does not know the field redacts with the whole dictionary,
+    /// which is the safe side.
+    #[prost(message, repeated, tag = "14")]
+    pub redaction_scopes: ::prost::alloc::vec::Vec<RedactionScope>,
+}
+/// RedactionScope is the redaction set of one agent's sessions: the whole
+/// dictionary minus the values whose store refused that agent's own identity.
+/// It applies to provider requests on the LLM proxy only; every other path
+/// redacts with the whole dictionary.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RedactionScope {
+    /// agent names the agent, for logs. Safe to log.
+    #[prost(string, tag = "1")]
+    pub agent: ::prost::alloc::string::String,
+    /// sessions are the session ids this scope applies to. A request is in the
+    /// scope only when it carried the session's token, checked against the
+    /// token of that id among the values of store `scrim-sessions` (reference
+    /// `store:scrim-sessions`); a bare session id, a token of another session,
+    /// a peer or a Kubernetes caller gets the whole dictionary.
+    #[prost(string, repeated, tag = "2")]
+    pub sessions: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// exempt_refs are references whose entries are left out of the redactor
+    /// and the guard for these sessions. Safe to log.
+    #[prost(string, repeated, tag = "3")]
+    pub exempt_refs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 /// CaCertificate is one generation of the tool-proxy CA.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
