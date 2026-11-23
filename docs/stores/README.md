@@ -102,7 +102,11 @@ Credential fields (`token`, `role-id`, `secret-id`, `client-id`, `client-secret`
 `unlock`, `age-identity`, `credentials`, `certificate`, `access-key-id`, `secret-access-key`, `jwt`)
 take a reference instead of a literal: `env:NAME`, `file:/path`, `cred:NAME` (a systemd credential),
 or a reference into another configured store. They are resolved at start; a reference that cannot be
-resolved stops start-up, and no store is contacted with an empty credential. `scrim config show`
+resolved stops start-up, and no store is contacted with an empty credential. A reference into
+another store is read through that store each time this one logs in, so it follows rotation there.
+It cannot name the store itself (by name or alias) or a store that is not configured, and a chain of
+such references cannot lead back to a store already in it (`bao` reading its token from `doppler`
+whose token is in `bao`); the configuration is rejected naming the field or the cycle. `scrim config show`
 masks them. A literal still works, but scrim logs a warning naming the field. scrim also adds the
 credentials it holds, and the session tokens a store issues at login, to the redaction set.
 

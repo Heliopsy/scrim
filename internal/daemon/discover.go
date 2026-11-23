@@ -21,6 +21,8 @@ import (
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/policy"
+	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/storeconfig"
 )
 
 type policyRuleSet = policy.RuleSet
@@ -124,7 +126,14 @@ func adminGet(ctx context.Context, cfg *config.Config, path string) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	if tok, ok := cfg.Secret(AdminToken); ok {
+	// A client builds its configuration without stores: an admin.token
+	// given as a store reference is read from its store here.
+	rcfg, done, err := storeconfig.Resolved(ctx, cfg, stores.DefaultRegistry, AdminToken.Name())
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	if tok, ok := rcfg.Secret(AdminToken); ok {
 		_ = tok.Expose(func(b []byte) error { req.Header.Set("Authorization", "Bearer "+string(b)); return nil })
 	}
 	resp, err := hc.Do(req)

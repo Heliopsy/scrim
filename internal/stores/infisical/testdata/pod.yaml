@@ -45,5 +45,9 @@ spec:
           value: http://localhost:8080
         - name: TELEMETRY_ENABLED
           value: "false"
+        # OIDC Auth fetches discovery from scrim's identity issuer, which
+        # the agent OIDC test serves on the host's address.
+        - name: ALLOW_INTERNAL_IP_CONNECTIONS
+          value: "true"
       ports:
         - containerPort: 8080

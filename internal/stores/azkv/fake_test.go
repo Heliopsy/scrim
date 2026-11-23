@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -68,6 +69,14 @@ type fake struct {
 	// echoValue makes a refused PUT quote the value back in its message.
 	echoValue bool
 	pageSize  int
+
+	// Agents' own identities: a token issued for an accepted assertion in
+	// agentReads may read only secrets whose name starts with its prefix
+	// (403 otherwise, as an RBAC role scoped to them would answer).
+	// forms keeps every token request's form.
+	agentReads  map[string]string
+	tokenPrefix map[string]string
+	forms       []url.Values
 }
 
 type fakeVersion struct {
@@ -92,6 +101,9 @@ func newFake(t *testing.T) *fake {
 		secrets:    map[string][]*fakeVersion{},
 		deleted:    map[string]bool{},
 		pageSize:   25,
+
+		agentReads:  map[string]string{},
+		tokenPrefix: map[string]string{},
 	}
 	f.clientSecret = "cs-" + randHex(12)
 	f.miHeader = "mi-" + randHex(8)
@@ -191,6 +203,7 @@ func (f *fake) token(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.tokenReqs++
+	f.forms = append(f.forms, r.PostForm)
 	f.scopes = append(f.scopes, r.PostForm.Get("scope"))
 	bad := func(code, desc string) {
 		w.Header().Set("Content-Type", "application/json")
@@ -229,7 +242,11 @@ func (f *fake) token(w http.ResponseWriter, r *http.Request) {
 		bad("invalid_request", "AADSTS900144: The request body must contain client_secret or client_assertion.")
 		return
 	}
-	f.writeJSON(w, map[string]any{"token_type": "Bearer", "expires_in": 3600, "ext_expires_in": 3600, "access_token": f.issue()})
+	tok := f.issue()
+	if p, ok := f.agentReads[r.PostForm.Get("client_assertion")]; ok {
+		f.tokenPrefix[tok] = p
+	}
+	f.writeJSON(w, map[string]any{"token_type": "Bearer", "expires_in": 3600, "ext_expires_in": 3600, "access_token": tok})
 }
 
 func (f *fake) managedIdentity(w http.ResponseWriter, r *http.Request) {
@@ -296,6 +313,10 @@ func (f *fake) vault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	seg := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if p, ok := f.tokenPrefix[tok]; ok && (len(seg) < 2 || !strings.HasPrefix(seg[1], p)) {
+		f.kvError(w, http.StatusForbidden, "Forbidden", "Caller is not authorized to perform action on resource.", "ForbiddenByRbac")
+		return
+	}
 	switch {
 	case len(seg) == 1 && r.Method == http.MethodGet:
 		f.list(w, r)

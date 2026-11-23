@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,8 +24,8 @@ import (
 // running control plane through the admin API (admin.url), which identifies
 // the operator from the connection.
 
-func adminClient(e *Env) (*approval.Client, error) {
-	cfg, err := e.Config()
+func adminClient(ctx context.Context, e *Env) (*approval.Client, error) {
+	cfg, err := e.resolvedConfig(ctx, daemon.AdminToken.Name())
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +83,7 @@ func decideCommand(e *Env, approve bool) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o := &outWriter{w: e.Stdout}
-			cl, err := adminClient(e)
+			cl, err := adminClient(cmd.Context(), e)
 			if err != nil {
 				return err
 			}
@@ -131,7 +132,7 @@ func (Commands) Approvals(e *Env) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o := &outWriter{w: e.Stdout}
-			cl, err := adminClient(e)
+			cl, err := adminClient(cmd.Context(), e)
 			if err != nil {
 				return err
 			}
@@ -167,7 +168,7 @@ func (Commands) Approvals(e *Env) *cobra.Command {
 		Short: "Show one approval",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cl, err := adminClient(e)
+			cl, err := adminClient(cmd.Context(), e)
 			if err != nil {
 				return err
 			}
@@ -226,7 +227,7 @@ func (Commands) Grants(e *Env) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o := &outWriter{w: e.Stdout}
-			cl, err := adminClient(e)
+			cl, err := adminClient(cmd.Context(), e)
 			if err != nil {
 				return err
 			}
@@ -265,7 +266,7 @@ func (Commands) Grants(e *Env) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o := &outWriter{w: e.Stdout}
-			cl, err := adminClient(e)
+			cl, err := adminClient(cmd.Context(), e)
 			if err != nil {
 				return err
 			}
@@ -292,7 +293,7 @@ func (Commands) DenyAll(e *Env) *cobra.Command {
 		ValidArgs: []string{"on", "off", "status"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o := &outWriter{w: e.Stdout}
-			cl, err := adminClient(e)
+			cl, err := adminClient(cmd.Context(), e)
 			if err != nil {
 				return err
 			}

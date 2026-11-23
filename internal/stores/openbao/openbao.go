@@ -72,8 +72,8 @@ type Adapter struct {
 	// (Vault), so List stops trying it.
 	detailed atomicBool
 	jitter   func(time.Duration) time.Duration
-	// agents caches Kubernetes passthrough logins (agent.go).
-	agents agentLogins
+	// agents caches the logins of agents' own identities (agent.go).
+	agents *vaultapi.AgentLogins
 	// mounts caches mount information for labels (labels.go).
 	mounts vaultapi.MountCache
 }
@@ -88,7 +88,7 @@ func New(inst stores.Instance) (*Adapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &Adapter{c: c, opts: opts, jitter: defaultJitter}
+	a := &Adapter{c: c, opts: opts, jitter: defaultJitter, agents: vaultapi.NewAgentLogins()}
 	a.detailed.Store(true)
 	return a, nil
 }
@@ -104,7 +104,7 @@ func (a *Adapter) Credentials() []secret.Value { return a.c.Credentials() }
 
 // Close implements stores.Adapter.
 func (a *Adapter) Close() error {
-	a.agents.close()
+	a.agents.Close()
 	a.c.Close()
 	return nil
 }

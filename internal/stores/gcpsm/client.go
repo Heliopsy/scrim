@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/heliopsy/scrim/internal/secret"
@@ -88,6 +89,17 @@ func classify(status int, body []byte, involved []secret.Value) *apiError {
 // are validated names that need no escaping. involved are values the
 // request carries, kept out of messages.
 func (c *client) do(ctx context.Context, method, path string, q url.Values, body *wire.Body, involved []secret.Value) ([]byte, error) {
+	tok, err := c.auth.token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tok.Wipe()
+	return c.doAs(ctx, tok, method, path, q, body, involved)
+}
+
+// doAs is [client.do] with the access token tok, which stays the
+// caller's: an agent's own token (agent.go) or scrim's.
+func (c *client) doAs(ctx context.Context, tok secret.Value, method, path string, q url.Values, body *wire.Body, involved []secret.Value) ([]byte, error) {
 	u := *c.base
 	u.Path = strings.TrimRight(u.Path, "/") + "/v1/" + path
 	if q != nil {
@@ -107,17 +119,12 @@ func (c *client) do(ctx context.Context, method, path string, q url.Values, body
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
-	tok, err := c.auth.token(ctx)
-	if err != nil {
-		return nil, err
-	}
 	_ = tok.Expose(func(b []byte) error {
 		// net/http takes the header as a string; it lives for this
 		// request only.
 		req.Header.Set("Authorization", "Bearer "+string(b))
 		return nil
 	})
-	tok.Wipe()
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, &apiError{kind: stores.ErrUnavailable, msg: "store unreachable", cause: scrubURLError(err)}
@@ -130,7 +137,7 @@ func (c *client) do(ctx context.Context, method, path string, q url.Values, body
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return b, nil
 	}
-	e := classify(resp.StatusCode, b, involved)
+	e := classify(resp.StatusCode, b, append(slices.Clone(involved), tok))
 	secret.WipeBytes(b)
 	return nil, e
 }

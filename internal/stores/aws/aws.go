@@ -28,6 +28,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/internal/agentcache"
 )
 
 // Adapter kinds this package registers. They are also the label prefixes:
@@ -55,6 +56,9 @@ type base struct {
 	kind string
 	s    *settings
 	c    *client
+	// agents caches the roles agents assumed with their own identity
+	// (agent.go).
+	agents *agentcache.Cache[*agentCreds]
 }
 
 // Name implements stores.Adapter.
@@ -72,6 +76,7 @@ func (b *base) Credentials() []secret.Value { return b.c.credentials() }
 
 // Close implements stores.Adapter.
 func (b *base) Close() error {
+	b.agents.Close()
 	b.c.close()
 	return nil
 }

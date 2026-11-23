@@ -252,6 +252,12 @@ func (c *client) call(ctx context.Context, op string, body *wire.Body, sensitive
 	if err := c.setup(ctx); err != nil {
 		return nil, err
 	}
+	return c.callWith(ctx, c.creds, op, body, sensitive)
+}
+
+// callWith is call signed with the credentials creds provides (an agent's
+// own assumed role). setup must have run.
+func (c *client) callWith(ctx context.Context, creds sdkaws.CredentialsProvider, op string, body *wire.Body, sensitive bool) ([]byte, error) {
 	h := sha256.New()
 	_, _ = io.Copy(h, body.Reader())
 	hash := hex.EncodeToString(h.Sum(nil))
@@ -262,7 +268,7 @@ func (c *client) call(ctx context.Context, op string, body *wire.Body, sensitive
 				return nil, &apiError{kind: stores.ErrUnavailable, msg: "cancelled while retrying", cause: err}
 			}
 		}
-		b, err, retry := c.once(ctx, op, body, hash, sensitive)
+		b, err, retry := c.once(ctx, creds, op, body, hash, sensitive)
 		if err == nil {
 			return b, nil
 		}
@@ -274,7 +280,7 @@ func (c *client) call(ctx context.Context, op string, body *wire.Body, sensitive
 	return nil, last
 }
 
-func (c *client) once(ctx context.Context, op string, body *wire.Body, hash string, sensitive bool) ([]byte, error, bool) {
+func (c *client) once(ctx context.Context, creds sdkaws.CredentialsProvider, op string, body *wire.Body, hash string, sensitive bool) ([]byte, error, bool) {
 	actx, cancel := context.WithTimeout(ctx, c.s.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(actx, http.MethodPost, c.endpoint+"/", body.Reader())
@@ -284,7 +290,7 @@ func (c *client) once(ctx context.Context, op string, body *wire.Body, hash stri
 	req.ContentLength = int64(body.Len())
 	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
 	req.Header.Set("X-Amz-Target", c.target+"."+op)
-	cr, err := c.creds.Retrieve(actx)
+	cr, err := creds.Retrieve(actx)
 	if err != nil {
 		kind, retry := stores.ErrPermission, false
 		var ne net.Error

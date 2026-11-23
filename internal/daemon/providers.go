@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/heliopsy/scrim/internal/app"
 	"github.com/heliopsy/scrim/internal/config"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
 	"github.com/heliopsy/scrim/internal/stores"
@@ -346,6 +347,33 @@ func (p CloudProvider) Route() *pb.Route {
 		r.Auth.Kind = &pb.RouteAuth_AwsSigv4{AwsSigv4: s}
 	}
 	return r
+}
+
+func init() { app.AddRedactRefs(providerStoreRefs) }
+
+// providerStoreRefs lists the credential references of every cloud
+// provider. Each is a redact target of its store, so the value is loaded
+// with the store, refreshed with it and in the snapshot for the route.
+func providerStoreRefs(cfg *config.Config) []string {
+	var out []string
+	for _, p := range CloudProviders(cfg) {
+		for _, r := range p.Refs() {
+			out = append(out, r.String())
+		}
+	}
+	return out
+}
+
+// refFields are the provider's credential references by field name.
+func (p CloudProvider) refFields() map[string]stores.Ref {
+	out := map[string]stores.Ref{}
+	for f, r := range map[string]stores.Ref{pfAccessKeyID: p.AccessKeyID, pfSecretAccessKey: p.SecretAccessKey,
+		pfSessionToken: p.SessionToken, pfAPIKey: p.APIKey, pfServiceAccount: p.ServiceAccount, pfClientSecret: p.ClientSecret} {
+		if !r.IsZero() {
+			out[f] = r
+		}
+	}
+	return out
 }
 
 // Refs are the store references the provider authenticates with.

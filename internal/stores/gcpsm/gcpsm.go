@@ -41,6 +41,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/internal/agentcache"
 	"github.com/heliopsy/scrim/internal/stores/internal/flatname"
 	"github.com/heliopsy/scrim/internal/stores/internal/poll"
 	"github.com/heliopsy/scrim/internal/stores/internal/wire"
@@ -77,6 +78,9 @@ type Adapter struct {
 	s     *settings
 	c     *client
 	names flatname.Mapper
+	// agents caches the access tokens agents' own identities were
+	// exchanged for (agent.go).
+	agents *agentcache.Cache[secret.Value]
 }
 
 var (
@@ -108,10 +112,11 @@ func newAdapter(inst stores.Instance, rt http.RoundTripper, iam string) (*Adapte
 		auth.iam = iam
 	}
 	return &Adapter{
-		name:  inst.Name,
-		s:     s,
-		c:     &client{base: s.endpoint, http: hc, auth: auth},
-		names: flatname.Mapper{Sep: s.sep, Valid: validIDByte, MaxLen: 255},
+		name:   inst.Name,
+		s:      s,
+		c:      &client{base: s.endpoint, http: hc, auth: auth},
+		names:  flatname.Mapper{Sep: s.sep, Valid: validIDByte, MaxLen: 255},
+		agents: agentcache.New(clone, secret.Value.Wipe),
 	}, nil
 }
 
@@ -138,6 +143,7 @@ func (a *Adapter) Credentials() []secret.Value { return a.c.auth.credentials() }
 // Close implements stores.Adapter.
 func (a *Adapter) Close() error {
 	a.c.auth.close()
+	a.agents.Close()
 	a.c.http.CloseIdleConnections()
 	return nil
 }
