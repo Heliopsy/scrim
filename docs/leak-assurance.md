@@ -371,6 +371,7 @@ identity and of test coverage.
 | The base85 family (ascii85, RFC 1924 base85) is not matched: its alphabet covers most printable text, so runs cannot be delimited cheaply. | `ascii85`, `base85` | none yet |
 | A value the agent splits across fields, tool results or requests (including server-side state such as `previous_response_id`) is not reassembled. | `split-blocks`, `split-tool-results`, `split-requests` | Fragment rules in the guard catch long halves; short values are not protected. |
 | Values shorter than the minimum length (default 8 bytes) are matched only whole and in their encoded forms, never as fragments. Truncations of short values pass as `repaired`. | truncation rows for short seeds | Raise the minimum only with care; `scrim status` lists short values. |
+| JSON text nested in JSON strings more deeply than `redaction.json_depth` (default 3) is not unescaped further. Backslashes written just before an escaped value pair with its own and count as one more level. | none | Set `redaction.json_depth` to 4 for deeper tool chains; the guard's fragment rule still catches a long half left readable at a shallower level. |
 | Transforms not in the matrix, and secrets unknown to every store and missed by the fallback detectors, are not protected. | none | Add stores for every secret source; report new transforms as issues so they become matrix rows. |
 
 Each release publishes its audit report, matrix results and fuzzing time; the summary lists every
