@@ -13,7 +13,26 @@ providers:
 ```
 
 scrim sends the key in the `api-key` header of each redacted request and drops the agent's
-`Authorization`, `api-key` and `x-api-key`. Microsoft Entra ID tokens are not minted by scrim yet.
+`Authorization`, `api-key` and `x-api-key`.
+
+## Microsoft Entra ID
+
+With an Entra ID application instead of a key, scrim mints access tokens with the client
+credentials grant (scope `https://ai.azure.com/.default`) and sends them as `Authorization: Bearer`:
+
+```yaml
+providers:
+  azure:
+    kind: foundry
+    resource: my-foundry-resource
+    tenant-id: 00000000-0000-0000-0000-000000000000
+    client-id: 11111111-1111-1111-1111-111111111111
+    client-secret: openbao://kv/azure/foundry#client_secret
+```
+
+The application needs the `Foundry User` or `Cognitive Services User` role on the resource.
+Tokens come from `https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/token`; `token-url`
+replaces it. Managed identities and workload identity federation are not supported yet.
 
 The route forwards the whole path to the resource origin, so the agent's base URL is the route
 plus `/anthropic`: `http://127.0.0.1:9790/azure/anthropic`.

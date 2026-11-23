@@ -188,7 +188,7 @@ func TestKubernetesLoginRenewsBeforeExpiry(t *testing.T) {
 	defer srv.Close()
 	a, _ := k8sAdapter(t, srv, jwt, nil)
 	now := time.Now()
-	a.c.now = func() time.Time { return now }
+	a.c.Now = func() time.Time { return now }
 
 	mustRead(t, a)
 	mustRead(t, a)
@@ -241,7 +241,7 @@ func TestKubernetesNonRenewableTokenIsReplaced(t *testing.T) {
 	defer srv.Close()
 	a, _ := k8sAdapter(t, srv, jwt, nil)
 	now := time.Now()
-	a.c.now = func() time.Time { return now }
+	a.c.Now = func() time.Time { return now }
 	mustRead(t, a)
 	now = now.Add(21 * time.Second)
 	mustRead(t, a)
@@ -260,7 +260,7 @@ func TestKubernetesRenewalFailureLogsIn(t *testing.T) {
 			defer srv.Close()
 			a, _ := k8sAdapter(t, srv, jwt, nil)
 			now := time.Now()
-			a.c.now = func() time.Time { return now }
+			a.c.Now = func() time.Time { return now }
 			mustRead(t, a)
 			now = now.Add(21 * time.Second)
 			mustRead(t, a)
@@ -375,7 +375,7 @@ func TestKubernetesNoTokenInOutput(t *testing.T) {
 	// A good session, renewed, then refused renewal, then revoked.
 	a, file := k8sAdapter(t, srv, jwt, nil)
 	now := time.Now()
-	a.c.now = func() time.Time { return now }
+	a.c.Now = func() time.Time { return now }
 	record(a.Health(t.Context()))
 	now = now.Add(21 * time.Second)
 	record(a.Health(t.Context()))
@@ -407,9 +407,9 @@ func TestKubernetesNoTokenInOutput(t *testing.T) {
 	}
 	record(err)
 	// Direct calls with explicit tokens.
-	_, _, _, err = a.c.loginKubernetes(t.Context(), stores.OpRead, stores.Ref{}, "kubernetes", "other", secret.FromString(jwt))
+	_, _, _, err = a.c.LoginKubernetes(t.Context(), stores.OpRead, stores.Ref{}, "kubernetes", "other", secret.FromString(jwt))
 	record(err)
-	_, _, err = a.c.renewSelf(t.Context(), stores.OpRead, stores.Ref{}, secret.FromString("hvs.k8s-"+randHex(12)), time.Minute)
+	_, _, err = a.c.RenewSelf(t.Context(), stores.OpRead, stores.Ref{}, secret.FromString("hvs.k8s-"+randHex(12)), time.Minute)
 	record(err)
 
 	s.mu.Lock()
@@ -438,7 +438,7 @@ func TestLoginKubernetesLeavesAdapterTokenAlone(t *testing.T) {
 	defer srv.Close()
 	a, _ := k8sAdapter(t, srv, jwt, nil)
 	mustRead(t, a)
-	own := copyValue(a.c.token)
+	own := a.c.TokenCopy()
 	defer own.Wipe()
 
 	// Another service account logs in through the same client.
@@ -446,7 +446,7 @@ func TestLoginKubernetesLeavesAdapterTokenAlone(t *testing.T) {
 	s.mu.Lock()
 	s.jwts[other] = true
 	s.mu.Unlock()
-	tok, ttl, renewable, err := a.c.loginKubernetes(t.Context(), stores.OpRead, stores.Ref{}, "kubernetes", "scrim", secret.FromString(other))
+	tok, ttl, renewable, err := a.c.LoginKubernetes(t.Context(), stores.OpRead, stores.Ref{}, "kubernetes", "scrim", secret.FromString(other))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,17 +454,17 @@ func TestLoginKubernetesLeavesAdapterTokenAlone(t *testing.T) {
 	if ttl != 30*time.Second || !renewable || tok.IsZero() {
 		t.Fatalf("ttl %s renewable %v", ttl, renewable)
 	}
-	if !a.c.token.Equal(own) || tok.Equal(own) {
+	if !a.c.TokenCopy().Equal(own) || tok.Equal(own) {
 		t.Fatal("loginKubernetes changed the adapter's own token")
 	}
 	// A request with an explicit token carries it, and a refusal is not
 	// retried with a login.
-	resp, err := a.c.do(t.Context(), request{op: stores.OpRead, method: http.MethodGet, path: "kv/data/x", token: tok})
-	resp.wipe()
+	resp, err := a.c.Do(t.Context(), request{Op: stores.OpRead, Method: http.MethodGet, Path: "kv/data/x", Token: tok})
+	resp.Wipe()
 	if err != nil {
 		t.Fatalf("request with the other token: %v", err)
 	}
-	ttl, renewable, err = a.c.renewSelf(t.Context(), stores.OpRead, stores.Ref{}, tok, time.Minute)
+	ttl, renewable, err = a.c.RenewSelf(t.Context(), stores.OpRead, stores.Ref{}, tok, time.Minute)
 	if err != nil || ttl != 30*time.Second || !renewable {
 		t.Fatalf("renewSelf: %s %v %v", ttl, renewable, err)
 	}
@@ -472,8 +472,8 @@ func TestLoginKubernetesLeavesAdapterTokenAlone(t *testing.T) {
 	clear(s.tokens)
 	s.mu.Unlock()
 	logins, _ := s.counts()
-	resp, err = a.c.do(t.Context(), request{op: stores.OpRead, method: http.MethodGet, path: "kv/data/x", token: tok})
-	resp.wipe()
+	resp, err = a.c.Do(t.Context(), request{Op: stores.OpRead, Method: http.MethodGet, Path: "kv/data/x", Token: tok})
+	resp.Wipe()
 	if !errors.Is(err, stores.ErrPermission) {
 		t.Fatalf("revoked explicit token: %v", err)
 	}

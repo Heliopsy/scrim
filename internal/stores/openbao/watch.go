@@ -72,7 +72,7 @@ func (a *Adapter) Watch(ctx context.Context, prefix stores.Ref) (<-chan stores.C
 
 func (a *Adapter) poll(ctx context.Context, prefix stores.Ref, prev map[string]string, ch chan<- stores.Change) {
 	defer close(ch)
-	interval, maxBackoff := a.c.opts.WatchInterval, a.c.opts.WatchMaxBackoff
+	interval, maxBackoff := a.opts.WatchInterval, a.opts.WatchMaxBackoff
 	wait := interval
 	timer := time.NewTimer(a.jitter(wait))
 	defer timer.Stop()

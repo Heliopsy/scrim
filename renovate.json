@@ -154,6 +154,8 @@
         "/^internal/testing/podtest/services\\.go$/",
         "/^test/load/orchestrate\\.go$/",
         "/^internal/stores/openbao/openbao_integration_test\\.go$/",
+        "/^internal/stores/vault/vault_integration_test\\.go$/",
+        "/^internal/stores/vault/testdata/pod\\.yaml$/",
         "/^internal/stores/vaultwarden/vwtest/vwtest\\.go$/",
         "/^internal/stores/infisical/testdata/pod\\.yaml$/",
         "/^bench/redact-bench/harness/(env\\.sh|proxybench\\.py)$/",

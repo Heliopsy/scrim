@@ -14,6 +14,10 @@
 //! * [`AuthConfig::Header`]: a static key in a header, such as `x-api-key`, `api-key` or
 //!   `Authorization: Bearer` (Bedrock API keys, Claude Platform on AWS and Microsoft Foundry API
 //!   keys).
+//! * [`AuthConfig::GoogleServiceAccount`], [`AuthConfig::GoogleMetadata`] and
+//!   [`AuthConfig::EntraClientSecret`]: an OAuth 2.0 access token scrim mints and caches
+//!   ([`crate::token`]), sent as `Authorization: Bearer` (Google Vertex AI, Microsoft Foundry
+//!   with Entra ID).
 //!
 //! The configuration names store references; the data plane looks their values up in the
 //! snapshot. A reference whose value is not there makes every request on the route fail with
@@ -32,6 +36,7 @@ use zeroize::Zeroizing;
 use crate::audit::RefusalReason;
 use crate::engine::SecretValue;
 use crate::error::Refusal;
+use crate::token::Minter;
 
 /// Request headers an agent may authenticate with. On a route with [`AuthConfig`] they are
 /// removed before the request is redacted, so the agent's own credentials (or the dummy ones it
@@ -76,6 +81,41 @@ pub enum AuthConfig {
         /// Reference to the value.
         value: String,
     },
+    /// Google access tokens from a service account key (the JSON key file).
+    #[serde(rename_all = "kebab-case")]
+    GoogleServiceAccount {
+        /// Reference to the key file's JSON.
+        key: String,
+        /// Token endpoint; empty for Google's.
+        #[serde(default)]
+        token_url: String,
+        /// Scope; empty for `cloud-platform`.
+        #[serde(default)]
+        scope: String,
+    },
+    /// Google access tokens from the metadata server (workload identity).
+    #[serde(rename_all = "kebab-case")]
+    GoogleMetadata {
+        /// Token URL; empty for the metadata server's.
+        #[serde(default)]
+        url: String,
+        /// Scope; empty for `cloud-platform`.
+        #[serde(default)]
+        scope: String,
+    },
+    /// Microsoft Entra ID access tokens from client credentials.
+    #[serde(rename_all = "kebab-case")]
+    EntraClientSecret {
+        /// Token endpoint of the tenant.
+        token_url: String,
+        /// Application (client) id.
+        client_id: String,
+        /// Reference to the client secret.
+        client_secret: String,
+        /// Scope; empty for Foundry's.
+        #[serde(default)]
+        scope: String,
+    },
 }
 
 impl AuthConfig {
@@ -93,6 +133,43 @@ impl AuthConfig {
                 v
             }
             Self::Header { value, .. } => vec![value.as_str()],
+            Self::GoogleServiceAccount { key, .. } => vec![key.as_str()],
+            Self::GoogleMetadata { .. } => vec![],
+            Self::EntraClientSecret { client_secret, .. } => vec![client_secret.as_str()],
+        }
+    }
+
+    /// How the route's token is minted, for the token kinds.
+    pub fn minter(&self) -> Option<Minter> {
+        let or = |s: &str, d: &str| {
+            if s.is_empty() {
+                d.to_owned()
+            } else {
+                s.to_owned()
+            }
+        };
+        match self {
+            Self::GoogleServiceAccount {
+                token_url, scope, ..
+            } => Some(Minter::GoogleServiceAccount {
+                token_url: or(token_url, crate::token::GOOGLE_TOKEN_URL),
+                scope: or(scope, crate::token::GOOGLE_SCOPE),
+            }),
+            Self::GoogleMetadata { url, scope } => Some(Minter::GoogleMetadata {
+                url: or(url, crate::token::GOOGLE_METADATA_URL),
+                scope: or(scope, crate::token::GOOGLE_SCOPE),
+            }),
+            Self::EntraClientSecret {
+                token_url,
+                client_id,
+                scope,
+                ..
+            } => Some(Minter::EntraClientSecret {
+                token_url: token_url.clone(),
+                client_id: client_id.clone(),
+                scope: or(scope, crate::token::ENTRA_SCOPE),
+            }),
+            Self::AwsSigv4 { .. } | Self::Header { .. } => None,
         }
     }
 
@@ -123,11 +200,33 @@ impl AuthConfig {
                     return Err("header auth: the prefix is not a header value".into());
                 }
             }
+            Self::GoogleServiceAccount { token_url, .. } => url_ok(token_url, true)?,
+            Self::GoogleMetadata { url, .. } => url_ok(url, true)?,
+            Self::EntraClientSecret {
+                token_url,
+                client_id,
+                ..
+            } => {
+                url_ok(token_url, false)?;
+                if client_id.is_empty() || HeaderValue::from_str(client_id).is_err() {
+                    return Err("entra auth needs a client id".into());
+                }
+            }
         }
         if self.refs().iter().any(|r| r.is_empty()) {
             return Err("every credential needs a reference".into());
         }
         Ok(())
+    }
+}
+
+fn url_ok(u: &str, empty_ok: bool) -> Result<(), String> {
+    if u.is_empty() && empty_ok {
+        return Ok(());
+    }
+    match u.parse::<http::Uri>() {
+        Ok(p) if matches!(p.scheme_str(), Some("http" | "https")) && p.host().is_some() => Ok(()),
+        _ => Err("the token URL is not an absolute http or https URL".into()),
     }
 }
 
@@ -140,6 +239,10 @@ enum Creds {
     },
     Header {
         value: SecretValue,
+    },
+    /// The credential a token is minted with (none for the metadata server).
+    Token {
+        credential: Option<SecretValue>,
     },
     /// References whose values the snapshot does not hold.
     Missing(Vec<String>),
@@ -205,6 +308,16 @@ impl RouteAuth {
                 Some(v) => Creds::Header { value: v },
                 None => Creds::Missing(missing),
             },
+            AuthConfig::GoogleServiceAccount { key: r, .. }
+            | AuthConfig::EntraClientSecret {
+                client_secret: r, ..
+            } => match get(r) {
+                Some(v) => Creds::Token {
+                    credential: Some(v),
+                },
+                None => Creds::Missing(missing),
+            },
+            AuthConfig::GoogleMetadata { .. } => Creds::Token { credential: None },
         };
         Self {
             config: config.clone(),
@@ -237,8 +350,17 @@ impl RouteAuth {
         }
     }
 
+    /// The minter and its credential when the route authenticates with a minted token.
+    pub fn token_source(&self) -> Option<(Minter, Option<&SecretValue>)> {
+        match &self.creds {
+            Creds::Token { credential } => Some((self.config.minter()?, credential.as_ref())),
+            _ => None,
+        }
+    }
+
     /// Authenticates the request that is about to leave: `uri` is where it goes, `headers` its
-    /// final headers (rewritten in place) and `body` its exact bytes.
+    /// final headers (rewritten in place) and `body` its exact bytes. `token` is the access token
+    /// minted for the token kinds ([`RouteAuth::token_source`]).
     pub fn apply(
         &self,
         method: &Method,
@@ -246,12 +368,30 @@ impl RouteAuth {
         headers: &mut HeaderMap,
         body: &[u8],
         now: SystemTime,
+        token: Option<&SecretValue>,
     ) -> Result<(), Refusal> {
         for h in AGENT_AUTH_HEADERS {
             headers.remove(*h);
         }
         match (&self.config, &self.creds) {
             (_, Creds::Missing(_)) => self.check(),
+            (_, Creds::Token { .. }) => {
+                let t = token.ok_or_else(|| {
+                    Refusal::new(RefusalReason::CredentialUnavailable, "no access token")
+                })?;
+                let mut v = Zeroizing::new(Vec::with_capacity(t.expose().len() + 7));
+                v.extend_from_slice(b"Bearer ");
+                v.extend_from_slice(t.expose());
+                let mut hv = HeaderValue::from_bytes(&v).map_err(|_| {
+                    Refusal::new(
+                        RefusalReason::CredentialUnavailable,
+                        "unusable access token",
+                    )
+                })?;
+                hv.set_sensitive(true);
+                headers.insert(header::AUTHORIZATION, hv);
+                Ok(())
+            }
             (AuthConfig::Header { name, prefix, .. }, Creds::Header { value }) => {
                 let mut v = Zeroizing::new(Vec::with_capacity(prefix.len() + value.expose().len()));
                 v.extend_from_slice(prefix.as_bytes());
@@ -621,7 +761,8 @@ mod tests {
                 &"https://x/".parse().unwrap(),
                 &mut h,
                 b"",
-                SystemTime::now()
+                SystemTime::now(),
+                None
             )
             .is_err()
         );
@@ -645,6 +786,7 @@ mod tests {
             &mut h,
             b"{}",
             SystemTime::now(),
+            None,
         )
         .unwrap();
         assert_eq!(h["authorization"], "Bearer tok-123");

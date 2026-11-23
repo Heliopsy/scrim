@@ -147,6 +147,10 @@ func (b *SnapshotBuilder) bindProviderRefs(routes []*pb.Route) {
 			}
 		case *pb.RouteAuth_Header:
 			k.Header.ValueRef = current(k.Header.ValueRef)
+		case *pb.RouteAuth_GoogleServiceAccount:
+			k.GoogleServiceAccount.KeyRef = current(k.GoogleServiceAccount.KeyRef)
+		case *pb.RouteAuth_EntraClientSecret:
+			k.EntraClientSecret.ClientSecretRef = current(k.EntraClientSecret.ClientSecretRef)
 		}
 	}
 }

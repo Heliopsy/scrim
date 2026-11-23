@@ -299,7 +299,7 @@ func TestScheduledDeletionIsStillReadable(t *testing.T) {
 	f, srv := newFakeKV(t)
 	a := newTest(t, srv, nil, nil)
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	a.c.now = func() time.Time { return now }
+	a.c.Now = func() time.Time { return now }
 	f.deletion = now.Add(time.Hour).Format(time.RFC3339)
 	s, err := a.Read(t.Context(), stores.MustParseRef("bao://kv-prod/prod/eu/db"))
 	if err != nil {
@@ -323,7 +323,7 @@ func TestMountInfoIsCached(t *testing.T) {
 	f, srv := newFakeKV(t)
 	a := newTest(t, srv, nil, nil)
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	a.c.now = func() time.Time { return now }
+	a.c.Now = func() time.Time { return now }
 	for range 3 {
 		s, err := a.Read(t.Context(), stores.MustParseRef("bao://kv-prod/prod/eu/db"))
 		if err != nil {
@@ -435,7 +435,7 @@ func TestReadMetadataFailsLikeRead(t *testing.T) {
 		t.Errorf("current version by selector: %v", err)
 	}
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	a.c.now = func() time.Time { return now }
+	a.c.Now = func() time.Time { return now }
 	f.deletion = now.Add(-time.Hour).Format(time.RFC3339)
 	if _, err := a.ReadMetadata(ctx, stores.MustParseRef("bao://kv-prod/prod/eu/db")); !errors.Is(err, stores.ErrNotFound) {
 		t.Errorf("current version deleted: %v", err)

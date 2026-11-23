@@ -591,3 +591,209 @@ async fn header_auth_replaces_the_agents_key() {
     assert_eq!(got[0].headers["anthropic-version"], "2023-06-01");
     assert!(fx.leaks(&got[0].body).is_empty());
 }
+
+/// A provider whose token endpoint is the same fake: the token path answers with a fresh token
+/// each time, everything else with a Messages reply.
+async fn token_upstream() -> FakeUpstream {
+    let n = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    FakeUpstream::start_with(move |r| {
+        if r.uri.starts_with("/token") || r.uri.starts_with("/computeMetadata") {
+            let i = n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return Scripted::json(
+                200,
+                format!(r#"{{"access_token":"minted-token-{i}","expires_in":3599,"token_type":"Bearer"}}"#),
+            );
+        }
+        Scripted::json(200, r#"{"type":"message","content":[]}"#)
+    })
+    .await
+}
+
+async fn token_proxy(fx: &Fixture, route: RouteConfig, value: Option<&str>) -> Harness2 {
+    let routes = vec![route];
+    let table = RouteTable::with_credentials(&routes, &|_| {
+        value.map(|v| SecretValue::new(v.as_bytes().to_vec()))
+    })
+    .unwrap();
+    let mut snap = fx.snapshot();
+    snap.routes = Some(Arc::new(table));
+    let upstream = FakeUpstream::start(Scripted::json(200, "{}")).await;
+    let audit = RecordingAudit::default();
+    let proxy = Arc::new(
+        Proxy::new(
+            ProxyConfig {
+                routes,
+                ..ProxyConfig::default()
+            },
+            Arc::new(SnapshotCell::with(snap)),
+            Arc::new(audit.clone()),
+        )
+        .unwrap(),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(scrim_llm::server::serve_tcp(listener, proxy, async {
+        let _ = rx.await;
+    }));
+    Harness2 {
+        addr,
+        upstream,
+        audit,
+        stop: Some(tx),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn vertex_metadata_token_minted_once_and_sent_as_bearer() {
+    let fx = fixture();
+    let up = token_upstream().await;
+    let route = RouteConfig {
+        name: "vertex".into(),
+        prefix: "/vertex".into(),
+        upstream: up.url(),
+        provider: Provider::Vertex,
+        strip_prefix: true,
+        chain: None,
+        hosts: vec![],
+        auth: Some(AuthConfig::GoogleMetadata {
+            url: format!(
+                "{}/computeMetadata/v1/instance/service-accounts/default/token",
+                up.url()
+            ),
+            scope: String::new(),
+        }),
+    };
+    let h = token_proxy(&fx, route, None).await;
+    let cl = Cloud { h, c: creds() };
+    let path = "/vertex/v1/projects/p/locations/us-east5/publishers/anthropic/models/claude-x@1:rawPredict";
+    let body = format!(
+        r#"{{"anthropic_version":"vertex-2023-10-16","max_tokens":5,"messages":[{{"role":"user","content":"{}"}}]}}"#,
+        fx.value("s0")
+    );
+    for _ in 0..2 {
+        let r = post(
+            &cl,
+            path,
+            &[
+                ("content-type", "application/json"),
+                ("authorization", "Bearer agent-dummy"),
+            ],
+            body.clone(),
+        )
+        .await;
+        assert_eq!(r.status, 200, "{}", r.text());
+    }
+    let got = up.received();
+    let meta: Vec<_> = got
+        .iter()
+        .filter(|r| r.uri.starts_with("/computeMetadata"))
+        .collect();
+    assert_eq!(meta.len(), 1, "the token is cached");
+    assert_eq!(meta[0].method, http::Method::GET);
+    assert_eq!(meta[0].headers["metadata-flavor"], "Google");
+    assert!(
+        meta[0]
+            .uri
+            .contains("scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform")
+    );
+    let api: Vec<_> = got
+        .iter()
+        .filter(|r| r.uri.contains(":rawPredict"))
+        .collect();
+    assert_eq!(api.len(), 2);
+    for r in api {
+        assert_eq!(r.headers["authorization"], "Bearer minted-token-0");
+        assert!(fx.leaks(&r.body).is_empty());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn foundry_entra_client_credentials() {
+    let fx = fixture();
+    let up = token_upstream().await;
+    let secret = scrim_llm::testing::random_value("entra-secret-");
+    let route = RouteConfig {
+        name: "foundry".into(),
+        prefix: "/foundry".into(),
+        upstream: up.url(),
+        provider: Provider::Anthropic,
+        strip_prefix: true,
+        chain: None,
+        hosts: vec![],
+        auth: Some(AuthConfig::EntraClientSecret {
+            token_url: format!("{}/token/tenant-1/oauth2/v2.0/token", up.url()),
+            client_id: "app-1".into(),
+            client_secret: "bao://kv/azure#client_secret".into(),
+            scope: String::new(),
+        }),
+    };
+    let h = token_proxy(&fx, route, Some(&secret)).await;
+    let cl = Cloud { h, c: creds() };
+    let r = post(
+        &cl,
+        "/foundry/anthropic/v1/messages",
+        &[
+            ("content-type", "application/json"),
+            ("authorization", "Bearer skip-foundry-auth"),
+        ],
+        r#"{"model":"claude-x","max_tokens":5,"messages":[]}"#,
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let got = up.received();
+    let tok = got.iter().find(|r| r.uri.starts_with("/token")).unwrap();
+    assert_eq!(
+        std::str::from_utf8(&tok.body).unwrap(),
+        format!(
+            "grant_type=client_credentials&client_id=app-1&client_secret={secret}&scope=https%3A%2F%2Fai.azure.com%2F.default"
+        )
+    );
+    let api = got
+        .iter()
+        .find(|r| r.uri == "/anthropic/v1/messages")
+        .unwrap();
+    assert_eq!(api.headers["authorization"], "Bearer minted-token-0");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refused_token_request_refuses_without_sending() {
+    let fx = fixture();
+    let up = FakeUpstream::start(Scripted::json(
+        401,
+        r#"{"error":"invalid_client","echo":"secret-echo"}"#,
+    ))
+    .await;
+    let route = RouteConfig {
+        name: "foundry".into(),
+        prefix: "/foundry".into(),
+        upstream: up.url(),
+        provider: Provider::Anthropic,
+        strip_prefix: true,
+        chain: None,
+        hosts: vec![],
+        auth: Some(AuthConfig::EntraClientSecret {
+            token_url: format!("{}/token", up.url()),
+            client_id: "app-1".into(),
+            client_secret: "r".into(),
+            scope: String::new(),
+        }),
+    };
+    let h = token_proxy(&fx, route, Some("wrong-secret-value")).await;
+    let cl = Cloud { h, c: creds() };
+    let r = post(
+        &cl,
+        "/foundry/anthropic/v1/messages",
+        &[("content-type", "application/json")],
+        "{}",
+    )
+    .await;
+    assert_eq!(r.status, 503);
+    assert_eq!(r.headers[scrim_llm::ERROR_HEADER], "credential_unavailable");
+    assert!(
+        r.text().contains("status 401") && !r.text().contains("secret-echo"),
+        "{}",
+        r.text()
+    );
+    assert_eq!(up.received().len(), 1, "only the token request left");
+}

@@ -52,6 +52,7 @@ pub struct Proxy {
     audit: Arc<dyn AuditSink>,
     capture: Option<Arc<Capture>>,
     metrics: Option<Arc<LlmMetrics>>,
+    tokens: Arc<crate::token::TokenCache>,
 }
 
 impl std::fmt::Debug for Proxy {
@@ -269,6 +270,7 @@ impl Proxy {
             audit,
             capture,
             metrics: None,
+            tokens: Arc::default(),
         })
     }
 
@@ -614,6 +616,15 @@ impl Proxy {
         *up.uri_mut() = uri;
         *up.headers_mut() = t.headers.clone();
         if let Some(auth) = t.auth {
+            let token = match auth.token_source() {
+                Some((m, cred)) => Some(
+                    self.tokens
+                        .token(&self.client, &m, cred)
+                        .await
+                        .map_err(SendError::Auth)?,
+                ),
+                None => None,
+            };
             let (parts, body) = up.into_parts();
             let mut parts = parts;
             auth.apply(
@@ -622,6 +633,7 @@ impl Proxy {
                 &mut parts.headers,
                 &out.body,
                 std::time::SystemTime::now(),
+                token.as_ref(),
             )
             .map_err(SendError::Auth)?;
             up = Request::from_parts(parts, body);

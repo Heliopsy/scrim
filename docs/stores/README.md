@@ -7,6 +7,7 @@ value back.
 | Store | Kind | Guide |
 | ------- | ------ | ------- |
 | OpenBao (and Vault-compatible KV v2) | `openbao` | [openbao.md](openbao.md) |
+| HashiCorp Vault (KV v1 and v2, dynamic secrets) | `vault` | [vault.md](vault.md) |
 | Infisical | `infisical` | [infisical.md](infisical.md) |
 | Doppler | `doppler` | [doppler.md](doppler.md) |
 | 1Password (through Connect) | `onepassword` | [onepassword.md](onepassword.md) |
@@ -28,6 +29,7 @@ support is refused before anything is attempted.
 | Kind          | read | list | watch | write  | generate | dynamic |
 |---------------|------|------|-------|--------|----------|---------|
 | `openbao`     | yes  | yes  | yes   | yes    | no       | no      |
+| `vault`       | yes  | yes  | yes   | yes    | no       | yes     |
 | `infisical`   | yes  | yes  | yes   | yes    | no       | no      |
 | `doppler`     | yes  | yes  | yes   | yes    | no       | no      |
 | `onepassword` | yes  | yes  | yes   | yes    | no       | no      |
@@ -43,14 +45,15 @@ support is refused before anything is attempted.
 | `keyring`     | yes  | yes  | no    | no     | no       | no      |
 | `memory`      | yes  | yes  | yes   | yes    | no       | no      |
 
-Watch on OpenBao, Infisical, 1Password, Bitwarden Secrets Manager, the AWS stores, Google Secret
-Manager and Azure Key Vault polls version metadata. It never fetches values, so it stays cheap even
-with a short interval. Watch on Doppler polls the config download with its ETag: an unchanged
-config is answered without values, a changed one is fingerprinted and wiped. Kubernetes watches
-Secrets through the API server, and writes there are off unless the instance enables them. The
-keyring source lists on Linux only (Secret Service); on macOS and Windows it reads single secrets.
-Generated secrets are produced by scrim and then written, so generate needs write and no
-store-side support.
+Watch on OpenBao, Vault (KV v2), Infisical, 1Password, Bitwarden Secrets Manager, the AWS stores,
+Google Secret Manager and Azure Key Vault polls version metadata. It never fetches values, so it
+stays cheap even with a short interval. Watch on Vault KV v1 compares digests of the fields, so it
+reads every secret under the prefix on each poll. Watch on Doppler polls the config download with
+its ETag: an unchanged config is answered without values, a changed one is fingerprinted and wiped.
+Kubernetes watches Secrets through the API server, and writes there are off unless the instance
+enables them. The keyring source lists on Linux only (Secret Service); on macOS and Windows it reads
+single secrets. Generated secrets are produced by scrim and then written, so generate needs write
+and no store-side support.
 
 ## Configuring an instance
 
@@ -96,13 +99,12 @@ and dashes turned into `_` (`stores.bao.secret-id` becomes `SCRIM_STORES_BAO_SEC
 instance has to be declared in a file, or the whole collection set as JSON in `SCRIM_STORES`.
 
 Credential fields (`token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password`,
-`unlock`, `age-identity`, `credentials`, `certificate`, `access-key-id`, `secret-access-key`) take
-a reference instead of a literal: `env:NAME`, `file:/path`, `cred:NAME` (a systemd credential), or
-a reference into another configured store. They are resolved at start; a reference that cannot be
-resolved stops start-up, and no store is contacted
-with an empty credential. `scrim config show` masks them. A literal still works, but scrim logs a
-warning naming the field. scrim also adds the credentials it holds, and the session tokens a store
-issues at login, to the redaction set.
+`unlock`, `age-identity`, `credentials`, `certificate`, `access-key-id`, `secret-access-key`, `jwt`)
+take a reference instead of a literal: `env:NAME`, `file:/path`, `cred:NAME` (a systemd credential),
+or a reference into another configured store. They are resolved at start; a reference that cannot be
+resolved stops start-up, and no store is contacted with an empty credential. `scrim config show`
+masks them. A literal still works, but scrim logs a warning naming the field. scrim also adds the
+credentials it holds, and the session tokens a store issues at login, to the redaction set.
 
 ### Empty redact targets
 

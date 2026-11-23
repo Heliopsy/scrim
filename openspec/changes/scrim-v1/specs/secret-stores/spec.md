@@ -1068,6 +1068,84 @@ when the grant ends, and redacted from the moment they are issued.
 - **THEN** scrim obtains a lease, injects the credential toward its bound host and redacts it
 - **AND** revokes the lease when the grant expires
 
+#### Scenario: Grant revoked early
+
+- **WHEN** an operator revokes the grant a dynamic database credential was issued for
+- **THEN** scrim revokes the credential's lease within the lease check interval
+- **AND** the database engine drops the user
+
+### Requirement: Vault dynamic leases follow the grant
+
+The Vault adapter SHALL renew the lease of a dynamic secret two thirds into its TTL while the grant it
+was issued for is usable, asking for no more than the grant has left, and SHALL revoke it once the
+grant is revoked, expires, is used up or deny-all is engaged. A failure to check the grant SHALL keep
+the lease without renewing it past the grant's last known expiry.
+
+#### Scenario: Renewed while the grant lasts
+
+- **WHEN** a database role's default TTL is 6 seconds and its credential was issued for a one-hour grant
+- **THEN** the lease is still live after 9 seconds
+- **AND** each renewal asks for at most the time the grant has left
+
+#### Scenario: Revocation fails
+
+- **WHEN** Vault is unreachable at the moment the grant ends
+- **THEN** the lease still lapses at the grant's expiry, since no renewal went past it
+
+### Requirement: Vault dynamic secrets are leased
+
+A dynamic secret the Vault engine issues without a lease SHALL be refused and its values wiped, since
+scrim could not revoke it. Dynamic paths SHALL never be read, listed or written as stored secrets.
+
+#### Scenario: PKI certificate without a lease
+
+- **WHEN** a reference names a PKI role without `generate_lease`
+- **THEN** the issue is refused as unsupported, naming the missing lease, and no value is returned
+
+### Requirement: Vault KV versions and mounts
+
+The Vault adapter SHALL find each reference's mount, type and KV version from
+`sys/internal/ui/mounts`, cached per mount, and fall back to configured mounts, KV v1 mounts and
+dynamic paths when that lookup is refused. On KV version 1 it SHALL read, list, watch and write
+secrets, refuse version selectors and labels instead of ignoring them, check a create-only write by
+listing the folder, and detect changes by comparing keyed digests of the fields without keeping a
+value.
+
+#### Scenario: Both KV versions in one store
+
+- **WHEN** one Vault store has a KV v2 mount `secret` and a KV v1 mount `kv1`
+- **THEN** both pass the conformance suite through the same adapter instance
+- **AND** their secrets are labelled `vault.engine` `kv-v2` and `kv-v1`
+
+### Requirement: Vault logins and namespaces
+
+The Vault adapter SHALL log in with a token, AppRole, Kubernetes service account or JWT, reading a JWT
+from its file or reference again at every login, renew login tokens as the OpenBao adapter does, and
+send the configured namespace as `X-Vault-Namespace` with every request, using `auth.namespace`
+instead for logins when it is set. No token, role ID, secret ID or JWT SHALL appear in an error.
+
+#### Scenario: Rotated JWT
+
+- **WHEN** the JWT file is replaced and scrim logs in again
+- **THEN** the new JWT is presented
+
+#### Scenario: Auth method in a parent namespace
+
+- **WHEN** `namespace` is `team-a/eu` and `auth.namespace` is `team-a`
+- **THEN** logins are sent to `team-a` and reads to `team-a/eu`
+
+### Requirement: Vault native labels
+
+The Vault adapter SHALL label secrets under `vault.<attribute>` with the same attributes the OpenBao
+adapter reports, plus `vault.dynamic`, `vault.lease_duration`, `vault.lease_renewable` and
+`vault.lease_holder` for issued dynamic secrets, following the shared label convention. Custom
+metadata SHALL never replace a native key, and labels SHALL never hold a value.
+
+#### Scenario: Forged engine label
+
+- **WHEN** a KV v2 secret's custom metadata sets `vault.engine` to `forged`
+- **THEN** `vault.engine` stays `kv-v2` and the custom value appears as `vault.meta.vault.engine`
+
 ### Requirement: Cloud secret managers use workload identity
 
 The AWS, Google and Azure adapters SHALL authenticate with the platform's ambient identity
