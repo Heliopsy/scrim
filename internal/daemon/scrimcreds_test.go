@@ -70,6 +70,38 @@ func TestScrimCredentialsSource(t *testing.T) {
 	}
 }
 
+// TestScrimCredentialsShortLeftOut: a credential shorter than
+// ownCredMinLen, or a DSN whose password is, would be matched everywhere
+// it occurs and wreck traffic (a DSN password "load" inside every
+// "load://" reference broke the load test). It stays out of the set and is
+// reported by setting name; the rest of the DSN is still redacted.
+func TestScrimCredentialsShortLeftOut(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scrim.yaml")
+	if err := os.WriteFile(path, []byte("apiVersion: "+config.APIVersion+"\nkind: Config\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dsn := "postgres://scrim:load@127.0.0.1:1/scrim"
+	cfg, err := config.Build(config.Options{Registry: config.Default, ConfigPaths: []string{path}, SystemDir: dir,
+		Environ: []string{"HOME=" + dir, "XDG_CONFIG_HOME=" + dir, "XDG_STATE_HOME=" + dir,
+			"SCRIM_NOTIFY_NTFY_TOKEN=env:SHORT_TOKEN", "SHORT_TOKEN=ab12cd", "SCRIM_STATE_POSTGRES_DSN=env:PG_DSN", "PG_DSN=" + dsn}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := newScrimCredentials(func() *config.Config { return cfg })
+	defer src.close()
+	got := sourceValues(t, src)
+	if slices.Contains(got, "ab12cd") || slices.Contains(got, "load") {
+		t.Error("a short value is in the set")
+	}
+	if !slices.Contains(got, dsn) {
+		t.Error("the DSN is not in the set")
+	}
+	if s := short(cfg); !slices.Equal(s, []string{"notify.ntfy.token", "state.postgres.dsn"}) {
+		t.Errorf("short = %v", s)
+	}
+}
+
 func TestDSNPasswords(t *testing.T) {
 	for _, c := range []struct {
 		name, dsn string

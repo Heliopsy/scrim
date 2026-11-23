@@ -340,6 +340,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		values = append(values, r)
 	}
 	d.ownCreds = newScrimCredentials(a.Config.Current)
+	warnShort(obs.WithComponent(a.Log, "redaction"), cfg)
 	d.cleanup = append(d.cleanup, d.ownCreds.close)
 	// scrim's own credentials come last: a value a store also holds keeps
 	// the store's reference (the lowest entry wins in the data plane).
@@ -545,6 +546,7 @@ func (d *Daemon) subscribe(ctx context.Context) {
 	d.cleanup = append(d.cleanup, a.Config.Subscribe(func(old, cur *config.Config) {
 		d.reloadKeys(ctx, old, cur)
 		d.warnUnloadedProviderRefs(cur)
+		warnShort(obs.WithComponent(a.Log, "redaction"), cur)
 		d.pusher.Trigger()
 	}))
 }

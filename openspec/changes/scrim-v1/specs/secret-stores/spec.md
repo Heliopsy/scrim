@@ -1566,7 +1566,7 @@ The system SHALL put every secret-ref setting and collection secret field it has
 redaction set, whatever reference it was read through, along with the password inside
 `state.postgres.dsn` and each key of a PEM bundle on their own. These values SHALL carry no
 reference and no bound host and SHALL never be injected. A reload that changes one SHALL replace it
-in the set.
+in the set. A value shorter than 8 bytes SHALL be left out and logged by setting name.
 
 #### Scenario: Notifier token pasted into a prompt
 
@@ -1580,6 +1580,12 @@ in the set.
 - **WHEN** `state.postgres.dsn` is `postgres://scrim:<password>@db/scrim` and an agent sends only the
   password to a provider
 - **THEN** the provider receives a placeholder in place of the password
+
+#### Scenario: Weak password in the state DSN
+
+- **WHEN** `state.postgres.dsn` is `postgres://postgres:load@db/scrim`
+- **THEN** the DSN is redacted but `load` is not, so text that merely contains it is untouched
+- **AND** a warning names `state.postgres.dsn`
 
 #### Scenario: Rotated by a reload
 

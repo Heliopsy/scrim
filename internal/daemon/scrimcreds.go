@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +27,13 @@ const scrimConfigStore = "scrim-config"
 
 // credFileMax bounds a credential file scrim reads for the redaction set.
 const credFileMax = 64 << 10
+
+// ownCredMinLen is the shortest credential of scrim's own that joins the
+// set, as for project files (projectscan.DefaultMinLength). A shorter value
+// would be matched verbatim everywhere it occurs (a DSN password "load"
+// inside every "load://" reference) and wreck traffic the operator never
+// chose to redact; it is reported at start-up and reload instead.
+const ownCredMinLen = 8
 
 // credFilePoll is how often the credential files are checked for a new
 // value (a kubelet-rotated service account token, a reissued NATS
@@ -75,9 +84,13 @@ func (s *scrimCredentials) EachValue(fn func(refresh.Source, secret.Value)) {
 		if strings.HasPrefix(key, dbproxy.CollectionKey+".") {
 			return
 		}
-		fn(refresh.Source{}, v)
+		if v.Len() >= ownCredMinLen {
+			fn(refresh.Source{}, v)
+		}
 		for _, part := range derivedParts(key, v) {
-			fn(refresh.Source{}, part)
+			if part.Len() >= ownCredMinLen {
+				fn(refresh.Source{}, part)
+			}
 			part.Wipe()
 		}
 	})
@@ -88,12 +101,42 @@ func (s *scrimCredentials) EachValue(fn func(refresh.Source, secret.Value)) {
 		if cf == nil {
 			continue
 		}
-		for _, v := range cf.cur {
-			fn(refresh.Source{}, v)
+		for _, v := range slices.Concat(cf.cur, cf.retired) {
+			if v.Len() >= ownCredMinLen {
+				fn(refresh.Source{}, v)
+			}
 		}
-		for _, v := range cf.retired {
-			fn(refresh.Source{}, v)
+	}
+}
+
+// short names the settings whose value, or the password inside it, is too
+// short to redact (ownCredMinLen). Names only, never values.
+func short(cfg *config.Config) []string {
+	var out []string
+	if cfg == nil {
+		return nil
+	}
+	cfg.EachSecret(func(key string, v secret.Value) {
+		if strings.HasPrefix(key, dbproxy.CollectionKey+".") {
+			return
 		}
+		isShort := v.Len() < ownCredMinLen
+		for _, part := range derivedParts(key, v) {
+			isShort = isShort || part.Len() < ownCredMinLen
+			part.Wipe()
+		}
+		if isShort {
+			out = append(out, key)
+		}
+	})
+	return out
+}
+
+// warnShort logs the settings short leaves out of the redaction set.
+func warnShort(log *slog.Logger, cfg *config.Config) {
+	for _, key := range short(cfg) {
+		log.Warn("credential too short to redact: an agent that finds it can send it to a model provider; use a longer one",
+			"setting", key, "min_length", ownCredMinLen)
 	}
 }
 

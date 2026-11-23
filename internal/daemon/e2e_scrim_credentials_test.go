@@ -249,7 +249,9 @@ func TestScrimCredentialsRedactedRealDataPlane(t *testing.T) {
 	for what, v := range rotated {
 		eventually(t, what+" rotated in the redaction set", func() bool {
 			red, err := d.redact(ctx, []byte("x "+v+" y"))
-			return err == nil && !strings.Contains(string(red.Text), v)
+			// A detector placeholder (JWTs) does not count: the value
+			// must be in the set itself.
+			return err == nil && !strings.Contains(string(red.Text), v) && strings.Contains(string(red.Text), scrimCredPlaceholder)
 		})
 		send(what+" rotated", v)
 	}
