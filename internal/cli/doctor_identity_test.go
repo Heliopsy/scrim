@@ -12,7 +12,8 @@ import (
 )
 
 // TestDoctorReportsStoreIdentityPerAgent: doctor says which store identity
-// each agent uses (passthrough, static, shared or none) and never prints a
+// each agent uses (passthrough, token exchange, static, shared or none),
+// fails a token exchange login without scrim's issuer, and never prints a
 // credential.
 func TestDoctorReportsStoreIdentityPerAgent(t *testing.T) {
 	dir := t.TempDir()
@@ -25,6 +26,8 @@ stores:
     kind: memory
   plain:
     kind: memory
+  aws:
+    kind: memory
 identity:
   peers:
     laptop: "uid:1000"
@@ -36,6 +39,7 @@ identity:
       reviewer: "sa:agents/reviewer"
   store-login:
     bao: "kubernetes role:{namespace}-{service_account}"
+    aws: "aws-web-identity role-arn:arn:aws:iam::000000000000:role/agent-{agent_slug}"
   store-credentials:
     vw/laptop: env:SCRIM_TEST_VW_LAPTOP
 `
@@ -60,6 +64,8 @@ identity:
 		"pass store vw, agent laptop: static",
 		"warn store vw, agent reviewer: none",
 		"pass store plain: every agent uses scrim's own identity",
+		"fail store aws logs agents in with aws-web-identity, which presents a token scrim signs, but scrim's identity issuer is off",
+		"pass store aws, agent laptop: token exchange (aws-web-identity audience:sts.amazonaws.com duration:15m role-arn:arn:aws:iam::000000000000:role/agent-{agent_slug})",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("doctor lacks %q:\n%s", want, got)

@@ -1710,7 +1710,7 @@ Static per-agent store credentials: `<store>/<agent>` to a reference (env:, file
 
 #### `identity.store-login`
 
-Per-agent store login, by store instance: `kubernetes role:<template> [mount:<path>]` logs in to the store (OpenBao Kubernetes auth) with the calling pod's own service account token at the role the template names; {namespace}, {service_account} and {agent} are replaced. A store listed here refuses agents that have no usable identity of their own.
+Per-agent store login, by store instance. `kubernetes role:<template> [mount:<path>]` logs in to the store (OpenBao Kubernetes auth) with the calling pod's own service account token. The token exchange methods present an identity token scrim's issuer (identity.issuer.url) signs for the agent: `jwt role:<template> audience:<aud> [mount:jwt]` (Vault and OpenBao JWT auth), `aws-web-identity role-arn:<template> [audience:sts.amazonaws.com] [duration:15m]`, `gcp-workload-identity provider://iam.googleapis.com/projects/<n>/locations/global/workloadIdentityPools/<pool>/providers/<p> [service-account:<template>] [audience:<aud>]`, `azure-federated tenant:<id> client-id:<template> [audience:api://AzureADTokenExchange] [authority:<url>]` and `infisical-oidc identity-id:<template> audience:<aud>`. In templates {agent}, {agent_slug}, {namespace} and {service_account} are replaced. A store listed here refuses agents that have no usable identity of their own.
 
 | | |
 |---|---|

@@ -179,7 +179,8 @@ func isTokenError(status int, body []byte) bool {
 
 // send performs one HTTP exchange. Network errors and timeouts are
 // ErrUnavailable. The returned body belongs to the caller, who wipes it.
-func (c *client) send(ctx context.Context, method, u string, body *wire.Body, auth bool) (int, []byte, error) {
+// With auth it presents as, or scrim's own access token when as is zero.
+func (c *client) send(ctx context.Context, method, u string, body *wire.Body, auth bool, as secret.Value) (int, []byte, error) {
 	var r io.Reader
 	if body != nil {
 		r = body.Reader()
@@ -197,11 +198,14 @@ func (c *client) send(ctx context.Context, method, u string, body *wire.Body, au
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if auth {
-		tok, err := c.accessToken(ctx)
-		if err != nil {
-			return 0, nil, err
+		tok := as
+		if tok.IsZero() {
+			var err error
+			if tok, err = c.accessToken(ctx); err != nil {
+				return 0, nil, err
+			}
+			defer tok.Wipe()
 		}
-		defer tok.Wipe()
 		_ = tok.Expose(func(b []byte) error {
 			// net/http needs the header as a string; it lives only for
 			// this request. See the package documentation.
@@ -237,7 +241,7 @@ func scrubURLError(err error) error {
 func (c *client) do(ctx context.Context, method, path string, q url.Values, body *wire.Body, involved []secret.Value) ([]byte, error) {
 	u := c.url(path, q)
 	for attempt := 0; ; attempt++ {
-		status, b, err := c.send(ctx, method, u, body, true)
+		status, b, err := c.send(ctx, method, u, body, true, secret.Value{})
 		if err != nil {
 			return nil, err
 		}
@@ -313,9 +317,43 @@ func (c *client) loginLocked(ctx context.Context) (secret.Value, error) {
 	}
 	defer body.Wipe()
 
-	status, b, err := c.send(ctx, http.MethodPost, c.url(path, nil), body, false)
+	tok, ttl, err := c.postLogin(ctx, path, what, body, involved)
 	if err != nil {
 		return secret.Value{}, err
+	}
+	margin := max(ttl/10, 30*time.Second)
+	if margin >= ttl {
+		margin = ttl / 2
+	}
+	c.token.Wipe()
+	c.token = tok
+	c.expiry = c.now().Add(ttl - margin)
+	return tok, nil
+}
+
+// doAs performs one call with an agent's access token as, with no second
+// login: a refused token is the agent's refusal. It returns the body of a
+// 2xx response, which the caller wipes.
+func (c *client) doAs(ctx context.Context, method, path string, q url.Values, as secret.Value) ([]byte, error) {
+	status, b, err := c.send(ctx, method, c.url(path, q), nil, true, as)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 200 && status < 300 {
+		return b, nil
+	}
+	e := classify(status, b, []secret.Value{as})
+	secret.WipeBytes(b)
+	return nil, e
+}
+
+// postLogin sends a login body to path and returns the access token and
+// its lifetime (five minutes when Infisical names none). involved are the
+// credentials in the body, kept out of error details.
+func (c *client) postLogin(ctx context.Context, path, what string, body *wire.Body, involved []secret.Value) (secret.Value, time.Duration, error) {
+	status, b, err := c.send(ctx, http.MethodPost, c.url(path, nil), body, false, secret.Value{})
+	if err != nil {
+		return secret.Value{}, 0, err
 	}
 	defer secret.WipeBytes(b)
 	if status < 200 || status >= 300 {
@@ -327,30 +365,23 @@ func (c *client) loginLocked(ctx context.Context) (secret.Value, error) {
 			e.kind = stores.ErrPermission
 		}
 		e.msg = what + " login refused: " + e.msg
-		return secret.Value{}, e
+		return secret.Value{}, 0, e
 	}
 	var lr loginResponse
 	if err := json.Unmarshal(b, &lr); err != nil {
 		lr.AccessToken.Wipe()
-		return secret.Value{}, &apiError{kind: stores.ErrUnavailable, msg: "malformed login response"}
+		return secret.Value{}, 0, &apiError{kind: stores.ErrUnavailable, msg: "malformed login response"}
 	}
 	tok, err := lr.AccessToken.Value()
 	lr.AccessToken.Wipe()
 	if err != nil || tok.IsZero() {
-		return secret.Value{}, &apiError{kind: stores.ErrUnavailable, msg: "login response holds no access token"}
+		return secret.Value{}, 0, &apiError{kind: stores.ErrUnavailable, msg: "login response holds no access token"}
 	}
 	ttl := time.Duration(lr.ExpiresIn) * time.Second
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
-	margin := max(ttl/10, 30*time.Second)
-	if margin >= ttl {
-		margin = ttl / 2
-	}
-	c.token.Wipe()
-	c.token = tok
-	c.expiry = c.now().Add(ttl - margin)
-	return tok, nil
+	return tok, ttl, nil
 }
 
 // universalLoginBody resolves the client credentials at the first login and
@@ -378,7 +409,7 @@ func (c *client) universalLoginBody(ctx context.Context) (*wire.Body, error) {
 
 // kubernetesLoginBody encodes a Kubernetes Auth login for identityID with
 // jwt, a service account token. The caller wipes the body; jwt stays owned
-// by the caller.
+// by the caller. OIDC Auth takes the same body.
 func kubernetesLoginBody(identityID string, jwt secret.Value) (*wire.Body, error) {
 	buf, err := wire.AppendJSON(nil, map[string]string{"identityId": identityID})
 	if err != nil {
@@ -388,7 +419,7 @@ func kubernetesLoginBody(identityID string, jwt secret.Value) (*wire.Body, error
 	buf, err = wire.AppendValue(buf, jwt)
 	if err != nil {
 		secret.WipeBytes(buf)
-		return nil, &apiError{kind: stores.ErrPermission, msg: "service account token cannot be encoded", cause: err}
+		return nil, &apiError{kind: stores.ErrPermission, msg: "token cannot be encoded", cause: err}
 	}
 	return wire.NewBody(append(buf, '}')), nil
 }
@@ -492,7 +523,7 @@ func (c *client) cachedProject(project string) projectInfo {
 
 // status checks the unauthenticated status endpoint.
 func (c *client) status(ctx context.Context) error {
-	st, b, err := c.send(ctx, http.MethodGet, c.url("/api/status", nil), nil, false)
+	st, b, err := c.send(ctx, http.MethodGet, c.url("/api/status", nil), nil, false, secret.Value{})
 	if err != nil {
 		return err
 	}

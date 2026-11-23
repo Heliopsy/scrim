@@ -79,6 +79,8 @@ type Adapter struct {
 	mounts vaultapi.MountCache
 	jitter func(time.Duration) time.Duration
 	leases leaseManager
+	// agents caches the logins of agents' own identities (agent.go).
+	agents *vaultapi.AgentLogins
 	// digestKey keys the digests that detect changes on KV v1 (watch.go).
 	digestKey [32]byte
 }
@@ -98,7 +100,7 @@ func New(inst stores.Instance) (*Adapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &Adapter{c: c, opts: opts, known: map[string]knownMount{}, jitter: defaultJitter}
+	a := &Adapter{c: c, opts: opts, known: map[string]knownMount{}, jitter: defaultJitter, agents: vaultapi.NewAgentLogins()}
 	a.leases.init(a)
 	newDigestKey(&a.digestKey)
 	return a, nil
@@ -117,6 +119,7 @@ func (a *Adapter) Credentials() []secret.Value { return a.c.Credentials() }
 // default) every held lease is revoked first.
 func (a *Adapter) Close() error {
 	a.leases.close()
+	a.agents.Close()
 	a.c.Close()
 	return nil
 }

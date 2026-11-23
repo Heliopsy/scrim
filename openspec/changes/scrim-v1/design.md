@@ -412,8 +412,9 @@ namespace, service account and pod as labels. When a store checks each agent's o
 (`identity.store-login`, `identity.store-credentials`), the control plane adds a residual rule in
 front of the snapshot so every injection or restore of that store's secrets is asked about, and
 after scrim's rules allow it asks the store, as the agent, whether it may read the path (OpenBao
-`sys/capabilities-self`, after a Kubernetes login with the pod's own token for passthrough). The
-value is still loaded with scrim's identity, so redaction never depends on the agent's.
+`sys/capabilities-self`, after a Kubernetes login with the pod's own token for passthrough; D16 for
+token exchange). The value is still loaded with scrim's identity, so redaction never depends on the
+agent's.
 
 ### D15. scrim signs its own identity tokens
 
@@ -449,6 +450,37 @@ there is no such issuer for an agent, so scrim is one (`internal/identity/issuer
   JWKS and nothing else, so exposing it to stores exposes no other API. The URL must be https or
   loopback http; plain http elsewhere is the weakening `identity.issuer.insecure-http`, because a
   verifier that fetches keys over plain http can be handed an attacker's keys.
+
+### D16. Per-agent store identity by token exchange
+
+`identity.store-login` names one method per store. Kubernetes passthrough (D14) presents the pod's
+own token; the exchange methods present a token scrim's issuer (D15) signs for the agent, with the
+store's audience, and trade it for a store credential: an OpenBao or Vault login token (`jwt`),
+assumed-role keys (`aws-web-identity`, session name `<agent>.<session>` so CloudTrail names the
+agent), a federated or impersonated Google access token (`gcp-workload-identity`), an Entra ID
+access token for the vault (`azure-federated`), or an Infisical access token (`infisical-oidc`).
+Role names, ARNs, client and identity IDs are templates over `{agent}`, `{agent_slug}`,
+`{namespace}` and `{service_account}`.
+
+- **Where the exchange lives.** `agentstore` renders the options for the caller and hands the
+  adapter a `stores.Federation` with a minter instead of a token, so a token is signed (and pushed
+  into the redaction set) only when the adapter has no cached credential. Adapters cache by a key
+  covering the agent principal, pod and options, for two thirds of the credential's life, and wipe
+  a session's entries when it ends (`stores.SessionForgetter`). An adapter declares the methods it
+  takes (`stores.AgentFederation`); scrim refuses to start on a method the store does not take, or
+  on an exchange method with the issuer off, rather than refusing every use later.
+- **How the store decides.** The check runs after scrim's rules allow a use, so neither side can
+  widen the other. Where the store can answer what an identity may do, scrim asks without reading:
+  Vault and OpenBao `sys/capabilities-self` on the API path, Google `testIamPermissions`
+  (`secretmanager.versions.access`). AWS, Azure Key Vault and Infisical have no such call that
+  covers resource policies, KMS keys and access policies, so the check is the read itself with the
+  agent's credential, and the value is wiped unread. The alternative, a policy simulation with
+  scrim's own credential (`iam:SimulatePrincipalPolicy`), would need broad IAM read rights for
+  scrim and still miss resource and key policies. The extra read happens only for a use scrim's
+  rules already allowed, of a value scrim already holds for redaction, and it puts the agent's
+  session in the store's audit.
+- **Writes.** The gate checks reads (inject and restore). Of the stores above only OpenBao, Vault
+  and Google can check a write without performing it; the others report it as unsupported.
 
 ## Risks / Trade-offs
 

@@ -38,6 +38,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/internal/agentcache"
 	"github.com/heliopsy/scrim/internal/stores/internal/wire"
 )
 
@@ -57,6 +58,9 @@ type Adapter struct {
 	name string
 	s    *settings
 	c    *client
+	// agents caches the access tokens agents' own identities logged in
+	// with (agent.go).
+	agents *agentcache.Cache[secret.Value]
 }
 
 var (
@@ -77,7 +81,7 @@ func New(ctx context.Context, inst stores.Instance) (stores.Adapter, error) {
 	if err != nil {
 		return nil, &stores.Error{Store: inst.Name, Op: "configure", Kind: stores.ErrInvalidRef, Detail: err.Error()}
 	}
-	return &Adapter{name: inst.Name, s: s, c: c}, nil
+	return &Adapter{name: inst.Name, s: s, c: c, agents: agentcache.New(copyValue, secret.Value.Wipe)}, nil
 }
 
 // Name implements stores.Adapter.
@@ -93,6 +97,7 @@ func (a *Adapter) Credentials() []secret.Value { return a.c.credentials() }
 
 // Close implements stores.Adapter.
 func (a *Adapter) Close() error {
+	a.agents.Close()
 	a.c.close()
 	return nil
 }
@@ -382,32 +387,33 @@ type fetched struct {
 	labels map[string]string
 }
 
-// get fetches the secret ref names, with its value when withValue is set.
-func (a *Adapter) get(ctx context.Context, ref stores.Ref, withValue bool) (fetched, error) {
+// secretQuery builds the single-secret read of ref: the API path and query,
+// the project ID and the location. Errors are store errors.
+func (a *Adapter) secretQuery(ctx context.Context, ref stores.Ref, withValue bool) (string, url.Values, string, location, error) {
 	l, ok := splitSecret(ref.Path)
 	if !ok {
-		return fetched{}, a.invalid(stores.OpRead, ref, "want <project>/<environment>/[<folder>/...]<KEY>")
+		return "", nil, "", l, a.invalid(stores.OpRead, ref, "want <project>/<environment>/[<folder>/...]<KEY>")
 	}
 	var version string
 	if ref.Selectors != "" {
 		q, _ := url.ParseQuery(ref.Selectors)
 		for k := range q {
 			if k != "version" {
-				return fetched{}, a.invalid(stores.OpRead, ref, "unknown selector "+strconv.Quote(k)+" (supported: version)")
+				return "", nil, "", l, a.invalid(stores.OpRead, ref, "unknown selector "+strconv.Quote(k)+" (supported: version)")
 			}
 		}
 		version = q.Get("version")
 		if n, err := strconv.Atoi(version); err != nil || n < 1 {
-			return fetched{}, a.invalid(stores.OpRead, ref, "version must be a positive integer")
+			return "", nil, "", l, a.invalid(stores.OpRead, ref, "version must be a positive integer")
 		}
 	}
 	if ref.Field != "" && ref.Field != Field {
-		return fetched{}, &stores.Error{Store: a.name, Op: stores.OpRead, Ref: ref, Kind: stores.ErrNotFound,
+		return "", nil, "", l, &stores.Error{Store: a.name, Op: stores.OpRead, Ref: ref, Kind: stores.ErrNotFound,
 			Detail: "Infisical secrets hold a single field named " + Field}
 	}
 	q, id, err := a.baseQuery(ctx, l)
 	if err != nil {
-		return fetched{}, a.fail(stores.OpRead, ref, err)
+		return "", nil, "", l, a.fail(stores.OpRead, ref, err)
 	}
 	q.Set("type", "shared")
 	q.Set("viewSecretValue", strconv.FormatBool(withValue))
@@ -415,7 +421,16 @@ func (a *Adapter) get(ctx context.Context, ref stores.Ref, withValue bool) (fetc
 	if version != "" {
 		q.Set("version", version)
 	}
-	b, err := a.c.do(ctx, http.MethodGet, "/api/v4/secrets/"+url.PathEscape(l.key), q, nil, nil)
+	return "/api/v4/secrets/" + url.PathEscape(l.key), q, id, l, nil
+}
+
+// get fetches the secret ref names, with its value when withValue is set.
+func (a *Adapter) get(ctx context.Context, ref stores.Ref, withValue bool) (fetched, error) {
+	path, q, id, l, err := a.secretQuery(ctx, ref, withValue)
+	if err != nil {
+		return fetched{}, err
+	}
+	b, err := a.c.do(ctx, http.MethodGet, path, q, nil, nil)
 	if err != nil {
 		return fetched{}, a.fail(stores.OpRead, ref, err)
 	}

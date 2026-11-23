@@ -44,6 +44,15 @@ type fake struct {
 	// echoJWT makes a refused Kubernetes login quote the JWT back.
 	echoJWT bool
 
+	// OIDC Auth: identity ID -> the JWT it accepts (scrim's identity token
+	// for that agent), the environment its tokens may read values in, and
+	// the identity behind each access token it issued.
+	oidcJWT      map[string]string
+	oidcEnv      map[string]string
+	oidcLogins   []struct{ IdentityID, JWT string }
+	tokenIdent   map[string]string
+	maskForIdent map[string]bool
+
 	// orgID is the organisation every project belongs to; hiddenProjects
 	// are projects whose details GET /api/v1/projects/{id} refuses.
 	orgID          string
@@ -103,6 +112,10 @@ func newFake(t *testing.T) *fake {
 		orgID:          "0rg00000-0000-4000-8000-" + randID(6),
 		imports:        map[string]string{},
 		hiddenProjects: map[string]bool{},
+		oidcJWT:        map[string]string{},
+		oidcEnv:        map[string]string{},
+		tokenIdent:     map[string]string{},
+		maskForIdent:   map[string]bool{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, _ *http.Request) {
@@ -110,6 +123,7 @@ func newFake(t *testing.T) *fake {
 	})
 	mux.HandleFunc("POST /api/v1/auth/universal-auth/login", f.login)
 	mux.HandleFunc("POST /api/v1/auth/kubernetes-auth/login", f.kubernetesLogin)
+	mux.HandleFunc("POST /api/v1/auth/oidc-auth/login", f.oidcLogin)
 	mux.HandleFunc("GET /api/v1/projects/slug/{slug}", f.auth(f.project))
 	mux.HandleFunc("GET /api/v1/projects/{id}", f.auth(f.projectByID))
 	mux.HandleFunc("GET /api/v4/secrets", f.auth(f.list))
@@ -219,6 +233,38 @@ func (f *fake) kubernetesLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	f.logins++
 	f.issueLocked(w)
+}
+
+// oidcLogin answers as Infisical's OIDC Auth: an identity without OIDC
+// Auth is 404, a JWT it does not accept 401. The access token it issues
+// reads values only in the identity's environment.
+func (f *fake) oidcLogin(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		IdentityID string `json:"identityId"`
+		JWT        string `json:"jwt"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.IdentityID == "" || in.JWT == "" {
+		apiErr(w, 400, "BadRequest", "bad body")
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.oidcLogins = append(f.oidcLogins, struct{ IdentityID, JWT string }{in.IdentityID, in.JWT})
+	want, ok := f.oidcJWT[in.IdentityID]
+	if !ok {
+		apiErr(w, 404, "NotFound", "OIDC auth method not found for identity with ID "+in.IdentityID)
+		return
+	}
+	if in.JWT != want {
+		apiErr(w, 401, "UnauthorizedError", "Access denied: OIDC token "+in.JWT+" failed verification")
+		return
+	}
+	f.logins++
+	tok := "tok-" + randID(16)
+	f.tokens[tok] = time.Now().Add(time.Duration(f.tokenTTL) * time.Second)
+	f.issued = append(f.issued, tok)
+	f.tokenIdent[tok] = in.IdentityID
+	writeJSON(w, 200, map[string]any{"accessToken": tok, "expiresIn": f.tokenTTL, "accessTokenMaxTTL": 7200, "tokenType": "Bearer"})
 }
 
 func (f *fake) auth(h http.HandlerFunc) http.HandlerFunc {
@@ -362,8 +408,13 @@ func (f *fake) get(w http.ResponseWriter, r *http.Request) {
 	f.gets = append(f.gets, q)
 	// Infisical defaults viewSecretValue to true.
 	view := q.Get("viewSecretValue") != "false" || f.ignoreView
-	if f.maskValues {
+	ident := f.tokenIdent[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
+	if f.maskValues || f.maskForIdent[ident] {
 		view = false
+	}
+	if ident != "" && f.oidcEnv[ident] != q.Get("environment") {
+		apiErr(w, 403, "PermissionDenied", "You are not allowed to read secrets in environment "+q.Get("environment"))
+		return
 	}
 	if view && f.denyValues {
 		apiErr(w, 403, "PermissionDenied", "You are not allowed to read the value of this secret")
