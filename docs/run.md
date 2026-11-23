@@ -432,8 +432,8 @@ backend only one of them can hold the state file, so a second concurrent `scrim 
 
 - The wrapper relies on the agent honouring the variables and arguments it is given. It does not
   stop an agent that ignores them; the transparent, managed-settings and Kubernetes modes enforce.
-- Claude Code on Vertex is refused until scrim serves it. Bedrock, Mantle, Claude Platform on AWS
-  and Foundry need a [provider route](providers/README.md).
+- Claude Code on Bedrock, Mantle, Claude Platform on AWS, Foundry and Vertex needs a
+  [provider route](providers/README.md); Claude on Google Cloud operated by Anthropic is refused.
 - Codex with a custom `model_provider` in its configuration talks to that provider's own base URL,
   which `scrim run` does not change. Codex signed in with a ChatGPT account calls the Responses
   API on `chatgpt.com` through the forward proxy, which routes it to the LLM proxy

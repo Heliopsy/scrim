@@ -44,6 +44,20 @@ providers:
     kind: foundry
     resource: my-res
     api-key: bao://kv/azure#key
+  gcp:
+    kind: vertex
+    region: us-east5
+    service-account: bao://kv/gcp#key
+  gcp-global:
+    kind: vertex
+    region: global
+    metadata-server: true
+  entra:
+    kind: foundry
+    resource: other-res
+    tenant-id: 00000000-0000-0000-0000-000000000001
+    client-id: app-1
+    client-secret: bao://kv/azure#client_secret
   local:
     kind: foundry
     upstream: http://127.0.0.1:9999/
@@ -84,6 +98,17 @@ providers:
 		f.GetAuth().GetHeader().GetPrefix() != "" || f.GetAuth().GetHeader().GetValueRef() != "bao://kv/azure#key" {
 		t.Errorf("foundry: %v", f)
 	}
+	if v := byName["gcp"]; v.GetProvider() != "vertex" || v.GetUpstream() != "https://us-east5-aiplatform.googleapis.com" ||
+		v.GetAuth().GetGoogleServiceAccount().GetKeyRef() != "bao://kv/gcp#key" {
+		t.Errorf("vertex: %v", v)
+	}
+	if v := byName["gcp-global"]; v.GetUpstream() != "https://aiplatform.googleapis.com" || v.GetAuth().GetGoogleMetadata() == nil {
+		t.Errorf("vertex global: %v", v)
+	}
+	if e := byName["entra"].GetAuth().GetEntraClientSecret(); e.GetTokenUrl() != "https://login.microsoftonline.com/00000000-0000-0000-0000-000000000001/oauth2/v2.0/token" ||
+		e.GetClientId() != "app-1" || e.GetClientSecretRef() != "bao://kv/azure#client_secret" {
+		t.Errorf("entra: %v", e)
+	}
 	if !slices.Contains(bypass(cfg), "127.0.0.1:9999") {
 		t.Errorf("a loopback provider upstream is not bypassed: %v", bypass(cfg))
 	}
@@ -96,18 +121,27 @@ providers:
 func TestProviderValidation(t *testing.T) {
 	keys := "    access-key-id: bao://kv/aws#id\n    secret-access-key: bao://kv/aws#secret\n"
 	for _, c := range []struct{ body, want string }{
-		{"kind: vertex\n" + keys, "must be one of"},
+		{"kind: openai\n" + keys, "must be one of"},
 		{"kind: bedrock\n" + keys, "region: required"},
 		{"kind: bedrock\n    region: us-east-1\n", "needs credentials"},
 		{"kind: bedrock\n    region: us-east-1\n    access-key-id: bao://kv/aws#id\n", "go together"},
 		{"kind: bedrock\n    region: us-east-1\n    api-key: AKIALITERALKEY\n", "must be a store reference"},
-		{"kind: bedrock\n    region: us-east-1\n    api-key: bao://kv/a#k\n" + keys, "not both"},
+		{"kind: bedrock\n    region: us-east-1\n    api-key: bao://kv/a#k\n" + keys, "one way to authenticate"},
 		{"kind: bedrock\n    region: bedrock-runtime.us-east-1.amazonaws.com\n" + keys, "not an AWS region"},
 		{"kind: foundry\n    api-key: bao://kv/a#k\n", "resource: required"},
 		{"kind: foundry\n    resource: https://x.services.ai.azure.com\n    api-key: bao://kv/a#k\n", "resource name alone"},
-		{"kind: foundry\n    resource: xy\n" + keys, "foundry takes api-key"},
+		{"kind: foundry\n    resource: xy\n" + keys, "only sign for AWS kinds"},
 		{"kind: bedrock\n    region: us-east-1\n    upstream: https://h/path\n" + keys, "origin without a path"},
 		{"kind: bedrock\n    region: us-east-1\n    bogus: 1\n" + keys, "unknown field bogus"},
+		{"kind: vertex\n    region: us-east5\n", "service-account or metadata-server"},
+		{"kind: vertex\n    region: us-east-1x\n    metadata-server: true\n", "not a Vertex AI location"},
+		{"kind: vertex\n    region: global\n    metadata-server: true\n    service-account: bao://kv/g#key\n", "one way"},
+		{"kind: vertex\n    region: global\n    api-key: bao://kv/g#key\n", "vertex takes"},
+		{"kind: vertex\n    region: global\n    metadata-server: yes-please\n", "true or false"},
+		{"kind: bedrock\n    region: us-east-1\n    service-account: bao://kv/g#key\n", "for kind vertex"},
+		{"kind: foundry\n    resource: xy\n    client-id: app\n    client-secret: bao://kv/a#s\n", "needs tenant-id"},
+		{"kind: foundry\n    resource: xy\n    tenant-id: t\n    client-id: app\n", "needs tenant-id, client-id and client-secret"},
+		{"kind: foundry\n    resource: xy\n    api-key: bao://kv/a#k\n    token-url: https://t/x\n", "only with"},
 	} {
 		err := buildErr(t, "providers:\n  p:\n    "+c.body)
 		if err == nil || !strings.Contains(err.Error(), c.want) {

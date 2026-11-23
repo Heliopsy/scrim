@@ -58,6 +58,7 @@ pub mod route;
 pub mod server;
 mod sse;
 pub mod stream;
+pub mod token;
 pub mod upstream;
 
 #[cfg(feature = "test-util")]

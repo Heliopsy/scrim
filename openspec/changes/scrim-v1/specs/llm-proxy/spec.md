@@ -70,6 +70,19 @@ A cloud provider route SHALL authenticate every request itself, toward its own u
 credentials it reads from stores by reference, and SHALL drop the authentication the agent sent. A
 cloud provider route SHALL NOT be chained.
 
+#### Scenario: Vertex access token minted
+
+- **WHEN** a Vertex route is configured with a service account key and an agent sends a
+  streamRawPredict request
+- **THEN** scrim mints an access token with a JWT signed by the key, sends it as a bearer token with
+  the redacted request, and reuses it for later requests until shortly before it expires
+
+#### Scenario: Token endpoint refuses
+
+- **WHEN** the token endpoint refuses the route's credential
+- **THEN** the request is refused with `credential_unavailable` naming the token endpoint's host and
+  status, and nothing is sent to the provider
+
 #### Scenario: Chain configured
 
 - **WHEN** `proxy.chain.url` is set and a Bedrock provider route is configured

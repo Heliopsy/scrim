@@ -491,6 +491,9 @@ message RouteAuth {
   oneof kind {
     AwsSigV4Auth aws_sigv4 = 1;
     HeaderAuth header = 2;
+    GoogleServiceAccountAuth google_service_account = 3;
+    GoogleMetadataAuth google_metadata = 4;
+    EntraClientSecretAuth entra_client_secret = 5;
   }
 }
 
@@ -511,6 +514,34 @@ message HeaderAuth {
   string name = 1;
   string prefix = 2;
   string value_ref = 3;
+}
+
+// GoogleServiceAccountAuth mints Google access tokens with a service account
+// key (the JSON key file) and sends them as a bearer token.
+message GoogleServiceAccountAuth {
+  string key_ref = 1;
+  // token_url is empty for https://oauth2.googleapis.com/token.
+  string token_url = 2;
+  // scope is empty for https://www.googleapis.com/auth/cloud-platform.
+  string scope = 3;
+}
+
+// GoogleMetadataAuth takes Google access tokens from the metadata server
+// (workload identity).
+message GoogleMetadataAuth {
+  // url is empty for the metadata server's token URL.
+  string url = 1;
+  string scope = 2;
+}
+
+// EntraClientSecretAuth mints Microsoft Entra ID access tokens with client
+// credentials.
+message EntraClientSecretAuth {
+  string token_url = 1;
+  string client_id = 2;
+  string client_secret_ref = 3;
+  // scope is empty for https://ai.azure.com/.default.
+  string scope = 4;
 }
 
 // RouteChain is a chained upstream that receives requests after redaction.

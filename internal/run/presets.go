@@ -36,7 +36,7 @@ var ClaudePreset = &Preset{
 	Name:     "claude",
 	Commands: []string{"claude"},
 	Check: func(env map[string]string) error {
-		for _, v := range []string{"CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD"} {
+		for _, v := range []string{"CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD"} {
 			if truthy(env[v]) {
 				return fmt.Errorf("%s is set: scrim does not serve this provider yet, and the agent would reach it directly; unset it to use the Anthropic API or a provider scrim serves", v)
 			}
@@ -111,6 +111,10 @@ var claudeClouds = []claudeCloud{
 	{Use: "CLAUDE_CODE_USE_FOUNDRY", Kind: "foundry", BaseURL: "ANTHROPIC_FOUNDRY_BASE_URL", Suffix: "/anthropic",
 		SkipAuth: "CLAUDE_CODE_SKIP_FOUNDRY_AUTH",
 		Unset:    []string{"ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_FOUNDRY_AUTH_TOKEN", "ANTHROPIC_FOUNDRY_RESOURCE"}},
+	// Claude Code appends /projects/... to the base URL, which ends in the
+	// API version.
+	{Use: "CLAUDE_CODE_USE_VERTEX", Kind: "vertex", BaseURL: "ANTHROPIC_VERTEX_BASE_URL", Suffix: "/v1",
+		SkipAuth: "CLAUDE_CODE_SKIP_VERTEX_AUTH"},
 }
 
 // cloudMode points each cloud provider mode the inherited environment turns
