@@ -55,8 +55,8 @@ providers:
 | `token-url` | Replaces the token endpoint (Google, Entra ID or the metadata server), for private endpoints and tests |
 
 Credential fields are store references, never values; a literal is rejected when the
-configuration loads. A reference without a field names the secret's default field. The values must be in the store's redaction set (they are when the store
-loads every secret, the default). A route whose credentials are not loaded refuses every request
+configuration loads. A reference without a field names the secret's default field. The values
+must be in the store's redaction set (they are when the store loads every secret, the default). A route whose credentials are not loaded refuses every request
 with `503` and the code `credential_unavailable`, naming the missing reference, and sends nothing.
 
 The credentials are used toward the route's upstream only. A provider route is never chained
