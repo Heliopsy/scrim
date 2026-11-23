@@ -60,6 +60,7 @@ var (
 //	provider string             the model provider, if any
 //	dest     policy.RuleDest    host, method, path
 //	tool     policy.RuleTool    tool name and command
+//	ssh      policy.RuleSSH     ssh-agent signature details
 //	now      timestamp          request time
 //
 // Besides the CEL standard library, optional types and the strings
@@ -76,6 +77,7 @@ func newEnv() (*cel.Env, error) {
 			reflect.TypeFor[RuleSecret](),
 			reflect.TypeFor[RuleDest](),
 			reflect.TypeFor[RuleTool](),
+			reflect.TypeFor[RuleSSH](),
 			ext.ParseStructTags(true),
 		),
 		ext.Strings(),
@@ -86,6 +88,7 @@ func newEnv() (*cel.Env, error) {
 		cel.Variable("provider", cel.StringType),
 		cel.Variable("dest", cel.ObjectType("policy.RuleDest")),
 		cel.Variable("tool", cel.ObjectType("policy.RuleTool")),
+		cel.Variable("ssh", cel.ObjectType("policy.RuleSSH")),
 		cel.Variable("now", cel.TimestampType),
 		cel.Function("glob",
 			cel.MemberOverload("string_glob_string",

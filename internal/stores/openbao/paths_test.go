@@ -85,7 +85,7 @@ func newEscapeKV(t *testing.T, names ...string) (*escapeKV, *Adapter, *bytes.Buf
 	t.Cleanup(srv.Close)
 	a := newTest(t, srv, map[string]any{"labels.lookups": false}, nil)
 	var logs bytes.Buffer
-	a.c.log = slog.New(slog.NewTextHandler(&logs, nil))
+	a.c.Log = slog.New(slog.NewTextHandler(&logs, nil))
 	return f, a, &logs
 }
 

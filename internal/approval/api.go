@@ -13,6 +13,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/breakglass"
 	"github.com/heliopsy/scrim/internal/grant"
+	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/state"
 )
 
@@ -49,6 +50,9 @@ type ApprovalView struct { //nolint:revive // the name is part of the API packag
 	ExpiresAt time.Time `json:"expires_at"`
 	DecidedAt time.Time `json:"decided_at,omitzero"`
 	DecidedBy string    `json:"decided_by,omitempty"`
+
+	// SSH is what an ssh-agent signature is for (action ssh.sign).
+	SSH *policy.SSHRequest `json:"ssh,omitempty"`
 }
 
 // ViewOf converts an approval for the API.
@@ -61,6 +65,10 @@ func ViewOf(a *state.Approval) ApprovalView {
 	}
 	if !a.Request.Ref.IsZero() {
 		v.Ref = a.Request.Ref.String()
+	}
+	if a.Request.SSH != (policy.SSHRequest{}) {
+		ssh := a.Request.SSH
+		v.SSH = &ssh
 	}
 	if a.GrantTTL > 0 {
 		v.GrantTTL = a.GrantTTL.String()

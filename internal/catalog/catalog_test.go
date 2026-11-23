@@ -486,3 +486,35 @@ func TestPlaceholderFormatAndSigV4Validation(t *testing.T) {
 		}
 	}
 }
+
+func TestSSHKeyEntries(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		e    Entry
+		ok   bool
+	}{
+		{"key", Entry{Name: "deploy", Ref: "env://KEY", SSHKey: true}, true},
+		{"key and certificate", Entry{Name: "deploy", Ref: "env://KEY", SSHKey: true, SSHCertificate: "env://CERT"}, true},
+		{"certificate without key", Entry{Name: "deploy", Ref: "env://KEY", SSHCertificate: "env://CERT"}, false},
+		{"bad certificate ref", Entry{Name: "deploy", Ref: "env://KEY", SSHKey: true, SSHCertificate: "not a ref"}, false},
+		{"key with hosts", Entry{Name: "deploy", Ref: "env://KEY", SSHKey: true, Hosts: []string{"github.com"}}, false},
+		{"key with inject", Entry{Name: "deploy", Ref: "env://KEY", SSHKey: true, Inject: []string{"env"}}, false},
+		{"key and client certificate", Entry{Name: "deploy", Ref: "env://KEY", SSHKey: true, ClientCertificate: true}, false},
+		{"bulk key", Entry{Name: "deploy", Prefix: "env://KEYS/*", Template: "SCRIM_{NAME}", SSHKey: true}, false},
+		{"display key", Entry{Name: "deploy", Ref: "env://KEY", SSHKey: true, Class: ClassDisplay}, false},
+	} {
+		e := tc.e
+		err := validateEntry(&e)
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: err = %v", tc.name, err)
+		}
+	}
+	c := compile(t, Selection{}, Entry{Name: "deploy", Ref: "env://KEY", SSHKey: true, SSHCertificate: "env://CERT"})
+	b, err := c.Name("deploy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !b.SSHKey || b.SSHCertificate.String() != "env://CERT" || b.Injectable() {
+		t.Fatalf("binding: %+v", b)
+	}
+}

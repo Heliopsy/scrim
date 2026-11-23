@@ -45,6 +45,7 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 | --- | --- |
 | [stores/README.md](stores/README.md) | Store adapters, the capability matrix, references, freshness and outages |
 | [stores/openbao.md](stores/openbao.md) | OpenBao and Vault-compatible KV v2 |
+| [stores/vault.md](stores/vault.md) | HashiCorp Vault: KV v1 and v2, namespaces, dynamic secrets leased per grant |
 | [stores/infisical.md](stores/infisical.md) | Infisical |
 | [stores/gcp.md](stores/gcp.md) | Google Secret Manager, workload identity |
 | [stores/azure.md](stores/azure.md) | Azure Key Vault, workload identity |
@@ -59,7 +60,8 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 | --- | --- |
 | [cli-tools.md](cli-tools.md) | Tool profiles: gh, git, kubectl, aws, terraform and other CLIs with placeholder credentials |
 | [run.md](run.md) | `scrim run`: what it sets for Claude Code, Codex and other agents, failing closed, signals |
-| [providers/README.md](providers/README.md) | Cloud provider routes: Bedrock, Claude Platform on AWS and Foundry, signed by scrim after redaction |
+| [ssh-agent.md](ssh-agent.md) | scrim's ssh-agent: keys from stores, a policy decision and audit entry per signature, approvals, git over SSH |
+| [providers/README.md](providers/README.md) | Cloud provider routes: Bedrock, Claude Platform on AWS, Foundry and Vertex, authenticated by scrim after redaction |
 | [agent-tools.md](agent-tools.md) | The MCP server, `scrim secret` commands and the human entry page |
 | [exec-broker.md](exec-broker.md) | `secret_exec` and `scrim exec`: allowed commands run as another user with a secret, output redacted |
 | [identity.md](identity.md) | How scrim knows which agent is calling: peer credentials and session tokens |

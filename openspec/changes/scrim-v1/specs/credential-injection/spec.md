@@ -386,12 +386,94 @@ the allow list or policy says, and SHALL not be accepted as allow-list entries.
 ### Requirement: SSH agent
 
 scrim SHALL act as an SSH agent offering keys from configured stores. Agents SHALL be able to sign
-with a key but never read it, and policy MAY require approval for each signature.
+with a key but never read it, and policy MAY require approval for each signature. `scrim run`
+SHALL point the session's `SSH_AUTH_SOCK` at a socket that holds no key and forwards every request
+to the control plane as the session, replacing an inherited agent.
 
 #### Scenario: Git push over SSH with approval
 
 - **WHEN** an agent's SSH client requests a signature with a key whose policy requires approval
 - **THEN** the signature is produced only after a human approves, and refused on timeout
+
+#### Scenario: Denied signature fails the push
+
+- **WHEN** a human denies the approval for the signature of a `git push` over SSH
+- **THEN** the agent answers SSH_AGENT_FAILURE, the push fails and the server is unchanged
+
+#### Scenario: Session socket
+
+- **WHEN** `scrim run` starts an agent with `run.ssh-agent` on
+- **THEN** `SSH_AUTH_SOCK` names a socket in the session directory, readable by the user only, and
+  the control plane sees each request as that session
+
+### Requirement: SSH signatures are decided with what they sign
+
+Each signature SHALL be decided by policy as operation `ssh.sign` with the key's catalog entry,
+the session, and what the data says: an SSH login's user, an SSHSIG namespace, the key's
+fingerprint, and the server's verified host key. Data that is neither a login nor an SSHSIG blob
+SHALL be refused.
+
+#### Scenario: Login to a named host
+
+- **WHEN** an OpenSSH client binds to a server whose host key is listed as `git.example.com` in
+  `ssh-agent.known-hosts` and asks to sign its login as `git`
+- **THEN** rules see `ssh.user == "git"`, `ssh.host_key` and `dest.host == "git.example.com"`
+
+#### Scenario: Login for another session
+
+- **WHEN** the login to sign carries another session identifier than the connection's binding
+- **THEN** the signature is refused before policy and the refusal is audited
+
+#### Scenario: Arbitrary data
+
+- **WHEN** a caller asks the agent to sign bytes that are not an SSH login or an SSHSIG blob
+- **THEN** the signature is refused
+
+### Requirement: SSH host keys come from verified bindings
+
+The agent SHALL trust a server's host key only from a `session-bind@openssh.com` whose signature
+over the session identifier verifies, and only for a login that carries that session identifier.
+The host key SHALL get a name only from known_hosts files the operator configures.
+
+#### Scenario: Unbound client
+
+- **WHEN** a client that sends no session binding asks to sign a login
+- **THEN** rules see an empty `ssh.host_key` and `dest.host`
+
+### Requirement: SSH agent offers only what policy may allow
+
+The agent SHALL list a key only when policy could allow or ask for a signature with it on that
+connection, evaluating with the attributes a list cannot know (user, kind, namespace) unknown, and
+SHALL list nothing while break-glass deny-all is on. Every signature SHALL still be decided on its
+own.
+
+#### Scenario: Key for another host
+
+- **WHEN** the only rule for a key allows logins to `github.com` and the connection is bound to
+  another host
+- **THEN** the key is not listed
+
+### Requirement: SSH agent cannot be changed or forwarded
+
+The agent side SHALL NOT add, remove or replace keys, or lock or unlock the agent. A connection
+bound with `is_forwarding` SHALL be refused for every list and signature.
+
+#### Scenario: Agent forwarding
+
+- **WHEN** a remote host reaches the agent through `ssh -A`
+- **THEN** its binding is refused and so is every request on that connection
+
+### Requirement: SSH signatures are audited
+
+Every signature, allowed, denied or refused before policy, SHALL leave an audit entry with the
+key's reference, the rule, the outcome and the parsed login or namespace and fingerprints. No
+audit entry, error, log line or API response SHALL contain key material.
+
+#### Scenario: Signature audit
+
+- **WHEN** an agent signs a login as `git` through scrim's agent
+- **THEN** the audit log records `ssh.sign` with the user, key and host key fingerprints and the
+  rule that decided
 
 ### Requirement: Database auth proxies
 

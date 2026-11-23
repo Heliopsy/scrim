@@ -89,6 +89,9 @@ type Options struct {
 	// FSView configures the session filesystem view; the zero value is
 	// off.
 	FSView FSViewOptions
+	// SSHAgent serves scrim's ssh-agent on a socket in the session
+	// directory and points SSH_AUTH_SOCK at it (run.ssh-agent).
+	SSHAgent bool
 
 	// dryRun builds the plan only (PrintEnv).
 	dryRun bool
@@ -174,6 +177,7 @@ type Prepared struct {
 	token    secret.Value
 	client   *localapi.Client
 	project  *projectscan.Result
+	stopSSH  func()
 }
 
 // Prepare ensures scrim runs, mints the session, writes the session
@@ -274,6 +278,7 @@ func (p *Prepared) build(ctx context.Context, ep Endpoints) error {
 		Command: o.Command, Preset: o.Preset, Environ: o.environ(), Endpoints: ep,
 		SessionDir: dir, SessionID: p.Session.ID, Token: !p.token.IsZero() || o.dry(),
 		MCP: o.MCP, ScrimPath: scrimPath, Placeholders: phs, Reserved: o.Reserved, Profiles: rendered,
+		SSHAgent: o.SSHAgent,
 	}
 	if ep.ForwardProxy != "" {
 		in.SystemRoots, in.NodeExtra = trustInputs(envMap(o.environ()))
@@ -290,6 +295,9 @@ func (p *Prepared) build(ctx context.Context, ep Endpoints) error {
 	}
 	if !o.dry() {
 		if err := p.writeFiles(); err != nil {
+			return err
+		}
+		if err := p.startSSHAgent(); err != nil {
 			return err
 		}
 	}
@@ -419,6 +427,10 @@ func (p *Prepared) unprotected(cause error) (*Prepared, error) {
 // Close ends the session, removes the session directory and releases the
 // instance. It is safe to call more than once.
 func (p *Prepared) Close(ctx context.Context) {
+	if p.stopSSH != nil {
+		p.stopSSH()
+		p.stopSSH = nil
+	}
 	if p.client != nil {
 		if err := p.client.EndSession(ctx); err != nil && p.opts.Log != nil {
 			// The sweep revokes it once this process is gone.

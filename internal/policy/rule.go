@@ -81,12 +81,15 @@ const (
 	// ScopeSecret covers every operation on the reference that policy would
 	// otherwise send to ask.
 	ScopeSecret GrantScope = "secret"
+	// ScopeOnce leaves no grant: an approval releases the one operation it
+	// was raised for, and the next one asks again.
+	ScopeOnce GrantScope = "once"
 )
 
 // Valid reports whether s is a known scope or empty.
 func (s GrantScope) Valid() bool {
 	switch s {
-	case "", ScopeRequest, ScopeHost, ScopeSecret:
+	case "", ScopeRequest, ScopeHost, ScopeSecret, ScopeOnce:
 		return true
 	}
 	return false

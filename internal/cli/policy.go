@@ -140,6 +140,7 @@ type evalFlags struct {
 	op, agent, kind, ref, name, class, provider, host, method, path, tool, command string
 	labels, slabels                                                                map[string]string
 	label                                                                          []string
+	ssh                                                                            policy.SSHRequest
 }
 
 // vectorFile is the JSON request format of `policy eval --request`, the same
@@ -151,6 +152,7 @@ type vectorFile struct {
 	Provider string            `json:"provider"`
 	Dest     policy.RuleDest   `json:"dest"`
 	Tool     policy.RuleTool   `json:"tool"`
+	SSH      policy.RuleSSH    `json:"ssh"`
 }
 
 func (r *evalFlags) request(file string) (policy.Request, error) {
@@ -167,6 +169,7 @@ func (r *evalFlags) request(file string) (policy.Request, error) {
 		r.ref, r.name, r.class, r.slabels = v.Secret.Ref, v.Secret.Name, v.Secret.Class, v.Secret.Labels
 		r.provider, r.host, r.method, r.path = v.Provider, v.Dest.Host, v.Dest.Method, v.Dest.Path
 		r.tool, r.command = v.Tool.Name, v.Tool.Command
+		r.ssh = policy.SSHRequest(v.SSH)
 	}
 	for _, kv := range r.label {
 		k, v, ok := strings.Cut(kv, "=")
@@ -183,6 +186,7 @@ func (r *evalFlags) request(file string) (policy.Request, error) {
 		Agent:  policy.Agent{ID: r.agent, Kind: policy.IdentityKind(r.kind), Labels: r.labels},
 		Name:   r.name, SecretClass: r.class, SecretLabels: r.slabels,
 		Provider: r.provider, Host: r.host, Method: r.method, Path: r.path, Tool: r.tool, Command: r.command,
+		SSH: r.ssh,
 	}
 	if r.agent == "" {
 		req.Agent.Kind = policy.IdentityUnknown

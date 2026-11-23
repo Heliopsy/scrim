@@ -253,7 +253,7 @@ func TestClaudePreset(t *testing.T) {
 
 func TestClaudeCloudModes(t *testing.T) {
 	routes := map[string]string{ProviderAnthropic: "/anthropic", ProviderOpenAI: "/openai",
-		"bedrock": "/bedrock", "anthropic-aws": "/claude-aws", "foundry": "/azure", "bedrock-mantle": "/mantle"}
+		"bedrock": "/bedrock", "anthropic-aws": "/claude-aws", "foundry": "/azure", "bedrock-mantle": "/mantle", "vertex": "/gcp"}
 	for _, c := range []struct {
 		use, baseVar, base, skip string
 		unset                    []string
@@ -266,6 +266,7 @@ func TestClaudeCloudModes(t *testing.T) {
 			[]string{"ANTHROPIC_AWS_API_KEY"}},
 		{"CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_FOUNDRY_BASE_URL", "http://127.0.0.1:9790/azure/anthropic", "CLAUDE_CODE_SKIP_FOUNDRY_AUTH",
 			[]string{"ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_FOUNDRY_AUTH_TOKEN", "ANTHROPIC_FOUNDRY_RESOURCE"}},
+		{"CLAUDE_CODE_USE_VERTEX", "ANTHROPIC_VERTEX_BASE_URL", "http://127.0.0.1:9790/gcp/v1", "CLAUDE_CODE_SKIP_VERTEX_AUTH", nil},
 	} {
 		in := input("claude")
 		in.Endpoints.Routes = routes
@@ -287,12 +288,12 @@ func TestClaudeCloudModes(t *testing.T) {
 			t.Errorf("%s: no warning that the inherited %s is replaced: %v", c.use, c.baseVar, p.Warnings)
 		}
 	}
-	// Vertex is not served yet: refused even with routes.
+	// Claude on Google Cloud (Anthropic managed) is not served: refused even with routes.
 	in := input("claude")
 	in.Endpoints.Routes = routes
-	in.Environ = append(in.Environ, "CLAUDE_CODE_USE_VERTEX=true")
-	if _, err := Build(in); err == nil || !strings.Contains(err.Error(), "CLAUDE_CODE_USE_VERTEX") {
-		t.Errorf("vertex: %v", err)
+	in.Environ = append(in.Environ, "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD=true")
+	if _, err := Build(in); err == nil || !strings.Contains(err.Error(), "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD") {
+		t.Errorf("claude on google cloud: %v", err)
 	}
 }
 

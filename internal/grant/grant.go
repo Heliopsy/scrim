@@ -66,6 +66,8 @@ var (
 	ErrNoIdentity = errors.New("grant: a grant needs a known agent identity")
 	// ErrNoRef: grants are per secret reference.
 	ErrNoRef = errors.New("grant: a grant needs a secret reference")
+	// ErrOnce: the rule's grant scope is once, so nothing is left behind.
+	ErrOnce = errors.New("grant: scope once leaves no grant")
 )
 
 // Limits are the effective TTL limits for one grant.
@@ -136,6 +138,8 @@ func Build(req policy.Request, scope policy.GrantScope, uses int, ttl time.Durat
 			g.Scope.Hosts = []string{strings.ToLower(req.Host)}
 		}
 	case policy.ScopeSecret:
+	case policy.ScopeOnce:
+		return state.Grant{}, ErrOnce
 	default:
 		return state.Grant{}, fmt.Errorf("grant: unknown scope %q", scope)
 	}

@@ -37,6 +37,8 @@ const (
 	FileCA     = "scrim-ca.pem"
 	FileBundle = "ca-bundle.pem"
 	FileMCP    = "mcp.json"
+	// FileSSHAgent is scrim's ssh-agent socket (SSH_AUTH_SOCK).
+	FileSSHAgent = "ssh-agent.sock"
 	// ProfilesDir holds what tool profiles generate.
 	ProfilesDir = "profiles"
 	// BinDir holds the credential helper links tool profiles ask for; it is
@@ -150,6 +152,9 @@ type Input struct {
 	// SystemRoots is the PEM of the trust store the session bundle starts
 	// from. NodeExtra is the PEM of an inherited NODE_EXTRA_CA_CERTS file.
 	SystemRoots, NodeExtra []byte
+	// SSHAgent points SSH_AUTH_SOCK at scrim's ssh-agent in the session
+	// directory (run.ssh-agent).
+	SSHAgent bool
 }
 
 type builder struct {
@@ -271,6 +276,7 @@ func Build(in Input) (*Plan, error) {
 	}
 	b.placeholders()
 	b.profiles()
+	b.sshAgent()
 
 	for n := range b.unset {
 		b.plan.Unset = append(b.plan.Unset, n)
@@ -358,6 +364,21 @@ func (b *builder) proxy() {
 	for _, v := range bundleVars {
 		b.setVar(v, b.file(FileBundle), "system roots plus scrim's CA")
 	}
+}
+
+// sshAgent points ssh at scrim's agent, whose keys come from scrim's stores.
+// An inherited agent is replaced: it holds the user's own keys, which the
+// agent would otherwise sign with directly.
+func (b *builder) sshAgent() {
+	if !b.in.SSHAgent || !b.identified() {
+		return
+	}
+	sock := b.file(FileSSHAgent)
+	if old := b.env["SSH_AUTH_SOCK"]; old != "" && old != sock {
+		b.warn("SSH_AUTH_SOCK from your environment is replaced: ssh in the session signs with scrim's ssh-agent, whose keys come from scrim's stores (docs/ssh-agent.md)")
+	}
+	b.setVar("SSH_AUTH_SOCK", sock, "ssh and git over ssh sign through scrim's ssh-agent; keys stay in scrim")
+	b.unsetVar("SSH_AGENT_PID")
 }
 
 func (b *builder) placeholders() {
