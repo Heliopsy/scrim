@@ -22,6 +22,7 @@ import (
 	"github.com/heliopsy/scrim/internal/audit/sinks"
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/dataplane"
+	"github.com/heliopsy/scrim/internal/dbproxy"
 	"github.com/heliopsy/scrim/internal/events"
 	"github.com/heliopsy/scrim/internal/notify"
 	"github.com/heliopsy/scrim/internal/obs"
@@ -198,6 +199,9 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 	opened, err := storeconfig.OpenWith(ctx, cfg, stores.DefaultRegistry, storeconfig.Options{
 		OnChange: a.valuesChanged,
 		Log:      obs.WithComponent(a.Log, "stores"),
+		// Database passwords given as store references stay in the
+		// redaction set and follow rotation like any redact target.
+		Redact: dbproxy.StoreRefs(cfg),
 		OnStatus: func(st refresh.Status) {
 			a.Instruments.StoreHealth(st.Store, st.Healthy, st.LastSuccess, st.Values, st.State == refresh.StateDegraded)
 			a.Instruments.StoreRefresh(st.Store, st.LastDuration, st.LastError != "")

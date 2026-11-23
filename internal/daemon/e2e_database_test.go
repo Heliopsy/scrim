@@ -34,7 +34,9 @@ var dbtestPostgres = dbtest.Postgres()
 // credential bound to the database host and returns the row with the value
 // redacted back to its placeholder; a write and an unbound host are refused;
 // neither the database password nor the secret appears in anything the
-// agent received or in the log.
+// agent received or in the log. The password of "app" is a store reference
+// (files://db-password): it is read through the file store, is in the
+// redaction set, and a rotated value is used by the next login.
 func TestDatabaseProxyAndToolRealDataPlane(t *testing.T) {
 	bin := realDataPlane(t)
 	dbtestPostgres.Start(t)
@@ -57,6 +59,13 @@ func TestDatabaseProxyAndToolRealDataPlane(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "db-pw"), []byte(pw.Value()), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	storeRoot := filepath.Join(dir, "store")
+	if err := os.MkdirAll(storeRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storeRoot, "db-password"), []byte(pw.Value()), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "rules.yaml"), []byte(`default: deny
 rules:
   - name: databases-for-agents
@@ -75,12 +84,14 @@ rules:
 	}
 	host, port, _ := net.SplitHostPort(dbtestPostgres.Addr)
 	cfg := strings.Replace(string(raw), "hosts: [api.acme.test]", "hosts: [api.acme.test, "+host+"]", 1)
-	db := func(name, addr string) string {
-		return fmt.Sprintf("  %s:\n    kind: postgres\n    address: %s\n    user: %s\n    password: file:%s\n    database: scrim\n"+
+	cfg = strings.Replace(cfg, "stores:\n", "stores:\n  files:\n    kind: file\n    root: "+storeRoot+"\n", 1)
+	db := func(name, addr, password string) string {
+		return fmt.Sprintf("  %s:\n    kind: postgres\n    address: %s\n    user: %s\n    password: %s\n    database: scrim\n"+
 			"    listen: 127.0.0.1:0\n    tls-ca: %s\n    tls-server-name: localhost\n    query-timeout: 5s\n",
-			name, addr, user, filepath.Join(dir, "db-pw"), filepath.Join(dir, "db-ca.pem"))
+			name, addr, user, password, filepath.Join(dir, "db-ca.pem"))
 	}
-	cfg += "databases:\n" + db("app", dbtestPostgres.Addr) + db("byname", "localhost:"+port)
+	cfg += "databases:\n" + db("app", dbtestPostgres.Addr, "files://db-password") +
+		db("byname", "localhost:"+port, "file:"+filepath.Join(dir, "db-pw"))
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +103,8 @@ rules:
 	if addr == "" {
 		t.Fatalf("no listener for database app in %+v", d.Addrs())
 	}
-	checker := leak.NewChecker([]leak.Seed{pw, leak.NewSeed("acme", leak.KindAPIKey, token)})
+	rotated := leak.Generate(leak.KindDBPassword)
+	checker := leak.NewChecker([]leak.Seed{pw, rotated, leak.NewSeed("acme", leak.KindAPIKey, token)})
 	noLeak := func(what, text string) {
 		t.Helper()
 		if fs := checker.CheckText(1, text); len(fs) > 0 {
@@ -100,20 +112,46 @@ rules:
 		}
 	}
 
-	// The proxy: no password, scrim logs in.
+	// The proxy: no password, scrim logs in with the password from the
+	// file store.
 	lh, lp, _ := net.SplitHostPort(addr)
-	pc, err := pgconn.Connect(ctx, fmt.Sprintf("host=%s port=%s user=anyone dbname=scrim sslmode=disable", lh, lp))
-	if err != nil {
-		t.Fatalf("proxy login: %v\n%s", err, h.logs.String())
+	login := func(what string) {
+		t.Helper()
+		pc, err := pgconn.Connect(ctx, fmt.Sprintf("host=%s port=%s user=anyone dbname=scrim sslmode=disable", lh, lp))
+		if err != nil {
+			t.Fatalf("proxy login (%s): %v\n%s", what, err, h.logs.String())
+		}
+		defer func() { _ = pc.Close(ctx) }()
+		res, err := pc.Exec(ctx, "SELECT current_user, (SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid())").ReadAll()
+		if err != nil || len(res) != 1 || len(res[0].Rows) != 1 {
+			t.Fatalf("query through the proxy (%s): %v", what, err)
+		}
+		if got := res[0].Rows[0]; string(got[0]) != user || string(got[1]) != "t" {
+			t.Fatalf("proxy session %q (%s), want %s over TLS", got, what, user)
+		}
 	}
-	res, err := pc.Exec(ctx, "SELECT current_user, (SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid())").ReadAll()
-	if err != nil || len(res) != 1 || len(res[0].Rows) != 1 {
-		t.Fatalf("query through the proxy: %v", err)
+	// The store's password is in the redaction set before any login.
+	redacted := func(what string, v leak.Seed) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			red, err := d.redact(ctx, []byte("password "+v.Value()+"\n"))
+			// The store reference is what matched, not a pattern detector.
+			fromStore := false
+			for _, r := range red.Refs {
+				fromStore = fromStore || strings.HasPrefix(r, "files://db-password")
+			}
+			if err == nil && fromStore && len(checker.CheckText(1, string(red.Text))) == 0 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: database password not redacted by its store reference (refs %v): %v", what, red.Refs, err)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
 	}
-	if got := res[0].Rows[0]; string(got[0]) != user || string(got[1]) != "t" {
-		t.Fatalf("proxy session %q, want %s over TLS", got, user)
-	}
-	_ = pc.Close(ctx)
+	redacted("store reference", pw)
+	login("store reference")
 
 	// The tool, by placeholder.
 	ph := d.builder.PlaceholderFor(stores.Ref{Scheme: "testenv", Path: "SCRIMTEST_TOKEN"})
@@ -154,6 +192,23 @@ rules:
 	if got := dbtestPostgres.QueryString(t, "SELECT count(*) FROM "+table); got != "2" {
 		t.Fatalf("%s rows after the refused write, want 2", got)
 	}
+	// Rotation, last because it leaves the file: password of byname stale:
+	// the role and the store get a new password; after the store refreshes,
+	// the next login uses it and both values stay redacted.
+	dbtestPostgres.Exec(t, fmt.Sprintf("ALTER ROLE %s PASSWORD '%s'", user, rotated.Value()))
+	if err := os.WriteFile(filepath.Join(storeRoot, "db-password"), []byte(rotated.Value()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := d.refresherFor(stores.Ref{Scheme: "files", Path: "db-password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RefreshNow(ctx); err != nil {
+		t.Fatal(err)
+	}
+	login("rotated")
+	redacted("rotated", rotated)
+	redacted("retained after rotation", pw)
 	noLeak("log", h.logs.String())
 }
 

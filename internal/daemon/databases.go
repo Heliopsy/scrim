@@ -47,7 +47,7 @@ const dbProxyTool = "database-proxy"
 // startDatabases binds every configured database's listener and serves it
 // until ctx ends.
 func (d *Daemon) startDatabases(ctx context.Context, cfg *config.Config) error {
-	specs, err := dbproxy.Specs(cfg, d.app.Config.Current)
+	specs, err := dbproxy.Specs(cfg, d.app.Config.Current, d.resolveStoreRef)
 	if err != nil {
 		return err
 	}
@@ -83,6 +83,25 @@ func (d *Daemon) startDatabases(ctx context.Context, cfg *config.Config) error {
 	d.runtime.SetDatabases(ds)
 	d.dbs = ds
 	return nil
+}
+
+// resolveStoreRef reads a database password given as a store reference
+// through its store's refresher, the path injected credentials take: the
+// value comes from memory while the store confirms it (the password is a
+// redact target of its store, see dbproxy.StoreRefs), else from the store,
+// and it is in the redaction set before it is returned. A locked or
+// unreachable store refuses. Errors name the reference, never the value.
+func (d *Daemon) resolveStoreRef(ctx context.Context, raw config.SecretRef) (secret.Value, error) {
+	ref, err := stores.ParseRef(string(raw))
+	if err != nil {
+		return secret.Value{}, fmt.Errorf("reference %s: %w", raw.Display(), err)
+	}
+	r, err := d.refresherFor(ref)
+	if err != nil {
+		return secret.Value{}, err
+	}
+	ref.Scheme = r.Store()
+	return r.Resolve(ctx, ref)
 }
 
 func listenDatabase(s dbproxy.Spec) (net.Listener, error) {
@@ -267,8 +286,10 @@ func (ds *databases) lookup(ph string) (stores.Ref, secret.Value, bool) {
 	return ref, out, found
 }
 
-// databasePasswords puts every configured database password in the
-// redaction set. They carry no reference: redacted, never injected.
+// databasePasswords puts every database password configured as env:, file:,
+// cred: or a literal in the redaction set. They carry no reference:
+// redacted, never injected. A password given as a store reference is a
+// redact target of its store and reaches the set through its refresher.
 type databasePasswords struct{ cfg func() *config.Config }
 
 func (databasePasswords) Store() string { return "scrim-databases" }

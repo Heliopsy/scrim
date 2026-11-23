@@ -241,6 +241,28 @@ type Options struct {
 	OnStatus func(refresh.Status)
 	// Log is handed to every adapter for its warnings. Nil discards them.
 	Log *slog.Logger
+	// Redact lists store references that configuration uses as secret
+	// values outside the stores collection (database passwords). Each
+	// becomes a redact target of the store its scheme names, so its value
+	// is loaded with the store, refreshed with it and kept in the redaction
+	// set. A reference must name one secret of a configured store.
+	Redact []string
+}
+
+// addTarget adds t, a whole secret, to ts unless a target already covers
+// it. A target naming one field of the same secret is widened to the whole
+// secret, which only adds values to the redaction set.
+func addTarget(ts []refresh.Target, t refresh.Target) []refresh.Target {
+	for i, have := range ts {
+		if !have.Covers(t.Ref) {
+			continue
+		}
+		if !have.Prefix && !have.Glob {
+			ts[i].Ref.Field = ""
+		}
+		return ts
+	}
+	return append(ts, t)
 }
 
 // Open builds every configured store's adapter (without contacting it),
@@ -253,7 +275,14 @@ func Open(ctx context.Context, cfg *config.Config, reg *stores.Registry) (*Opene
 // OpenWith is [Open] with hooks on every Refresher.
 func OpenWith(ctx context.Context, cfg *config.Config, reg *stores.Registry, opts Options) (*Opened, error) {
 	o := &Opened{Set: stores.NewSet()}
-	var errs []error
+	type opened struct {
+		a  stores.Adapter
+		rc refresh.Config
+	}
+	var (
+		errs []error
+		all  []opened
+	)
 	for _, ci := range Collection.Get(cfg) {
 		inst, rc, err := Instance(cfg, ci)
 		if err != nil {
@@ -289,7 +318,35 @@ func OpenWith(ctx context.Context, cfg *config.Config, reg *stores.Registry, opt
 		}
 		rc.OnStatus = opts.OnStatus
 		rc.AllowEmptyTargets = AllowEmptyTargets.Get(cfg)
-		o.Refreshers = append(o.Refreshers, refresh.New(a, rc))
+		all = append(all, opened{a: a, rc: rc})
+	}
+	for _, raw := range opts.Redact {
+		t, err := refresh.ParseTarget(raw)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Errorf("reference %s: %w", config.SecretRef(raw).Display(), err))
+			continue
+		case t.Prefix || t.Glob:
+			errs = append(errs, fmt.Errorf("reference %s: must name one secret", config.SecretRef(raw).Display()))
+			continue
+		}
+		a, err := o.Set.Lookup(t.Ref)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("reference %s: no configured store has the scheme %s", config.SecretRef(raw).Display(), t.Ref.Scheme))
+			continue
+		}
+		// The whole secret is the target: a target limited to one field
+		// next to a prefix or whole-secret target over the same secret
+		// would replace its other fields at every refresh.
+		t.Ref.Scheme, t.Ref.Field = a.Name(), ""
+		for i := range all {
+			if all[i].a == a {
+				all[i].rc.Targets = addTarget(all[i].rc.Targets, t)
+			}
+		}
+	}
+	for _, x := range all {
+		o.Refreshers = append(o.Refreshers, refresh.New(x.a, x.rc))
 	}
 	if err := errors.Join(errs...); err != nil {
 		_ = o.Close()

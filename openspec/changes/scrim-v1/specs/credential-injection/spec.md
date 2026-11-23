@@ -507,6 +507,20 @@ and verify the certificate and host name unless the database is configured as
   authentication
 - **THEN** scrim refuses the login instead of sending the password
 
+### Requirement: Database password from a store reference
+
+A password given as a store reference SHALL be a redact target of the store its scheme names, loaded
+and refreshed with that store, and SHALL be read through that store's refresher at each login after
+the connection is authorized, so a rotated value is used by the next login. A reference that names
+no configured store SHALL stop start-up.
+
+#### Scenario: Password from a store reference
+
+- **WHEN** a database's password is `files://db-password` and the file store holds it
+- **THEN** the value is in the redaction set before any login, the proxy logs in with it, and after
+  the secret is rotated and the store refreshed the next login uses the new value while the old one
+  stays redacted
+
 ### Requirement: Database proxy authorization
 
 Every proxy connection SHALL be decided as `database.auth` for the caller the transport

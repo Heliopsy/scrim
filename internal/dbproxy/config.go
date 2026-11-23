@@ -41,7 +41,7 @@ var Databases = config.RegisterCollection(config.CollectionSpec{
 	RequiredFields:   []string{"kind", "address", "user", "password"},
 	RestartRequired:  true,
 	Validate: func(inst config.Instance) error {
-		_, err := specOf(inst, nil)
+		_, err := specOf(inst, nil, nil)
 		return err
 	},
 })
@@ -85,13 +85,19 @@ func DefaultListen(name string, kind Kind) string {
 	return "unix:" + filepath.Join(DefaultSocketDir(name), ".s.PGSQL.5432")
 }
 
+// StoreResolver reads the current value of a store reference
+// (`bao://kv/db/app#password`) through the secret stores. The caller wipes
+// the value. Errors name the reference, never a value.
+type StoreResolver func(ctx context.Context, ref config.SecretRef) (secret.Value, error)
+
 // Specs reads every configured database. Each Database's Password reads the
 // current configuration through current, so a reload's new password is used
-// for the next login.
-func Specs(cfg *config.Config, current func() *config.Config) ([]Spec, error) {
+// for the next login. A password given as a store reference is read through
+// resolve at every login, after the connection was authorized.
+func Specs(cfg *config.Config, current func() *config.Config, resolve StoreResolver) ([]Spec, error) {
 	var out []Spec
 	for _, inst := range Databases.Get(cfg) {
-		s, err := specOf(inst, current)
+		s, err := specOf(inst, current, resolve)
 		if err != nil {
 			return nil, err
 		}
@@ -100,7 +106,7 @@ func Specs(cfg *config.Config, current func() *config.Config) ([]Spec, error) {
 	return out, nil
 }
 
-func specOf(inst config.Instance, current func() *config.Config) (Spec, error) {
+func specOf(inst config.Instance, current func() *config.Config, resolve StoreResolver) (Spec, error) {
 	where := func(f string) string { return inst.Key(CollectionKey, f) }
 	for k := range inst.Fields {
 		if !slices.Contains(fields, k) {
@@ -177,9 +183,42 @@ func specOf(inst config.Instance, current func() *config.Config) (Spec, error) {
 		s.Limits.MaxRows = n
 	}
 	s.Limits.MaxBytes = 1 << 20
-	key := s.PasswordKey
-	db.Password = func(context.Context) (secret.Value, error) { return currentPassword(current, key) }
+	key, ref := s.PasswordKey, s.PasswordRef
+	db.Password = func(ctx context.Context) (secret.Value, error) { return password(ctx, current, resolve, ref, key) }
 	return s, nil
+}
+
+// StoreRefs lists the database passwords configured as store references.
+// Their stores keep them in the redaction set (storeconfig.Options.Redact).
+func StoreRefs(cfg *config.Config) []string {
+	var out []string
+	for _, inst := range Databases.Get(cfg) {
+		if ref := config.SecretRef(inst.String("password")); ref.Kind() == config.RefStore {
+			out = append(out, string(ref))
+		}
+	}
+	return out
+}
+
+// password returns the database's password for one login: a store reference
+// read through resolve (the collection needs a restart to change, so the
+// reference is fixed), any other reference copied out of the current
+// configuration. The caller wipes it.
+func password(ctx context.Context, current func() *config.Config, resolve StoreResolver, ref config.SecretRef, key string) (secret.Value, error) {
+	if ref.Kind() != config.RefStore {
+		return currentPassword(current, key)
+	}
+	if resolve == nil {
+		return secret.Value{}, fmt.Errorf("%s: no secret store can resolve %s", key, ref.Display())
+	}
+	v, err := resolve(ctx, ref)
+	if err != nil {
+		return secret.Value{}, fmt.Errorf("%s: %w", key, err)
+	}
+	if v.IsZero() {
+		return secret.Value{}, fmt.Errorf("%s: %s resolves to an empty value", key, ref.Display())
+	}
+	return v, nil
 }
 
 // currentPassword copies the resolved password out of the current

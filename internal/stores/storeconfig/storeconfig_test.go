@@ -249,3 +249,54 @@ func TestDocsLabelMapping(t *testing.T) {
 		}
 	}
 }
+
+// TestRedactAddsTargets: a reference configuration uses as a secret value
+// elsewhere (a database password) becomes a redact target of the store its
+// scheme or alias names, as the whole secret, and loads with the store. A
+// reference naming no store, or more than one secret, is refused.
+func TestRedactAddsTargets(t *testing.T) {
+	t.Setenv("SCRIM_DBREF_PW", "pw-"+strings.Repeat("r", 20))
+	t.Setenv("SCRIM_DBREF_OTHER", "ot-"+strings.Repeat("s", 20))
+	cfg, err := build(t, `
+stores:
+  local:
+    kind: env
+    aliases: [envs]
+    prefix: SCRIM_DBREF_
+    redact: ["local://SCRIM_DBREF_OTHER#value"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := storeconfig.OpenWith(t.Context(), cfg, stores.DefaultRegistry, storeconfig.Options{
+		Redact: []string{"envs://SCRIM_DBREF_PW#value", "local://SCRIM_DBREF_OTHER", "local://SCRIM_DBREF_PW"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = o.Close() }()
+	r := o.Refreshers[0]
+	if err := r.RefreshNow(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, ts := range r.Status().Targets {
+		if ts.Values != 1 {
+			t.Errorf("target %s holds %d values", ts.Target, ts.Values)
+		}
+		got = append(got, ts.Target)
+	}
+	if want := []string{"local://SCRIM_DBREF_OTHER", "local://SCRIM_DBREF_PW"}; strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("targets %v, want %v", got, want)
+	}
+
+	for raw, want := range map[string]string{
+		"nosuch://kv/x":         "no configured store has the scheme nosuch",
+		"local://SCRIM_DBREF_*": "must name one secret",
+	} {
+		_, err := storeconfig.OpenWith(t.Context(), cfg, stores.DefaultRegistry, storeconfig.Options{Redact: []string{raw}})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: got %v, want %q", raw, err, want)
+		}
+	}
+}
