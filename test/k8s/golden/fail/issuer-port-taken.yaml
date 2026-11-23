@@ -1,0 +1,2 @@
+# expect: identity.issuer.port 9790 is taken
+identity: {issuer: {enabled: true, url: "https://scrim.example.com/idp", port: 9790}}

@@ -51,6 +51,13 @@ postgres: {enabled: true}
 identity:
   kubernetes:
     agents: {reviewer: "sa:agents/reviewer"}
+  issuer:
+    enabled: true
+    url: https://scrim.example.com/idp
+    tokenTTL: 5m
+    signingKeys: {existingSecret: scrim-issuer-keys}
+    service:
+      annotations: {example.com/public: "true"}
 storeAuth:
   serviceAccountToken: {enabled: true, audience: openbao}
 central:
@@ -107,6 +114,7 @@ networkPolicy:
   enabled: true
   agentEgress: [{ports: [{port: 22, protocol: TCP}]}]
   adminFrom: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ops}}}]
+  issuerFrom: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}}]
 objectMetadata:
   Service/ci-scrim: {annotations: {example.com/expose: "false"}}
 extraConfigMaps:

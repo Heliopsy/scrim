@@ -420,6 +420,9 @@ The first key signs and all are published; scrim does not rotate them. To rotate
 first and keep the old one second, roll the replicas, wait one token lifetime plus the stores' JWKS
 cache time, then remove the old key.
 
+In Kubernetes the Helm chart sets all of this from its `identity.issuer` values and puts the
+listener on its own Service ([kubernetes.md](kubernetes.md#identity-issuer)).
+
 ## Store identity per agent
 
 scrim loads the redaction set with its own store identity, so a value an agent may not use is

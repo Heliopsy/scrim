@@ -1,0 +1,2 @@
+# expect: keyStore.type pvc needs central.strategy.type=Recreate
+identity: {issuer: {enabled: true, url: "https://scrim.example.com/idp", keyStore: {type: pvc}}}

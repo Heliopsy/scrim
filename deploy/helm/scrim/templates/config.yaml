@@ -27,7 +27,7 @@ data:
       upstream-ca-file: /etc/scrim/upstream-ca/{{ .Values.upstreamCA.key }}
     {{- end }}
     {{- include "scrim.metricsSettings" (dict "root" . "listen" (printf "0.0.0.0:%v" .Values.metrics.port)) | nindent 4 }}
-    {{- include "scrim.identitySettings" (dict "root" .) | nindent 4 }}
+    {{- include "scrim.identitySettings" (dict "root" . "issuer" true) | nindent 4 }}
     {{- if .Values.edge.enabled }}
     {{- $short := include "scrim.fullname" . }}
     {{- $ns := include "scrim.namespace" . }}

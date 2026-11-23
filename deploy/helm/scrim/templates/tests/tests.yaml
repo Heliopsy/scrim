@@ -1,7 +1,8 @@
 {{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
 {{- /*
 helm test: central scrim's LLM listener and forward proxy answer through the
-Service, and with metrics on, /readyz reports ready. A listener answers any
+Service, with metrics on /readyz reports ready, and with identity.issuer on the
+issuer Service serves the discovery document and a JWKS with a key. A listener answers any
 HTTP status (an unknown path is 404, a proxied request to a host no
 credential is bound to is passed or refused); only "no answer" fails.
 */ -}}
@@ -12,6 +13,11 @@ credential is bound to is passed or refused); only "no answer" fails.
       "check" (printf "c=\"$(%s http://%s:%v/)\" && [ \"$c\" != 000 ]" $code $host .Values.central.service.llmPort)) }}
 {{- include "chart.test.pod" (dict "root" . "name" "forward" "what" "forward proxy"
       "check" (printf "c=\"$(%s --proxy http://%s:%v http://scrim-helm-test.invalid/)\" && [ \"$c\" != 000 ]" $code $host .Values.central.service.forwardPort)) }}
+{{- if .Values.identity.issuer.enabled }}
+{{- $base := printf "http://%s-issuer.%s.svc.%s:%v%s/.well-known" (include "scrim.fullname" .) (include "scrim.namespace" .) .Values.global.clusterDomain .Values.identity.issuer.port (include "scrim.issuerPath" .) }}
+{{- include "chart.test.pod" (dict "root" . "name" "issuer" "what" "issuer discovery and JWKS"
+      "check" (printf "curl -fsS --max-time 10 %s/openid-configuration | grep -q jwks_uri && curl -fsS --max-time 10 %s/jwks.json | grep -q '\"kid\"'" $base $base)) }}
+{{- end }}
 {{- if .Values.metrics.enabled }}
 {{- include "chart.test.pod" (dict "root" . "name" "ready" "what" "/readyz"
       "check" (printf "curl -fsS --max-time 10 http://%s:%v/readyz >/dev/null" $host .Values.metrics.port)) }}

@@ -1,0 +1,14 @@
+# The issuer on one replica with generated keys on a PersistentVolumeClaim, so the keys and
+# their rotation survive restarts; Recreate keeps two pods off the key directory.
+identity:
+  issuer:
+    enabled: true
+    url: https://scrim.example.com/idp
+    rotateEvery: 168h
+    keyStore:
+      type: pvc
+      storageClassName: standard
+central:
+  strategy:
+    type: Recreate
+    rollingUpdate: null

@@ -1,0 +1,28 @@
+# scrim as an identity provider on one replica: generated keys in an emptyDir, the issuer
+# Service open to every source, and OpenBao JWT login per agent by token exchange.
+identity:
+  issuer:
+    enabled: true
+    url: https://scrim.example.com/idp
+config:
+  stores:
+    bao:
+      kind: openbao
+      address: https://bao.example.com:8200
+      auth:
+        method: kubernetes
+        kubernetes:
+          role: scrim
+          token-file: /var/run/secrets/scrim/store-token
+      redact: ["bao://kv/agents/*"]
+  identity:
+    store-login:
+      bao: "jwt role:agent-{agent_slug} audience:openbao mount:jwt"
+storeAuth:
+  serviceAccountToken:
+    enabled: true
+    audience: openbao
+networkPolicy:
+  enabled: true
+agents:
+  namespaces: [agents]

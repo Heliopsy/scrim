@@ -49,6 +49,23 @@ http://<fullname>.<namespace>.svc); the ServiceAccount is "<fullname>-proxy".
   {{- $vols = append $vols (dict "name" "store-token" "projected" (dict "defaultMode" 0440 "sources" (list (dict "serviceAccountToken" (dict "audience" .audience "expirationSeconds" (int .expirationSeconds) "path" (base .path)))))) -}}
 {{- end -}}
 {{- end -}}
+{{- $iss := .Values.identity.issuer -}}
+{{- if $iss.enabled -}}
+{{- if $iss.signingKeys.existingSecret -}}
+  {{- $mounts = append $mounts (dict "name" "issuer-keys" "mountPath" "/run/secrets/scrim/issuer-keys" "readOnly" true) -}}
+  {{- $vols = append $vols (dict "name" "issuer-keys" "secret" (dict "secretName" $iss.signingKeys.existingSecret "defaultMode" 0440 "items" (list (dict "key" $iss.signingKeys.key "path" $iss.signingKeys.key)))) -}}
+{{- else -}}
+  {{- /* scrim creates the key directory itself, mode 0700, one level below the volume root. */ -}}
+  {{- $mounts = append $mounts (dict "name" "issuer-keys" "mountPath" (include "scrim.issuerKeyMount" .)) -}}
+  {{- if eq $iss.keyStore.type "pvc" -}}
+    {{- $vols = append $vols (dict "name" "issuer-keys" "persistentVolumeClaim" (dict "claimName" (include "scrim.issuerClaimName" .))) -}}
+    {{- /* A recursive fsGroup change on every mount would make the key files group-readable, which scrim refuses. */ -}}
+    {{- $_ := set $v "podSecurityContext" (merge (deepCopy (default dict $v.podSecurityContext)) (dict "fsGroupChangePolicy" "OnRootMismatch")) -}}
+  {{- else -}}
+    {{- $vols = append $vols (dict "name" "issuer-keys" "emptyDir" (dict "sizeLimit" "16Mi")) -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
 {{- range .Values.secretMounts -}}
   {{- $mounts = append $mounts (dict "name" (printf "secret-%s" .name) "mountPath" (printf "/run/secrets/scrim/%s" .name) "readOnly" true) -}}
   {{- $sec := dict "secretName" .secretName "defaultMode" 0440 -}}
@@ -68,6 +85,10 @@ http://<fullname>.<namespace>.svc); the ServiceAccount is "<fullname>-proxy".
 {{- if .Values.edge.enabled -}}
   {{- $ports = append $ports (dict "name" "edge" "containerPort" (int .Values.edge.port) "protocol" "TCP") -}}
   {{- $svcPorts = append $svcPorts (dict "name" "edge" "port" (int .Values.edge.port) "targetPort" "edge" "protocol" "TCP") -}}
+{{- end -}}
+{{- if $iss.enabled -}}
+  {{- /* Exposed by the issuer's own Service (issuer.yaml), not the central one. */ -}}
+  {{- $ports = append $ports (dict "name" "issuer" "containerPort" (int $iss.port) "protocol" "TCP") -}}
 {{- end -}}
 {{- if .Values.admin.tcp.enabled -}}
   {{- $ports = append $ports (dict "name" "admin" "containerPort" (int .Values.admin.tcp.port) "protocol" "TCP") -}}
