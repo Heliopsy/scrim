@@ -283,6 +283,7 @@ type Refresher struct {
 	entries     map[string]*entry // by Ref.Secret().String()
 	retired     []retired
 	pending     map[*secret.Value]stores.Ref // values of writes in flight
+	kept        []stores.Ref                 // secrets loaded beyond the targets ([Refresher.Keep])
 	creds       []secret.Value
 	loaded      bool
 	locked      bool
@@ -494,6 +495,9 @@ func (r *Refresher) RefreshNow(ctx context.Context) error {
 func (r *Refresher) refresh(ctx context.Context) error {
 	var errs []error
 	seen := map[string]bool{}
+	r.mu.RLock()
+	kept, loaded := r.kept, r.loaded
+	r.mu.RUnlock()
 	for _, t := range r.cfg.Targets {
 		if !t.Prefix && !t.Glob {
 			seen[key(t.Ref)] = true
@@ -540,6 +544,27 @@ func (r *Refresher) refresh(ctx context.Context) error {
 				errs = append(errs, err)
 			}
 		}
+	}
+	// Kept secrets are read like single-secret targets. One that no target
+	// covered and that the store no longer holds is retired below. One
+	// that cannot be read keeps its values; the failure marks the store
+	// degraded, but never holds back the first load: a kept secret is not
+	// a configured redact target.
+	for _, ref := range kept {
+		k := key(ref)
+		if seen[k] {
+			continue
+		}
+		if err := r.load(ctx, ref, stores.Metadata{}); err != nil {
+			if !errors.Is(err, stores.ErrNotFound) {
+				seen[k] = true
+				if loaded {
+					errs = append(errs, err)
+				}
+			}
+			continue
+		}
+		seen[k] = true
 	}
 	// Secrets no target lists any more are gone from the store: their
 	// values are retired, not dropped.
@@ -958,6 +983,30 @@ func (r *Refresher) Close() {
 		v.Wipe()
 	}
 	r.creds = nil
+}
+
+// Keep sets the secrets, besides those the targets name, that this
+// Refresher loads and keeps fresh: the catalog-bound secrets of its store.
+// Each is read at every refresh like a single-secret target, so it stays
+// current and injectable; one the store no longer holds, or one a later
+// call drops, is retired like any secret gone from the store. Kept secrets
+// add no target: they do not appear in [Status.Targets] and never fail a
+// load as an empty target. Keep replaces the previous set and reads
+// nothing itself; the next refresh, or [Refresher.Resolve], does.
+func (r *Refresher) Keep(refs []stores.Ref) {
+	kept := make([]stores.Ref, 0, len(refs))
+	have := map[string]bool{}
+	for _, ref := range refs {
+		ref = ref.Secret()
+		if ref.IsZero() || have[key(ref)] {
+			continue
+		}
+		have[key(ref)] = true
+		kept = append(kept, ref)
+	}
+	r.mu.Lock()
+	r.kept = kept
+	r.mu.Unlock()
 }
 
 // Kick asks a running Run loop to refresh now.

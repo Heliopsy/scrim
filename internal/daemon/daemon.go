@@ -424,8 +424,12 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	}
 	d.setDataPlaneAddrs(nil)
 
-	// Everything is bound: start the loops.
+	// Everything is bound: start the loops. The catalog's secrets are part
+	// of each store's first load; warmCatalog logs those that cannot be
+	// read.
+	d.keepCatalog(d.catalog.Current())
 	a.Start(runCtx)
+	go d.warmCatalog(runCtx)
 	d.watchFirstLoads(runCtx)
 	d.goRun("policy", func() error { a.RunPolicy(runCtx); return nil })
 	d.goRun("catalog", func() error { return ignoreCanceled(d.catalog.Run(runCtx)) })
@@ -545,18 +549,49 @@ func keysEqual(a, b []config.Instance) bool {
 	return true
 }
 
-// warmCatalog reads, into the redaction set, every catalog-bound secret
-// that no store's redact list loads, so it can be redacted and injected.
-// Reads happen here, off the request path; a failure is retried on the next
-// catalog change or refresh.
+// keepCatalog hands each store's refresher the catalog-bound secrets it
+// holds, so every refresh reads them like redact targets: they stay in the
+// redaction set and injectable for as long as the catalog binds them.
+// Before the stores start it makes them part of the first load.
+func (d *Daemon) keepCatalog(cat *catalog.Catalog) {
+	keep := make(map[*refresh.Refresher][]stores.Ref, len(d.app.Refreshers))
+	for _, r := range d.app.Refreshers {
+		keep[r] = nil
+	}
+	if cat != nil {
+		for _, e := range cat.Entries() {
+			if !e.OK || e.Binding.Ref.IsZero() {
+				continue
+			}
+			if r, err := d.refresherFor(e.Binding.Ref); err == nil {
+				keep[r] = append(keep[r], e.Binding.Ref)
+			}
+		}
+	}
+	for r, refs := range keep {
+		r.Keep(refs)
+	}
+}
+
+// warmCatalog keeps the catalog-bound secrets with their stores and reads,
+// into the redaction set, every one that no store holds a current value of
+// yet, so it can be redacted and injected before the next refresh. Reads
+// happen here, off the request path; a failure is retried by the next
+// refresh.
 func (d *Daemon) warmCatalog(ctx context.Context) {
 	cat := d.catalog.Current()
+	d.keepCatalog(cat)
 	if cat == nil {
 		return
 	}
 	have := map[stores.Ref]bool{}
 	for _, r := range d.app.Refreshers {
-		r.EachValue(func(s refresh.Source, _ secret.Value) { have[s.Ref] = true; have[s.Ref.Secret()] = true })
+		r.EachValue(func(s refresh.Source, _ secret.Value) {
+			if !s.Retained && !s.Pending {
+				have[s.Ref] = true
+				have[s.Ref.Secret()] = true
+			}
+		})
 	}
 	for _, e := range cat.Entries() {
 		if !e.OK || e.Binding.Ref.IsZero() || have[e.Binding.Ref] || have[e.Binding.Ref.Secret()] {

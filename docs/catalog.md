@@ -15,6 +15,13 @@ rejected, and a string that looks like a credential (a GitHub or GitLab token, a
 `sk-` key, a JWT, a private key, a long random path segment) fails validation in any field. A
 catalog that fails validation is not loaded.
 
+Every secret an entry selects is loaded with its store, as if it were in the store's `redact` list:
+read with the store's first load and at every refresh, so it is redacted and injectable whether or
+not a `redact` entry covers it. A secret that drops out of the catalog, or out of the store, stays
+redacted for the store's `refresh.retention` and is no longer injected. A catalog secret that cannot
+be read does not hold back the store's first load; after it, the failure marks the store degraded
+and the last value stays.
+
 A bound entry whose value the store has not delivered yet (the store is still loading, or a read
 failed) is still known to the tool proxy by its hosts and placeholders. A tool request toward one
 of those hosts that carries its placeholder, or any other placeholder nothing resolves, is refused

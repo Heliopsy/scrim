@@ -781,3 +781,87 @@ func TestSecretLabelsOutsideTheRedactionSet(t *testing.T) {
 		t.Fatalf("metadata reader: %v, %v, %d reads", got, err, ts.reads)
 	}
 }
+
+// TestKeptSecrets: secrets handed to Keep (the catalog's) are read at every
+// refresh like single-secret targets. Before, a secret loaded on demand was
+// retired by the next refresh because no target listed it: no longer
+// injectable, and gone from the redaction set once the retention ran out.
+func TestKeptSecrets(t *testing.T) {
+	s := memstore.New("mem")
+	other, a, b := gen(t), gen(t), gen(t)
+	seed(s, "other", map[string]string{"v": other})
+	seed(s, "cat/a", map[string]string{"v": a})
+	seed(s, "cat/b", map[string]string{"token": b})
+	c := &clock{t: time.Unix(1_700_000_000, 0)}
+	r := newRefresher(t, s, c, "mem://other")
+	r.Keep([]stores.Ref{{Scheme: "mem", Path: "cat/a"}, {Scheme: "mem", Path: "cat/b", Field: "token"}, {Scheme: "mem", Path: "other"}})
+	current := func(v string) bool {
+		src, ok := set(r)[v]
+		return ok && !src.Retained
+	}
+	for i := range 3 {
+		if err := r.RefreshNow(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if !current(other) || !current(a) || !current(b) {
+			t.Fatalf("refresh %d: a kept secret is not current", i)
+		}
+		c.add(time.Minute)
+	}
+	if st := r.Status(); len(st.Targets) != 1 || st.State != refresh.StateReady {
+		t.Fatalf("kept secrets changed the targets or the state: %+v", st)
+	}
+	v, err := r.Resolve(t.Context(), stores.Ref{Scheme: "mem", Path: "cat/b", Field: "token"})
+	if err != nil || plain(v) != b {
+		t.Fatalf("Resolve kept secret: %v", err)
+	}
+	v.Wipe()
+
+	// Gone from the store, or no longer kept: retired, still redacted.
+	s.Delete(stores.Ref{Scheme: "mem", Path: "cat/b"})
+	if err := r.RefreshNow(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if src, ok := set(r)[b]; !ok || !src.Retained {
+		t.Fatal("a deleted kept secret is not retained")
+	}
+	r.Keep(nil)
+	if err := r.RefreshNow(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if src, ok := set(r)[a]; !ok || !src.Retained || !current(other) {
+		t.Fatal("a secret no longer kept is not retired, or the target was")
+	}
+}
+
+// TestKeptSecretFailure: a kept secret that cannot be read does not hold
+// back the first load, which it never did as a catalog secret; after it,
+// the failure marks the store degraded and the last value stays.
+func TestKeptSecretFailure(t *testing.T) {
+	s := memstore.New("mem")
+	a := gen(t)
+	seed(s, "cat/a", map[string]string{"v": a})
+	r := newRefresher(t, s, nil)
+	r.Keep([]stores.Ref{{Scheme: "mem", Path: "cat/a"}})
+	s.SetDown(true)
+	if err := r.RefreshNow(t.Context()); err != nil {
+		t.Fatalf("first load failed on a kept secret: %v", err)
+	}
+	if err := r.Ready(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s.SetDown(false)
+	if err := r.RefreshNow(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s.SetDown(true)
+	if err := r.RefreshNow(t.Context()); err == nil {
+		t.Fatal("a failed read of a kept secret after the first load was not reported")
+	}
+	if src, ok := set(r)[a]; !ok || src.Retained {
+		t.Fatal("a kept secret that could not be read lost its value")
+	}
+	if st := r.Status(); st.State != refresh.StateDegraded {
+		t.Fatalf("state = %s", st.State)
+	}
+}
