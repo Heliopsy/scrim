@@ -22,22 +22,35 @@ import (
 )
 
 // TestMatrixKubernetes is the Kubernetes cell of the matrix, run by
-// test/k8s/e2e.sh once the chart is installed: the bypass matrix through the
+// test/k8s/e2e.sh in two steps. Before the chart is installed, with
+// SCRIM_MATRIX_K8S_PHASE=seed, it generates the seeds into the file
+// SCRIM_MATRIX_K8S_SEEDS and writes them to OpenBao, so scrim loads them at
+// start like any secret it serves. Once the chart is installed it runs the
+// bypass matrix through the
 // central scrim Deployment and through an agent pod's scrim sidecar, with the
 // seeds in the cluster's OpenBao (read by scrim with its own service account
 // token) and the cluster's fake provider as the upstream. The script reaches
 // each with kubectl port-forward and names them here:
 //
-//	SCRIM_MATRIX_K8S_BAO, SCRIM_MATRIX_K8S_BAO_TOKEN  OpenBao and a token to write the seeds with
+//	SCRIM_MATRIX_K8S_SEEDS                            the seed file (0600)
+//	SCRIM_MATRIX_K8S_BAO, SCRIM_MATRIX_K8S_BAO_TOKEN  OpenBao and a token to write the seeds with (seed step)
 //	SCRIM_MATRIX_K8S_FAKE                             the fake provider (its /_fake control endpoints)
 //	SCRIM_MATRIX_K8S_TARGETS                          name=url,... of the LLM base URLs to test
 //	SCRIM_MATRIX_K8S_APIS                             name=api,... the API each target runs
 //
 // It skips without them.
 func TestMatrixKubernetes(t *testing.T) {
-	bao, fake, targets := os.Getenv("SCRIM_MATRIX_K8S_BAO"), os.Getenv("SCRIM_MATRIX_K8S_FAKE"), os.Getenv("SCRIM_MATRIX_K8S_TARGETS")
-	if bao == "" || fake == "" || targets == "" {
+	path := os.Getenv("SCRIM_MATRIX_K8S_SEEDS")
+	if path == "" {
 		t.Skip("run by test/k8s/e2e.sh")
+	}
+	if os.Getenv("SCRIM_MATRIX_K8S_PHASE") == "seed" {
+		seedKubernetes(t, path)
+		return
+	}
+	fake, targets := os.Getenv("SCRIM_MATRIX_K8S_FAKE"), os.Getenv("SCRIM_MATRIX_K8S_TARGETS")
+	if fake == "" || targets == "" {
+		t.Fatal("SCRIM_MATRIX_K8S_FAKE and SCRIM_MATRIX_K8S_TARGETS are required")
 	}
 	apis := map[string]fp.API{}
 	for _, kv := range strings.Split(os.Getenv("SCRIM_MATRIX_K8S_APIS"), ",") {
@@ -46,26 +59,9 @@ func TestMatrixKubernetes(t *testing.T) {
 		}
 	}
 	ctx := t.Context()
-	seeds := leak.GenerateSet()
-	a, err := stores.DefaultRegistry.Open(ctx, stores.Instance{Name: "bao", Kind: "openbao",
-		Options: map[string]any{"address": bao, "token": "test:token"},
-		Resolve: func(_ context.Context, ref config.SecretRef) (secret.Value, error) {
-			if ref != "test:token" {
-				return secret.Value{}, errors.New("no such reference")
-			}
-			return secret.FromString(os.Getenv("SCRIM_MATRIX_K8S_BAO_TOKEN")), nil
-		}})
+	seeds, err := leak.ReadSeedFile(path)
 	if err != nil {
 		t.Fatal(err)
-	}
-	defer func() { _ = a.Close() }()
-	// Under secret/e2e, which the chart's store redacts and scrim's
-	// OpenBao role may read (test/k8s/e2e.sh).
-	for i, s := range seeds {
-		ref := stores.MustParseRef(fmt.Sprintf("bao://secret/e2e/matrix-seed-%d", i))
-		if _, err := a.Write(ctx, ref, map[string]secret.Value{"value": secret.FromString(s.Value())}, stores.WriteOptions{}); err != nil {
-			t.Fatalf("write %s: %v", ref, err)
-		}
 	}
 	up := matrix.RemoteUpstream{BaseURL: fake, Client: &http.Client{Timeout: 30 * time.Second}}
 	checker := leak.NewChecker(seeds)
@@ -107,6 +103,35 @@ func TestMatrixKubernetes(t *testing.T) {
 				t.Errorf("%d results not at their expected outcome:\n%s", tot.Failed, b)
 			}
 		})
+	}
+}
+
+// seedKubernetes generates the seeds, writes them to path and to OpenBao
+// under secret/e2e, which the chart's store redacts and scrim's OpenBao role
+// may read (test/k8s/e2e.sh).
+func seedKubernetes(t *testing.T, path string) {
+	ctx := t.Context()
+	seeds := leak.GenerateSet()
+	if err := leak.WriteSeedFile(path, seeds); err != nil {
+		t.Fatal(err)
+	}
+	a, err := stores.DefaultRegistry.Open(ctx, stores.Instance{Name: "bao", Kind: "openbao",
+		Options: map[string]any{"address": os.Getenv("SCRIM_MATRIX_K8S_BAO"), "token": "test:token"},
+		Resolve: func(_ context.Context, ref config.SecretRef) (secret.Value, error) {
+			if ref != "test:token" {
+				return secret.Value{}, errors.New("no such reference")
+			}
+			return secret.FromString(os.Getenv("SCRIM_MATRIX_K8S_BAO_TOKEN")), nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+	for i, s := range seeds {
+		ref := stores.MustParseRef(fmt.Sprintf("bao://secret/e2e/matrix-seed-%d", i))
+		if _, err := a.Write(ctx, ref, map[string]secret.Value{"value": secret.FromString(s.Value())}, stores.WriteOptions{}); err != nil {
+			t.Fatalf("write %s: %v", ref, err)
+		}
 	}
 }
 

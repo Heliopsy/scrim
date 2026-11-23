@@ -236,6 +236,27 @@ printf %s "$tool_token" | k -n scrim-e2e exec -i deploy/openbao -- sh -c \
 printf %s "$llm_secret" | k -n scrim-e2e exec -i deploy/openbao -- sh -c \
   'BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN="$(cat /run/secrets/bao/token)" bao kv put -mount=secret e2e/llm value=-' >/dev/null
 
+# kubectl port-forward on a free local port; prints the port.
+port_forward() {
+  local logf="$work/port-forward-$RANDOM.log" p
+  timeout 1800 kubectl --kubeconfig "$kubeconfig" --context "$ctx" -n "$1" port-forward "$2" ":$3" >"$logf" 2>&1 &
+  echo "$!" >>"$work/port-forward.pids"
+  for _ in $(seq 1 100); do
+    p="$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9]*\) .*/\1/p' "$logf" | head -n1)"
+    if [ -n "$p" ]; then echo "$p"; return 0; fi
+    sleep 0.2
+  done
+  fail "port-forward to $1/$2 did not start: $(cat "$logf")"
+}
+# The leak matrix's seeds go into OpenBao before scrim starts, so it loads
+# them like the secrets above (TestMatrixKubernetes, seed step).
+bao_port="$(port_forward scrim-e2e deploy/openbao 8200)"
+(cd "$root" && SCRIM_MATRIX_K8S_PHASE=seed SCRIM_MATRIX_K8S_SEEDS="$work/matrix-seeds.json" \
+  SCRIM_MATRIX_K8S_BAO="http://127.0.0.1:$bao_port" SCRIM_MATRIX_K8S_BAO_TOKEN="$bao_token" \
+  go test -count=1 -timeout 5m -run '^TestMatrixKubernetes$' ./test/e2e/matrix/ >/dev/null) || fail "could not write the leak matrix seeds"
+xargs -r kill <"$work/port-forward.pids" 2>/dev/null || true
+: >"$work/port-forward.pids"
+
 # ---------------------------------------------------------------- chart
 
 log "install the chart"
@@ -343,24 +364,10 @@ for mode in central sidecar; do
 done
 
 log "leak matrix (test/e2e/matrix, TestMatrixKubernetes)"
-# kubectl port-forward on a free local port; prints the port.
-port_forward() {
-  local logf="$work/port-forward-$RANDOM.log" p
-  timeout 1800 kubectl --kubeconfig "$kubeconfig" --context "$ctx" -n "$1" port-forward "$2" ":$3" >"$logf" 2>&1 &
-  echo "$!" >>"$work/port-forward.pids"
-  for _ in $(seq 1 100); do
-    p="$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9]*\) .*/\1/p' "$logf" | head -n1)"
-    if [ -n "$p" ]; then echo "$p"; return 0; fi
-    sleep 0.2
-  done
-  fail "port-forward to $1/$2 did not start: $(cat "$logf")"
-}
-bao_port="$(port_forward scrim-e2e deploy/openbao 8200)"
 fake_port="$(port_forward scrim-e2e svc/fakeprovider 18089)"
 central_port="$(port_forward scrim deploy/scrim 9790)"
 sidecar_port="$(port_forward agents pod/agent-sidecar 9790)"
-(cd "$root" && SCRIM_MATRIX_K8S_BAO="http://127.0.0.1:$bao_port" SCRIM_MATRIX_K8S_BAO_TOKEN="$bao_token" \
-  SCRIM_MATRIX_K8S_FAKE="http://127.0.0.1:$fake_port" \
+(cd "$root" && SCRIM_MATRIX_K8S_SEEDS="$work/matrix-seeds.json" SCRIM_MATRIX_K8S_FAKE="http://127.0.0.1:$fake_port" \
   SCRIM_MATRIX_K8S_TARGETS="central=http://127.0.0.1:$central_port,sidecar=http://127.0.0.1:$sidecar_port" \
   SCRIM_MATRIX_K8S_APIS="central=anthropic-messages,sidecar=openai-chat" \
   go test -count=1 -timeout 25m -run '^TestMatrixKubernetes$' -v ./test/e2e/matrix/) || fail "leak matrix in the cluster"
