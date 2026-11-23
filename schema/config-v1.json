@@ -1934,11 +1934,19 @@
             "type": "string",
             "x-scrim-secret-ref": true
           },
+          "certificate": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          },
           "client-id": {
             "type": "string",
             "x-scrim-secret-ref": true
           },
           "client-secret": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          },
+          "credentials": {
             "type": "string",
             "x-scrim-secret-ref": true
           },
