@@ -88,6 +88,24 @@ never decoded or re-serialised. Two engines, byte-identical output, chosen by pa
 A genuine placeholder already in the input (one that resolves) is copied byte for byte, so an
 unchanged conversation prefix redacts to identical bytes and prompt caching keeps working.
 
+**Values inside other values.** A value can lie inside a longer one: LocalStack's `test`
+credentials inside an API key `sk-test-...`. In the forms the redactor compiles the longer value
+wins (leftmost-longest), but in a form only the guard decodes (hex wrapped at 60 columns, `xxd`,
+`hexdump -C`, a truncation) the redactor finds just the shorter one, and replacing it cuts the
+longer value apart: no whole value, and no half of one, is left for the guard, and the rest of the
+key goes out. At build, `enclosures` finds every value that lies inside another (raw with ASCII
+case ignored, raw inside another's hex form, or in hex form inside another) and the bytes that can
+border it there: the longer value's neighbouring bytes, in both cases, rot13 and rot47, and line
+breaks and escape ends or starts. Around a match of such a value, unless both bytes next to a raw
+or JSON-form match are outside those sets (prose, identifiers), the redactor runs the guard's
+decoders (`Guard::spans`) over its input, 24 bytes per byte of the longer value plus 256 to each
+side, windows joined where they meet. A value found there that overlaps the match and reaches past
+it is replaced whole with its own placeholder (`Variant::Enclosing`, the whole pass is redone with
+those spans). Sets without nested values never take this path. With `test` nested in a key,
+single-threaded `protect` on the 1 MB reference bodies (805 matches of `test`) takes 13 % (1,000
+values) and 19 % (10,000) longer than with `test` alone, and 1.8 and 2.1 times as long when every
+match borders bytes of a possible encoding.
+
 In `protect`, bodies of at least `parallel_min_bytes` (512 KiB) are matched on up to
 `parallel_threads` (4) scoped threads: each region runs its own cursor, the region lists are
 stitched (a cursor from the last match's end runs until it meets a match the next region also

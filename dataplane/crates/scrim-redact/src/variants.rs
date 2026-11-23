@@ -70,6 +70,30 @@ pub enum Variant {
     UrlKeepSlash,
     /// Percent-encoding that keeps `!'()*` (JavaScript `encodeURIComponent`).
     UrlComponent,
+    /// A longer value around the match of a value nested in it (`test` inside `sk-test-...`),
+    /// in a form the redactor does not compile (a wrapped hex dump, `xxd`): the guard's decoders
+    /// found it in the input, and the whole span gets the longer value's placeholder. Never a
+    /// compiled pattern.
+    Enclosing,
+}
+
+impl Variant {
+    /// Whether the form keeps the value's characters as they are, JSON escapes aside (raw and
+    /// every JSON form), so its match is bounded by the text around it.
+    pub(crate) fn is_textual(self) -> bool {
+        matches!(
+            self,
+            Self::Raw
+                | Self::Json
+                | Self::JsonSlash
+                | Self::JsonAscii
+                | Self::JsonAsciiSlash
+                | Self::JsonAsciiUpper
+                | Self::JsonHtml
+                | Self::JsonHtmlGson
+                | Self::JsonNested { .. }
+        )
+    }
 }
 
 impl fmt::Display for Variant {
@@ -110,6 +134,7 @@ impl fmt::Display for Variant {
             } => "base64url-whole",
             Self::HexLower => "hex",
             Self::HexUpper => "hex-upper",
+            Self::Enclosing => "enclosing",
             Self::UrlUpper => "url",
             Self::UrlLower => "url-lower",
             Self::UrlForm => "url-form",

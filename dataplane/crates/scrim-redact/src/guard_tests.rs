@@ -8,7 +8,7 @@
 )]
 
 #[path = "../testdata/fixtures.rs"]
-mod fixtures;
+pub(crate) mod fixtures;
 
 use std::sync::Arc;
 

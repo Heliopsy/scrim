@@ -37,6 +37,11 @@ n="$(jq '.seeds | length' "$SCRIM_LEAK_SEEDS")"
 for ((i = 0; i < n; i++)); do
   jq -j ".seeds[$i].value" "$SCRIM_LEAK_SEEDS" > "$dir/seeds/leak/seed-$i"
 done
+# A short value inside a seed: scrim redacts a store's own credentials, and
+# LocalStack's are test/test, which sits inside the api-key seed (sk-test-...).
+# Replacing it must not cut the seed apart in the forms only the guard decodes
+# (wrapped hex, xxd, hexdump -C). It is not a seed: the gate checks the seeds.
+printf 'test' > "$dir/seeds/leak/nested-credential"
 chmod 0600 "$dir"/seeds/leak/*
 
 listen="${SCRIM_LEAK_LISTEN#http://}"

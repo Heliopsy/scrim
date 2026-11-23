@@ -736,6 +736,23 @@ impl Guard {
         self.check(bytes, &mut a) == self.oracle.check(bytes, &mut b)
     }
 
+    /// Every occurrence the guard finds in `bytes`, as `(start, end, owner)` over `bytes`, before
+    /// any repair; `owner` is the index of the value in the inputs [`Guard::build`] was given.
+    /// The redactor asks this around a nested value's match (`Redactor::widen`); it reads the
+    /// input there, never the outgoing bytes, which [`Guard::check`] still checks on its own.
+    pub(crate) fn spans(
+        &self,
+        bytes: &[u8],
+        scratch: &mut GuardScratch,
+        out: &mut Vec<(usize, usize, u32)>,
+    ) {
+        let mut hits = std::mem::take(&mut scratch.hits);
+        hits.clear();
+        self.collect(bytes, scratch, &mut hits);
+        out.extend(hits.iter().map(|h| (h.start, h.end, h.owner)));
+        scratch.hits = hits;
+    }
+
     fn entry_of(&self, owner: u32) -> EntryId {
         self.entry_ids[owner as usize]
     }
