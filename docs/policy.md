@@ -94,6 +94,12 @@ scrim adds one rule after the rules from your file:
 | `ssh` | object | `kind` (`userauth`, `sshsig`, `list`), `user`, `namespace`, `key`, `host_key` (SHA256 fingerprints); set for `ssh.sign` only, see [ssh-agent.md](ssh-agent.md) |
 | `now` | timestamp | request time |
 
+For `database.auth` (the database proxies and the read-only database tool, see
+[databases.md](databases.md)), `dest.host` is the database server's host, `dest.method` is `connect`
+or `query`, `dest.path` is `/<database name>`, `tool.name` is `database-proxy` or `database_query`
+and `tool.command` the kind (`postgres`, `mysql`). A placeholder the tool binds is decided as
+`inject` toward the database host with `tool.name == "database_query"`.
+
 Agent attributes come from the transport (socket peer, session token, service account token,
 certificate), never from request content. Identity sources put what they know into `agent.labels`
 under these keys: `namespace`, `service_account`, `pod`, `user`, `uid`, `spiffe_id`, `profile`.

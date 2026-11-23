@@ -532,6 +532,31 @@
       },
       "type": "object"
     },
+    "databases": {
+      "additionalProperties": {
+        "properties": {
+          "password": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          }
+        },
+        "required": [
+          "kind",
+          "address",
+          "user",
+          "password"
+        ],
+        "type": "object"
+      },
+      "description": "Databases the auth proxies and the read-only database tool reach, by name: `kind` (postgres or mysql), `address` (host:port of the server), `user` and `password` (a reference) scrim logs in with, optional `database` (the only database the agent gets; default the one its client asks for), `listen` (unix:/path or host:port; default a Unix socket under $XDG_RUNTIME_DIR/scrim/db/<name>), `listen-permissions` (octal, default 0600), `tls` (verify-full, the default, or insecure-plaintext, which weakens the protection of the session and the server's identity), `tls-ca` (PEM file; default the system roots), `tls-server-name`, `connect-timeout`, `tool` (false turns the read-only database tool off for this database), `query-timeout` (default 10s) and `query-max-rows` (default 1000).",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+      },
+      "type": "object",
+      "x-scrim-collection": true,
+      "x-scrim-env": "SCRIM_DATABASES",
+      "x-scrim-restart-required": true
+    },
     "dataplane": {
       "additionalProperties": false,
       "properties": {

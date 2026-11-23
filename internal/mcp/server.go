@@ -122,6 +122,9 @@ func NewServer(api API, version string) *sdk.Server {
 	sdk.AddTool(srv, &sdk.Tool{Name: agenttools.ToolGrantsList, Annotations: read,
 		Description: "List your active grants with reference, scope, expiry and remaining uses."},
 		handle(func(ctx context.Context, _ GrantsInput) (agenttools.GrantsOutput, error) { return api.Grants(ctx) }))
+	if d, ok := api.(DatabaseAPI); ok {
+		addDatabaseTools(srv, d)
+	}
 	return srv
 }
 

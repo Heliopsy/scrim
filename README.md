@@ -487,6 +487,7 @@ veil's per-tool policy.
 | [docs/catalog.md](docs/catalog.md) | Logical names, host bindings, placeholders and profiles |
 | [docs/cli-tools.md](docs/cli-tools.md) | Tool profiles for gh, git, kubectl, aws, terraform and other CLIs |
 | [docs/agent-tools.md](docs/agent-tools.md) | The MCP server and `scrim secret` commands |
+| [docs/databases.md](docs/databases.md) | PostgreSQL and MySQL auth proxies and the read-only database tool |
 | [docs/identity.md](docs/identity.md) | How scrim knows which agent is calling |
 | [docs/policy.md](docs/policy.md) | CEL rules and what they can see |
 | [docs/approvals.md](docs/approvals.md) | Approvals, notifiers, grants and break-glass |

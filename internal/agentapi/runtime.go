@@ -183,6 +183,10 @@ func (r *Runtime) SetSessionValues(fn func(ctx context.Context, sessionID string
 	r.api.SessionEnded = ended
 }
 
+// SetDatabases serves the read-only database tool with d. Call it before
+// Serve.
+func (r *Runtime) SetDatabases(d localapi.Databases) { r.api.Databases = d }
+
 // SetSSHAgent serves POST /v1/ssh/keys and /v1/ssh/sign with a, scrim's
 // ssh-agent keyring. Call it before Serve.
 func (r *Runtime) SetSSHAgent(a localapi.SSHAgent) { r.api.SSH = a }

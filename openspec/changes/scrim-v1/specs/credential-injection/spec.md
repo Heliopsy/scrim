@@ -393,6 +393,55 @@ unbound database SHALL be refused.
 - **WHEN** an agent connects to the local database endpoint for a configured database
 - **THEN** the session is authenticated upstream and the agent never receives the password
 
+### Requirement: Database proxy login and transport
+
+A database proxy SHALL answer the agent's handshake itself and SHALL log in to the server with the
+configured user and the password from its reference (SCRAM-SHA-256 or MD5 for PostgreSQL,
+caching_sha2_password or mysql_native_password for MySQL). It SHALL require TLS toward the server
+and verify the certificate and host name unless the database is configured as
+`insecure-plaintext`, and it SHALL never send the password in clear outside TLS.
+
+#### Scenario: Server certificate does not verify
+
+- **WHEN** the server presents a certificate that does not chain to the configured CA or does not
+  name the host
+- **THEN** the agent's connection is refused with a message naming the database and no login is
+  attempted
+
+#### Scenario: Full authentication without TLS
+
+- **WHEN** a MySQL server configured `insecure-plaintext` asks for caching_sha2_password full
+  authentication
+- **THEN** scrim refuses the login instead of sending the password
+
+### Requirement: Database proxy authorization
+
+Every proxy connection SHALL be decided as `database.auth` for the caller the transport
+identifies (peer credentials on a Unix socket, the owner of the client socket on a loopback TCP
+connection) before scrim logs in, with approvals waited for and the decision audited. A proxy SHALL
+be attachable to any listener, so an edge forwarder can hand it connections.
+
+#### Scenario: Connection denied by policy
+
+- **WHEN** no rule allows `database.auth` for the caller
+- **THEN** the client receives an error naming the rule and scrim does not connect to the server
+
+### Requirement: The password never reaches the agent through a proxy
+
+A database proxy SHALL check every server message for the database password before relaying it and
+SHALL close the session instead of relaying a message that carries it. It SHALL refuse a client's
+request to change the session user. Configured database passwords SHALL be in the redaction set.
+
+#### Scenario: Password stored in a table
+
+- **WHEN** an agent selects a row whose text contains the database password
+- **THEN** the session is closed with a scrim error and no byte of the password reaches the agent
+
+#### Scenario: MySQL change user
+
+- **WHEN** a client sends COM_CHANGE_USER on a proxied connection
+- **THEN** it receives an error and the session stays logged in as the configured user
+
 ### Requirement: Read-only database tool
 
 scrim SHALL offer a read-only database tool that turns placeholders inside string literals into
@@ -408,6 +457,39 @@ time limits, and returns results redacted.
 
 - **WHEN** an agent submits a data-modifying statement to the database tool
 - **THEN** the statement is refused and not executed
+
+### Requirement: Database tool statement checks
+
+The database tool SHALL accept one statement whose first keyword is a read (SELECT, WITH, VALUES,
+TABLE, SHOW, EXPLAIN, and DESCRIBE for MySQL), SHALL refuse write keywords outside literals and
+comments, MySQL executable comments and placeholders outside plain string literals, and SHALL run
+the statement in a read-only transaction with a statement timeout.
+
+#### Scenario: Write inside a function
+
+- **WHEN** an agent runs `SELECT f()` where `f` inserts a row
+- **THEN** the read-only transaction refuses it and the table is unchanged
+
+### Requirement: Database tool placeholder binding
+
+A placeholder SHALL be bound only when it is the current placeholder of a value scrim holds, its
+credential is bound to the database host (display values excepted) and the injection policy allows
+it for the caller.
+
+#### Scenario: Placeholder of a credential bound elsewhere
+
+- **WHEN** an agent's query carries the placeholder of a credential not bound to the database host
+- **THEN** the query is refused naming the reference and the host, and nothing is sent
+
+### Requirement: Database tool output is redacted
+
+Results and database error messages SHALL pass the redactor and the guard before the agent sees
+them; when that fails the output SHALL be withheld.
+
+#### Scenario: Server error quoting a bound value
+
+- **WHEN** the server's error message quotes a bound value (an invalid cast)
+- **THEN** the agent receives the error with the placeholder in place of the value
 
 ### Requirement: Placeholder credentials for command-line tools
 
