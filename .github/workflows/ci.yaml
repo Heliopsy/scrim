@@ -177,7 +177,7 @@ jobs:
         if: always()
         run: |
           podman ps -a --filter name=scrim-db- --format '{{.Names}}'
-          podman ps -aq --filter name=scrim-db- | xargs -r podman rm -f -v
+          podman ps -aq --filter name=scrim-db- | xargs -r podman rm -f -t 0 -v || true
 
   rust:
     name: Rust
