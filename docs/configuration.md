@@ -385,6 +385,7 @@ is out of date.
 | [`valkey.tls-ca-file`](#valkeytls-ca-file) | string | `""` | restart required |
 | [`valkey.username`](#valkeyusername) | string | `""` | restart required |
 | [`catalog.entries.<name>.*`](#catalogentriesname) | collection | empty | hot |
+| [`providers.<name>.*`](#providersname) | collection | empty | hot |
 | [`redaction.placeholder-keys.<name>.*`](#redactionplaceholder-keysname) | collection | empty | hot |
 | [`restore.tools.<name>.*`](#restoretoolsname) | collection | empty | hot |
 | [`stores.<name>.*`](#storesname) | collection | empty | restart required |
@@ -399,6 +400,17 @@ Catalog entries by logical name: ref, profiles, variants, prefix, template, host
 |---|---|
 | Type | collection of named instances (names: lower-case words with dashes) |
 | Environment | `SCRIM_CATALOG_ENTRIES` (JSON object of instances, replaces the collection); `SCRIM_CATALOG_ENTRIES_<NAME>_<FIELD>` for one field |
+| Reload | hot |
+
+### `providers.<name>`
+
+Cloud provider routes by name, each served at `/<name>` on the LLM base URL and for its provider host through the forward proxy. `kind` is `bedrock` (Amazon Bedrock runtime), `bedrock-mantle`, `anthropic-aws` (Claude Platform on AWS) or `foundry` (Microsoft Foundry). `region` (AWS kinds) or `resource` (foundry) selects the endpoint, `upstream` overrides it. scrim authenticates every request itself after redaction and drops what the agent sent: `access-key-id`, `secret-access-key` and optional `session-token` sign with AWS SigV4 (AWS kinds), or `api-key` sends a key (Bedrock and Claude Platform on AWS as a bearer token, Foundry as `api-key`). Credential fields are store references, never values. Provider routes are never chained.
+
+| | |
+|---|---|
+| Type | collection of named instances (names: lower-case words with dashes) |
+| Environment | `SCRIM_PROVIDERS` (JSON object of instances, replaces the collection); `SCRIM_PROVIDERS_<NAME>_<FIELD>` for one field |
+| Required fields | `kind` |
 | Reload | hot |
 
 ### `redaction.placeholder-keys.<name>`

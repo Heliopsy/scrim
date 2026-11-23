@@ -115,6 +115,63 @@ pub fn prepare_timed(
     })
 }
 
+/// [`prepare_timed`] for a Bedrock `count-tokens` body,
+/// `{"input":{"invokeModel":{"body":"<base64 Anthropic Messages body>"}}}`: the inner body is
+/// decoded, redacted and guarded as Anthropic Messages and encoded again, then the whole body is
+/// redacted and guarded as generic JSON (which also covers the `converse` form). Base64 the
+/// redactor could not see through would otherwise carry values past it.
+pub fn prepare_bedrock_count_tokens(
+    snap: &Snapshot,
+    body: &[u8],
+    timed: bool,
+) -> Result<Outgoing, Refusal> {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD as B64;
+    fn get<'d, 'a>(
+        v: Option<crate::json::Value<'d, 'a>>,
+        k: &str,
+    ) -> Result<Option<crate::json::Value<'d, 'a>>, Refusal> {
+        match v {
+            Some(v) if v.kind() == crate::json::Kind::Object => v
+                .get(k)
+                .map_err(|e| Refusal::new(RefusalReason::MalformedBody, e.to_string())),
+            _ => Ok(None),
+        }
+    }
+    let malformed = |d: &str| Refusal::new(RefusalReason::MalformedBody, d.to_owned());
+    let doc = crate::json::Doc::parse(body).map_err(|e| malformed(&e.to_string()))?;
+    let inner = get(get(get(Some(doc.root()), "input")?, "invokeModel")?, "body")?;
+    let Some(inner) = inner else {
+        return prepare_timed(snap, Api::Generic, body, timed);
+    };
+    let encoded = inner
+        .as_str()
+        .ok_or_else(|| malformed("input.invokeModel.body is not a string"))?;
+    let decoded = B64
+        .decode(encoded.as_bytes())
+        .map_err(|_| malformed("input.invokeModel.body is not base64"))?;
+    let i = prepare_timed(snap, Api::AnthropicMessages, &decoded, timed)?;
+    let spliced = crate::json::splice(
+        body,
+        &[(
+            inner.span().0,
+            inner.span().1,
+            crate::json::quote(&B64.encode(&i.body)),
+        )],
+    );
+    let mut o = prepare_timed(snap, Api::Generic, &spliced, timed)?;
+    o.report.merge(i.report);
+    for r in i.guard_repaired {
+        if !o.guard_repaired.contains(&r) {
+            o.guard_repaired.push(r);
+        }
+    }
+    o.unscanned = i.unscanned;
+    o.stages.redaction += i.stages.redaction;
+    o.stages.guard += i.stages.guard;
+    Ok(o)
+}
+
 #[cfg(all(test, feature = "test-util"))]
 mod tests {
     use super::*;
@@ -191,6 +248,46 @@ mod tests {
         let e = prepare(&fx.snapshot(), Api::AnthropicMessages, body.as_bytes()).unwrap_err();
         assert_eq!(e.reason, RefusalReason::GuardRefused);
         assert_eq!(e.refs, vec![SecretRef::new("a")]);
+    }
+
+    #[test]
+    fn bedrock_count_tokens_redacts_inside_base64() {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD as B64;
+        let fx = Fixture::new(&[("a", "alpha-secret-value-01")]);
+        let inner = anthropic_body(&fx);
+        let body = format!(
+            r#"{{"input":{{"invokeModel":{{"body":"{}"}}}}}}"#,
+            B64.encode(inner.as_bytes())
+        );
+        let o = prepare_bedrock_count_tokens(&fx.snapshot(), body.as_bytes(), false).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&o.body).unwrap();
+        let sent = B64
+            .decode(v["input"]["invokeModel"]["body"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(fx.leaks(&sent), [] as [String; 0]);
+        assert_eq!(
+            std::str::from_utf8(&sent)
+                .unwrap()
+                .matches(&fx.placeholder("a"))
+                .count(),
+            2
+        );
+        assert_eq!(o.report.replacements, 2);
+        // The converse form is plain JSON.
+        let body = format!(
+            r#"{{"input":{{"converse":{{"messages":[{{"role":"user","content":[{{"text":"{}"}}]}}]}}}}}}"#,
+            fx.value("a")
+        );
+        let o = prepare_bedrock_count_tokens(&fx.snapshot(), body.as_bytes(), false).unwrap();
+        assert_eq!(fx.leaks(&o.body), [] as [String; 0]);
+        let e = prepare_bedrock_count_tokens(
+            &fx.snapshot(),
+            br#"{"input":{"invokeModel":{"body":"%%%"}}}"#,
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(e.reason, RefusalReason::MalformedBody);
     }
 
     #[test]

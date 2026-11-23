@@ -712,6 +712,7 @@ fn snapshot(
             hosts: vec!["api.anthropic.com".into()],
             path_prefix: "/anthropic".into(),
             chain: None,
+            auth: None,
         }],
         listeners: vec![
             listener("base", v1::ListenerKind::BaseUrl, "127.0.0.1:0"),

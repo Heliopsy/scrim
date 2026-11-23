@@ -58,7 +58,9 @@ impl Refusal {
     /// HTTP status for the reason.
     pub fn status(&self) -> StatusCode {
         match self.reason {
-            RefusalReason::NotReady => StatusCode::SERVICE_UNAVAILABLE,
+            RefusalReason::NotReady | RefusalReason::CredentialUnavailable => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
             RefusalReason::NoRoute => StatusCode::NOT_FOUND,
             RefusalReason::MalformedBody
             | RefusalReason::RedactorFailed
@@ -118,6 +120,9 @@ impl Refusal {
             RefusalReason::UpgradeUnsupported => {
                 "scrim: protocol upgrades (WebSocket) cannot be redacted; use HTTPS requests"
             }
+            RefusalReason::CredentialUnavailable => {
+                "scrim: the provider credentials for this route are unavailable"
+            }
         };
         let mut m = what.to_string();
         if !self.detail.is_empty() {
@@ -160,6 +165,8 @@ impl Refusal {
                     }],
                 }
             }),
+            // Bedrock's own error shape, `{"message": ...}`, with the code alongside.
+            Api::BedrockConverse => serde_json::json!({ "message": message, "code": code }),
             Api::AnthropicMessages | Api::Generic => serde_json::json!({
                 "type": "error",
                 "error": { "type": "scrim_error", "code": code, "message": message }
