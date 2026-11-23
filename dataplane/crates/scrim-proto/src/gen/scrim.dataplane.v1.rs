@@ -436,6 +436,56 @@ pub struct Route {
     /// example a context-compression proxy) in place of `upstream`.
     #[prost(message, optional, tag = "6")]
     pub chain: ::core::option::Option<RouteChain>,
+    /// auth, when set, makes the route authenticate the redacted request itself
+    /// toward `upstream`, with credentials from this snapshot's values looked up
+    /// by reference, and drop whatever authentication the agent sent. A route
+    /// with auth has no chain. Unset: the agent's own credentials pass through.
+    #[prost(message, optional, tag = "7")]
+    pub auth: ::core::option::Option<RouteAuth>,
+}
+/// RouteAuth is how a cloud provider route authenticates. It holds references,
+/// never values.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RouteAuth {
+    #[prost(oneof = "route_auth::Kind", tags = "1, 2")]
+    pub kind: ::core::option::Option<route_auth::Kind>,
+}
+/// Nested message and enum types in `RouteAuth`.
+pub mod route_auth {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Kind {
+        #[prost(message, tag = "1")]
+        AwsSigv4(super::AwsSigV4Auth),
+        #[prost(message, tag = "2")]
+        Header(super::HeaderAuth),
+    }
+}
+/// AwsSigV4Auth signs requests with AWS Signature Version 4.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AwsSigV4Auth {
+    #[prost(string, tag = "1")]
+    pub region: ::prost::alloc::string::String,
+    /// service is the signing name: `bedrock`, `bedrock-mantle`,
+    /// `aws-external-anthropic`.
+    #[prost(string, tag = "2")]
+    pub service: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub access_key_id_ref: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub secret_access_key_ref: ::prost::alloc::string::String,
+    /// session_token_ref is empty for long-term keys.
+    #[prost(string, tag = "5")]
+    pub session_token_ref: ::prost::alloc::string::String,
+}
+/// HeaderAuth sends a static credential as `name: <prefix><value>`.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct HeaderAuth {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub prefix: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub value_ref: ::prost::alloc::string::String,
 }
 /// RouteChain is a chained upstream that receives requests after redaction.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

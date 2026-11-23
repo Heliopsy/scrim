@@ -236,7 +236,9 @@ func TestClaudePreset(t *testing.T) {
 	if p := mustBuild(t, in); len(p.Args) != 1 || p.Files[FileMCP] != nil {
 		t.Errorf("MCP registered with run.mcp off: %v", p.Args)
 	}
-	for _, v := range []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
+	// Without a provider route for the mode, the agent would reach the provider directly.
+	for _, v := range []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+		"CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD"} {
 		in := input("claude")
 		in.Environ = append(in.Environ, v+"=1")
 		if _, err := Build(in); err == nil || !strings.Contains(err.Error(), v) {
@@ -246,6 +248,51 @@ func TestClaudePreset(t *testing.T) {
 		if _, err := Build(in); err != nil {
 			t.Errorf("%s=0 refused: %v", v, err)
 		}
+	}
+}
+
+func TestClaudeCloudModes(t *testing.T) {
+	routes := map[string]string{ProviderAnthropic: "/anthropic", ProviderOpenAI: "/openai",
+		"bedrock": "/bedrock", "anthropic-aws": "/claude-aws", "foundry": "/azure", "bedrock-mantle": "/mantle"}
+	for _, c := range []struct {
+		use, baseVar, base, skip string
+		unset                    []string
+	}{
+		{"CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_BEDROCK_BASE_URL", "http://127.0.0.1:9790/bedrock", "CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+			[]string{"AWS_BEARER_TOKEN_BEDROCK"}},
+		{"CLAUDE_CODE_USE_MANTLE", "ANTHROPIC_BEDROCK_MANTLE_BASE_URL", "http://127.0.0.1:9790/mantle", "CLAUDE_CODE_SKIP_MANTLE_AUTH",
+			[]string{"AWS_BEARER_TOKEN_BEDROCK"}},
+		{"CLAUDE_CODE_USE_ANTHROPIC_AWS", "ANTHROPIC_AWS_BASE_URL", "http://127.0.0.1:9790/claude-aws", "CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH",
+			[]string{"ANTHROPIC_AWS_API_KEY"}},
+		{"CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_FOUNDRY_BASE_URL", "http://127.0.0.1:9790/azure/anthropic", "CLAUDE_CODE_SKIP_FOUNDRY_AUTH",
+			[]string{"ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_FOUNDRY_AUTH_TOKEN", "ANTHROPIC_FOUNDRY_RESOURCE"}},
+	} {
+		in := input("claude")
+		in.Endpoints.Routes = routes
+		in.Environ = append(in.Environ, c.use+"=1", c.baseVar+"=https://direct.example")
+		for _, u := range c.unset {
+			in.Environ = append(in.Environ, u+"=real-credential-not-for-the-agent")
+		}
+		p := mustBuild(t, in)
+		v := vars(p)
+		if v[c.baseVar].Value != c.base || v[c.skip].Value != "1" {
+			t.Errorf("%s: %s=%q %s=%q", c.use, c.baseVar, v[c.baseVar].Value, c.skip, v[c.skip].Value)
+		}
+		for _, u := range c.unset {
+			if !slices.Contains(p.Unset, u) {
+				t.Errorf("%s: %s is left to the agent", c.use, u)
+			}
+		}
+		if !slices.ContainsFunc(p.Warnings, func(w string) bool { return strings.Contains(w, c.baseVar) }) {
+			t.Errorf("%s: no warning that the inherited %s is replaced: %v", c.use, c.baseVar, p.Warnings)
+		}
+	}
+	// Vertex is not served yet: refused even with routes.
+	in := input("claude")
+	in.Endpoints.Routes = routes
+	in.Environ = append(in.Environ, "CLAUDE_CODE_USE_VERTEX=true")
+	if _, err := Build(in); err == nil || !strings.Contains(err.Error(), "CLAUDE_CODE_USE_VERTEX") {
+		t.Errorf("vertex: %v", err)
 	}
 }
 

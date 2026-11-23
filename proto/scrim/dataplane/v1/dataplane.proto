@@ -478,6 +478,39 @@ message Route {
   // chain, when set, sends the redacted request to another proxy (for
   // example a context-compression proxy) in place of `upstream`.
   RouteChain chain = 6;
+  // auth, when set, makes the route authenticate the redacted request itself
+  // toward `upstream`, with credentials from this snapshot's values looked up
+  // by reference, and drop whatever authentication the agent sent. A route
+  // with auth has no chain. Unset: the agent's own credentials pass through.
+  RouteAuth auth = 7;
+}
+
+// RouteAuth is how a cloud provider route authenticates. It holds references,
+// never values.
+message RouteAuth {
+  oneof kind {
+    AwsSigV4Auth aws_sigv4 = 1;
+    HeaderAuth header = 2;
+  }
+}
+
+// AwsSigV4Auth signs requests with AWS Signature Version 4.
+message AwsSigV4Auth {
+  string region = 1;
+  // service is the signing name: `bedrock`, `bedrock-mantle`,
+  // `aws-external-anthropic`.
+  string service = 2;
+  string access_key_id_ref = 3;
+  string secret_access_key_ref = 4;
+  // session_token_ref is empty for long-term keys.
+  string session_token_ref = 5;
+}
+
+// HeaderAuth sends a static credential as `name: <prefix><value>`.
+message HeaderAuth {
+  string name = 1;
+  string prefix = 2;
+  string value_ref = 3;
 }
 
 // RouteChain is a chained upstream that receives requests after redaction.

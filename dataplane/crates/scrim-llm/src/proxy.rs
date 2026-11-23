@@ -13,18 +13,20 @@ use http_body::Body;
 use http_body_util::{BodyExt, Full, Limited};
 
 use crate::audit::{AuditEvent, AuditSink, RefusalReason};
+use crate::auth::{AGENT_AUTH_HEADERS, RouteAuth};
 use crate::body::{BoxError, ProxyBody, Restoring, full};
 use crate::capture::{Capture, CaptureError, Record};
 use crate::codec::{self, Api};
-use crate::config::{OnUnavailable, ProxyConfig};
+use crate::config::{OnUnavailable, Provider, ProxyConfig, bedrock_action};
 use crate::engine::{Admission, RedactReport, RequestInfo, Snapshot, SnapshotCell};
 use crate::error::Refusal;
+use crate::eventstream::{self, EventStreamRestorer};
 use crate::head;
 use crate::metrics::{LlmMetrics, RouteMetrics, Stage, UpstreamError};
 use crate::outgoing::{self, Outgoing};
 use crate::restore::{Ctx, RestoreStats};
 use crate::route::{Route, RouteError, RouteTable};
-use crate::stream::SseRestorer;
+use crate::stream::{ChunkRestore, SseRestorer};
 use crate::upstream::{TlsError, UpstreamClient, build_client};
 
 /// Proxy construction failed.
@@ -69,6 +71,8 @@ struct Target<'a> {
     method: &'a http::Method,
     headers: &'a HeaderMap,
     metrics: Option<&'a RouteMetrics>,
+    /// Authentication the route adds after redaction.
+    auth: Option<&'a RouteAuth>,
 }
 
 /// Why one send failed.
@@ -79,12 +83,15 @@ enum SendError {
     Connect,
     /// The connection failed after (part of) the request may have been sent.
     Failed,
+    /// The route could not authenticate the request; nothing was sent.
+    Auth(Refusal),
 }
 
 impl SendError {
     fn into_forward(self, chain_skipped: bool) -> Forward {
         match self {
             SendError::Capture => Forward::Refused(Refusal::new(RefusalReason::CaptureFailed, "")),
+            SendError::Auth(r) => Forward::Refused(r),
             SendError::Connect => {
                 Forward::Refused(Refusal::new(RefusalReason::UpstreamUnavailable, ""))
             }
@@ -388,12 +395,27 @@ impl Proxy {
             Ok(s) => s,
             Err(r) => return self.refuse(Some(route), api, &r),
         };
+        // A route that signs with credentials scrim holds refuses before reading the body when
+        // they are not loaded.
+        if let Some(Err(r)) = route.auth.as_deref().map(RouteAuth::check) {
+            return self.refuse(Some(route), api, &r);
+        }
+        let count_tokens = route.provider == Provider::Bedrock
+            && parts.method == http::Method::POST
+            && bedrock_action(rest) == Some("count-tokens");
         let rm = self
             .metrics
             .as_ref()
             .map(|m| m.route(&route.name, route.provider.name()));
         let (mut out, began) = match self
-            .prepare(&snap, api, &parts.headers, body, rm.as_deref())
+            .prepare(
+                &snap,
+                api,
+                count_tokens,
+                &parts.headers,
+                body,
+                rm.as_deref(),
+            )
             .await
         {
             Ok(o) => o,
@@ -401,6 +423,10 @@ impl Proxy {
         };
         let mut headers = parts.headers;
         strip(&mut headers, STRIP_REQUEST);
+        if route.auth.is_some() {
+            // The route authenticates itself; whatever the agent sent stays here.
+            strip(&mut headers, AGENT_AUTH_HEADERS);
+        }
         headers.insert(
             header::ACCEPT_ENCODING,
             HeaderValue::from_static("identity"),
@@ -435,6 +461,7 @@ impl Proxy {
             method: &parts.method,
             headers: &headers,
             metrics: rm.as_deref(),
+            auth: route.auth.as_deref(),
         };
         match self.forward(&target, &out).await {
             Ok((upstream_resp, record, chain_skipped)) => {
@@ -457,6 +484,7 @@ impl Proxy {
         &self,
         snap: &Arc<Snapshot>,
         api: Api,
+        count_tokens: bool,
         headers: &HeaderMap,
         body: B,
         rm: Option<&RouteMetrics>,
@@ -503,11 +531,18 @@ impl Proxy {
                 began,
             ));
         }
+        let run = move |s: &Snapshot, body: &[u8]| {
+            if count_tokens {
+                outgoing::prepare_bedrock_count_tokens(s, body, timed)
+            } else {
+                outgoing::prepare_timed(s, api, body, timed)
+            }
+        };
         if body.len() < self.cfg.limits.offload_threshold {
-            return outgoing::prepare_timed(snap, api, &body, timed).map(|o| (o, began));
+            return run(snap, &body).map(|o| (o, began));
         }
         let s = snap.clone();
-        tokio::task::spawn_blocking(move || outgoing::prepare_timed(&s, api, &body, timed))
+        tokio::task::spawn_blocking(move || run(&s, &body))
             .await
             .unwrap_or_else(|_| {
                 Err(Refusal::new(
@@ -578,6 +613,19 @@ impl Proxy {
         *up.method_mut() = t.method.clone();
         *up.uri_mut() = uri;
         *up.headers_mut() = t.headers.clone();
+        if let Some(auth) = t.auth {
+            let (parts, body) = up.into_parts();
+            let mut parts = parts;
+            auth.apply(
+                &parts.method,
+                &parts.uri,
+                &mut parts.headers,
+                &out.body,
+                std::time::SystemTime::now(),
+            )
+            .map_err(SendError::Auth)?;
+            up = Request::from_parts(parts, body);
+        }
         let sent = t.metrics.map(|_| Instant::now());
         let res = self.client.request(up).await;
         if let (Some(m), Some(sent)) = (t.metrics, sent) {
@@ -646,6 +694,25 @@ impl Proxy {
         true
     }
 
+    /// The chunk restorer for a streamed response: SSE, or Bedrock's event stream.
+    fn stream_restorer(
+        &self,
+        route: &Route,
+        api: Api,
+        snap: &Arc<Snapshot>,
+        headers: &HeaderMap,
+    ) -> Option<Box<dyn ChunkRestore>> {
+        if mime_is(headers, "text/event-stream") {
+            return SseRestorer::new(api, snap.clone(), &self.cfg.limits)
+                .map(|r| Box::new(r) as Box<dyn ChunkRestore>);
+        }
+        if route.provider == Provider::Bedrock && mime_is(headers, eventstream::CONTENT_TYPE) {
+            return EventStreamRestorer::new(api, snap.clone(), &self.cfg.limits)
+                .map(|r| Box::new(r) as Box<dyn ChunkRestore>);
+        }
+        None
+    }
+
     async fn respond(
         &self,
         route: &Route,
@@ -662,7 +729,6 @@ impl Proxy {
         };
         strip(&mut parts.headers, STRIP_RESPONSE);
         let restorable = parts.status.is_success() && is_identity(&parts.headers);
-        let sse = restorable && mime_is(&parts.headers, "text/event-stream");
         let json = restorable && mime_is(&parts.headers, "application/json");
         let audit = self.audit.clone();
         let name = route.name.clone();
@@ -680,7 +746,10 @@ impl Proxy {
             }
         });
 
-        if sse && let Some(r) = SseRestorer::new(api, snap.clone(), &self.cfg.limits) {
+        let streaming = restorable
+            .then(|| self.stream_restorer(route, api, &snap, &parts.headers))
+            .flatten();
+        if let Some(r) = streaming {
             let b = Restoring::new(body, None, tee, Some(r), Some(on_end)).timed(rm);
             return Response::from_parts(parts, BodyExt::boxed_unsync(b));
         }
@@ -698,9 +767,14 @@ impl Proxy {
                 if buf.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'[')
                     && let Some(r) = SseRestorer::json_array(api, snap.clone(), &self.cfg.limits)
                 {
-                    let b =
-                        Restoring::new(body, Some(Bytes::from(buf)), tee, Some(r), Some(on_end))
-                            .timed(rm);
+                    let b = Restoring::new(
+                        body,
+                        Some(Bytes::from(buf)),
+                        tee,
+                        Some(Box::new(r)),
+                        Some(on_end),
+                    )
+                    .timed(rm);
                     return Response::from_parts(parts, BodyExt::boxed_unsync(b));
                 }
                 overflow = buf.len() > self.cfg.limits.max_response_body;

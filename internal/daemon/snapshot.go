@@ -112,6 +112,45 @@ func (b *SnapshotBuilder) PlaceholderFor(ref stores.Ref) string {
 	return out
 }
 
+// bindProviderRefs rewrites each credential reference of a provider route to
+// the reference of the current value it names, as the store reports it (a
+// reference without a field names the secret's default field, and a store may
+// report that field explicitly). The data plane matches references exactly.
+// A reference no current value matches is left as configured, and the route
+// refuses its requests with credential_unavailable naming it.
+func (b *SnapshotBuilder) bindProviderRefs(routes []*pb.Route) {
+	current := func(raw string) string {
+		want, err := stores.ParseRef(raw)
+		if err != nil {
+			return raw
+		}
+		out := ""
+		for _, src := range b.Values {
+			src.EachValue(func(s refresh.Source, _ secret.Value) {
+				if out == "" && !s.Retained && !s.Pending && !s.Ref.IsZero() && sameSecret(s.Ref, want) {
+					out = s.Ref.String()
+				}
+			})
+		}
+		if out == "" {
+			return raw
+		}
+		return out
+	}
+	for _, r := range routes {
+		switch k := r.GetAuth().GetKind().(type) {
+		case *pb.RouteAuth_AwsSigv4:
+			a := k.AwsSigv4
+			a.AccessKeyIdRef, a.SecretAccessKeyRef = current(a.AccessKeyIdRef), current(a.SecretAccessKeyRef)
+			if a.SessionTokenRef != "" {
+				a.SessionTokenRef = current(a.SessionTokenRef)
+			}
+		case *pb.RouteAuth_Header:
+			k.Header.ValueRef = current(k.Header.ValueRef)
+		}
+	}
+}
+
 func sameSecret(a, b stores.Ref) bool {
 	if a.Field == "" || b.Field == "" {
 		return a.Secret() == b.Secret()
@@ -185,6 +224,7 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 	keys := labelKeys(snap.Policy)
 	snap.ValueLabels = true
 	snap.Values = b.values(cat, keys)
+	b.bindProviderRefs(snap.Routes)
 	snap.Unavailable = unavailable(cat, snap.Values)
 	for _, u := range snap.Unavailable {
 		if r, err := stores.ParseRef(u.GetRef()); err == nil {
@@ -420,7 +460,7 @@ func routes(cfg *config.Config) []*pb.Route {
 		}
 		return &pb.RouteChain{Url: chain.GetUrl(), DirectOnUnavailable: chain.GetDirectOnUnavailable()}
 	}
-	return []*pb.Route{
+	out := []*pb.Route{
 		{Name: "anthropic", Provider: "anthropic", Upstream: UpstreamAnthropic.Get(cfg), PathPrefix: "/anthropic",
 			Hosts: []string{"api.anthropic.com"}, Chain: clone()},
 		{Name: "openai", Provider: "openai", Upstream: UpstreamOpenAI.Get(cfg), PathPrefix: "/openai",
@@ -439,6 +479,24 @@ func routes(cfg *config.Config) []*pb.Route {
 		{Name: "chatgpt-ab", Provider: "openai", Upstream: UpstreamChatGPTAB.Get(cfg), PathPrefix: "/chatgpt-ab",
 			Hosts: []string{"ab.chatgpt.com"}, Chain: clone()},
 	}
+	// Cloud provider routes authenticate the redacted request themselves and
+	// are never chained: the chain would receive their credentials. A host
+	// goes to the first route that names it.
+	claimed := map[string]bool{}
+	for _, r := range out {
+		for _, h := range r.GetHosts() {
+			claimed[h] = true
+		}
+	}
+	for _, p := range CloudProviders(cfg) {
+		r := p.Route()
+		r.Hosts = slices.DeleteFunc(r.Hosts, func(h string) bool { return claimed[h] })
+		for _, h := range r.GetHosts() {
+			claimed[h] = true
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // bypass returns the loopback hosts of the upstreams and the chain, which
@@ -446,7 +504,11 @@ func routes(cfg *config.Config) []*pb.Route {
 // not intercepted").
 func bypass(cfg *config.Config) []string {
 	var out []string
-	for _, raw := range []string{ChainURL.Get(cfg), UpstreamAnthropic.Get(cfg), UpstreamOpenAI.Get(cfg), UpstreamGemini.Get(cfg), UpstreamChatGPT.Get(cfg), UpstreamChatGPTAB.Get(cfg)} {
+	raws := []string{ChainURL.Get(cfg), UpstreamAnthropic.Get(cfg), UpstreamOpenAI.Get(cfg), UpstreamGemini.Get(cfg), UpstreamChatGPT.Get(cfg), UpstreamChatGPTAB.Get(cfg)}
+	for _, p := range CloudProviders(cfg) {
+		raws = append(raws, p.Upstream)
+	}
+	for _, raw := range raws {
 		u, err := url.Parse(raw)
 		if err != nil || u.Host == "" {
 			continue
