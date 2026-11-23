@@ -21,6 +21,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use scrim_llm::auth::AuthConfig;
 use scrim_llm::config::{ChainConfig, OnUnavailable, Provider, RouteConfig, default_routes};
 use scrim_llm::core::CoreEngine;
 use scrim_llm::route::RouteTable;
@@ -190,8 +191,7 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
     let mut policy = snap.policy.take().unwrap_or_default();
     policy::normalise(&mut policy);
     check_entries(&snap)?;
-    let routes = RouteTable::new(&route_configs(&snap.routes)?)
-        .map_err(|e| invalid(format!("routes: {e}")))?;
+    let routes = route_table(&snap)?;
     let keyring = Arc::new(keyring(&snap.placeholder_keys, !snap.values.is_empty())?);
     let min_value_length = match snap.redaction.as_ref().map(|r| r.min_value_length) {
         None | Some(0) => DEFAULT_MIN_VALUE_LENGTH,
@@ -287,6 +287,19 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
         llm,
         tool_proxy,
     })
+}
+
+/// The LLM proxy's routes. Routes that authenticate themselves take their credentials from the
+/// snapshot's values, by exact reference. The first entry for a reference is its current value:
+/// the control plane lists a store's current values before the retained ones of a rotation.
+fn route_table(snap: &v1::Snapshot) -> Result<RouteTable, Rejected> {
+    RouteTable::with_credentials(&route_configs(&snap.routes)?, &|r| {
+        snap.values
+            .iter()
+            .find(|v| v.r#ref == r && !v.value.is_empty())
+            .map(|v| scrim_llm::SecretValue::new(v.value.clone()))
+    })
+    .map_err(|e| invalid(format!("routes: {e}")))
 }
 
 /// Every listener has a kind and an address, every value bytes.
@@ -468,6 +481,7 @@ fn route_configs(routes: &[v1::Route]) -> Result<Vec<RouteConfig>, Rejected> {
                 "anthropic" => Provider::Anthropic,
                 "openai" => Provider::Openai,
                 "gemini" => Provider::Gemini,
+                "bedrock" => Provider::Bedrock,
                 other => {
                     return Err(invalid(format!(
                         "route {}: provider {other:?} is not supported by this data plane",
@@ -500,9 +514,36 @@ fn route_configs(routes: &[v1::Route]) -> Result<Vec<RouteConfig>, Rejected> {
                 strip_prefix: true,
                 chain,
                 hosts: r.hosts.clone(),
+                auth: r
+                    .auth
+                    .as_ref()
+                    .map(|a| route_auth(&r.name, a))
+                    .transpose()?,
             })
         })
         .collect()
+}
+
+/// A route's authentication: references only, values are looked up when the table is built.
+fn route_auth(route: &str, a: &v1::RouteAuth) -> Result<AuthConfig, Rejected> {
+    let opt = |s: &str| (!s.is_empty()).then(|| s.to_owned());
+    match &a.kind {
+        Some(v1::route_auth::Kind::AwsSigv4(k)) => Ok(AuthConfig::AwsSigv4 {
+            region: k.region.clone(),
+            service: k.service.clone(),
+            access_key_id: k.access_key_id_ref.clone(),
+            secret_access_key: k.secret_access_key_ref.clone(),
+            session_token: opt(&k.session_token_ref),
+        }),
+        Some(v1::route_auth::Kind::Header(h)) => Ok(AuthConfig::Header {
+            name: h.name.clone(),
+            prefix: h.prefix.clone(),
+            value: h.value_ref.clone(),
+        }),
+        None => Err(invalid(format!(
+            "route {route}: auth names no kind this data plane supports"
+        ))),
+    }
 }
 
 #[cfg(test)]
@@ -668,6 +709,70 @@ mod tests {
             r[0].chain.as_ref().map(|c| c.on_unavailable),
             Some(OnUnavailable::Direct)
         );
+    }
+
+    #[test]
+    fn auth_routes_take_credentials_from_the_snapshot() {
+        let route = v1::Route {
+            name: "bedrock".into(),
+            provider: "bedrock".into(),
+            upstream: "https://bedrock-runtime.us-east-1.amazonaws.com".into(),
+            auth: Some(v1::RouteAuth {
+                kind: Some(v1::route_auth::Kind::AwsSigv4(v1::AwsSigV4Auth {
+                    region: "us-east-1".into(),
+                    service: "bedrock".into(),
+                    access_key_id_ref: "bao://kv/aws#id".into(),
+                    secret_access_key_ref: "bao://kv/aws#secret".into(),
+                    session_token_ref: String::new(),
+                })),
+            }),
+            ..Default::default()
+        };
+        let r = route_configs(std::slice::from_ref(&route)).unwrap();
+        assert_eq!(r[0].provider, Provider::Bedrock);
+        assert!(matches!(
+            r[0].auth,
+            Some(AuthConfig::AwsSigv4 {
+                session_token: None,
+                ..
+            })
+        ));
+        let mut snap = snap(1);
+        snap.values.clear();
+        snap.routes = vec![route.clone()];
+        for (r, v) in [
+            ("bao://kv/aws#id", "AKIDRUNTIME"),
+            ("bao://kv/aws#secret", "made-at-runtime-secret"),
+        ] {
+            let mut e = entry(v.as_bytes());
+            e.r#ref = r.into();
+            e.slug = r.replace([':', '/', '#'], "-");
+            snap.values.push(e);
+        }
+        let built = ok(snap.clone());
+        let table = built.llm.routes.unwrap();
+        let auth = table
+            .find("/bedrock/model/m/invoke")
+            .unwrap()
+            .0
+            .auth
+            .clone()
+            .unwrap();
+        assert_eq!(auth.missing(), [] as [String; 0]);
+        snap.values.pop();
+        let built = ok(snap);
+        let table = built.llm.routes.unwrap();
+        let auth = table
+            .find("/bedrock/model/m/invoke")
+            .unwrap()
+            .0
+            .auth
+            .clone()
+            .unwrap();
+        assert_eq!(auth.missing(), ["bao://kv/aws#secret"]);
+        let mut bad = route;
+        bad.auth = Some(v1::RouteAuth { kind: None });
+        assert!(route_configs(&[bad]).is_err());
     }
 
     #[test]

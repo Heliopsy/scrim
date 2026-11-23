@@ -19,6 +19,34 @@ enum Framing {
     Array(ArrayFramer, Box<dyn ArrayCodec>),
 }
 
+/// A response body restorer fed chunk by chunk: SSE ([`SseRestorer`]) or an Amazon event
+/// stream ([`crate::eventstream::EventStreamRestorer`]).
+pub trait ChunkRestore: Send {
+    /// Feeds one chunk as received from the provider and appends what the agent should receive.
+    fn push(&mut self, chunk: &[u8], out: &mut Vec<u8>);
+    /// Ends the stream: releases held text and any unterminated trailing bytes.
+    fn finish(&mut self, out: &mut Vec<u8>);
+    /// Placeholders resolved so far.
+    fn resolved(&self) -> u64;
+    /// Placeholders kept so far.
+    fn kept(&self) -> u64;
+}
+
+impl ChunkRestore for SseRestorer {
+    fn push(&mut self, chunk: &[u8], out: &mut Vec<u8>) {
+        SseRestorer::push(self, chunk, out);
+    }
+    fn finish(&mut self, out: &mut Vec<u8>) {
+        SseRestorer::finish(self, out);
+    }
+    fn resolved(&self) -> u64 {
+        SseRestorer::resolved(self)
+    }
+    fn kept(&self) -> u64 {
+        SseRestorer::kept(self)
+    }
+}
+
 /// Restores placeholders in one provider stream: SSE, or a streamed JSON array
 /// ([`SseRestorer::json_array`]).
 ///

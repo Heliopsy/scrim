@@ -837,6 +837,178 @@ selectors SHALL be supported in references.
 - **WHEN** a reference names `aws-sm://agents/github?stage=AWSPREVIOUS`
 - **THEN** the previous version is used and the current one is still redacted
 
+### Requirement: Google Secret Manager adapter
+
+The system SHALL read, list, watch and write Google Secret Manager secrets, global or regional, in
+one project per store instance. A reference path's segments SHALL be joined with a configurable
+separator to form the secret ID, and a path that cannot map to an ID and back SHALL be refused.
+`version` selectors SHALL accept a version number, `latest` or a version alias, and every payload
+read SHALL be checked against the CRC32C Google returns.
+
+#### Scenario: Version alias
+
+- **WHEN** secret `app--key` has versions 1 and 2 and alias `stable` points at version 1
+- **THEN** `gsm://app/key?version=stable` reads version 1 and reports `gcpsm.version = 1` and
+  `gcpsm.version-alias.stable = true`
+
+#### Scenario: Path that would not round-trip
+
+- **WHEN** a write targets `gsm://a-/b` with separator `--`
+- **THEN** it is refused as an invalid reference and nothing is created
+
+### Requirement: Google Secret Manager authentication
+
+The Google Secret Manager adapter SHALL authenticate with Application Default Credentials (service
+account keys, workload identity federation, the metadata server for GKE Workload Identity,
+impersonated service accounts), with a credentials file by reference, or with an access token by
+reference, and SHALL impersonate a configured service account through IAM Credentials. It SHALL
+resolve no reference and contact nothing until first use.
+
+#### Scenario: GKE Workload Identity
+
+- **WHEN** scrim runs in GKE with Workload Identity and a store `gsm` of kind `gcpsm` with only
+  `project` set
+- **THEN** `gsm://agents/github` reads the latest version of secret `agents--github` with a token from
+  the metadata server, and no key is configured
+
+### Requirement: Google Secret Manager native labels
+
+The Google Secret Manager adapter SHALL label every secret it reads or lists with Secret Manager's own
+attributes under `gcpsm.<attr>`: project and project number, location, secret ID, path, replication
+and replica locations, customer-managed keys, times, rotation, topics, version aliases, version and
+version state.
+
+#### Scenario: User-managed replication
+
+- **WHEN** a secret is replicated to `europe-west1` and `europe-west4`
+- **THEN** it carries `gcpsm.replication = user-managed`, `gcpsm.replica.europe-west1 = true` and
+  `gcpsm.replica.europe-west4 = true`
+
+### Requirement: Google Secret Manager metadata cannot forge native labels
+
+Secret labels and annotations SHALL appear under `gcpsm.meta.<key>`, annotations also under their own
+key. An annotation key in the `gcpsm.` namespace SHALL NOT set or override a native label, and a write
+SHALL store `WriteOptions` labels as annotations without keys in the `gcpsm.` namespace.
+
+#### Scenario: Annotation cannot forge a native label
+
+- **WHEN** a global secret carries annotation `gcpsm.location = us-central1`
+- **THEN** its labels say `gcpsm.location = global` and show the annotation as
+  `gcpsm.meta.gcpsm.location`
+
+### Requirement: Google Secret Manager write targets are labelled before they exist
+
+The Google Secret Manager adapter SHALL report the labels a secret written at a reference would get
+(project, location, secret ID, path) without contacting Google.
+
+#### Scenario: Write target labelled before it exists
+
+- **WHEN** a rule asks for writes whose `gcpsm.path` starts with `prod/` and an agent creates
+  `gsm://prod/new`
+- **THEN** the write is decided on `gcpsm.path = prod/new` before the secret exists, and asks
+
+### Requirement: Google Secret Manager labels without payloads
+
+The Google Secret Manager adapter SHALL return an existing secret's metadata and labels from the
+Secret and SecretVersion resources, without accessing a payload. The labels SHALL equal those a read
+reports for an enabled version, and a lookup SHALL fail wherever a read fails, a disabled or
+destroyed version as not found. Listings and the watch SHALL look up each secret's latest version
+without its payload, so a rotation is detected and only changed secrets are read again.
+
+#### Scenario: Labels of an existing secret
+
+- **WHEN** a rule needs the labels of `gsm://app/key`, which exists but is in no redaction set
+- **THEN** scrim asks for the secret and its latest version, accesses no payload, and the labels equal
+  those a read reports
+
+### Requirement: Azure Key Vault adapter
+
+The system SHALL read, list, watch and write Azure Key Vault secrets. A reference path's segments
+SHALL be joined with a configurable dash separator to form the secret name, and a path that cannot
+map to a valid name and back SHALL be refused. `?version=<id>` SHALL select a version, and format
+`raw` (one field `value`) or `json` (a JSON object of fields) SHALL decide how a value splits into
+fields.
+
+#### Scenario: Name held by a soft-deleted secret
+
+- **WHEN** scrim writes a secret whose name belongs to a soft-deleted secret
+- **THEN** the write fails as a conflict saying the name must be recovered or purged first
+
+### Requirement: Azure Key Vault authentication
+
+The Azure Key Vault adapter SHALL authenticate through azidentity with DefaultAzureCredential,
+workload identity, managed identity, a client secret, a client certificate or a static access token.
+It SHALL learn the token scope and tenant from the vault's 401 Bearer challenge, and SHALL refuse a
+challenge whose resource is not a parent domain of the vault's host without requesting a token.
+
+#### Scenario: Workload identity on AKS
+
+- **WHEN** scrim runs in AKS with workload identity and `auth.method: workload-identity`
+- **THEN** `kv://agents/github` reads the secret `agents--github` with no client secret in
+  configuration
+
+#### Scenario: Challenge for another resource
+
+- **WHEN** a host at the vault URL answers with a challenge naming a resource the vault's host does
+  not belong to
+- **THEN** the request fails as permission denied naming that resource, and no token is requested
+
+### Requirement: Azure Key Vault native labels
+
+The Azure Key Vault adapter SHALL label every secret it reads or lists under `azkv.<attr>`: vault name
+and host, secret name, version (reads), content type, enabled, created, updated, expiry, not-before,
+recovery level, recoverable days and whether a certificate manages the secret.
+
+#### Scenario: Disabled secret
+
+- **WHEN** a listed secret's current version is disabled
+- **THEN** it carries `azkv.enabled = false`
+
+### Requirement: Azure Key Vault tags cannot forge native labels
+
+Tags SHALL appear under their own key and under `azkv.meta.<key>`. A tag in the `azkv.` namespace
+SHALL NOT be copied to the top level or override a native label, and a write SHALL NOT store such
+keys as tags.
+
+#### Scenario: Tag cannot forge a native label
+
+- **WHEN** an enabled secret carries the tag `azkv.enabled = false`
+- **THEN** its labels say `azkv.enabled = true` and show the tag as `azkv.meta.azkv.enabled`
+
+### Requirement: Azure Key Vault labels read without values
+
+The Azure Key Vault adapter SHALL return an existing secret's metadata and labels from the secret's
+versions listing, which carries no values, taking the pinned version or the most recently created
+one. The labels SHALL equal those a read reports, except that the version SHALL be left out when two
+versions share the creation second, and a disabled or missing version SHALL be not found.
+
+#### Scenario: Labels of an existing secret
+
+- **WHEN** a rule needs the labels of `kv://apps/pay/db`, which exists but is in no redaction set
+- **THEN** scrim lists the secret's versions, the vault serves no value, and the labels equal a read's
+
+### Requirement: Azure Key Vault write labels and tag carry-over
+
+The Azure Key Vault adapter SHALL report the labels a secret written at a reference would get without
+contacting Key Vault. Because Key Vault keeps tags and content type per version, a write without
+labels SHALL carry the current version's tags and content type over to the new version.
+
+#### Scenario: Rotation keeps catalog tags
+
+- **WHEN** a secret tagged `scrim.hosts = api.example.test` is rotated through scrim without labels
+- **THEN** the new version still carries `scrim.hosts = api.example.test`
+
+### Requirement: Azure Key Vault watch survives one-second timestamps
+
+The Azure Key Vault adapter SHALL detect changes by polling the secrets listing, never fetching
+values. While a secret's update time is within two seconds of the vault's clock, each poll SHALL
+report it as changed, so a version written in the same second as the one before is not missed.
+
+#### Scenario: Two writes in one second
+
+- **WHEN** a secret is rotated twice within the same second
+- **THEN** the watch reports a change after the second rotation, and the new value is read
+
 ### Requirement: Adapter conformance suite
 
 Every adapter, built-in or plugin, SHALL pass one shared conformance suite covering read, list,

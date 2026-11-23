@@ -36,16 +36,17 @@ var ClaudePreset = &Preset{
 	Name:     "claude",
 	Commands: []string{"claude"},
 	Check: func(env map[string]string) error {
-		// These route Claude Code to cloud providers by their own base URL
-		// variables, which scrim does not serve yet (tasks.md 11.4).
-		for _, v := range []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
+		for _, v := range []string{"CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD"} {
 			if truthy(env[v]) {
-				return fmt.Errorf("%s is set: Bedrock, Vertex and Foundry are not served by scrim yet, and the agent would reach them directly; unset it to use the Anthropic API through scrim", v)
+				return fmt.Errorf("%s is set: scrim does not serve this provider yet, and the agent would reach it directly; unset it to use the Anthropic API or a provider scrim serves", v)
 			}
 		}
 		return nil
 	},
 	Apply: func(b *builder) error {
+		if err := cloudMode(b); err != nil {
+			return err
+		}
 		if b.identified() {
 			// Claude Code adds ANTHROPIC_CUSTOM_HEADERS (one "Name: value"
 			// per line) to every API request: the session header identifies
@@ -82,6 +83,58 @@ var ClaudePreset = &Preset{
 		b.insertArgs("--mcp-config=" + b.file(FileMCP))
 		return nil
 	},
+}
+
+// claudeCloud is one of Claude Code's cloud provider modes.
+type claudeCloud struct {
+	// Use turns the mode on; Kind is the scrim provider kind that serves it.
+	Use, Kind string
+	// BaseURL is Claude Code's base URL variable for the mode, pointed at
+	// scrim's route plus Suffix.
+	BaseURL, Suffix string
+	// SkipAuth turns Claude Code's own signing or key off: scrim
+	// authenticates the redacted request.
+	SkipAuth string
+	// Unset are credential variables that would take precedence over
+	// SkipAuth.
+	Unset []string
+}
+
+// claudeClouds are the modes scrim serves (docs/providers).
+var claudeClouds = []claudeCloud{
+	{Use: "CLAUDE_CODE_USE_BEDROCK", Kind: "bedrock", BaseURL: "ANTHROPIC_BEDROCK_BASE_URL",
+		SkipAuth: "CLAUDE_CODE_SKIP_BEDROCK_AUTH", Unset: []string{"AWS_BEARER_TOKEN_BEDROCK"}},
+	{Use: "CLAUDE_CODE_USE_MANTLE", Kind: "bedrock-mantle", BaseURL: "ANTHROPIC_BEDROCK_MANTLE_BASE_URL",
+		SkipAuth: "CLAUDE_CODE_SKIP_MANTLE_AUTH", Unset: []string{"AWS_BEARER_TOKEN_BEDROCK"}},
+	{Use: "CLAUDE_CODE_USE_ANTHROPIC_AWS", Kind: "anthropic-aws", BaseURL: "ANTHROPIC_AWS_BASE_URL",
+		SkipAuth: "CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH", Unset: []string{"ANTHROPIC_AWS_API_KEY"}},
+	{Use: "CLAUDE_CODE_USE_FOUNDRY", Kind: "foundry", BaseURL: "ANTHROPIC_FOUNDRY_BASE_URL", Suffix: "/anthropic",
+		SkipAuth: "CLAUDE_CODE_SKIP_FOUNDRY_AUTH",
+		Unset:    []string{"ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_FOUNDRY_AUTH_TOKEN", "ANTHROPIC_FOUNDRY_RESOURCE"}},
+}
+
+// cloudMode points each cloud provider mode the inherited environment turns
+// on at scrim's route for it, with Claude Code's own authentication off, or
+// refuses when scrim has no such route: the agent would reach the provider
+// directly.
+func cloudMode(b *builder) error {
+	for _, c := range claudeClouds {
+		if !truthy(b.env[c.Use]) {
+			continue
+		}
+		prefix := b.in.Endpoints.route(c.Kind)
+		if prefix == "" {
+			return fmt.Errorf("%s is set but scrim has no %s provider route, and the agent would reach the provider directly; "+
+				"configure providers.<name> with kind %s (docs/providers/README.md) or unset %s", c.Use, c.Kind, c.Kind, c.Use)
+		}
+		base := strings.TrimRight(b.in.Endpoints.LLMBaseURL, "/")
+		b.override(c.BaseURL, base+prefix+c.Suffix, "Claude Code's "+c.Kind+" requests through scrim's LLM proxy")
+		b.setVar(c.SkipAuth, "1", "scrim authenticates the redacted request with credentials it holds")
+		for _, v := range c.Unset {
+			b.unsetVar(v)
+		}
+	}
+	return nil
 }
 
 // CodexPreset is the OpenAI Codex CLI.
