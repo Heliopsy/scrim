@@ -9,6 +9,8 @@ value back.
 | OpenBao (and Vault-compatible KV v2) | `openbao` | [openbao.md](openbao.md) |
 | Infisical | `infisical` | [infisical.md](infisical.md) |
 | Bitwarden Secrets Manager | `bws` | [bws.md](bws.md) |
+| Google Secret Manager | `gcpsm` | [gcp.md](gcp.md) |
+| Azure Key Vault | `azkv` | [azure.md](azure.md) |
 | Environment variables, files | `env`, `file` | [local.md](local.md) |
 | SOPS-encrypted files | `sops` | [sops.md](sops.md) |
 | Memory (tests, throwaway runs) | `memory` | none |
@@ -23,14 +25,17 @@ support is refused before anything is attempted.
 | `openbao`   | yes  | yes  | yes   | yes   | no       | no      |
 | `infisical` | yes  | yes  | yes   | yes   | no       | no      |
 | `bws`       | yes  | yes  | yes   | yes   | no       | no      |
+| `gcpsm`     | yes  | yes  | yes   | yes   | no       | no      |
+| `azkv`      | yes  | yes  | yes   | yes   | no       | no      |
 | `env`       | yes  | yes  | no    | no    | no       | no      |
 | `file`      | yes  | yes  | yes   | no    | no       | no      |
 | `sops`      | yes  | yes  | yes   | no    | no       | no      |
 | `memory`    | yes  | yes  | yes   | yes   | no       | no      |
 
-Watch on OpenBao, Infisical and Bitwarden Secrets Manager polls version metadata. It never fetches
-values, so it stays cheap even with a short interval. Generated secrets are produced by scrim and
-then written, so generate needs write and no store-side support.
+Watch on OpenBao, Infisical, Bitwarden Secrets Manager, Google Secret Manager and Azure Key Vault
+polls version metadata. It never fetches values, so it stays cheap even with a short interval.
+Generated secrets are produced by scrim and then written, so generate needs write and no
+store-side support.
 
 ## Configuring an instance
 
@@ -75,12 +80,13 @@ Every key can also be set from the environment: `SCRIM_` followed by the key upp
 and dashes turned into `_` (`stores.bao.secret-id` becomes `SCRIM_STORES_BAO_SECRET_ID`). The
 instance has to be declared in a file, or the whole collection set as JSON in `SCRIM_STORES`.
 
-Credential fields (`token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password`) take
-a reference instead of a literal: `env:NAME`, `file:/path`, `cred:NAME` (a systemd credential), or
-a reference into another configured store. They are resolved at start; a reference that cannot be
-resolved stops start-up, and no store is contacted with an empty credential. `scrim config show`
-masks them. A literal still works, but scrim logs a warning naming the field. scrim also adds the
-credentials it holds, and the session tokens a store issues at login, to the redaction set.
+Credential fields (`token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password`,
+`credentials`, `certificate`) take a reference instead of a literal: `env:NAME`, `file:/path`,
+`cred:NAME` (a systemd credential), or a reference into another configured store. They are
+resolved at start; a reference that cannot be resolved stops start-up, and no store is contacted
+with an empty credential. `scrim config show` masks them. A literal still works, but scrim logs a
+warning naming the field. scrim also adds the credentials it holds, and the session tokens a store
+issues at login, to the redaction set.
 
 ### Empty redact targets
 

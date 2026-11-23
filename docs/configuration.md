@@ -458,7 +458,7 @@ Secret store instances by name. The name is the instance's reference scheme (`ba
 | Type | collection of named instances (names: lower-case words with dashes) |
 | Environment | `SCRIM_STORES` (JSON object of instances, replaces the collection); `SCRIM_STORES_<NAME>_<FIELD>` for one field |
 | Required fields | `kind` |
-| Secret fields | `token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password`, `unlock`, `age-identity` (references; a literal is warned about) |
+| Secret fields | `token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password`, `unlock`, `age-identity`, `credentials`, `certificate` (references; a literal is warned about) |
 | Reload | restart required |
 
 ### `tool-profiles.<name>`
