@@ -58,6 +58,7 @@ func TestRunPrintEnv(t *testing.T) {
 		"command  claude --mcp-config=<session-dir>/mcp.json -p hi",
 		"ANTHROPIC_BASE_URL=http://127.0.0.1:9790/anthropic",
 		"OPENAI_BASE_URL=http://127.0.0.1:9790/openai/v1",
+		"GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:9790/gemini",
 		"HTTPS_PROXY=http://127.0.0.1:9791",
 		"NODE_EXTRA_CA_CERTS=<session-dir>/scrim-ca.pem",
 		"SCRIM_SESSION_TOKEN=<secret>",

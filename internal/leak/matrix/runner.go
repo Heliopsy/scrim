@@ -59,10 +59,12 @@ func (t Target) Send(ctx context.Context, r Request) (int, []byte, error) {
 	for k, vs := range r.Header {
 		hr.Header[k] = vs
 	}
-	if hr.Header.Get("Authorization") == "" && hr.Header.Get("X-Api-Key") == "" {
+	if hr.Header.Get("Authorization") == "" && hr.Header.Get("X-Api-Key") == "" && hr.Header.Get("X-Goog-Api-Key") == "" {
 		switch r.API {
 		case fp.Anthropic:
 			hr.Header.Set("X-Api-Key", "fake-provider-key-not-a-seed")
+		case fp.Gemini:
+			hr.Header.Set("X-Goog-Api-Key", "fake-provider-key-not-a-seed")
 		default:
 			hr.Header.Set("Authorization", "Bearer fake-provider-key-not-a-seed")
 		}

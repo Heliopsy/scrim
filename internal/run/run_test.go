@@ -128,13 +128,14 @@ func TestRunEnvironmentSeenByTheAgent(t *testing.T) {
 	}
 	env := envMap(strings.Split(strings.TrimSpace(out.String()), "\n"))
 	want := map[string]string{
-		"ANTHROPIC_BASE_URL": h.llm.URL + "/anthropic",
-		"OPENAI_BASE_URL":    h.llm.URL + "/openai/v1",
-		"HTTPS_PROXY":        strings.Replace(h.ep.ForwardProxy, "http://", "http://"+env[EnvSessionID]+":"+TokenMarker+"@", 1),
-		"https_proxy":        strings.Replace(h.ep.ForwardProxy, "http://", "http://"+env[EnvSessionID]+":"+TokenMarker+"@", 1),
-		"NO_PROXY":           "localhost,127.0.0.1,::1",
-		"SCRIM_API_SOCKET":   h.api.Socket,
-		"SCRIM_ACME_KEY":     "SCRIM_ACME_KEY",
+		"ANTHROPIC_BASE_URL":     h.llm.URL + "/anthropic",
+		"OPENAI_BASE_URL":        h.llm.URL + "/openai/v1",
+		"GOOGLE_GEMINI_BASE_URL": h.llm.URL + "/gemini",
+		"HTTPS_PROXY":            strings.Replace(h.ep.ForwardProxy, "http://", "http://"+env[EnvSessionID]+":"+TokenMarker+"@", 1),
+		"https_proxy":            strings.Replace(h.ep.ForwardProxy, "http://", "http://"+env[EnvSessionID]+":"+TokenMarker+"@", 1),
+		"NO_PROXY":               "localhost,127.0.0.1,::1",
+		"SCRIM_API_SOCKET":       h.api.Socket,
+		"SCRIM_ACME_KEY":         "SCRIM_ACME_KEY",
 	}
 	for k, v := range want {
 		if env[k] != v {

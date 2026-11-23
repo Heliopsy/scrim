@@ -55,6 +55,7 @@ name could be read as a flag. `scrim run` flags go before it:
 | --- | --- | --- |
 | `ANTHROPIC_BASE_URL` | `http://127.0.0.1:<port>/anthropic` | Anthropic SDKs and Claude Code send Messages requests to scrim's LLM proxy. |
 | `OPENAI_BASE_URL` | `http://127.0.0.1:<port>/openai/v1` | OpenAI SDKs (and older Codex releases) send requests to scrim's LLM proxy. |
+| `GOOGLE_GEMINI_BASE_URL` | `http://127.0.0.1:<port>/gemini` | Gemini CLI and the Google Gen AI SDKs send Gemini API requests to scrim's LLM proxy. Their own `x-goog-api-key` (or `key=`) is forwarded untouched. |
 | `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, `http_proxy` | `http://<session id>:<token>@127.0.0.1:<port>`, scrim's forward proxy | Tool traffic (curl, git, SDKs) goes through scrim for credential injection and response redaction. The user info identifies the session: clients send it as `Proxy-Authorization`, which ends at the proxy, so policy and grants apply to this agent. `--print-env` shows `<session-token>` in its place. |
 | `GIT_HTTP_PROXY_AUTHMETHOD` | `basic` | git otherwise sends proxy credentials only after a `407` challenge, which scrim's forward proxy never sends, so its tunnels would carry no session and injection toward bound hosts would be refused. Set only when the proxy URL carries the session. |
 | `NO_PROXY`, `no_proxy` | `localhost,127.0.0.1,::1` plus chained local upstreams | Loopback, including the LLM base URL, is reached directly. |
@@ -293,7 +294,8 @@ or give the scrim binary an AppArmor profile with `userns,`.
 - the session cannot be minted;
 - the secret values found in project files cannot be registered for redaction;
 - `scrim run` is already inside a session (`SCRIM_SESSION_TOKEN` is set);
-- the preset refuses the environment (Claude Code with Bedrock, Vertex or Foundry);
+- the preset refuses the environment (Claude Code in a cloud provider mode scrim has no route for,
+  see [providers](providers/README.md#claude-code-under-scrim-run));
 - the command is `caveman` (see below) or cannot be found;
 - the [filesystem view](#filesystem-view) cannot be set up, or `run.fs-view` is `namespace` and the
   host has no unprivileged user namespaces.
@@ -345,6 +347,7 @@ command  claude --mcp-config=<session-dir>/mcp.json
 set
   ANTHROPIC_BASE_URL=http://127.0.0.1:9790/anthropic   # Anthropic API through scrim's LLM proxy
   OPENAI_BASE_URL=http://127.0.0.1:9790/openai/v1      # OpenAI API through scrim's LLM proxy
+  GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:9790/gemini  # Gemini API through scrim's LLM proxy
   SCRIM_API_SOCKET=/run/user/1000/scrim/api.sock       # local agent API for scrim mcp and scrim secret
   SCRIM_SESSION_TOKEN=<secret>                         # session token, bound to this process tree
   ...
@@ -429,7 +432,8 @@ backend only one of them can hold the state file, so a second concurrent `scrim 
 
 - The wrapper relies on the agent honouring the variables and arguments it is given. It does not
   stop an agent that ignores them; the transparent, managed-settings and Kubernetes modes enforce.
-- Claude Code on Bedrock, Vertex or Foundry is refused until scrim serves those APIs (tasks.md 11.4).
+- Claude Code on Vertex is refused until scrim serves it. Bedrock, Mantle, Claude Platform on AWS
+  and Foundry need a [provider route](providers/README.md).
 - Codex with a custom `model_provider` in its configuration talks to that provider's own base URL,
   which `scrim run` does not change. Codex signed in with a ChatGPT account calls the Responses
   API on `chatgpt.com` through the forward proxy, which routes it to the LLM proxy

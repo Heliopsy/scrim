@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package fakeprovider is a model provider stand-in for the leak suite and
-// integration tests. It speaks the Anthropic Messages API and the OpenAI Chat
-// Completions and Responses APIs, streaming and non-streaming, with tool use
-// round trips, and records every byte it receives.
+// integration tests. It speaks the Anthropic Messages API, the OpenAI Chat
+// Completions and Responses APIs and the Google Gemini API (generateContent,
+// streamGenerateContent as SSE or as a streamed JSON array, countTokens),
+// streaming and non-streaming, with tool use round trips, and records every
+// byte it receives.
 //
 // It is faithful where the proxy under test can tell the difference: paths,
-// event names and order, JSON shapes, SSE framing, small streamed deltas that
+// event names and order, JSON shapes, SSE and JSON array framing, small
+// streamed deltas that
 // split placeholders across chunks, usage blocks with cache counters, and
 // provider-shaped errors. It is not a model: replies come from a [Responder].
 //
@@ -23,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -39,12 +43,17 @@ const (
 	Anthropic       API = "anthropic-messages"
 	OpenAIChat      API = "openai-chat"
 	OpenAIResponses API = "openai-responses"
+	Gemini          API = "gemini"
 )
 
 // APIs lists every API the fake speaks.
-var APIs = []API{Anthropic, OpenAIChat, OpenAIResponses}
+var APIs = []API{Anthropic, OpenAIChat, OpenAIResponses, Gemini}
 
-// Path returns the canonical request path of an API.
+// GeminiModel is the model the canonical Gemini paths name.
+const GeminiModel = "gemini-2.5-pro"
+
+// Path returns the canonical request path of an API. For Gemini it is the
+// non-streaming generateContent path; see [API.StreamPath].
 func (a API) Path() string {
 	switch a {
 	case Anthropic:
@@ -53,8 +62,43 @@ func (a API) Path() string {
 		return "/v1/chat/completions"
 	case OpenAIResponses:
 		return "/v1/responses"
+	case Gemini:
+		return "/v1beta/models/" + GeminiModel + ":generateContent"
 	}
 	return ""
+}
+
+// StreamPath returns the path and query of a streaming request. Gemini
+// streams by path (streamGenerateContent) and, with alt=sse, as server-sent
+// events; without it the reply is a JSON array streamed element by element.
+// Every other API streams by a body field and uses [API.Path] with no query.
+func (a API) StreamPath(sse bool) (string, url.Values) {
+	if a != Gemini {
+		return a.Path(), nil
+	}
+	p := "/v1beta/models/" + GeminiModel + ":streamGenerateContent"
+	if sse {
+		return p, url.Values{"alt": {"sse"}}
+	}
+	return p, nil
+}
+
+// geminiPath splits a Gemini request path into model and method, for example
+// "gemini-2.5-pro" and "generateContent". ok is false for any other path.
+func geminiPath(path string) (model, method string, ok bool) {
+	i := strings.LastIndex(path, "/models/")
+	if i < 0 {
+		return "", "", false
+	}
+	model, method, ok = strings.Cut(path[i+len("/models/"):], ":")
+	if !ok || model == "" || strings.Contains(model, "/") {
+		return "", "", false
+	}
+	switch method {
+	case "generateContent", "streamGenerateContent", "countTokens":
+		return model, method, true
+	}
+	return "", "", false
 }
 
 // Exchange is one recorded request and the reply the fake sent.
@@ -240,7 +284,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	path := r.URL.Path
+	gModel, gMethod, isGemini := geminiPath(path)
 	switch {
+	case isGemini && gMethod == "countTokens":
+		ex.API, ex.Model = Gemini, gModel
+		writeJSON(rw, http.StatusOK, map[string]any{"totalTokens": max(1, len(body)/4)})
+		return
+	case isGemini:
+		ex.API = Gemini
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/v1/models"):
 		writeJSON(rw, http.StatusOK, map[string]any{"object": "list", "data": []any{
 			map[string]any{"id": "fake-model", "object": "model", "type": "model", "display_name": "Fake model", "created": 0, "owned_by": "scrim"},
@@ -264,7 +315,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.apiError(rw, ex.API, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed")
 		return
 	}
-	if s.opts.RequireAuth && r.Header.Get("Authorization") == "" && r.Header.Get("X-Api-Key") == "" {
+	if s.opts.RequireAuth && !authenticated(r) {
 		s.apiError(rw, ex.API, http.StatusUnauthorized, "authentication_error", "missing credentials")
 		return
 	}
@@ -277,6 +328,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ex.Model, _ = req["model"].(string)
 	ex.Stream, _ = req["stream"].(bool)
+	if ex.API == Gemini {
+		ex.Model, ex.Stream = gModel, gMethod == "streamGenerateContent"
+	}
 	ex.Placeholders = uniq(s.opts.PlaceholderPattern.FindAllString(string(body), -1))
 	ex.PromptBytes, ex.CachedBytes = s.cache(ex.API, ex.Model, body)
 
@@ -299,7 +353,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.chat(rw, reply, ex.Stream, includeUsage(req))
 	case OpenAIResponses:
 		g.responses(rw, reply, ex.Stream)
+	case Gemini:
+		g.gemini(rw, reply, ex.Stream, r.URL.Query().Get("alt") == "sse")
 	}
+}
+
+// authenticated reports whether a request carries provider authentication in
+// any form a provider accepts.
+func authenticated(r *http.Request) bool {
+	return r.Header.Get("Authorization") != "" || r.Header.Get("X-Api-Key") != "" ||
+		r.Header.Get("X-Goog-Api-Key") != "" || r.URL.Query().Get("key") != ""
 }
 
 func includeUsage(req map[string]any) bool {
@@ -326,6 +389,29 @@ func errorType(status int) string {
 	return "api_error"
 }
 
+// geminiStatus is the google.rpc status name Gemini reports for an HTTP status.
+func geminiStatus(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "INVALID_ARGUMENT"
+	case http.StatusUnauthorized:
+		return "UNAUTHENTICATED"
+	case http.StatusForbidden:
+		return "PERMISSION_DENIED"
+	case http.StatusNotFound:
+		return "NOT_FOUND"
+	case http.StatusMethodNotAllowed:
+		return "UNIMPLEMENTED"
+	case http.StatusTooManyRequests:
+		return "RESOURCE_EXHAUSTED"
+	case http.StatusServiceUnavailable, 529:
+		return "UNAVAILABLE"
+	case http.StatusGatewayTimeout:
+		return "DEADLINE_EXCEEDED"
+	}
+	return "INTERNAL"
+}
+
 func (s *Server) apiError(w http.ResponseWriter, api API, status int, typ, msg string) {
 	if status == http.StatusTooManyRequests {
 		w.Header().Set("Retry-After", "1")
@@ -333,6 +419,8 @@ func (s *Server) apiError(w http.ResponseWriter, api API, status int, typ, msg s
 	switch api {
 	case OpenAIChat, OpenAIResponses:
 		writeJSON(w, status, map[string]any{"error": map[string]any{"message": msg, "type": typ, "param": nil, "code": nil}})
+	case Gemini:
+		writeJSON(w, status, map[string]any{"error": map[string]any{"code": status, "message": msg, "status": geminiStatus(status)}})
 	default:
 		writeJSON(w, status, map[string]any{"type": "error", "error": map[string]any{"type": typ, "message": msg}})
 	}
@@ -463,6 +551,21 @@ func countTurns(api API, req map[string]any) (toolResults, assistant int) {
 		items, _ = req["messages"].([]any)
 	case OpenAIResponses:
 		items, _ = req["input"].([]any)
+	case Gemini:
+		contents, _ := req["contents"].([]any)
+		for _, it := range contents {
+			m, _ := it.(map[string]any)
+			if m["role"] == "model" {
+				assistant++
+			}
+			parts, _ := m["parts"].([]any)
+			for _, p := range parts {
+				if pm, _ := p.(map[string]any); pm["functionResponse"] != nil {
+					toolResults++
+				}
+			}
+		}
+		return toolResults, assistant
 	}
 	for _, it := range items {
 		m, _ := it.(map[string]any)
@@ -525,6 +628,10 @@ func (s *Server) cache(api API, model string, body []byte) (total, cached int) {
 		addArray("tools:", "tools")
 		addArray("instructions:", "instructions")
 		addArray("input:", "input")
+	case Gemini:
+		addArray("tools:", "tools")
+		addArray("system:", "systemInstruction")
+		addArray("contents:", "contents")
 	}
 	for _, b := range blocks[1:] {
 		total += len(b)

@@ -23,6 +23,12 @@ with request and response semantics unchanged apart from redaction and placehold
 - **WHEN** an agent sends an OpenAI Responses API request through the proxy
 - **THEN** the request is redacted and forwarded and the response is returned to the agent
 
+#### Scenario: Gemini streamed as a JSON array
+
+- **WHEN** an agent calls Gemini `streamGenerateContent` without `alt=sse` and the provider streams a JSON array of chunks
+- **THEN** the proxy restores placeholders element by element as the chunks arrive, including a placeholder split across chunks, without buffering the whole array
+- **AND** thought parts and thought signatures reach the agent byte-identical
+
 ### Requirement: Cloud provider routes
 
 The proxy SHALL support Claude on Amazon Bedrock (including its binary event stream), Google Vertex,
@@ -40,6 +46,35 @@ the proxy SHALL sign the request after redaction and SHALL refuse the request wh
 - **WHEN** a route requires signing and no signing credentials are configured
 - **THEN** the proxy refuses the request with an error naming the missing credentials
 - **AND** nothing is sent to the provider
+
+#### Scenario: Agent credentials dropped
+
+- **WHEN** an agent sends a request with its own signature, API key or bearer token on a cloud provider route
+- **THEN** the provider receives only the authentication scrim added and none of the agent's
+
+#### Scenario: Placeholder inside an event stream frame
+
+- **WHEN** Bedrock streams a response whose text holds a placeholder split across two event stream frames
+- **THEN** the agent receives event stream frames with the placeholder resolved where the restore policy allows
+- **AND** every frame scrim changed carries recomputed prelude and message CRCs, and every other frame
+  is forwarded byte for byte
+
+#### Scenario: Base64 body in count-tokens
+
+- **WHEN** an agent sends a Bedrock count-tokens request whose embedded base64 body holds a known secret
+- **THEN** the provider receives the embedded body decoded, redacted and encoded again
+
+### Requirement: Cloud provider routes authenticate themselves
+
+A cloud provider route SHALL authenticate every request itself, toward its own upstream only, with
+credentials it reads from stores by reference, and SHALL drop the authentication the agent sent. A
+cloud provider route SHALL NOT be chained.
+
+#### Scenario: Chain configured
+
+- **WHEN** `proxy.chain.url` is set and a Bedrock provider route is configured
+- **THEN** the built-in routes go through the chain and the Bedrock route sends its signed requests
+  to Bedrock directly
 
 ### Requirement: Routing by path
 
@@ -122,8 +157,8 @@ forwarded without redaction.
 The redactor SHALL run over every path segment, query key and value, and request header value the
 proxy forwards, known header or not, on the raw bytes and on their percent-decoded form (in the
 query also with `+` read as a space). A component changed in its decoded form SHALL be forwarded
-percent-encoded. Only the agent's provider credential headers, `authorization` and `x-api-key`,
-SHALL be exempt. Response headers SHALL reach the agent as sent, with no placeholder restored.
+percent-encoded, provider credentials excepted. Response headers SHALL reach the agent as sent,
+with no placeholder restored.
 
 #### Scenario: Secret in a custom header
 
@@ -135,15 +170,27 @@ SHALL be exempt. Response headers SHALL reach the agent as sent, with no placeho
 - **WHEN** an agent's request URL carries a known secret in a query parameter, percent-encoded or form-encoded
 - **THEN** the provider receives the query with the secret replaced by a percent-encoded placeholder and the other parameters unchanged
 
+#### Scenario: Placeholder in a response header
+
+- **WHEN** the provider's response carries a placeholder in a response header
+- **THEN** the agent receives that header with the placeholder unresolved
+
+### Requirement: Provider credentials are exempt from head redaction
+
+Only the agent's provider credentials SHALL be exempt from redaction and the guard in the request
+head: the headers `authorization`, `x-api-key` and `x-goog-api-key`, and on a Gemini route the
+`key` query parameter.
+
 #### Scenario: Provider credential headers pass through
 
 - **WHEN** an agent's request carries its provider API key in `x-api-key` or `authorization`
 - **THEN** the provider receives those headers byte for byte as the agent sent them
 
-#### Scenario: Placeholder in a response header
+#### Scenario: Gemini API key in the query
 
-- **WHEN** the provider's response carries a placeholder in a response header
-- **THEN** the agent receives that header with the placeholder unresolved
+- **WHEN** an agent sends a Gemini request with its API key in the `key` query parameter or the `x-goog-api-key` header
+- **THEN** the provider receives the key as sent while every other query parameter is redacted
+- **AND** a capture of the request shows the key masked
 
 ### Requirement: Request target and headers are guarded
 

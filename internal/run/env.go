@@ -248,6 +248,7 @@ func Build(in Input) (*Plan, error) {
 	base := strings.TrimRight(ep.LLMBaseURL, "/")
 	b.override("ANTHROPIC_BASE_URL", base+ep.route(ProviderAnthropic), "Anthropic API through scrim's LLM proxy")
 	b.override("OPENAI_BASE_URL", base+ep.route(ProviderOpenAI)+"/v1", "OpenAI API through scrim's LLM proxy")
+	b.override("GOOGLE_GEMINI_BASE_URL", base+ep.route(ProviderGemini), "Gemini API through scrim's LLM proxy")
 
 	if ep.APISocket != "" {
 		b.setVar(localapi.EnvSocket, ep.APISocket, "local agent API for scrim mcp and scrim secret")

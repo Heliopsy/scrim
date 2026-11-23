@@ -58,7 +58,9 @@ impl Refusal {
     /// HTTP status for the reason.
     pub fn status(&self) -> StatusCode {
         match self.reason {
-            RefusalReason::NotReady => StatusCode::SERVICE_UNAVAILABLE,
+            RefusalReason::NotReady | RefusalReason::CredentialUnavailable => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
             RefusalReason::NoRoute => StatusCode::NOT_FOUND,
             RefusalReason::MalformedBody
             | RefusalReason::RedactorFailed
@@ -73,6 +75,18 @@ impl Refusal {
             }
             RefusalReason::PolicyDenied => StatusCode::FORBIDDEN,
             RefusalReason::UpgradeUnsupported => StatusCode::NOT_IMPLEMENTED,
+        }
+    }
+
+    /// The `google.rpc.Code` name for the status, for Gemini-shaped errors.
+    fn rpc_status(&self) -> &'static str {
+        match self.status() {
+            StatusCode::SERVICE_UNAVAILABLE | StatusCode::BAD_GATEWAY => "UNAVAILABLE",
+            StatusCode::NOT_FOUND => "NOT_FOUND",
+            StatusCode::FORBIDDEN => "PERMISSION_DENIED",
+            StatusCode::NOT_IMPLEMENTED => "UNIMPLEMENTED",
+            StatusCode::INTERNAL_SERVER_ERROR => "INTERNAL",
+            _ => "INVALID_ARGUMENT",
         }
     }
 
@@ -106,6 +120,9 @@ impl Refusal {
             RefusalReason::UpgradeUnsupported => {
                 "scrim: protocol upgrades (WebSocket) cannot be redacted; use HTTPS requests"
             }
+            RefusalReason::CredentialUnavailable => {
+                "scrim: the provider credentials for this route are unavailable"
+            }
         };
         let mut m = what.to_string();
         if !self.detail.is_empty() {
@@ -135,6 +152,21 @@ impl Refusal {
             Api::OpenAiChat | Api::OpenAiResponses => serde_json::json!({
                 "error": { "message": message, "type": "scrim_error", "code": code, "param": null }
             }),
+            // google.rpc.Status, as the Gemini API and Vertex AI answer errors.
+            Api::Gemini => serde_json::json!({
+                "error": {
+                    "code": self.status().as_u16(),
+                    "message": message,
+                    "status": self.rpc_status(),
+                    "details": [{
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": code,
+                        "domain": "scrim",
+                    }],
+                }
+            }),
+            // Bedrock's own error shape, `{"message": ...}`, with the code alongside.
+            Api::BedrockConverse => serde_json::json!({ "message": message, "code": code }),
             Api::AnthropicMessages | Api::Generic => serde_json::json!({
                 "type": "error",
                 "error": { "type": "scrim_error", "code": code, "message": message }
@@ -176,6 +208,12 @@ mod tests {
         let o = r.to_response(Api::OpenAiResponses);
         let v: serde_json::Value = serde_json::from_slice(o.body()).unwrap();
         assert_eq!(v["error"]["code"], "guard_refused");
+        let gemini = r.to_response(Api::Gemini);
+        let v: serde_json::Value = serde_json::from_slice(gemini.body()).unwrap();
+        assert_eq!(v["error"]["code"], 422);
+        assert_eq!(v["error"]["status"], "INVALID_ARGUMENT");
+        assert_eq!(v["error"]["details"][0]["reason"], "guard_refused");
+        assert!(v["error"]["message"].as_str().unwrap().contains("db/pw"));
         let nr = Refusal::new(RefusalReason::NotReady, "").to_response(Api::Generic);
         assert_eq!(nr.status(), 503);
         assert_eq!(nr.headers()[http::header::RETRY_AFTER], "1");

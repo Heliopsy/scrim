@@ -138,6 +138,9 @@ func TestNaiveRedactorPattern(t *testing.T) {
 			"anthropic-messages/unknown-field/raw",
 			"openai-chat/tool-result/raw",
 			"openai-responses/tool-result-blocks/raw",
+			"gemini/tool-result/raw",
+			"gemini/tool-result-streaming/raw",
+			"gemini/system-prompt/raw",
 		} {
 			if r := get(row, k); r.Outcome != matrix.OutcomeRedacted || !r.Pass {
 				t.Errorf("naive stub should redact: %s", r.Describe())
@@ -149,6 +152,8 @@ func TestNaiveRedactorPattern(t *testing.T) {
 			"openai-chat/tool-result/hex-lower",
 			"openai-responses/header/raw",
 			"anthropic-messages/tool-result/json-escape-all",
+			"gemini/tool-result/reversed",
+			"gemini/query/raw",
 		} {
 			if r := get(row, k); r.Outcome != matrix.OutcomeLeaked || r.Pass {
 				t.Errorf("naive stub should leak: %s", r.Describe())

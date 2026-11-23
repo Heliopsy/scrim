@@ -12,6 +12,8 @@
 //! per-content-block holdback. Thinking, reasoning and signatures are never touched.
 
 pub(crate) mod anthropic;
+pub(crate) mod converse;
+pub mod gemini;
 pub(crate) mod openai_chat;
 pub(crate) mod openai_responses;
 
@@ -28,6 +30,12 @@ pub enum Api {
     OpenAiChat,
     /// `OpenAI` Responses (`/v1/responses`, `/v1/responses/compact`).
     OpenAiResponses,
+    /// Google Gemini `generateContent`, `streamGenerateContent` and `countTokens`, on the
+    /// Gemini API and on Vertex AI.
+    Gemini,
+    /// Amazon Bedrock Converse (`/model/{modelId}/converse`, `/converse-stream`). Its stream is
+    /// an event stream, restored by [`crate::eventstream::EventStreamRestorer`].
+    BedrockConverse,
     /// Anything else on a provider route. The whole body is redacted, nothing is allowlisted,
     /// and responses pass through without resolution.
     Generic,
@@ -40,6 +48,8 @@ impl Api {
             Self::AnthropicMessages => "anthropic-messages",
             Self::OpenAiChat => "openai-chat",
             Self::OpenAiResponses => "openai-responses",
+            Self::Gemini => "gemini",
+            Self::BedrockConverse => "bedrock-converse",
             Self::Generic => "generic",
         }
     }
@@ -130,6 +140,8 @@ pub(crate) fn plan(api: Api, body: &[u8]) -> Result<Plan, PlanError> {
         Api::AnthropicMessages => anthropic::plan(&Doc::parse(body)?)?,
         Api::OpenAiChat => openai_chat::plan(&Doc::parse(body)?)?,
         Api::OpenAiResponses => openai_responses::plan(&Doc::parse(body)?)?,
+        Api::Gemini => gemini::plan(&Doc::parse(body)?)?,
+        Api::BedrockConverse => converse::plan(&Doc::parse(body)?)?,
     };
     Ok(plan.finish())
 }
@@ -162,6 +174,8 @@ pub(crate) fn restore_json(api: Api, ctx: &Ctx<'_>, body: &[u8]) -> Option<Vec<u
         Api::OpenAiResponses => {
             openai_responses::restore_response(ctx, doc.root(), &mut edits, &|_| true);
         }
+        Api::Gemini => gemini::restore_response(ctx, doc.root(), &mut edits),
+        Api::BedrockConverse => converse::restore_response(ctx, doc.root(), &mut edits),
         Api::Generic => return None,
     }
     edits.apply(body)
@@ -388,7 +402,35 @@ pub(crate) fn stream_codec(api: Api, limits: StreamLimits) -> Option<Box<dyn Str
         Api::AnthropicMessages => Some(Box::new(anthropic::Stream::new(limits))),
         Api::OpenAiChat => Some(Box::new(openai_chat::Stream::new(limits))),
         Api::OpenAiResponses => Some(Box::new(openai_responses::Stream::new(limits))),
-        Api::Generic => None,
+        Api::Gemini => Some(Box::new(gemini::SseStream::new(limits))),
+        // Event streams, not SSE (crate::eventstream).
+        Api::BedrockConverse | Api::Generic => None,
+    }
+}
+
+/// The per-stream restore state machine of an API that streams the elements of one JSON array
+/// (Gemini `streamGenerateContent` without `alt=sse`).
+pub(crate) trait ArrayCodec: Send {
+    /// Handles one complete top-level element, appending what the agent should receive. The
+    /// separator before it has been written already.
+    fn element(&mut self, ctx: &Ctx<'_>, raw: &[u8], out: &mut Vec<u8>);
+    /// Called just before the closing `]` is written: releases everything still held, as
+    /// further elements.
+    fn close(&mut self, ctx: &Ctx<'_>, out: &mut Vec<u8>);
+    /// Releases everything still held at the end of a stream that never closed its array.
+    fn finish(&mut self, ctx: &Ctx<'_>, out: &mut Vec<u8>);
+}
+
+/// Whether `api` may stream as one JSON array of chunks (see [`array_codec`]).
+pub(crate) fn streams_json_array(api: Api) -> bool {
+    matches!(api, Api::Gemini)
+}
+
+/// Creates the JSON-array stream codec for `api`, or `None` when the API has no such stream.
+pub(crate) fn array_codec(api: Api, limits: StreamLimits) -> Option<Box<dyn ArrayCodec>> {
+    match api {
+        Api::Gemini => Some(Box::new(gemini::ArrayStream::new(limits))),
+        _ => None,
     }
 }
 

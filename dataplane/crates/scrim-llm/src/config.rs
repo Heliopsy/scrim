@@ -23,14 +23,33 @@ pub enum Provider {
     /// `OpenAI`: Chat Completions on `/chat/completions`, Responses on `/responses` and
     /// `/responses/compact`.
     Openai,
+    /// Google Gemini API: `generateContent`, `streamGenerateContent` and `countTokens` on
+    /// paths ending in `:<method>`.
+    Gemini,
+    /// Amazon Bedrock runtime: Anthropic Messages bodies on `/model/{id}/invoke` and
+    /// `/model/{id}/invoke-with-response-stream`, Converse on `/model/{id}/converse` and
+    /// `/model/{id}/converse-stream`, and the Anthropic body inside `/model/{id}/count-tokens`.
+    Bedrock,
 }
 
 impl Provider {
-    /// The provider's name in policy rules (`provider`): `anthropic` or `openai`.
+    /// The provider's name in policy rules (`provider`): `anthropic`, `openai` or `gemini`.
     pub fn name(self) -> &'static str {
         match self {
             Provider::Anthropic => "anthropic",
             Provider::Openai => "openai",
+            Provider::Gemini => "gemini",
+            Provider::Bedrock => "bedrock",
+        }
+    }
+
+    /// Query parameters that carry the agent's own provider credential (the Gemini API's
+    /// `key`). They are forwarded untouched, like the credential headers in
+    /// [`crate::head::PASSTHROUGH`], and masked in captures.
+    pub fn query_credentials(self) -> &'static [&'static str] {
+        match self {
+            Provider::Gemini => &["key"],
+            Provider::Anthropic | Provider::Openai | Provider::Bedrock => &[],
         }
     }
 
@@ -52,9 +71,25 @@ impl Provider {
             {
                 Api::OpenAiResponses
             }
+            Provider::Gemini if crate::codec::gemini::is_gemini_method(path) => Api::Gemini,
+            Provider::Bedrock => match bedrock_action(path) {
+                Some("invoke" | "invoke-with-response-stream") => Api::AnthropicMessages,
+                Some("converse" | "converse-stream") => Api::BedrockConverse,
+                _ => Api::Generic,
+            },
             _ => Api::Generic,
         }
     }
+}
+
+/// The action of a Bedrock runtime path, `/model/{modelId}/{action}`. The model id is one
+/// segment (percent-encoded on the wire when it holds `/` or `:`).
+pub fn bedrock_action(path: &str) -> Option<&str> {
+    let rest = path.trim_end_matches('/');
+    let (head, action) = rest.rsplit_once('/')?;
+    let (head, model) = head.rsplit_once('/')?;
+    let at_model = head == "/model" || head.ends_with("/model");
+    (at_model && !model.is_empty()).then_some(action)
 }
 
 /// What to do when a chained upstream cannot be reached.
@@ -104,6 +139,10 @@ pub struct RouteConfig {
     /// `api.anthropic.com`). Matched case-insensitively on the host alone.
     #[serde(default)]
     pub hosts: Vec<String>,
+    /// Authentication the route adds itself with credentials scrim holds, replacing whatever
+    /// the agent sent (cloud provider routes). A route with authentication cannot be chained.
+    #[serde(default)]
+    pub auth: Option<crate::auth::AuthConfig>,
 }
 
 fn yes() -> bool {
@@ -219,10 +258,12 @@ impl ProxyConfig {
     }
 }
 
-/// `/anthropic` to `https://api.anthropic.com` and `/openai` to `https://api.openai.com`.
+/// `/anthropic` to `https://api.anthropic.com`, `/openai` to `https://api.openai.com` and
+/// `/gemini` to `https://generativelanguage.googleapis.com`.
 ///
-/// Agents use base URLs such as `ANTHROPIC_BASE_URL=http://127.0.0.1:9790/anthropic` and
-/// `OPENAI_BASE_URL=http://127.0.0.1:9790/openai/v1`.
+/// Agents use base URLs such as `ANTHROPIC_BASE_URL=http://127.0.0.1:9790/anthropic`,
+/// `OPENAI_BASE_URL=http://127.0.0.1:9790/openai/v1` and
+/// `GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:9790/gemini`.
 pub fn default_routes() -> Vec<RouteConfig> {
     vec![
         RouteConfig {
@@ -233,6 +274,7 @@ pub fn default_routes() -> Vec<RouteConfig> {
             strip_prefix: true,
             chain: None,
             hosts: vec!["api.anthropic.com".into()],
+            auth: None,
         },
         RouteConfig {
             name: "openai".into(),
@@ -242,6 +284,17 @@ pub fn default_routes() -> Vec<RouteConfig> {
             strip_prefix: true,
             chain: None,
             hosts: vec!["api.openai.com".into()],
+            auth: None,
+        },
+        RouteConfig {
+            name: "gemini".into(),
+            prefix: "/gemini".into(),
+            upstream: "https://generativelanguage.googleapis.com".into(),
+            provider: Provider::Gemini,
+            strip_prefix: true,
+            chain: None,
+            hosts: vec!["generativelanguage.googleapis.com".into()],
+            auth: None,
         },
         // Codex signed in with a ChatGPT account: the Responses API at
         // /backend-api/codex/responses, other backend paths redacted as generic JSON.
@@ -253,6 +306,7 @@ pub fn default_routes() -> Vec<RouteConfig> {
             strip_prefix: true,
             chain: None,
             hosts: vec!["chatgpt.com".into()],
+            auth: None,
         },
         // The same session's traffic on ab.chatgpt.com. Its API shape is not documented; no path
         // there is a Responses call, so every body is redacted as generic JSON.
@@ -264,6 +318,7 @@ pub fn default_routes() -> Vec<RouteConfig> {
             strip_prefix: true,
             chain: None,
             hosts: vec!["ab.chatgpt.com".into()],
+            auth: None,
         },
     ]
 }
@@ -304,6 +359,33 @@ mod tests {
             Api::OpenAiResponses
         );
         assert_eq!(Provider::Openai.api_for(&p, "/v1/embeddings"), Api::Generic);
+        assert_eq!(
+            Provider::Gemini.api_for(&p, "/v1beta/models/gemini-2.5-pro:generateContent"),
+            Api::Gemini
+        );
+        assert_eq!(
+            Provider::Gemini.api_for(&p, "/v1beta/models/gemini-2.5-pro:streamGenerateContent"),
+            Api::Gemini
+        );
+        assert_eq!(
+            Provider::Gemini.api_for(&p, "/v1beta/models/gemini-2.5-pro:countTokens"),
+            Api::Gemini
+        );
+        assert_eq!(
+            Provider::Gemini.api_for(&p, "/v1beta/models/text-embedding-004:embedContent"),
+            Api::Generic
+        );
+        assert_eq!(
+            Provider::Gemini.api_for(
+                &http::Method::GET,
+                "/v1beta/models/gemini-2.5-pro:generateContent"
+            ),
+            Api::Generic
+        );
+        assert_eq!(
+            Provider::Openai.api_for(&p, "/v1beta/models/gemini-2.5-pro:generateContent"),
+            Api::Generic
+        );
         // ChatGPT backend (Codex signed in with ChatGPT).
         assert_eq!(
             Provider::Openai.api_for(&p, "/backend-api/codex/responses"),
@@ -311,6 +393,41 @@ mod tests {
         );
         assert_eq!(
             Provider::Openai.api_for(&p, "/backend-api/codex/analytics-events/events"),
+            Api::Generic
+        );
+    }
+
+    #[test]
+    fn bedrock_paths() {
+        let p = http::Method::POST;
+        let b = Provider::Bedrock;
+        for (path, api) in [
+            (
+                "/model/us.anthropic.claude-x-v1%3A0/invoke",
+                Api::AnthropicMessages,
+            ),
+            (
+                "/model/m/invoke-with-response-stream",
+                Api::AnthropicMessages,
+            ),
+            (
+                "/model/arn%3Aaws%3Abedrock%3Aus-east-1%3A1%3Aapplication-inference-profile%2Fx/converse",
+                Api::BedrockConverse,
+            ),
+            ("/model/m/converse-stream", Api::BedrockConverse),
+            ("/model/m/count-tokens", Api::Generic),
+            ("/model//invoke", Api::Generic),
+            ("/invoke", Api::Generic),
+            ("/guardrail/g/version/1/apply", Api::Generic),
+        ] {
+            assert_eq!(b.api_for(&p, path), api, "{path}");
+        }
+        assert_eq!(
+            bedrock_action("/model/m/count-tokens"),
+            Some("count-tokens")
+        );
+        assert_eq!(
+            b.api_for(&http::Method::GET, "/model/m/invoke"),
             Api::Generic
         );
     }

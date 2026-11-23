@@ -351,6 +351,8 @@ func ParseAPI(s string) (fp.API, error) {
 		return fp.OpenAIChat, nil
 	case "openai-responses", "responses":
 		return fp.OpenAIResponses, nil
+	case "gemini", "google", "google-gemini":
+		return fp.Gemini, nil
 	}
-	return "", fmt.Errorf("unknown api %q (anthropic, openai-chat, openai-responses)", s)
+	return "", fmt.Errorf("unknown api %q (anthropic, openai-chat, openai-responses, gemini)", s)
 }

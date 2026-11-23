@@ -20,7 +20,7 @@ import (
 )
 
 // DefaultRoutes are the LLM proxy's path prefixes per provider family.
-var DefaultRoutes = map[string]string{"anthropic": "/anthropic", "openai": "/openai"}
+var DefaultRoutes = map[string]string{"anthropic": "/anthropic", "openai": "/openai", "gemini": "/gemini"}
 
 // RunEndpoints is what a daemon offers an agent started by `scrim run`.
 // None of it is secret.
@@ -143,6 +143,11 @@ func (l *Lease) Endpoints() RunEndpoints {
 	}
 	ep := RunEndpoints{APISocket: a.AgentAPI, LLMBaseURL: a.BaseURL, Routes: maps.Clone(DefaultRoutes),
 		CACertPEM: slices.Clone(l.ca), Bypass: slices.Clone(l.info.Bypass)}
+	// Cloud provider routes are read from this run's configuration; a system
+	// service is not asked for its own.
+	if l.cfg != nil {
+		maps.Copy(ep.Routes, ProviderRoutes(l.cfg))
+	}
 	if a.ForwardProxy != "" {
 		ep.ForwardProxy = "http://" + a.ForwardProxy
 	}

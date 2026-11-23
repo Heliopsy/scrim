@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/heliopsy/scrim/internal/leak"
+	fp "github.com/heliopsy/scrim/internal/testing/fakeprovider"
 )
 
 func TestPassThroughFailsAndReportHoldsNoValue(t *testing.T) {
@@ -81,5 +82,18 @@ func TestBadOptions(t *testing.T) {
 		if _, err := Run(context.Background(), o); err == nil || errors.Is(err, ErrGate) {
 			t.Errorf("%+v: err %v", o, err)
 		}
+	}
+}
+
+func TestParseRoutesGemini(t *testing.T) {
+	m, err := ParseRoutes([]string{"gemini=/gemini/", "anthropic=anthropic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m[fp.Gemini] != "/gemini" || m[fp.Anthropic] != "/anthropic" {
+		t.Errorf("routes %v", m)
+	}
+	if _, err := ParseAPI("vertex"); err == nil || !strings.Contains(err.Error(), "gemini") {
+		t.Errorf("unknown api error does not list gemini: %v", err)
 	}
 }

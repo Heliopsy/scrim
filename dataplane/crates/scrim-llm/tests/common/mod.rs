@@ -80,6 +80,7 @@ pub fn routes_to(url: &str) -> Vec<RouteConfig> {
             strip_prefix: true,
             chain: None,
             hosts: vec!["api.anthropic.com".into()],
+            auth: None,
         },
         RouteConfig {
             name: "openai".into(),
@@ -89,6 +90,17 @@ pub fn routes_to(url: &str) -> Vec<RouteConfig> {
             strip_prefix: true,
             chain: None,
             hosts: vec!["api.openai.com".into()],
+            auth: None,
+        },
+        RouteConfig {
+            name: "gemini".into(),
+            prefix: "/gemini".into(),
+            upstream: url.into(),
+            provider: Provider::Gemini,
+            strip_prefix: true,
+            chain: None,
+            hosts: vec!["generativelanguage.googleapis.com".into()],
+            auth: None,
         },
     ]
 }
