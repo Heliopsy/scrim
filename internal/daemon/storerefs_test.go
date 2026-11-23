@@ -301,3 +301,19 @@ func TestStoreReferenceSettingsReload(t *testing.T) {
 		}
 	}
 }
+
+// TestProviderCredentialAddedByReloadWarns: a provider credential a reload
+// adds is not a redact target until a restart; the log says so by setting
+// and store.
+func TestProviderCredentialAddedByReloadWarns(t *testing.T) {
+	h := newHarness(t, seed(t, "tok-"))
+	d := startDaemon(t, h)
+	h.appendConfig(t, "providers:\n  azure:\n    kind: foundry\n    resource: res\n    api-key: testenv://SCRIMTEST_LATE_KEY\n")
+	if res := d.app.Config.Reload(t.Context(), "test"); !res.Applied {
+		t.Fatalf("reload: %+v", res)
+	}
+	eventually(t, "the warning", func() bool {
+		return strings.Contains(h.logs.String(), "loaded after a restart") &&
+			strings.Contains(h.logs.String(), "providers.azure.api-key")
+	})
+}

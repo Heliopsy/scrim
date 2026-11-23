@@ -490,30 +490,30 @@ func (d *Daemon) subscribe(ctx context.Context) {
 	}))
 }
 
-// warnUnloadedProviderRefs names every cloud provider credential no store
-// loads. Provider credentials become redact targets at start; one added by
-// a reload is loaded after a restart, and until then its route answers
-// credential_unavailable.
+// warnUnloadedProviderRefs names, by setting, every cloud provider
+// credential no store loads. Provider credentials become redact targets at
+// start; one added by a reload is loaded after a restart, and until then its
+// route answers credential_unavailable. The log names the setting and the
+// store, not the reference.
 func (d *Daemon) warnUnloadedProviderRefs(cfg *config.Config) {
-	for _, raw := range providerStoreRefs(cfg) {
-		ref, err := stores.ParseRef(raw)
-		if err != nil {
-			continue
-		}
-		r, err := d.refresherFor(ref)
-		if err != nil {
-			d.log.Warn("cloud provider credential names no configured store", "ref", ref.String(), "err", err)
-			continue
-		}
-		covered := false
-		for _, ts := range r.Status().Targets {
-			if t, err := refresh.ParseTarget(ts.Target); err == nil && t.Covers(ref.Secret()) {
-				covered = true
-				break
+	for _, p := range CloudProviders(cfg) {
+		for field, ref := range p.refFields() {
+			setting := providersKey + "." + p.Name + "." + field
+			r, err := d.refresherFor(ref)
+			if err != nil {
+				d.log.Warn("cloud provider credential names no configured store", "setting", setting)
+				continue
 			}
-		}
-		if !covered {
-			d.log.Warn("cloud provider credential added by a reload is loaded after a restart", "ref", ref.String(), "store", r.Store())
+			covered := false
+			for _, ts := range r.Status().Targets {
+				if t, err := refresh.ParseTarget(ts.Target); err == nil && t.Covers(ref.Secret()) {
+					covered = true
+					break
+				}
+			}
+			if !covered {
+				d.log.Warn("cloud provider credential added by a reload is loaded after a restart", "setting", setting, "store", r.Store())
+			}
 		}
 	}
 }

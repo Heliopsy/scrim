@@ -364,6 +364,18 @@ func providerStoreRefs(cfg *config.Config) []string {
 	return out
 }
 
+// refFields are the provider's credential references by field name.
+func (p CloudProvider) refFields() map[string]stores.Ref {
+	out := map[string]stores.Ref{}
+	for f, r := range map[string]stores.Ref{pfAccessKeyID: p.AccessKeyID, pfSecretAccessKey: p.SecretAccessKey,
+		pfSessionToken: p.SessionToken, pfAPIKey: p.APIKey, pfServiceAccount: p.ServiceAccount, pfClientSecret: p.ClientSecret} {
+		if !r.IsZero() {
+			out[f] = r
+		}
+	}
+	return out
+}
+
 // Refs are the store references the provider authenticates with.
 func (p CloudProvider) Refs() []stores.Ref {
 	var out []stores.Ref
