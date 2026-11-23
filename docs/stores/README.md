@@ -9,11 +9,16 @@ value back.
 | OpenBao (and Vault-compatible KV v2) | `openbao` | [openbao.md](openbao.md) |
 | HashiCorp Vault (KV v1 and v2, dynamic secrets) | `vault` | [vault.md](vault.md) |
 | Infisical | `infisical` | [infisical.md](infisical.md) |
+| Doppler | `doppler` | [doppler.md](doppler.md) |
+| 1Password (through Connect) | `onepassword` | [onepassword.md](onepassword.md) |
+| AWS Secrets Manager, AWS SSM Parameter Store | `awssm`, `ssm` | [aws.md](aws.md) |
 | Bitwarden Secrets Manager | `bws` | [bws.md](bws.md) |
 | Google Secret Manager | `gcpsm` | [gcp.md](gcp.md) |
 | Azure Key Vault | `azkv` | [azure.md](azure.md) |
+| Kubernetes Secrets | `kubernetes` | [kubernetes.md](kubernetes.md) |
 | Environment variables, files | `env`, `file` | [local.md](local.md) |
 | SOPS-encrypted files | `sops` | [sops.md](sops.md) |
+| OS keyring (Secret Service, Keychain, Credential Manager) | `keyring` | [keyring.md](keyring.md) |
 | Memory (tests, throwaway runs) | `memory` | none |
 
 ## Capabilities
@@ -21,23 +26,34 @@ value back.
 `scrim doctor` prints this matrix for the stores you configure. An operation a store does not
 support is refused before anything is attempted.
 
-| Kind        | read | list | watch | write | generate | dynamic |
-|-------------|------|------|-------|-------|----------|---------|
-| `openbao`   | yes  | yes  | yes   | yes   | no       | no      |
-| `vault`     | yes  | yes  | yes   | yes   | no       | yes     |
-| `infisical` | yes  | yes  | yes   | yes   | no       | no      |
-| `bws`       | yes  | yes  | yes   | yes   | no       | no      |
-| `gcpsm`     | yes  | yes  | yes   | yes   | no       | no      |
-| `azkv`      | yes  | yes  | yes   | yes   | no       | no      |
-| `env`       | yes  | yes  | no    | no    | no       | no      |
-| `file`      | yes  | yes  | yes   | no    | no       | no      |
-| `sops`      | yes  | yes  | yes   | no    | no       | no      |
-| `memory`    | yes  | yes  | yes   | yes   | no       | no      |
+| Kind          | read | list | watch | write  | generate | dynamic |
+|---------------|------|------|-------|--------|----------|---------|
+| `openbao`     | yes  | yes  | yes   | yes    | no       | no      |
+| `vault`       | yes  | yes  | yes   | yes    | no       | yes     |
+| `infisical`   | yes  | yes  | yes   | yes    | no       | no      |
+| `doppler`     | yes  | yes  | yes   | yes    | no       | no      |
+| `onepassword` | yes  | yes  | yes   | yes    | no       | no      |
+| `awssm`       | yes  | yes  | yes   | yes    | no       | no      |
+| `ssm`         | yes  | yes  | yes   | yes    | no       | no      |
+| `bws`         | yes  | yes  | yes   | yes    | no       | no      |
+| `gcpsm`       | yes  | yes  | yes   | yes    | no       | no      |
+| `azkv`        | yes  | yes  | yes   | yes    | no       | no      |
+| `kubernetes`  | yes  | yes  | yes   | opt-in | no       | no      |
+| `env`         | yes  | yes  | no    | no     | no       | no      |
+| `file`        | yes  | yes  | yes   | no     | no       | no      |
+| `sops`        | yes  | yes  | yes   | no     | no       | no      |
+| `keyring`     | yes  | yes  | no    | no     | no       | no      |
+| `memory`      | yes  | yes  | yes   | yes    | no       | no      |
 
-Watch on OpenBao, Infisical, Bitwarden Secrets Manager, Google Secret Manager and Azure Key Vault
-polls version metadata. It never fetches values, so it stays cheap even with a short interval.
-Generated secrets are produced by scrim and then written, so generate needs write and no
-store-side support.
+Watch on OpenBao, Vault (KV v2), Infisical, 1Password, Bitwarden Secrets Manager, the AWS stores,
+Google Secret Manager and Azure Key Vault polls version metadata. It never fetches values, so it
+stays cheap even with a short interval. Watch on Vault KV v1 compares digests of the fields, so it
+reads every secret under the prefix on each poll. Watch on Doppler polls the config download with
+its ETag: an unchanged config is answered without values, a changed one is fingerprinted and wiped.
+Kubernetes watches Secrets through the API server, and writes there are off unless the instance
+enables them. The keyring source lists on Linux only (Secret Service); on macOS and Windows it reads
+single secrets. Generated secrets are produced by scrim and then written, so generate needs write
+and no store-side support.
 
 ## Configuring an instance
 
@@ -71,7 +87,7 @@ its guide.
 | ----- | --------- | --------- |
 | `stores.<name>.kind` | required | Adapter kind. |
 | `stores.<name>.aliases` | none | Extra schemes that address this instance. |
-| `stores.<name>.redact` | none | References loaded into the redaction set at start and kept fresh. A reference ending in `/*` loads every secret under that folder; one ending in `*` right after part of a name (`APP_*`, `dir/app-*`) is a glob that loads every secret whose path starts with the text before the `*` (env and file stores only); a `#field` limits a single secret to one field. A `*` anywhere else is refused. References must use the instance name as their scheme. |
+| `stores.<name>.redact` | none | References loaded into the redaction set at start and kept fresh. A reference ending in `/*` loads every secret under that folder; one ending in `*` right after part of a name (`APP_*`, `dir/app-*`) is a glob that loads every secret whose path starts with the text before the `*` (stores that support glob listing, see each guide); a `#field` limits a single secret to one field. A `*` anywhere else is refused. References must use the instance name as their scheme. |
 | `stores.<name>.refresh.interval` | `5m` | Full refresh period, spread by ±20% jitter. |
 | `stores.<name>.refresh.retention` | `24h` | How long a rotated, deleted or overwritten value stays in the redaction set. |
 | `stores.<name>.refresh.staleness` | `15m` | How long a value confirmed by the store may still be injected without a newer confirmation, and how long the store may be unreachable before it is reported unhealthy. |
@@ -83,12 +99,12 @@ and dashes turned into `_` (`stores.bao.secret-id` becomes `SCRIM_STORES_BAO_SEC
 instance has to be declared in a file, or the whole collection set as JSON in `SCRIM_STORES`.
 
 Credential fields (`token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password`,
-`credentials`, `certificate`) take a reference instead of a literal: `env:NAME`, `file:/path`,
-`cred:NAME` (a systemd credential), or a reference into another configured store. They are
-resolved at start; a reference that cannot be resolved stops start-up, and no store is contacted
-with an empty credential. `scrim config show` masks them. A literal still works, but scrim logs a
-warning naming the field. scrim also adds the credentials it holds, and the session tokens a store
-issues at login, to the redaction set.
+`unlock`, `age-identity`, `credentials`, `certificate`, `access-key-id`, `secret-access-key`, `jwt`)
+take a reference instead of a literal: `env:NAME`, `file:/path`, `cred:NAME` (a systemd credential),
+or a reference into another configured store. They are resolved at start; a reference that cannot be
+resolved stops start-up, and no store is contacted with an empty credential. `scrim config show`
+masks them. A literal still works, but scrim logs a warning naming the field. scrim also adds the
+credentials it holds, and the session tokens a store issues at login, to the redaction set.
 
 ### Empty redact targets
 
@@ -168,6 +184,9 @@ The local stores report:
 | `sops` | `sops.root`, `sops.path`, `sops.format`, `sops.version`, `sops.lastmodified`, `sops.key-type`, `sops.age-recipient` and more from the file's metadata ([sops.md](sops.md#labels)) |
 | `memory` | `memory.top` (first path segment, when the path has more than one) |
 
+Kubernetes Secrets report `kubernetes.namespace`, `kubernetes.name` and `kubernetes.type`, with
+labels and annotations under `kubernetes.meta.` ([kubernetes.md](kubernetes.md#labels)).
+
 `labels` derives names of your own from the labels above. Each entry is a label name and a source:
 a label to copy, `{value}` for a constant, `{from, value}` for a constant set when a label exists, or
 `{from, regex, value}` for a match (`$1` expands to a submatch):
@@ -233,6 +252,8 @@ SCRIM_TEST_PODMAN=1 go test -race ./internal/stores/...
 | `SCRIM_TEST_OPENBAO_IMAGE` | OpenBao image (default `quay.io/openbao/openbao:2.7.3`). |
 | `SCRIM_TEST_INFISICAL_VERSION` | Infisical image tag (default: `defaultInfisicalVersion` in `internal/stores/infisical/infisical_integration_test.go`). |
 | `SCRIM_TEST_INFISICAL_ADDR`, `SCRIM_TEST_INFISICAL_TOKEN`, `SCRIM_TEST_INFISICAL_ORG` | Use an existing Infisical (an organisation admin identity token and the organisation ID) instead of a pod. The outage case is skipped. |
+| `SCRIM_TEST_LOCALSTACK_ENDPOINT` | Use an existing LocalStack (`http://127.0.0.1:4566`) for the AWS adapters instead of a container. The outage cases are skipped. |
+| `SCRIM_TEST_LOCALSTACK_IMAGE` | LocalStack image (default: `defaultLocalStackImage` in `internal/stores/aws/localstack_test.go`, the last community release). |
 
 Containers and pods are named `scrim-stores-*` and are removed with their volumes when the tests
 finish.

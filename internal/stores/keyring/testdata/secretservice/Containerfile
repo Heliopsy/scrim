@@ -1,0 +1,11 @@
+# A throwaway Secret Service for the keyring source's integration tests:
+# gnome-keyring on a private D-Bus session bus, reachable from the test over
+# TCP with ANONYMOUS auth. Never run it outside a test.
+FROM docker.io/library/alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
+RUN apk add --no-cache dbus gnome-keyring \
+    && adduser -D -u 10001 keyring
+COPY bus.conf /etc/scrim-keyring/bus.conf
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+USER keyring
+EXPOSE 7777
+ENTRYPOINT ["/bin/sh", "/usr/local/bin/entrypoint.sh"]

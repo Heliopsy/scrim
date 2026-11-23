@@ -182,6 +182,8 @@ directly, so write-only access, approvals and grants behave the same on every st
 | Google Secret Manager | `gcpsm` | yes | yes | yes | yes |
 | Azure Key Vault | `azkv` | yes | yes | yes | yes |
 | Vaultwarden, and Bitwarden-compatible servers | `vaultwarden` | yes | yes | yes | yes |
+| AWS Secrets Manager | `awssm` | yes | yes | yes | yes |
+| AWS SSM Parameter Store | `ssm` | yes | yes | yes | yes |
 | Environment variables | `env` | yes | yes | no | no |
 | Files (raw, dotenv, JSON) | `file` | yes | yes | yes | no |
 | Memory (tests, throwaway runs) | `memory` | yes | yes | yes | yes |
@@ -480,6 +482,7 @@ veil's per-tool policy.
 | [docs/stores/gcp.md](docs/stores/gcp.md) | Google Secret Manager |
 | [docs/stores/azure.md](docs/stores/azure.md) | Azure Key Vault |
 | [docs/stores/vaultwarden.md](docs/stores/vaultwarden.md) | Vaultwarden and Bitwarden-compatible servers |
+| [docs/stores/aws.md](docs/stores/aws.md) | AWS Secrets Manager and SSM Parameter Store |
 | [docs/stores/local.md](docs/stores/local.md) | Environment and file sources |
 | [docs/catalog.md](docs/catalog.md) | Logical names, host bindings, placeholders and profiles |
 | [docs/cli-tools.md](docs/cli-tools.md) | Tool profiles for gh, git, kubectl, aws, terraform and other CLIs |
