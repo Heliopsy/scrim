@@ -485,8 +485,37 @@ func (d *Daemon) subscribe(ctx context.Context) {
 	a.PolicyParts.BreakGlass.OnChange(func(bool) { d.pusher.Trigger() })
 	d.cleanup = append(d.cleanup, a.Config.Subscribe(func(old, cur *config.Config) {
 		d.reloadKeys(ctx, old, cur)
+		d.warnUnloadedProviderRefs(cur)
 		d.pusher.Trigger()
 	}))
+}
+
+// warnUnloadedProviderRefs names every cloud provider credential no store
+// loads. Provider credentials become redact targets at start; one added by
+// a reload is loaded after a restart, and until then its route answers
+// credential_unavailable.
+func (d *Daemon) warnUnloadedProviderRefs(cfg *config.Config) {
+	for _, raw := range providerStoreRefs(cfg) {
+		ref, err := stores.ParseRef(raw)
+		if err != nil {
+			continue
+		}
+		r, err := d.refresherFor(ref)
+		if err != nil {
+			d.log.Warn("cloud provider credential names no configured store", "ref", ref.String(), "err", err)
+			continue
+		}
+		covered := false
+		for _, ts := range r.Status().Targets {
+			if t, err := refresh.ParseTarget(ts.Target); err == nil && t.Covers(ref.Secret()) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			d.log.Warn("cloud provider credential added by a reload is loaded after a restart", "ref", ref.String(), "store", r.Store())
+		}
+	}
 }
 
 // reloadKeys loads the placeholder keys again when their configuration

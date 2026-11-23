@@ -24,6 +24,8 @@ import (
 	"github.com/heliopsy/scrim/internal/state/postgres"
 	"github.com/heliopsy/scrim/internal/state/sqlite"
 	"github.com/heliopsy/scrim/internal/status"
+	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/storeconfig"
 	"github.com/heliopsy/scrim/internal/version"
 )
 
@@ -250,6 +252,13 @@ func openPostgresForStatus(ctx context.Context, cfg *config.Config) (status.Stat
 	if err != nil {
 		return status.StateOf{Name: postgres.Name, Err: err}, func() {}
 	}
+	// The CLI builds its configuration without stores: a DSN given as a
+	// store reference is read from its store here.
+	cfg, done, err := storeconfig.Resolved(ctx, cfg, stores.DefaultRegistry, postgres.DSNSetting.Name())
+	if err != nil {
+		return status.StateOf{Name: postgres.Name, Err: err}, func() {}
+	}
+	done()
 	dsn, ok := cfg.Secret(postgres.DSNSetting)
 	if !ok {
 		return status.StateOf{Name: postgres.Name,

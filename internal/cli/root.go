@@ -28,6 +28,8 @@ import (
 
 	"github.com/heliopsy/scrim/internal/app"
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/storeconfig"
 )
 
 // Commands is the receiver every top-level command hangs off. It has no
@@ -58,6 +60,24 @@ func (e *Env) Config() (*config.Config, error) {
 		e.cfg, e.cfgErr = config.Build(e.ConfigOptions())
 	})
 	return e.cfg, e.cfgErr
+}
+
+// resolvedConfig is [Env.Config] with the store references of the named
+// settings read from the stores the configuration names. The configuration
+// is built without stores, so a command that sends one of these values (the
+// admin token, the state DSN) resolves it here. The stores are closed
+// before it returns; the values stay in the returned Config.
+func (e *Env) resolvedConfig(ctx context.Context, keys ...string) (*config.Config, error) {
+	cfg, err := e.Config()
+	if err != nil {
+		return nil, err
+	}
+	r, done, err := storeconfig.Resolved(ctx, cfg, stores.DefaultRegistry, keys...)
+	if err != nil {
+		return nil, err
+	}
+	done()
+	return r, nil
 }
 
 // resetConfig drops the cached configuration, so the next Config call

@@ -300,3 +300,118 @@ stores:
 		}
 	}
 }
+
+// TestStoreCredentialStoreReferenceRejected: a store's credential may be a
+// reference into another store, but not into itself (by name or alias),
+// not into a store that is not configured, and not around a cycle of
+// stores. Errors name the field and the reference form, never a value.
+func TestStoreCredentialStoreReferenceRejected(t *testing.T) {
+	bao := func(name, extra string) string {
+		return "  " + name + ":\n    kind: openbao\n    address: http://x\n" + extra
+	}
+	cases := map[string]struct{ yaml, want string }{
+		"itself": {"stores:\n" + bao("bao", "    token: bao://kv/scrim#token\n"),
+			"token: bao://kv/scrim#token refers to this store"},
+		"its alias": {"stores:\n" + bao("bao", "    aliases: [bao-prod]\n    token: bao-prod://kv/scrim#token\n"),
+			"refers to this store"},
+		"no such store": {"stores:\n" + bao("bao", "    token: vault://kv/scrim#token\n"),
+			"bao.token: vault://kv/scrim#token names no configured store"},
+		"cycle": {"stores:\n" + bao("a", "    token: b://kv/a#token\n") + bao("b", "    token: c://kv/b#token\n") +
+			bao("c", "    token: a://kv/c#token\n"), "store credentials form a cycle (a -> b -> c -> a)"},
+	}
+	for name, c := range cases {
+		_, err := build(t, c.yaml)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: got %v, want %q", name, err, c.want)
+		}
+	}
+	// A chain that ends is accepted: the reference is deferred until the
+	// stores are open.
+	cfg, err := build(t, "stores:\n  mem:\n    kind: memory\n"+bao("a", "    token: b://kv/a#token\n")+bao("b", "    token: mem://b#token\n"))
+	if err != nil {
+		t.Fatalf("chain a -> b -> mem: %v", err)
+	}
+	if got := cfg.Unresolved(); len(got) != 2 {
+		t.Fatalf("unresolved %v", got)
+	}
+}
+
+// TestResolverReadsThroughTheSet: the Resolver reads a store reference from
+// the Set it was given, refuses before it has one, and names the reference
+// (not a value) when the store has no such secret or scheme.
+func TestResolverReadsThroughTheSet(t *testing.T) {
+	const val = "val-0123456789abcdef"
+	t.Setenv("SCRIM_SREF_TOKEN", val)
+	cfg, err := build(t, "stores:\n  local:\n    kind: env\n    prefix: SCRIM_SREF_\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &storeconfig.Resolver{}
+	if _, err := r.ResolveSecret(t.Context(), "local://SCRIM_SREF_TOKEN"); err == nil {
+		t.Fatal("resolved without a Set")
+	}
+	o, err := storeconfig.Open(t.Context(), cfg, stores.DefaultRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = o.Close() }()
+	r.Use(o.Set)
+	v, err := r.ResolveSecret(t.Context(), "local://SCRIM_SREF_TOKEN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = v.Expose(func(b []byte) error {
+		if string(b) != val {
+			t.Error("wrong value")
+		}
+		return nil
+	})
+	for _, ref := range []string{"local://SCRIM_SREF_MISSING", "nosuch://x"} {
+		_, err := r.ResolveSecret(t.Context(), ref)
+		if err == nil || strings.Contains(err.Error(), val) {
+			t.Errorf("%s: %v", ref, err)
+		}
+	}
+}
+
+// Two secret-ref settings for TestResolvedReadsOnlyTheNamedSettings.
+var (
+	_ = config.Register(config.Spec[config.SecretRef]{Key: "sreftest.a", Description: "Test setting."})
+	_ = config.Register(config.Spec[config.SecretRef]{Key: "sreftest.b", Description: "Test setting."})
+)
+
+// TestResolvedReadsOnlyTheNamedSettings: a client's configuration, built
+// without stores, gets the named setting read from its store; another
+// deferred setting stays deferred, and nothing deferred returns cfg as is.
+func TestResolvedReadsOnlyTheNamedSettings(t *testing.T) {
+	const val = "val-0123456789abcdef"
+	t.Setenv("SCRIM_SREF_A", val)
+	cfg, err := build(t, "stores:\n  local:\n    kind: env\n    prefix: SCRIM_SREF_\n",
+		"SCRIM_SREFTEST_A=local://SCRIM_SREF_A", "SCRIM_SREFTEST_B=local://SCRIM_SREF_MISSING")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Unresolved()) != 2 {
+		t.Fatalf("unresolved %v", cfg.Unresolved())
+	}
+	r, done, err := storeconfig.Resolved(t.Context(), cfg, stores.DefaultRegistry, "sreftest.a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done()
+	if v, ok := r.SecretAt("sreftest.a"); !ok || v.IsZero() {
+		t.Fatal("sreftest.a not resolved")
+	}
+	if u := r.Unresolved(); len(u) != 1 || u[0] != "sreftest.b" {
+		t.Fatalf("unresolved after %v", u)
+	}
+	same, done, err := storeconfig.Resolved(t.Context(), r, stores.DefaultRegistry, "sreftest.a")
+	if err != nil || same != r {
+		t.Fatalf("nothing to resolve: %v", err)
+	}
+	done()
+	if _, _, err := storeconfig.Resolved(t.Context(), cfg, stores.DefaultRegistry, "sreftest.b"); err == nil ||
+		!strings.Contains(err.Error(), "sreftest.b") {
+		t.Fatalf("missing secret: %v", err)
+	}
+}
