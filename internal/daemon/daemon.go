@@ -207,6 +207,8 @@ type Daemon struct {
 	// project are the values scrim run found in each session's project
 	// files, redacted until the session ends.
 	project *projectValues
+	// ownCreds are scrim's own credentials in the redaction set.
+	ownCreds *scrimCredentials
 
 	mu        sync.Mutex
 	addrs     Addrs
@@ -333,11 +335,16 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	}
 	d.project = newProjectValues(d.pushNow)
 	d.cleanup = append(d.cleanup, d.project.close)
-	values := make([]ValueSource, 0, len(a.Refreshers)+5)
+	values := make([]ValueSource, 0, len(a.Refreshers)+6)
 	for _, r := range a.Refreshers {
 		values = append(values, r)
 	}
-	values = append(values, d.tokens, d.kubeTokens, d.issued, d.project, databasePasswords{cfg: a.Config.Current})
+	d.ownCreds = newScrimCredentials(a.Config.Current)
+	warnShort(obs.WithComponent(a.Log, "redaction"), cfg)
+	d.cleanup = append(d.cleanup, d.ownCreds.close)
+	// scrim's own credentials come last: a value a store also holds keeps
+	// the store's reference (the lowest entry wins in the data plane).
+	values = append(values, d.tokens, d.kubeTokens, d.issued, d.project, databasePasswords{cfg: a.Config.Current}, d.ownCreds)
 	pp := a.PolicyParts
 	// Per-agent store identity: the gate checks it on every use of a
 	// governed store's secrets, and the snapshot sends those uses to the
@@ -479,6 +486,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	d.goRun("pusher", func() error { d.pusher.Run(runCtx); return nil })
 	d.goRun("dataplane", func() error { return ignoreCanceled(d.sup.Run(runCtx)) })
 	d.goRun("sessions", func() error { d.sweepSessions(runCtx); return nil })
+	d.goRun("credential files", func() error { d.ownCreds.watch(runCtx, d.pusher.Trigger); return nil })
 	if d.scopes != nil {
 		d.goRun("redaction scopes", func() error { d.scopes.Run(runCtx); return nil })
 	}
@@ -538,6 +546,7 @@ func (d *Daemon) subscribe(ctx context.Context) {
 	d.cleanup = append(d.cleanup, a.Config.Subscribe(func(old, cur *config.Config) {
 		d.reloadKeys(ctx, old, cur)
 		d.warnUnloadedProviderRefs(cur)
+		warnShort(obs.WithComponent(a.Log, "redaction"), cur)
 		d.pusher.Trigger()
 	}))
 }

@@ -340,6 +340,23 @@ func (c *Config) Secret(k Key[SecretRef]) (v secret.Value, ok bool) {
 	return v, ok
 }
 
+// EachSecret calls fn with the full key and the resolved value of every
+// secret field that holds one, sorted by key: secret-ref settings and
+// collection secret fields, whatever kind of reference they were read
+// through. fn must not retain or wipe v; the Config owns it.
+func (c *Config) EachSecret(fn func(key string, v secret.Value)) {
+	keys := make([]string, 0, len(c.secrets))
+	for k := range c.secrets {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		if v := c.secrets[k]; !v.IsZero() {
+			fn(k, v)
+		}
+	}
+}
+
 // Unresolved lists the secret-ref settings holding store references that
 // were not resolved because no [StoreResolver] was given.
 func (c *Config) Unresolved() []string { return slices.Clone(c.deferred) }

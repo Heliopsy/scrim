@@ -192,8 +192,9 @@ on the restarted plugin; the refresher's full refreshes cover changes made in be
   read values once they are sent. Copy what you need to keep.
 - scrim adds a store plugin's credentials to the redaction set, so an agent that finds one cannot
   send it to a model provider. A notifier plugin's credentials are handled like the built-in
-  notifiers' tokens: resolved from their reference at every start, sent in `Configure`, and the
-  copy made for the request is zeroed.
+  notifiers' tokens: resolved from their reference at every start and reload, in the redaction set
+  (see [configuration](configuration.md)), sent in `Configure`, and the copy made for the request
+  is zeroed.
 - A plugin must never write a value to stderr or into an error. scrim scrubs its log against every
   value it holds, but a value it does not hold yet cannot be scrubbed.
 
