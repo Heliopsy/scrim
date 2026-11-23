@@ -406,7 +406,7 @@ Catalog entries by logical name: ref, profiles, variants, prefix, template, host
 
 ### `providers.<name>`
 
-Cloud provider routes by name, each served at `/<name>` on the LLM base URL and for its provider host through the forward proxy. `kind` is `bedrock` (Amazon Bedrock runtime), `bedrock-mantle`, `anthropic-aws` (Claude Platform on AWS) or `foundry` (Microsoft Foundry). `region` (AWS kinds) or `resource` (foundry) selects the endpoint, `upstream` overrides it. scrim authenticates every request itself after redaction and drops what the agent sent: `access-key-id`, `secret-access-key` and optional `session-token` sign with AWS SigV4 (AWS kinds), or `api-key` sends a key (Bedrock and Claude Platform on AWS as a bearer token, Foundry as `api-key`). Credential fields are store references, never values. Provider routes are never chained.
+Cloud provider routes by name, each served at `/<name>` on the LLM base URL and for its provider host through the forward proxy. `kind` is `bedrock` (Amazon Bedrock runtime), `bedrock-mantle`, `anthropic-aws` (Claude Platform on AWS), `foundry` (Microsoft Foundry) or `vertex` (Google Vertex AI). `region` (AWS kinds, and the Vertex location) or `resource` (foundry) selects the endpoint, `upstream` overrides it. scrim authenticates every request itself after redaction and drops what the agent sent: `access-key-id`, `secret-access-key` and optional `session-token` sign with AWS SigV4 (AWS kinds); `api-key` sends a key (Bedrock and Claude Platform on AWS as a bearer token, Foundry as `api-key`); `service-account` (a JSON key file) or `metadata-server: true` mints Google access tokens (vertex); `tenant-id`, `client-id` and `client-secret` mint Entra ID tokens (foundry). `token-url` overrides the token endpoint. Credential fields are store references, never values. Provider routes are never chained.
 
 | | |
 |---|---|
@@ -447,7 +447,7 @@ Secret store instances by name. The name is the instance's reference scheme (`ba
 | Type | collection of named instances (names: lower-case words with dashes) |
 | Environment | `SCRIM_STORES` (JSON object of instances, replaces the collection); `SCRIM_STORES_<NAME>_<FIELD>` for one field |
 | Required fields | `kind` |
-| Secret fields | `token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password`, `unlock`, `age-identity` (references; a literal is warned about) |
+| Secret fields | `token`, `role-id`, `secret-id`, `client-id`, `client-secret`, `password`, `unlock`, `age-identity`, `credentials`, `certificate` (references; a literal is warned about) |
 | Reload | restart required |
 
 ### `tool-profiles.<name>`

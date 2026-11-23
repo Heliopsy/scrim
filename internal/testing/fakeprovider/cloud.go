@@ -4,7 +4,10 @@ package fakeprovider
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -19,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -46,8 +50,11 @@ const (
 	// anthropic-workspace-id header on every request.
 	AnthropicAWS CloudKind = "anthropic-aws"
 	// Foundry is Microsoft Foundry: the Anthropic Messages API under
-	// /anthropic with an api-key header.
+	// /anthropic with an api-key header, or an Entra ID bearer token.
 	Foundry CloudKind = "foundry"
+	// Vertex is Google Vertex AI's Anthropic publisher: rawPredict and
+	// streamRawPredict with the model in the path, Google access tokens.
+	Vertex CloudKind = "vertex"
 )
 
 // CloudOptions configure a [Cloud].
@@ -60,6 +67,9 @@ type CloudOptions struct {
 	// provider refuses it.
 	AccessKeyID, SecretAccessKey, SessionToken string
 	APIKey                                     string
+	// Tokens, when set, issues the bearer tokens a request must carry
+	// (Vertex, Foundry with Entra ID).
+	Tokens *TokenIssuer
 	// Now is the clock signatures are checked against; default time.Now.
 	Now func() time.Time
 }
@@ -139,6 +149,8 @@ func (c *Cloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.forward(w, r, r.URL.Path, body)
+	case Vertex:
+		c.vertex(w, r, body)
 	case Foundry:
 		p, ok := strings.CutPrefix(r.URL.Path, "/anthropic/")
 		if !ok {
@@ -167,6 +179,13 @@ func (c *Cloud) deny(w http.ResponseWriter, why string) {
 // authenticate returns why the request is not authenticated, or "".
 func (c *Cloud) authenticate(r *http.Request, rawPath, rawQuery string, body []byte) string {
 	o := c.opts
+	if o.Tokens != nil {
+		tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || !o.Tokens.Valid(tok) {
+			return "Request had invalid authentication credentials. Expected OAuth 2 access token."
+		}
+		return ""
+	}
 	if o.APIKey != "" {
 		var got string
 		switch o.Kind {
@@ -311,6 +330,49 @@ func (c *Cloud) forward(w http.ResponseWriter, r *http.Request, path string, bod
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	req.ContentLength = int64(len(body))
 	c.inner.ServeHTTP(w, req)
+}
+
+var vertexPath = regexp.MustCompile(`^/v1/projects/[^/]+/locations/[^/]+/publishers/anthropic/models/([^/:]+):(rawPredict|streamRawPredict)$`)
+
+// vertex serves the Anthropic publisher's rawPredict and streamRawPredict.
+func (c *Cloud) vertex(w http.ResponseWriter, r *http.Request, body []byte) {
+	bad := func(status int, msg string) {
+		writeJSON(w, status, map[string]any{"error": map[string]any{"code": status, "message": msg, "status": "INVALID_ARGUMENT"}})
+	}
+	m := vertexPath.FindStringSubmatch(r.URL.Path)
+	if r.Method != http.MethodPost || m == nil {
+		bad(http.StatusNotFound, "The requested URL was not found on this server.")
+		return
+	}
+	var req map[string]json.RawMessage
+	if json.Unmarshal(body, &req) != nil {
+		bad(http.StatusBadRequest, "Invalid JSON payload received.")
+		return
+	}
+	if m[1] == "count-tokens" {
+		c.forward(w, r, "/v1/messages/count_tokens", body)
+		return
+	}
+	var version string
+	if json.Unmarshal(req["anthropic_version"], &version) != nil || version != "vertex-2023-10-16" {
+		bad(http.StatusBadRequest, "anthropic_version: vertex-2023-10-16 is required")
+		return
+	}
+	if _, ok := req["model"]; ok {
+		bad(http.StatusBadRequest, "model: Extra inputs are not permitted")
+		return
+	}
+	delete(req, "anthropic_version")
+	req["model"], _ = json.Marshal(m[1])
+	stream := m[2] == "streamRawPredict"
+	if s, ok := req["stream"]; ok {
+		var v bool
+		_ = json.Unmarshal(s, &v)
+		stream = stream || v
+	}
+	req["stream"], _ = json.Marshal(stream)
+	msg, _ := json.Marshal(req)
+	c.forward(w, r, "/v1/messages", msg)
 }
 
 // bedrock serves the Bedrock runtime paths.
@@ -504,4 +566,145 @@ func DecodeEventStream(b []byte) ([]EventStreamMessage, error) {
 		b = b[total:]
 	}
 	return out, nil
+}
+
+// TokenIssuer is a fake OAuth 2.0 token service: Google's token endpoint
+// (service account JWT bearer grant, checked against the key's public key),
+// the Google metadata server, and an Entra ID tenant's client credentials
+// grant. It issues random tokens that [Cloud] accepts until they expire.
+type TokenIssuer struct {
+	// URL is where the issuer is served: the JWT audience it requires.
+	URL string
+	// ServiceAccount and PublicKey are the Google service account whose
+	// signed assertions are accepted.
+	ServiceAccount string
+	PublicKey      *rsa.PublicKey
+	// ClientID and ClientSecret are the Entra ID application accepted.
+	ClientID, ClientSecret string
+
+	mu       sync.Mutex
+	tokens   map[string]time.Time
+	requests []leak.Capture
+	refused  []string
+}
+
+// Valid reports whether tok was issued and has not expired.
+func (t *TokenIssuer) Valid(tok string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	exp, ok := t.tokens[tok]
+	return ok && time.Now().Before(exp)
+}
+
+// Requests returns every token request received.
+func (t *TokenIssuer) Requests() []leak.Capture {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return slices.Clone(t.requests)
+}
+
+// Refused returns why each refused token request was refused.
+func (t *TokenIssuer) Refused() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return slices.Clone(t.refused)
+}
+
+func (t *TokenIssuer) issue(w http.ResponseWriter) {
+	b := make([]byte, 24)
+	_, _ = rand.Read(b)
+	tok := "ya29.fake-" + base64.RawURLEncoding.EncodeToString(b)
+	t.mu.Lock()
+	if t.tokens == nil {
+		t.tokens = map[string]time.Time{}
+	}
+	t.tokens[tok] = time.Now().Add(time.Hour)
+	t.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"access_token": tok, "expires_in": 3599, "token_type": "Bearer"})
+}
+
+func (t *TokenIssuer) refuse(w http.ResponseWriter, why string) {
+	t.mu.Lock()
+	t.refused = append(t.refused, why)
+	t.mu.Unlock()
+	writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_grant", "error_description": why})
+}
+
+// ServeHTTP implements http.Handler.
+func (t *TokenIssuer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	t.mu.Lock()
+	t.requests = append(t.requests, leak.Capture{Seq: len(t.requests) + 1, Method: r.Method, Path: r.URL.Path,
+		RawQuery: r.URL.RawQuery, Header: r.Header.Clone(), Body: body})
+	t.mu.Unlock()
+	form, _ := url.ParseQuery(string(body))
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/computeMetadata/v1/instance/service-accounts/default/token":
+		if r.Header.Get("Metadata-Flavor") != "Google" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		t.issue(w)
+	case r.Method == http.MethodPost && r.URL.Path == "/token":
+		if form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:jwt-bearer" {
+			t.refuse(w, "unsupported grant_type")
+			return
+		}
+		if why := t.checkJWT(form.Get("assertion")); why != "" {
+			t.refuse(w, why)
+			return
+		}
+		t.issue(w)
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/oauth2/v2.0/token"):
+		switch {
+		case form.Get("grant_type") != "client_credentials":
+			t.refuse(w, "AADSTS70003: unsupported grant type")
+		case form.Get("client_id") != t.ClientID || subtle.ConstantTimeCompare([]byte(form.Get("client_secret")), []byte(t.ClientSecret)) != 1:
+			t.refuse(w, "AADSTS7000215: Invalid client secret provided.")
+		case form.Get("scope") != "https://ai.azure.com/.default":
+			t.refuse(w, "AADSTS70011: The provided value for scope is not valid.")
+		default:
+			t.issue(w)
+		}
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// checkJWT verifies an RS256 assertion the way Google's token endpoint does.
+func (t *TokenIssuer) checkJWT(a string) string {
+	parts := strings.Split(a, ".")
+	if len(parts) != 3 {
+		return "malformed assertion"
+	}
+	var hdr struct{ Alg, Typ string }
+	var cl struct {
+		Iss, Scope, Aud string
+		Iat, Exp        int64
+	}
+	hb, err1 := base64.RawURLEncoding.DecodeString(parts[0])
+	cb, err2 := base64.RawURLEncoding.DecodeString(parts[1])
+	sig, err3 := base64.RawURLEncoding.DecodeString(parts[2])
+	if err1 != nil || err2 != nil || err3 != nil || json.Unmarshal(hb, &hdr) != nil || json.Unmarshal(cb, &cl) != nil {
+		return "malformed assertion"
+	}
+	if hdr.Alg != "RS256" {
+		return "unsupported alg"
+	}
+	sum := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	if rsa.VerifyPKCS1v15(t.PublicKey, crypto.SHA256, sum[:], sig) != nil {
+		return "Invalid JWT Signature."
+	}
+	now := time.Now().Unix()
+	switch {
+	case cl.Iss != t.ServiceAccount:
+		return "Invalid JWT: iss"
+	case cl.Aud != t.URL+"/token":
+		return "Invalid JWT: aud"
+	case !strings.Contains(" "+cl.Scope+" ", " https://www.googleapis.com/auth/cloud-platform "):
+		return "Invalid JWT: scope"
+	case cl.Exp < now || cl.Iat > now+60 || cl.Exp-cl.Iat > 3600:
+		return "Invalid JWT: Token must be a short-lived token (60 minutes) and in a reasonable timeframe."
+	}
+	return ""
 }

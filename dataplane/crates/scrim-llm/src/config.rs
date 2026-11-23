@@ -30,6 +30,10 @@ pub enum Provider {
     /// `/model/{id}/invoke-with-response-stream`, Converse on `/model/{id}/converse` and
     /// `/model/{id}/converse-stream`, and the Anthropic body inside `/model/{id}/count-tokens`.
     Bedrock,
+    /// Google Vertex AI: Anthropic Messages bodies on
+    /// `.../publishers/anthropic/models/{model}:rawPredict` and `:streamRawPredict` (and the
+    /// `count-tokens:rawPredict` model), Gemini on `.../publishers/google/models/{model}:<method>`.
+    Vertex,
 }
 
 impl Provider {
@@ -40,6 +44,7 @@ impl Provider {
             Provider::Openai => "openai",
             Provider::Gemini => "gemini",
             Provider::Bedrock => "bedrock",
+            Provider::Vertex => "vertex",
         }
     }
 
@@ -49,7 +54,7 @@ impl Provider {
     pub fn query_credentials(self) -> &'static [&'static str] {
         match self {
             Provider::Gemini => &["key"],
-            Provider::Anthropic | Provider::Openai | Provider::Bedrock => &[],
+            Provider::Anthropic | Provider::Openai | Provider::Bedrock | Provider::Vertex => &[],
         }
     }
 
@@ -72,6 +77,7 @@ impl Provider {
                 Api::OpenAiResponses
             }
             Provider::Gemini if crate::codec::gemini::is_gemini_method(path) => Api::Gemini,
+            Provider::Vertex => vertex_api(path),
             Provider::Bedrock => match bedrock_action(path) {
                 Some("invoke" | "invoke-with-response-stream") => Api::AnthropicMessages,
                 Some("converse" | "converse-stream") => Api::BedrockConverse,
@@ -90,6 +96,20 @@ pub fn bedrock_action(path: &str) -> Option<&str> {
     let (head, model) = head.rsplit_once('/')?;
     let at_model = head == "/model" || head.ends_with("/model");
     (at_model && !model.is_empty()).then_some(action)
+}
+
+/// The API of a Vertex AI path: the Anthropic publisher's `rawPredict` and `streamRawPredict`
+/// take Anthropic Messages bodies, the Google publisher's generate methods Gemini bodies.
+fn vertex_api(path: &str) -> Api {
+    if path.contains("/publishers/anthropic/models/")
+        && (path.ends_with(":rawPredict") || path.ends_with(":streamRawPredict"))
+    {
+        return Api::AnthropicMessages;
+    }
+    if path.contains("/publishers/google/models/") && crate::codec::gemini::is_gemini_method(path) {
+        return Api::Gemini;
+    }
+    Api::Generic
 }
 
 /// What to do when a chained upstream cannot be reached.
@@ -430,6 +450,42 @@ mod tests {
             b.api_for(&http::Method::GET, "/model/m/invoke"),
             Api::Generic
         );
+    }
+
+    #[test]
+    fn vertex_paths() {
+        let p = http::Method::POST;
+        let v = Provider::Vertex;
+        let base = "/v1/projects/p/locations/us-east5/publishers";
+        for (path, api) in [
+            (
+                format!("{base}/anthropic/models/claude-sonnet-4-5@20250929:streamRawPredict"),
+                Api::AnthropicMessages,
+            ),
+            (
+                format!("{base}/anthropic/models/claude-sonnet-4-5@20250929:rawPredict"),
+                Api::AnthropicMessages,
+            ),
+            (
+                format!("{base}/anthropic/models/count-tokens:rawPredict"),
+                Api::AnthropicMessages,
+            ),
+            (
+                format!("{base}/google/models/gemini-2.5-pro:streamGenerateContent"),
+                Api::Gemini,
+            ),
+            (
+                format!("{base}/google/models/gemini-2.5-pro:generateContent"),
+                Api::Gemini,
+            ),
+            (
+                format!("{base}/anthropic/models/claude:predict"),
+                Api::Generic,
+            ),
+            (format!("{base}/meta/models/llama:rawPredict"), Api::Generic),
+        ] {
+            assert_eq!(v.api_for(&p, &path), api, "{path}");
+        }
     }
 
     #[test]
