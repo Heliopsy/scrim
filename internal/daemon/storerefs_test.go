@@ -15,6 +15,7 @@ import (
 	"github.com/heliopsy/scrim/internal/app"
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/leak"
+	"github.com/heliopsy/scrim/internal/plugin/plugintest"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -95,6 +96,8 @@ func TestStoreReferencesInSettingsResolve(t *testing.T) {
 			string(f.put(t, "c-db")) + "\n",
 		"redaction.placeholder-keys": "redaction:\n  placeholder-keys:\n    k1:\n      version: 1\n      key: " +
 			string(f.put(t, "c-pk")) + "\n",
+		"notify.plugins": "notify:\n  plugins:\n    file:\n      command: " + plugintest.Build(t, "./examples/plugins/filenotify") +
+			"\n      options: {path: " + filepath.Join(f.dir, "approvals.jsonl") + "}\n      token: " + string(f.put(t, "c-np")) + "\n",
 		// A store's credential from another store: TestIdentityFromAnotherStore
 		// (internal/stores/sops); into itself or around a cycle:
 		// TestStoreCredentialStoreReferenceRejected (storeconfig).
@@ -108,7 +111,7 @@ func TestStoreReferencesInSettingsResolve(t *testing.T) {
 			t.Errorf("collection %s has secret fields and no case in this test", c.Key)
 		}
 	}
-	extra := collections["databases"] + collections["redaction.placeholder-keys"]
+	extra := collections["databases"] + collections["redaction.placeholder-keys"] + collections["notify.plugins"]
 
 	var logs bytes.Buffer
 	a, err := app.New(context.Background(), f.options(t, extra, env...), &logs)
@@ -127,7 +130,8 @@ func TestStoreReferencesInSettingsResolve(t *testing.T) {
 			t.Errorf("%s: store reference did not resolve to the stored value (resolved %v)", key, ok)
 		}
 	}
-	for key, name := range map[string]string{"databases.app.password": "c-db", "redaction.placeholder-keys.k1.key": "c-pk"} {
+	for key, name := range map[string]string{"databases.app.password": "c-db", "redaction.placeholder-keys.k1.key": "c-pk",
+		"notify.plugins.file.token": "c-np"} {
 		if v, ok := cfg.SecretAt(key); !ok || !equalTo(v, f.values[name]) {
 			t.Errorf("%s: store reference did not resolve to the stored value (resolved %v)", key, ok)
 		}

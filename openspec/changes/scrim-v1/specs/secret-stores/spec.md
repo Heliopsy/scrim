@@ -60,6 +60,15 @@ forwarded with an incomplete redaction set.
 - **THEN** the request is refused with an error saying redaction is not ready
 - **AND** nothing is forwarded to the provider
 
+#### Scenario: Catalog secret without a redact entry
+
+- **WHEN** a catalog entry binds `files://cat-token` and no `redact` entry of the file store covers it
+- **THEN** the value is loaded with the store's first load and read again at every refresh
+- **AND** it is redacted from provider requests and injected toward its bound hosts from start-up on,
+  across any number of refreshes, not only after the catalog changes
+- **AND** once the entry leaves the catalog the value stays redacted for the retention period and is
+  no longer injected
+
 ### Requirement: Redact targets name secrets, folders or globs
 
 A redact target SHALL be one secret, every secret under a folder (`<folder>/*`), or a glob: a
