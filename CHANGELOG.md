@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/Heliopsy/scrim/compare/v0.6.0...v0.6.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **config:** resolve store references in every secret setting ([#124](https://github.com/Heliopsy/scrim/issues/124)) ([d8784cc](https://github.com/Heliopsy/scrim/commit/d8784ccd20bb3345917504b338d75b3fdcf80ed9)). A store reference in `metrics.auth.token` left the metrics endpoint without authentication.
+* **stores:** keep catalog secrets loaded across refreshes ([#130](https://github.com/Heliopsy/scrim/issues/130)) ([d65de8d](https://github.com/Heliopsy/scrim/commit/d65de8de0e7f1a5bf6bea268b8e2bda4016e539e)). A catalog secret with no `redact` entry was not loaded at start-up and could leave the redaction set after a refresh.
+
 ## [0.6.0](https://github.com/Heliopsy/scrim/compare/v0.5.0...v0.6.0) (2026-11-23)
 
 
