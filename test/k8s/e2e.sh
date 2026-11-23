@@ -248,15 +248,6 @@ port_forward() {
   done
   fail "port-forward to $1/$2 did not start: $(cat "$logf")"
 }
-# The leak matrix's seeds go into OpenBao before scrim starts, so it loads
-# them like the secrets above (TestMatrixKubernetes, seed step).
-bao_port="$(port_forward scrim-e2e deploy/openbao 8200)"
-(cd "$root" && SCRIM_MATRIX_K8S_PHASE=seed SCRIM_MATRIX_K8S_SEEDS="$work/matrix-seeds.json" \
-  SCRIM_MATRIX_K8S_BAO="http://127.0.0.1:$bao_port" SCRIM_MATRIX_K8S_BAO_TOKEN="$bao_token" \
-  go test -count=1 -timeout 5m -run '^TestMatrixKubernetes$' ./test/e2e/matrix/ >/dev/null) || fail "could not write the leak matrix seeds"
-xargs -r kill <"$work/port-forward.pids" 2>/dev/null || true
-: >"$work/port-forward.pids"
-
 # ---------------------------------------------------------------- chart
 
 log "install the chart"
@@ -364,6 +355,14 @@ for mode in central sidecar; do
 done
 
 log "leak matrix (test/e2e/matrix, TestMatrixKubernetes)"
+# The seeds go into OpenBao while the central scrim and the sidecar are
+# already running, so they reach the redaction set only through the store
+# watch (watch.interval 2s in values-e2e.yaml), not the load at start-up.
+# TestMatrixKubernetes waits until both redact every seed before it starts.
+bao_port="$(port_forward scrim-e2e deploy/openbao 8200)"
+(cd "$root" && SCRIM_MATRIX_K8S_PHASE=seed SCRIM_MATRIX_K8S_SEEDS="$work/matrix-seeds.json" \
+  SCRIM_MATRIX_K8S_BAO="http://127.0.0.1:$bao_port" SCRIM_MATRIX_K8S_BAO_TOKEN="$bao_token" \
+  go test -count=1 -timeout 5m -run '^TestMatrixKubernetes$' ./test/e2e/matrix/ >/dev/null) || fail "could not write the leak matrix seeds"
 fake_port="$(port_forward scrim-e2e svc/fakeprovider 18089)"
 central_port="$(port_forward scrim deploy/scrim 9790)"
 sidecar_port="$(port_forward agents pod/agent-sidecar 9790)"
