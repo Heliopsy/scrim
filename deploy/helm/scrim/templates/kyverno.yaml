@@ -74,12 +74,21 @@ metadata:
     policies.kyverno.io/title: scrim agent injection, central
     policies.kyverno.io/description: >-
       Pods labelled {{ $label }}=central get the base URLs, forward proxy and CA of the central
-      scrim, the identity token and the scrim-exec launcher.
+      scrim, the identity token and the scrim-exec launcher{{ if .Values.edge.enabled }}, and the edge
+      forwarder for ssh-agent, database ports and the agent API{{ end }}.
+{{- $env := include "scrim.centralAgentEnv" . | fromYamlArray }}
+{{- $volumes := include "scrim.agentVolumes" . | fromYamlArray }}
+{{- $mounts := include "scrim.agentMounts" . | fromYamlArray }}
+{{- $init := list }}
+{{- if .Values.edge.enabled }}
+{{- $env = concat $env (include "scrim.edgeAgentEnv" . | fromYamlArray) }}
+{{- $volumes = concat $volumes (include "scrim.edgeVolumes" . | fromYamlArray) }}
+{{- $mounts = concat $mounts (include "scrim.edgeMounts" . | fromYamlArray) }}
+{{- $init = include "scrim.edgeInitContainers" . | fromYamlArray }}
+{{- end }}
 spec:
   {{- include "scrim.kyverno.injectSpec" (dict "root" . "mode" "central"
-        "env" (include "scrim.centralAgentEnv" . | fromYamlArray)
-        "volumes" (include "scrim.agentVolumes" . | fromYamlArray)
-        "initContainers" list) | nindent 2 }}
+        "env" $env "volumes" $volumes "mounts" $mounts "initContainers" $init) | nindent 2 }}
 {{- end }}
 {{- if .Values.sidecar.enabled }}
 ---

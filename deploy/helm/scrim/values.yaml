@@ -352,6 +352,46 @@ identity:
     # -- What a service account no rule maps becomes: derive (NAMESPACE/NAME) or unknown.
     unmapped: derive
 
+# -- Edge forwarder (central mode): Kyverno adds a native sidecar running `scrim edge` to agent pods labelled `central`. It serves SSH_AUTH_SOCK, loopback database ports and the agent API socket (the exec broker included) in the pod and carries every connection to central scrim's edge listener over TLS, with the pod's projected identity token. Keys, database passwords and exec secrets stay in central scrim. Needs identity.kubernetes.enabled and kyverno.enabled (or the sidecar copied into the pod spec).
+# @default -- See the keys below.
+edge:
+  # -- Serve the edge listener in central scrim (edge.listen) and inject the forwarder into
+  # agent pods labelled `central`.
+  enabled: false
+  # -- Port of the edge listener, on the scrim container and the Service.
+  port: 9794
+  # -- Directory of the forwarder's sockets in agent containers, an in-memory emptyDir only this
+  # pod mounts.
+  socketDir: /run/scrim-edge
+  # -- Serve scrim's ssh-agent at `<socketDir>/ssh-agent.sock` and point SSH_AUTH_SOCK at it.
+  sshAgent: true
+  # -- Serve the agent API at `<socketDir>/api.sock` and point SCRIM_API_SOCKET at it (the exec
+  # broker, the database tool and the other agent tools).
+  api: true
+  # -- Databases to forward: the name of a database in `config.databases` to the loopback port
+  # agent containers connect to, for example `{app: 5432}`.
+  databases: {}
+  # -- Resources of the forwarder container.
+  # @default -- See the keys below.
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+  # -- Security context of the forwarder container.
+  # @default -- See the keys below.
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
+
 # -- Store authentication with scrim's own service account (OpenBao Kubernetes auth, Infisical kubernetes-auth), so no static store credential exists. Configure the store in `config.stores` with `auth.method: kubernetes` (OpenBao) or `kubernetes-auth` (Infisical) and `auth.kubernetes.token-file` set to `path`.
 # @default -- See the keys below.
 storeAuth:
@@ -682,6 +722,10 @@ networkPolicy:
           protocol: TCP
         - port: 6443
           protocol: TCP
+  # -- Extra egress rules of central agent pods, for connections that do not go through scrim:
+  # SSH to git servers with the edge forwarder (scrim signs, the SSH session itself is direct).
+  # Empty: scrim and DNS only.
+  agentEgress: []
   # -- Egress rules of sidecar agent pods besides DNS (what the in-pod scrim must reach).
   sidecarEgress:
     - ports:

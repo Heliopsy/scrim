@@ -634,6 +634,120 @@
       },
       "type": "object"
     },
+    "edge": {
+      "additionalProperties": false,
+      "properties": {
+        "listen": {
+          "default": "",
+          "description": "Address of the edge listener the forwarders in agent pods connect to (TLS; callers present a Kubernetes service account token). Empty turns it off. Needs identity.kubernetes.enabled and edge.server-names.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EDGE_LISTEN",
+          "x-scrim-flag": "--edge-listen",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "server-names": {
+          "default": [],
+          "description": "Host names and IP addresses the edge listener's certificate carries, signed by scrim's CA, which forwarders already trust. Required with edge.listen.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_EDGE_SERVER_NAMES",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
+    "edge-forwarder": {
+      "additionalProperties": false,
+      "properties": {
+        "api-socket": {
+          "default": "",
+          "description": "Unix socket the forwarder serves the agent API on, the exec broker included (point SCRIM_API_SOCKET at it). Empty serves none.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EDGE_FORWARDER_API_SOCKET",
+          "x-scrim-flag": "--edge-forwarder-api-socket",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "ca-file": {
+          "default": "/etc/scrim/trust/scrim-ca.pem",
+          "description": "PEM file of the CA the central scrim's certificate must chain to: scrim's CA. No system roots are used.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EDGE_FORWARDER_CA_FILE",
+          "x-scrim-flag": "--edge-forwarder-ca-file",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "central": {
+          "default": "",
+          "description": "host:port of the central scrim's edge listener (edge.listen).",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EDGE_FORWARDER_CENTRAL",
+          "x-scrim-flag": "--edge-forwarder-central",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "connect-timeout": {
+          "default": "10s",
+          "description": "How long the forwarder waits for the central scrim before it refuses the local connection.",
+          "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EDGE_FORWARDER_CONNECT_TIMEOUT",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "databases": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Databases to forward: the central scrim's database name to a loopback address in the pod (app: 127.0.0.1:5432).",
+          "type": "object",
+          "x-scrim-env": "SCRIM_EDGE_FORWARDER_DATABASES",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "server-name": {
+          "default": "",
+          "description": "Name the central scrim's certificate is verified for. Empty takes the host of edge-forwarder.central.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EDGE_FORWARDER_SERVER_NAME",
+          "x-scrim-flag": "--edge-forwarder-server-name",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "socket-permissions": {
+          "default": "0666",
+          "description": "Permission bits of the forwarder's Unix sockets, octal. The default lets the agent's containers, which run as other users, connect; the sockets live in a volume only this pod mounts.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EDGE_FORWARDER_SOCKET_PERMISSIONS",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "ssh-agent-socket": {
+          "default": "",
+          "description": "Unix socket the forwarder serves the ssh-agent on (point SSH_AUTH_SOCK at it). Empty serves none.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EDGE_FORWARDER_SSH_AGENT_SOCKET",
+          "x-scrim-flag": "--edge-forwarder-ssh-agent-socket",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "token-file": {
+          "default": "/var/run/secrets/scrim/token",
+          "description": "Projected service account token for scrim's audience, read again for every connection and sent to the central scrim only.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EDGE_FORWARDER_TOKEN_FILE",
+          "x-scrim-flag": "--edge-forwarder-token-file",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        }
+      },
+      "type": "object"
+    },
     "entry": {
       "additionalProperties": false,
       "properties": {

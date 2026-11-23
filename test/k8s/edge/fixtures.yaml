@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Stand-ins of test/k8s/edge-e2e.sh in namespace scrim-edge-e2e: PostgreSQL and
+# a throwaway sshd with a bare git repository. Only the central scrim may reach
+# them (the agent pod's NetworkPolicy allows scrim and DNS only). @TOOLS@ and
+# @POSTGRES@ are replaced by the script; the Secrets it creates hold the
+# generated password, host key and authorized key.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: scrim-edge-e2e
+spec:
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      containers:
+        - name: postgres
+          image: @POSTGRES@
+          env:
+            - {name: POSTGRES_USER, value: app}
+            - {name: POSTGRES_DB, value: app}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: postgres, key: password}
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, app, -d, app, -h, 127.0.0.1]
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: scrim-edge-e2e
+spec:
+  selector: {app: postgres}
+  ports:
+    - {port: 5432, targetPort: 5432}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitserver
+  namespace: scrim-edge-e2e
+spec:
+  selector:
+    matchLabels: {app: gitserver}
+  template:
+    metadata:
+      labels: {app: gitserver}
+    spec:
+      containers:
+        - name: sshd
+          image: @TOOLS@
+          imagePullPolicy: Never
+          command: [sh, -c]
+          # git may push; git2 has the same key but no rule allows its signatures.
+          args:
+            - |
+              set -e
+              for u in git git2; do
+                adduser -D -s /usr/bin/git-shell "$u"
+                echo "$u:*" | chpasswd -e >/dev/null
+                mkdir -p "/home/$u/.ssh"
+                cp /etc/gitserver/authorized_keys "/home/$u/.ssh/authorized_keys"
+                chmod 700 "/home/$u/.ssh"; chmod 600 "/home/$u/.ssh/authorized_keys"
+                chown -R "$u:$u" "/home/$u/.ssh"
+              done
+              addgroup git2 git
+              git init -q --bare --shared=group -b main /srv/repo.git
+              chown -R git:git /srv/repo.git
+              install -m 0600 /etc/gitserver/ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key
+              exec /usr/sbin/sshd -D -e -h /etc/ssh/ssh_host_ed25519_key \
+                -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no
+          ports:
+            - containerPort: 22
+          readinessProbe:
+            tcpSocket: {port: 22}
+            periodSeconds: 2
+          volumeMounts:
+            - {name: keys, mountPath: /etc/gitserver, readOnly: true}
+      volumes:
+        - name: keys
+          secret: {secretName: gitserver, defaultMode: 0400}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitserver
+  namespace: scrim-edge-e2e
+spec:
+  selector: {app: gitserver}
+  ports:
+    - {port: 22, targetPort: 22}

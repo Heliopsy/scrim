@@ -570,7 +570,7 @@ flowchart TB
     direction LR
     subgraph agentpod["Agent pod, labelled"]
       kag["agent"]
-      edge["edge forwarder<br>ssh-agent, db ports,<br>no values, M2"]
+      edge["edge forwarder<br>ssh-agent, db ports, agent API<br>no values"]
     end
     subgraph central["scrim Deployment, HPA on CPU and connections"]
       kcp["scrim replicas<br>control plane + data plane"]
@@ -580,7 +580,7 @@ flowchart TB
     kyv["admission policy<br>injects env, CA, MCP, token"]
     side["optional sidecar<br>full scrim proxy, egress guard"]
     kag --> kcp
-    edge --> kcp
+    edge -- "TLS, pod token" --> kcp
     kcp --- pg
     np -.-> agentpod
     kyv -.-> agentpod
@@ -595,8 +595,8 @@ flowchart TB
   classDef zone fill:#94a3b81a,stroke:#64748b,stroke-width:1px,stroke-dasharray:4 3
   class sh human
   class run,lcp,vcp cplane
-  class ldp,vdp,edge,kcp,side dplane
-  class lag,vag,kag agent
+  class ldp,vdp,kcp,side dplane
+  class lag,vag,kag,edge agent
   class lsq,pg store
   class unit,nft,np,kyv enforce
   class laptop,vm,k8s,agentpod,central zone
@@ -614,16 +614,18 @@ agents that were not configured to use scrim. In Kubernetes (M2) a central Deplo
 pods, a NetworkPolicy keeps them from reaching providers directly, an admission policy configures
 labelled pods without changing their images, and replicas share PostgreSQL so approvals and grants
 agree everywhere. Placeholders need no shared lookup table across replicas because they are an HMAC
-of the value (D3). The edge forwarder exposes local sockets such as ssh-agent in the pod and holds
-no values. A sidecar (a full `scrim proxy` per pod) holds the dictionary in every pod, so the
-central deployment is the default. Valkey and NATS events and extra audit sinks are M3.
+of the value (D3). The edge forwarder exposes the ssh-agent socket, localhost database ports and
+the agent API in the pod and carries each connection to the central scrim over TLS with the pod's
+projected token; it holds no values ([edge-forwarder.md](edge-forwarder.md)). A sidecar (a full
+`scrim proxy` per pod) holds the dictionary in every pod, so the central deployment is the default.
+Valkey and NATS events and extra audit sinks are M3.
 
 Status: v0.1.0 ships the laptop path and the forward proxy; `scrim run` and `scrim proxy` are on
 `main`. The Helm chart with central and sidecar modes, the NetworkPolicies and the Kyverno admission
 policy are on `main` ([kubernetes.md](kubernetes.md)); the sidecar is a full `scrim proxy`, not
 the standalone data plane. TokenReview identity, Postgres notify events and the local service are on
-`main` too, and so are the transparent mode (nftables) and the DNS override. The edge forwarder is
-planned for M2; Valkey and NATS for M3. The eBPF transparent mode's loader (`scrim ebpf`), the
+`main` too, and so are the transparent mode (nftables), the DNS override and the edge forwarder.
+Valkey and NATS are M3. The eBPF transparent mode's loader (`scrim ebpf`), the
 PostgreSQL state backend and the standalone `scrim-dataplane` image are on `main`.
 
 ## Where to find it in the code

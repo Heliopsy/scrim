@@ -21,6 +21,11 @@ data:
   {{- range (include "scrim.centralAgentEnv" $ | fromYamlArray) }}
   {{ .name }}: {{ .value | quote }}
   {{- end }}
+  {{- if $.Values.edge.enabled }}
+  {{- range (include "scrim.edgeAgentEnv" $ | fromYamlArray) }}
+  {{ .name }}: {{ .value | quote }}
+  {{- end }}
+  {{- end }}
 {{- end }}
 {{- if $.Values.sidecar.enabled }}
 ---

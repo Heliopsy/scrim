@@ -255,8 +255,19 @@ A labelled pod in a namespace not listed in `agents.namespaces`, or with a label
 would be missing. With `kyverno.failurePolicy: Fail` (default) labelled pods are refused while
 Kyverno is down, rather than started unconfigured.
 
-MCP registration is not injected. `scrim mcp` talks to the agent API over a Unix socket in scrim's
-pod; reaching it from an agent pod needs the edge forwarder (tasks.md 12.5).
+MCP registration is not injected. `scrim mcp` talks to the agent API over a Unix socket; with
+`edge.enabled` the edge forwarder serves that socket in the pod ([Edge forwarder](#edge-forwarder)).
+
+### Edge forwarder
+
+`edge.enabled` adds `scrim edge` to pods labelled `central` as a native sidecar. It serves
+`SSH_AUTH_SOCK`, loopback ports for the databases in `edge.databases` and the agent API at
+`SCRIM_API_SOCKET` (the exec broker, the database tool and the other agent tools) in the pod, and
+carries every connection to central scrim's edge listener (port `edge.port`, 9794) over TLS 1.3 with
+the pod's projected identity token. Keys, database passwords and exec secrets stay in central scrim;
+the forwarder holds nothing secret and refuses connections while central scrim cannot be reached. It
+needs `identity.kubernetes.enabled`. Values, policy examples, the channel and failure behaviour are in
+[edge-forwarder.md](edge-forwarder.md).
 
 ### Kyverno versions
 
@@ -335,8 +346,8 @@ JSON, in the `initContainers` and `volumes` variables of the `-inject-sidecar` M
 
 | Policy | Namespace | Selects | Allows |
 | --- | --- | --- | --- |
-| `<release>-scrim` | release | scrim pods | ingress to 9790 and 9791 from pods labelled `central` in `agents.namespaces`; to the metrics port from `networkPolicy.prometheus` when `metrics.enabled`; to the admin port from `networkPolicy.adminFrom` when `admin.tcp.enabled`. Egress to DNS, the API server (`networkPolicy.apiServerEgress`, for TokenReview) and `networkPolicy.scrimEgress` |
-| `<release>-scrim-agents-central` | each agent namespace | pods labelled `central` | egress to the scrim pods on 9790 and 9791, and DNS. Nothing else |
+| `<release>-scrim` | release | scrim pods | ingress to 9790 and 9791 (and `edge.port` with `edge.enabled`) from pods labelled `central` in `agents.namespaces`; to the metrics port from `networkPolicy.prometheus` when `metrics.enabled`; to the admin port from `networkPolicy.adminFrom` when `admin.tcp.enabled`. Egress to DNS, the API server (`networkPolicy.apiServerEgress`, for TokenReview) and `networkPolicy.scrimEgress` |
+| `<release>-scrim-agents-central` | each agent namespace | pods labelled `central` | egress to the scrim pods on 9790 and 9791 (and `edge.port` with `edge.enabled`), DNS and `networkPolicy.agentEgress` (empty by default). Nothing else |
 | `<release>-scrim-agents-sidecar` | each agent namespace | pods labelled `sidecar` | egress to DNS, the API server (`networkPolicy.apiServerEgress`) and `networkPolicy.sidecarEgress` (what the in-pod scrim needs; the guard keeps the agent off it) |
 
 `scrimEgress` and `sidecarEgress` default to TCP 443 anywhere, `apiServerEgress` to TCP 443 and
@@ -645,7 +656,8 @@ namespace's directory under `$XDG_RUNTIME_DIR/libpod/tmp/rootless-netns/run` los
 - Publishing and signing the chart (OCI registry, cosign), part of the release pipeline.
 - Transparent redirection for agents that ignore the injected variables (an init container or CNI
   that redirects with `NET_ADMIN`). The egress guard rejects such traffic instead of redirecting it.
-- MCP registration in agent pods and the edge forwarder for ssh-agent and database ports (12.5).
+- MCP registration in agent pods: the edge forwarder serves the agent API socket, but nothing
+  registers `scrim mcp` with the agent for you.
 - The chart lives in `oci://ghcr.io/heliopsy/charts/scrim` from the first release after it
   merged; earlier releases have no chart.
 - A standalone `scrim-dataplane` sidecar with a remote control plane (no transport is specified).

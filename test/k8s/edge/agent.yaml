@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The agent pod of test/k8s/edge-e2e.sh: git, ssh, psql and curl, labelled for
+# central mode. Nothing about scrim is in it: Kyverno adds the environment, the
+# CA, the identity token and the edge forwarder as a native sidecar. It runs as
+# UID 1000, the forwarder as 65532. @TOOLS@ is the tools image.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: agent-edge
+  labels:
+    scrim.dev/inject: central
+spec:
+  terminationGracePeriodSeconds: 1
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: agent
+      image: @TOOLS@
+      imagePullPolicy: Never
+      command: [sleep, "86400"]
+      env:
+        - {name: HOME, value: /tmp}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}
+      volumeMounts:
+        - {name: tmp, mountPath: /tmp}
+  volumes:
+    - name: tmp
+      emptyDir: {}

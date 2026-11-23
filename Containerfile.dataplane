@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # ghcr.io/heliopsy/scrim-dataplane: the data plane on its own, for Kubernetes
-# sidecars and edge forwarders that need it without a control plane per pod
+# sidecars that need it without a control plane per pod
 # (design D11). Same build as the copy embedded in scrim.
 #
 # Assembled from the release binary, never compiled here, like Containerfile:
@@ -21,7 +21,7 @@ ARG CREATED=1970-01-01T00:00:00Z
 ARG SOURCE=https://github.com/Heliopsy/scrim
 
 LABEL org.opencontainers.image.title="scrim-dataplane" \
-      org.opencontainers.image.description="scrim data plane for sidecars and edge forwarders" \
+      org.opencontainers.image.description="scrim data plane for sidecars" \
       org.opencontainers.image.source="${SOURCE}" \
       org.opencontainers.image.url="${SOURCE}" \
       org.opencontainers.image.documentation="${SOURCE}/blob/main/docs/install.md" \

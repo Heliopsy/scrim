@@ -315,8 +315,16 @@ the data plane holds the value dictionary, runs with fewer privileges and locked
 crash on either side makes the other refuse traffic.
 
 The data plane is also published on its own (`scrim-dataplane` binary and image) for Kubernetes
-sidecars and edge forwarders, which need it and not a control plane per pod. Both come from the
-same build.
+sidecars, which need it and not a control plane per pod. Both come from the same build.
+
+The edge forwarder needs neither half. It holds no value, redacts nothing and decides nothing: it is
+`scrim edge` from the scrim image, a few byte pipes from the agent pod's local endpoints (ssh-agent
+socket, localhost database ports, agent API socket) to the central scrim's edge listener. The pipes
+are TLS 1.3 verified against scrim's CA, which agent pods already trust, and each carries the pod's
+projected service account token, which the central scrim verifies with the same TokenReview
+resolver as the proxy (D14). A separate transport with its own credentials (mTLS client certificates
+per pod, a token scrim mints) was rejected: the projected token already names the pod, the cluster
+rotates it, and a second identity for the same pod would have to be kept in step with it.
 
 ### D12. The boundary is protobuf over the inherited socket, off the hot path
 

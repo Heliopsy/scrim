@@ -60,7 +60,7 @@ OBJECT_LISTS = {
     "extraInitContainers", "tolerations", "topologySpreadConstraints",
     "extraIngress", "extraEgress", "extraFrom", "metricsScrapers", "egress",
     "relabelings", "metricRelabelings", "additionalRules", "hosts", "tls",
-    "hostAliases", "secretMounts", "scrimEgress", "sidecarEgress", "apiServerEgress",
+    "hostAliases", "secretMounts", "scrimEgress", "agentEgress", "sidecarEgress", "apiServerEgress",
     "adminFrom", "groups", "extraObjects",
 }
 

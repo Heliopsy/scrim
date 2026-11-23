@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The agent and the throwaway git server of the edge forwarder's end-to-end
+# test (git, OpenSSH client and server, psql, curl). Built by
+# test/k8s/edge-e2e.sh; never published.
+FROM docker.io/library/alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
+RUN apk add --no-cache git openssh-client openssh-server postgresql-client curl jq \
+ && adduser -D -u 1000 agent

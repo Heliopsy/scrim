@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The exec broker's allow list for test/k8s/edge-e2e.sh, added when this tree
+# has the exec broker (an exec section in schema/config-v1.json).
+config:
+  exec:
+    commands:
+      execprobe:
+        path: /usr/local/bin/execprobe
+        secrets: [dbpw]
+        env-names: [PROBE_SECRET]

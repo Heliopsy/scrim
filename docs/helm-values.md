@@ -181,6 +181,15 @@ kubernetes-replicator (`global.replication`).
 | identity.kubernetes.tokenReviewRBAC | bool | `true` | Create a ClusterRole that may only create TokenReviews and bind it to scrim's service account (central) and to the service accounts of agents.namespaces (sidecar). |
 | identity.kubernetes.agents | object | `{}` | Agents by service account (identity.kubernetes.agents): agent name to selectors `sa:NAMESPACE/NAME` (globs allowed), `scope:`, `label:K=V`. |
 | identity.kubernetes.unmapped | string | `"derive"` | What a service account no rule maps becomes: derive (NAMESPACE/NAME) or unknown. |
+| edge | object | See the keys below. | Edge forwarder (central mode): Kyverno adds a native sidecar running `scrim edge` to agent pods labelled `central`. It serves SSH_AUTH_SOCK, loopback database ports and the agent API socket (the exec broker included) in the pod and carries every connection to central scrim's edge listener over TLS, with the pod's projected identity token. Keys, database passwords and exec secrets stay in central scrim. Needs identity.kubernetes.enabled and kyverno.enabled (or the sidecar copied into the pod spec). |
+| edge.enabled | bool | `false` | Serve the edge listener in central scrim (edge.listen) and inject the forwarder into agent pods labelled `central`. |
+| edge.port | int | `9794` | Port of the edge listener, on the scrim container and the Service. |
+| edge.socketDir | string | `"/run/scrim-edge"` | Directory of the forwarder's sockets in agent containers, an in-memory emptyDir only this pod mounts. |
+| edge.sshAgent | bool | `true` | Serve scrim's ssh-agent at `<socketDir>/ssh-agent.sock` and point SSH_AUTH_SOCK at it. |
+| edge.api | bool | `true` | Serve the agent API at `<socketDir>/api.sock` and point SCRIM_API_SOCKET at it (the exec broker, the database tool and the other agent tools). |
+| edge.databases | object | `{}` | Databases to forward: the name of a database in `config.databases` to the loopback port agent containers connect to, for example `{app: 5432}`. |
+| edge.resources | object | See the keys below. | Resources of the forwarder container. |
+| edge.securityContext | object | See the keys below. | Security context of the forwarder container. |
 | storeAuth | object | See the keys below. | Store authentication with scrim's own service account (OpenBao Kubernetes auth, Infisical kubernetes-auth), so no static store credential exists. Configure the store in `config.stores` with `auth.method: kubernetes` (OpenBao) or `kubernetes-auth` (Infisical) and `auth.kubernetes.token-file` set to `path`. |
 | storeAuth.serviceAccountToken | object | `{"audience":"vault","enabled":false,"expirationSeconds":3600,"path":"/var/run/secrets/scrim/store-token"}` | Mount a projected service account token for store login (central scrim and sidecars). |
 | storeAuth.serviceAccountToken.audience | string | `"vault"` | Audience the store expects (OpenBao: the role's audience, often "vault"). |
@@ -297,6 +306,7 @@ kubernetes-replicator (`global.replication`).
 | networkPolicy.dns | object | `{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}},"podSelector":{"matchLabels":{"k8s-app":"kube-dns"}}}` | Pod and namespace selectors of the cluster DNS. |
 | networkPolicy.scrimEgress | list | `[{"ports":[{"port":443,"protocol":"TCP"}]}]` | Egress rules of central scrim besides DNS (providers, stores, tool hosts, PostgreSQL). The default allows HTTPS anywhere. |
 | networkPolicy.apiServerEgress | list | `[{"ports":[{"port":443,"protocol":"TCP"},{"port":6443,"protocol":"TCP"}]}]` | Egress to the Kubernetes API server, for TokenReview (identity.kubernetes) from central scrim and sidecar pods. Policies see the API server's endpoint port, often 6443, not the Service port. Narrow it with `to` (the API server's addresses) where you can. |
+| networkPolicy.agentEgress | list | `[]` | Extra egress rules of central agent pods, for connections that do not go through scrim: SSH to git servers with the edge forwarder (scrim signs, the SSH session itself is direct). Empty: scrim and DNS only. |
 | networkPolicy.sidecarEgress | list | `[{"ports":[{"port":443,"protocol":"TCP"}]}]` | Egress rules of sidecar agent pods besides DNS (what the in-pod scrim must reach). |
 | networkPolicy.prometheus | object | `{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}},"podSelector":{}}` | Where Prometheus scrapes from (used when metrics.enabled). |
 | networkPolicy.adminFrom | list | `[]` | Peers allowed to the admin TCP port (NetworkPolicy `from` entries). |

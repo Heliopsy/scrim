@@ -225,7 +225,7 @@ variables:
   - name: mounts
     expression: |
       json.unmarshal(r'''
-      {{- include "scrim.agentMounts" $root | fromYamlArray | toPrettyJson | nindent 6 }}
+      {{- default (include "scrim.agentMounts" $root | fromYamlArray) .mounts | toPrettyJson | nindent 6 }}
       ''')
   - name: mountPaths
     expression: variables.mounts.map(m, m.mountPath)
@@ -274,4 +274,94 @@ mutations:
           path: "/spec/volumes",
           value: object.spec.?volumes.orValue([]).filter(v, !(v.name in variables.volumeNames)) + variables.volumes
         }]
+{{- end -}}
+
+{{/*
+The edge forwarder of central mode (edge.enabled): a native sidecar running
+`scrim edge` in agent pods, its socket volume and what agent containers get
+to use it. It holds nothing secret: it reads the pod's projected identity
+token and verifies central scrim against the scrim-ca ConfigMap.
+*/}}
+{{- define "scrim.edgeAddress" -}}
+{{- printf "%s:%v" (include "scrim.serviceHost" .) .Values.edge.port -}}
+{{- end -}}
+
+{{- define "scrim.edgeInitContainers" -}}
+{{- $e := .Values.edge -}}
+{{- $dbs := list -}}
+{{- range $name, $port := $e.databases }}{{ $dbs = append $dbs (printf "%s=127.0.0.1:%v" $name $port) }}{{ end -}}
+- name: scrim-edge
+  image: {{ include "scrim.image" . }}
+  imagePullPolicy: {{ include "chart.imagePullPolicy" .Values.image }}
+  # A native sidecar: the agent starts once central scrim has accepted this pod's token.
+  restartPolicy: Always
+  args: [edge]
+  env:
+    - name: SCRIM_EDGE_FORWARDER_CENTRAL
+      value: {{ include "scrim.edgeAddress" . | quote }}
+    - name: SCRIM_EDGE_FORWARDER_CA_FILE
+      value: {{ printf "%s/scrim-ca.pem" .Values.agents.trustPath | quote }}
+    - name: SCRIM_EDGE_FORWARDER_TOKEN_FILE
+      value: {{ .Values.identity.kubernetes.tokenPath | quote }}
+    {{- if $e.sshAgent }}
+    - name: SCRIM_EDGE_FORWARDER_SSH_AGENT_SOCKET
+      value: {{ printf "%s/ssh-agent.sock" $e.socketDir | quote }}
+    {{- end }}
+    {{- if $e.api }}
+    - name: SCRIM_EDGE_FORWARDER_API_SOCKET
+      value: {{ printf "%s/api.sock" $e.socketDir | quote }}
+    {{- end }}
+    {{- if $dbs }}
+    - name: SCRIM_EDGE_FORWARDER_DATABASES
+      value: {{ join "," $dbs | quote }}
+    {{- end }}
+    - name: SCRIM_LOG_LEVEL
+      value: {{ .Values.log.level | quote }}
+    - name: SCRIM_LOG_FORMAT
+      value: {{ .Values.log.format | quote }}
+  startupProbe:
+    exec:
+      command: [/usr/local/bin/scrim, edge, check]
+    periodSeconds: 2
+    timeoutSeconds: 15
+    failureThreshold: 60
+  resources:
+    {{- toYaml $e.resources | nindent 4 }}
+  securityContext:
+    {{- toYaml $e.securityContext | nindent 4 }}
+  volumeMounts:
+    - name: scrim-trust
+      mountPath: {{ .Values.agents.trustPath }}
+      readOnly: true
+    - name: scrim-identity
+      mountPath: {{ dir .Values.identity.kubernetes.tokenPath }}
+      readOnly: true
+    - name: scrim-edge
+      mountPath: {{ $e.socketDir }}
+{{- end -}}
+
+{{- define "scrim.edgeVolumes" -}}
+# The forwarder's sockets; the forwarder sets their mode so agents running as any user connect.
+- name: scrim-edge
+  emptyDir:
+    medium: Memory
+    sizeLimit: 1Mi
+{{- end -}}
+
+{{- define "scrim.edgeMounts" -}}
+- name: scrim-edge
+  mountPath: {{ .Values.edge.socketDir }}
+{{- end -}}
+
+{{/* What agent containers of central mode get from the forwarder. */}}
+{{- define "scrim.edgeAgentEnv" -}}
+{{- $e := .Values.edge -}}
+{{- if $e.sshAgent }}
+- name: SSH_AUTH_SOCK
+  value: {{ printf "%s/ssh-agent.sock" $e.socketDir | quote }}
+{{- end }}
+{{- if $e.api }}
+- name: SCRIM_API_SOCKET
+  value: {{ printf "%s/api.sock" $e.socketDir | quote }}
+{{- end }}
 {{- end -}}

@@ -1,0 +1,4 @@
+# expect: no database "app" in config.databases
+edge:
+  enabled: true
+  databases: {app: 5432}

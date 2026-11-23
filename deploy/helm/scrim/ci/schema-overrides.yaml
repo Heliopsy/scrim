@@ -29,6 +29,9 @@ central.autoscaling.connections.targetAverageValue: {type: [string, integer]}
 central.extraArgs: {items: {type: string}}
 admin.tcp.port: {minimum: 1, maximum: 65535}
 metrics.port: {minimum: 1, maximum: 65535}
+edge.port: {minimum: 1, maximum: 65535}
+edge.socketDir: {pattern: "^/"}
+edge.databases: {additionalProperties: {type: integer, minimum: 1, maximum: 65535}}
 metrics.path: {pattern: "^/"}
 ca.validityDays: {minimum: 1}
 image.digest: {pattern: "^(sha256:[0-9a-f]{64})?$"}
