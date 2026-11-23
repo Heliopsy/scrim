@@ -296,6 +296,11 @@ func (a *App) Close() error {
 	if a.Stores != nil {
 		errs = append(errs, a.Stores.Close())
 	}
+	if a.PolicyParts != nil {
+		for _, n := range a.PolicyParts.plugins {
+			errs = append(errs, n.Close())
+		}
+	}
 	errs = append(errs, a.closeAuditSinks(), a.RateLimits.Close())
 	if a.State != nil {
 		errs = append(errs, a.State.Close())

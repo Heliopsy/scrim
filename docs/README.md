@@ -53,6 +53,7 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 | [stores/vaultwarden.md](stores/vaultwarden.md) | Vaultwarden and Bitwarden-compatible servers, client-side decryption |
 | [stores/aws.md](stores/aws.md) | AWS Secrets Manager and SSM Parameter Store, ambient identity |
 | [stores/local.md](stores/local.md) | Environment variables and files |
+| [plugins.md](plugins.md) | Store and notifier plugins: the contract, configuration, binary checks, failure handling, the Go SDK and examples |
 | [catalog.md](catalog.md) | Logical names, host bindings, declared placeholders, profiles and bulk mapping |
 | [ca.md](ca.md) | The tool proxy's interception CA: where it lives, rotation, export, per-user trust install and uninstall |
 

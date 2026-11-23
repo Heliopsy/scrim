@@ -1390,6 +1390,40 @@
           },
           "type": "object"
         },
+        "plugins": {
+          "additionalProperties": {
+            "properties": {
+              "credentials": {
+                "type": "string",
+                "x-scrim-secret-ref": true
+              },
+              "password": {
+                "type": "string",
+                "x-scrim-secret-ref": true
+              },
+              "secret": {
+                "type": "string",
+                "x-scrim-secret-ref": true
+              },
+              "token": {
+                "type": "string",
+                "x-scrim-secret-ref": true
+              }
+            },
+            "required": [
+              "command"
+            ],
+            "type": "object"
+          },
+          "description": "Notifier plugins by name (docs/plugins.md): `command` (absolute path of the plugin binary, owned by root or scrim's user and writable by no one else), `args`, `env` (the plugin's environment; never a credential), `options` (the plugin's own settings, validated by the plugin), `sha256` (pins the binary), `timeout` (per delivery, default 10s), `start-timeout` (default 5s), and the credential fields `token`, `password`, `secret` and `credentials` (references, resolved at every start and sent only to the plugin).",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+          },
+          "type": "object",
+          "x-scrim-collection": true,
+          "x-scrim-env": "SCRIM_NOTIFY_PLUGINS",
+          "x-scrim-restart-required": true
+        },
         "terminal": {
           "additionalProperties": false,
           "properties": {
