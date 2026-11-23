@@ -701,6 +701,94 @@ the secret and wiping every value; any other failure SHALL be returned as an err
 - **WHEN** the metadata read fails with a server error
 - **THEN** the lookup fails with the store unavailable and the data is not read
 
+### Requirement: Doppler adapter
+
+The system SHALL read, list, watch and write Doppler secrets by project, config and name with a
+service token, service account token or personal token, and SHALL read the computed value, with
+Doppler secret references resolved. Listings SHALL leave out Doppler's managed `DOPPLER_*` secrets.
+
+#### Scenario: Secret that references another
+
+- **WHEN** `DATABASE` in `billing/dev` holds `${USER}@db:5432` and an agent's request needs
+  `dop://billing/dev/DATABASE`
+- **THEN** scrim redacts and injects the computed value with `USER` resolved, not the raw text
+
+#### Scenario: Managed secrets are not listed
+
+- **WHEN** a redact target names the whole config `dop://billing/dev/*`
+- **THEN** `DOPPLER_PROJECT`, `DOPPLER_CONFIG` and `DOPPLER_ENVIRONMENT` are not loaded
+
+### Requirement: Doppler withheld and reference-like values
+
+A value Doppler withholds (`null` for a restricted secret and a user token) SHALL fail the read as a
+permission error and SHALL NOT be used as a value. A write SHALL be refused before anything is sent
+when the value contains `${`, which Doppler would resolve as a reference.
+
+#### Scenario: Restricted value and a personal token
+
+- **WHEN** scrim reads a Restricted secret with a personal token and Doppler answers `null`
+- **THEN** the read fails with permission denied naming the store and reference, and nothing is
+  loaded into a redaction set
+
+#### Scenario: Value that looks like a reference
+
+- **WHEN** an agent captures a value containing `${HOME}` into `dop://billing/dev/NEW`
+- **THEN** the write is refused as unsupported and nothing is stored
+
+### Requirement: Doppler native labels
+
+The Doppler adapter SHALL label every secret it reads or lists under `doppler.<attr>` with the
+token's workplace, the project, the config, the config's environment, root, locked and inheritable
+state where Doppler describes the config, the name and whether Doppler manages it, and on a read
+the secret's visibility, computed visibility and value type. It SHALL report the location labels of
+a secret written at a reference without contacting Doppler.
+
+#### Scenario: Production rule
+
+- **WHEN** a rule asks for secrets with `doppler.environment == "prd"` and an agent reads
+  `dop://billing/prd_aws/STRIPE_KEY`
+- **THEN** the secret carries `doppler.environment = prd` and `doppler.config.root = false`, and the
+  read asks
+
+### Requirement: Doppler labels read without values
+
+The Doppler adapter SHALL return an existing secret's metadata and location labels from the config's
+secret names, a request that carries no value, and SHALL report a secret whose name is not listed as
+not found. A lookup SHALL fail wherever the names request fails.
+
+#### Scenario: Labels of an existing secret
+
+- **WHEN** a rule needs the labels of `dop://billing/prd/API_KEY`, which exists but is in no
+  redaction set
+- **THEN** scrim asks Doppler for the names of `billing/prd`, makes no request that returns a value,
+  and the labels equal the location labels a read reports
+
+### Requirement: Doppler watch without values for unchanged configs
+
+The Doppler adapter SHALL detect changes by polling the config download with the previous `ETag`,
+and SHALL tell changed secrets apart by keyed fingerprints of their values, computed under a key that
+never leaves the watch, with the values wiped at once.
+
+#### Scenario: Nothing changed
+
+- **WHEN** a watched config has not changed since the last poll
+- **THEN** Doppler answers `304 Not Modified` and no value reaches scrim
+
+#### Scenario: Referenced secret rotated
+
+- **WHEN** `USER` in a watched config is rotated and `DATABASE` references it
+- **THEN** both `USER` and `DATABASE` are reported as changed
+
+### Requirement: Doppler labels hold no value
+
+Labels from the Doppler adapter SHALL NOT contain a secret value, a raw value or a secret note, and
+the adapter SHALL NOT decode notes.
+
+#### Scenario: Labels hold no value
+
+- **WHEN** a secret has a value, a raw value with a reference in it, and a note
+- **THEN** none of them appears in any label key or value
+
 ### Requirement: Store login with the pod's Kubernetes service account
 
 When scrim runs in Kubernetes, the OpenBao adapter (`auth.method: kubernetes`) and the Infisical
