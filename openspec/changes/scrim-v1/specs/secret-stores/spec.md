@@ -528,6 +528,55 @@ note or the value of an encrypted metadata entry.
 - **THEN** none of them appears in any label key or value, and the encrypted entry is listed by key
   only in `infisical.encrypted-meta`
 
+### Requirement: 1Password adapter
+
+The system SHALL read, list, watch and write 1Password items through a 1Password Connect server,
+addressed as `<scheme>://<vault>/<item>[#[<section>/]<field>]` with vault and item given by name or
+ID, and SHALL authenticate with a Connect token held only by scrim. Version selectors SHALL be
+refused, since Connect serves only the current version.
+
+#### Scenario: Section field like an op:// reference
+
+- **WHEN** an agent's request references `op://Prod/GitHub#API/token`
+- **THEN** scrim reads the field labelled `token` in section `API` of item `GitHub` in vault `Prod`,
+  the value `op://Prod/GitHub/API/token` names in the 1Password CLI
+
+#### Scenario: Rotation keeps the rest of the item
+
+- **WHEN** scrim writes a new `password` to an existing login item
+- **THEN** Connect receives the item with only that field's value changed, keeping its username,
+  other fields, sections, tags and files
+
+### Requirement: 1Password ambiguous references are refused
+
+A 1Password field selector or item title SHALL resolve to exactly one field or item. One that
+matches several SHALL be refused as an invalid reference rather than resolved to one of them.
+
+#### Scenario: Same field label in two sections
+
+- **WHEN** item `GitHub` has a `token` field in sections `API` and `Backup` and a reference selects
+  `#token`
+- **THEN** the read fails as an invalid reference naming the ambiguity, and no value is returned
+
+### Requirement: 1Password labels without values
+
+The 1Password adapter SHALL label items under `onepassword.<attr>` (vault name, ID and type, item
+title and ID, category, tags with their parents, URL hosts, favourite, version, times, last editor)
+from the vault and the item listing only, so reads, listings and metadata lookups report the same
+labels and a metadata lookup or listing SHALL NOT fetch a full item. Field values, notes and
+one-time codes SHALL NOT appear in labels.
+
+#### Scenario: Labels of an existing item without its values
+
+- **WHEN** a rule needs the labels of `op://Prod/GitHub`, which is in no redaction set
+- **THEN** scrim finds the item through the title-filtered item listing, returns the labels a read
+  reports, and makes no request for the full item
+
+#### Scenario: Write target labelled before it exists
+
+- **WHEN** a rule asks for writes into vault `Prod` and an agent creates `op://Prod/svc/new`
+- **THEN** the write is decided on `onepassword.vault = Prod`, `onepassword.item = svc/new` and the
+  configured `onepassword.category` before Connect is contacted
 ### Requirement: SOPS file source
 
 The system SHALL provide a read-only `sops` source for SOPS-encrypted YAML, JSON, dotenv and INI files
@@ -701,6 +750,94 @@ the secret and wiping every value; any other failure SHALL be returned as an err
 - **WHEN** the metadata read fails with a server error
 - **THEN** the lookup fails with the store unavailable and the data is not read
 
+### Requirement: Doppler adapter
+
+The system SHALL read, list, watch and write Doppler secrets by project, config and name with a
+service token, service account token or personal token, and SHALL read the computed value, with
+Doppler secret references resolved. Listings SHALL leave out Doppler's managed `DOPPLER_*` secrets.
+
+#### Scenario: Secret that references another
+
+- **WHEN** `DATABASE` in `billing/dev` holds `${USER}@db:5432` and an agent's request needs
+  `dop://billing/dev/DATABASE`
+- **THEN** scrim redacts and injects the computed value with `USER` resolved, not the raw text
+
+#### Scenario: Managed secrets are not listed
+
+- **WHEN** a redact target names the whole config `dop://billing/dev/*`
+- **THEN** `DOPPLER_PROJECT`, `DOPPLER_CONFIG` and `DOPPLER_ENVIRONMENT` are not loaded
+
+### Requirement: Doppler withheld and reference-like values
+
+A value Doppler withholds (`null` for a restricted secret and a user token) SHALL fail the read as a
+permission error and SHALL NOT be used as a value. A write SHALL be refused before anything is sent
+when the value contains `${`, which Doppler would resolve as a reference.
+
+#### Scenario: Restricted value and a personal token
+
+- **WHEN** scrim reads a Restricted secret with a personal token and Doppler answers `null`
+- **THEN** the read fails with permission denied naming the store and reference, and nothing is
+  loaded into a redaction set
+
+#### Scenario: Value that looks like a reference
+
+- **WHEN** an agent captures a value containing `${HOME}` into `dop://billing/dev/NEW`
+- **THEN** the write is refused as unsupported and nothing is stored
+
+### Requirement: Doppler native labels
+
+The Doppler adapter SHALL label every secret it reads or lists under `doppler.<attr>` with the
+token's workplace, the project, the config, the config's environment, root, locked and inheritable
+state where Doppler describes the config, the name and whether Doppler manages it, and on a read
+the secret's visibility, computed visibility and value type. It SHALL report the location labels of
+a secret written at a reference without contacting Doppler.
+
+#### Scenario: Production rule
+
+- **WHEN** a rule asks for secrets with `doppler.environment == "prd"` and an agent reads
+  `dop://billing/prd_aws/STRIPE_KEY`
+- **THEN** the secret carries `doppler.environment = prd` and `doppler.config.root = false`, and the
+  read asks
+
+### Requirement: Doppler labels read without values
+
+The Doppler adapter SHALL return an existing secret's metadata and location labels from the config's
+secret names, a request that carries no value, and SHALL report a secret whose name is not listed as
+not found. A lookup SHALL fail wherever the names request fails.
+
+#### Scenario: Labels of an existing secret
+
+- **WHEN** a rule needs the labels of `dop://billing/prd/API_KEY`, which exists but is in no
+  redaction set
+- **THEN** scrim asks Doppler for the names of `billing/prd`, makes no request that returns a value,
+  and the labels equal the location labels a read reports
+
+### Requirement: Doppler watch without values for unchanged configs
+
+The Doppler adapter SHALL detect changes by polling the config download with the previous `ETag`,
+and SHALL tell changed secrets apart by keyed fingerprints of their values, computed under a key that
+never leaves the watch, with the values wiped at once.
+
+#### Scenario: Nothing changed
+
+- **WHEN** a watched config has not changed since the last poll
+- **THEN** Doppler answers `304 Not Modified` and no value reaches scrim
+
+#### Scenario: Referenced secret rotated
+
+- **WHEN** `USER` in a watched config is rotated and `DATABASE` references it
+- **THEN** both `USER` and `DATABASE` are reported as changed
+
+### Requirement: Doppler labels hold no value
+
+Labels from the Doppler adapter SHALL NOT contain a secret value, a raw value or a secret note, and
+the adapter SHALL NOT decode notes.
+
+#### Scenario: Labels hold no value
+
+- **WHEN** a secret has a value, a raw value with a reference in it, and a note
+- **THEN** none of them appears in any label key or value
+
 ### Requirement: Store login with the pod's Kubernetes service account
 
 When scrim runs in Kubernetes, the OpenBao adapter (`auth.method: kubernetes`) and the Infisical
@@ -783,6 +920,80 @@ fail the operation closed.
 - **THEN** the operation waits, the approver is notified, and the value is used only after
   authorisation
 
+### Requirement: Kubernetes Secrets adapter
+
+The system SHALL read Secrets from a Kubernetes cluster, each data key a field, addressed as
+`<instance>://<namespace>/<name>` or, for an instance confined to one namespace, `<instance>://<name>`,
+with each dot of a Secret name written as `/`. It SHALL use only the namespaces the configuration
+lists and SHALL refuse any other before calling the API server.
+
+#### Scenario: Namespace outside the instance
+
+- **WHEN** an instance lists `namespaces: [agents]` and a reference names `kube-system/token`
+- **THEN** the read or write is refused with a permission error naming the reference, before any API
+  call
+
+### Requirement: Kubernetes cluster named explicitly
+
+The Kubernetes adapter SHALL authenticate with the pod's service account, or with a kubeconfig file
+and a context that are both named in the configuration. It SHALL NOT use `KUBECONFIG`,
+`~/.kube/config` or a kubeconfig's current context.
+
+#### Scenario: Kubeconfig context named explicitly
+
+- **WHEN** an instance sets `auth.method: kubeconfig` and `auth.kubeconfig` without `auth.context`
+- **THEN** configuration validation fails naming `auth.context`
+- **AND** with a context named, scrim connects to that context's cluster even when the file's
+  current context and `KUBECONFIG` point elsewhere
+
+### Requirement: Kubernetes source read-only by default
+
+The Kubernetes adapter SHALL be read-only unless the configuration sets `writable: true`. A read-only
+instance SHALL NOT declare write and SHALL refuse a write before any API call.
+
+#### Scenario: Read-only by default
+
+- **WHEN** an agent writes `k8s://prod/new-token` and the instance does not set `writable: true`
+- **THEN** the write is refused with an error saying the kubernetes source is read-only
+- **AND** no request reaches the API server and the caller's value is not wiped
+
+### Requirement: Kubernetes watch
+
+The Kubernetes adapter SHALL watch through the API server's metadata-only watch, resuming from the
+last resource version, and SHALL list again and report the difference when that version has expired
+or the API server was unreachable.
+
+#### Scenario: Watch survives an outage
+
+- **WHEN** the API server becomes unreachable while a watch runs and comes back
+- **THEN** a Secret created after it came back is reported as changed on the same watch
+
+### Requirement: Kubernetes labels cannot be forged
+
+The Kubernetes adapter SHALL label a Secret with `kubernetes.namespace`, `kubernetes.name` and
+`kubernetes.type`, and SHALL file its labels and annotations as `kubernetes.meta.label.<key>` and
+`kubernetes.meta.annotation.<key>`, never over a native key. Annotations whose key starts with
+`scrim.` SHALL also be reported under their own key, and write labels SHALL be stored as such
+annotations.
+
+#### Scenario: Labels cannot forge native keys
+
+- **WHEN** a Secret in namespace `dev` carries the label `kubernetes.namespace: prod`
+- **THEN** its labels hold `kubernetes.namespace: dev` and
+  `kubernetes.meta.label.kubernetes.namespace: prod`
+
+### Requirement: Kubernetes labels hold no data
+
+The Kubernetes adapter SHALL NOT read the `kubectl.kubernetes.io/last-applied-configuration`
+annotation into a label. Its metadata lookups, list and watch SHALL use requests that return no
+Secret data, and a metadata lookup SHALL report the labels a read reports.
+
+#### Scenario: Applied data stays out of labels
+
+- **WHEN** a Secret was created with `kubectl apply`, so its last-applied annotation holds its data
+- **THEN** no label key or value contains that data
+- **AND** a metadata lookup of the Secret returns the labels a read returns
+
 ### Requirement: Built-in store adapters
 
 The system SHALL ship adapters for Vaultwarden, Infisical, OpenBao, HashiCorp Vault, AWS Secrets
@@ -807,6 +1018,43 @@ matrix of every configured store.
 - **WHEN** a rule targets `env://` for `secret_gen`
 - **THEN** the call is refused with an error saying the env source is read-only
 - **AND** nothing is generated or stored
+
+### Requirement: OS keyring source
+
+The system SHALL provide a read-only `keyring` source over the OS keyring (Secret Service, Keychain,
+Credential Manager), addressed as `<instance>://<service>/<account>`. It SHALL read only the services
+its required `services` option lists, never write, unlock or prompt, and keep user-editable item
+attributes under `keyring.meta.`.
+
+#### Scenario: Read from the Secret Service
+
+- **WHEN** the login collection holds an item with attributes `service=scrim` and
+  `username=github-token`, and `services` lists `scrim`
+- **THEN** `kr://scrim/github-token` reads its value into the redaction set over an encrypted
+  session
+- **AND** `kr://browser/me` reads as not found without a call to the Secret Service, because
+  `browser` is not in `services`
+- **AND** an item with the same attributes in another collection is not visible
+
+#### Scenario: Write to the keyring refused as read-only
+
+- **WHEN** a rule targets `kr://scrim/new` for `secret_gen` or `secret_capture`
+- **THEN** the call is refused with an error saying the keyring source is read-only, before the
+  keyring is contacted
+- **AND** nothing is generated or stored
+
+#### Scenario: Locked keyring refused without prompting
+
+- **WHEN** the collection holding `kr://scrim/github-token` is locked
+- **THEN** the read, list, label lookup and health check fail at once with the locked error kind
+- **AND** no unlock is requested and the collection is still locked afterwards
+
+#### Scenario: Keyring labels cannot be forged
+
+- **WHEN** an item carries attributes named `collection` and `keyring.backend`
+- **THEN** they appear as `keyring.meta.collection` and `keyring.meta.keyring.backend`
+- **AND** `keyring.collection` and `keyring.backend` keep the values scrim derived from its
+  configuration
 
 ### Requirement: HashiCorp Vault adapter
 
@@ -1086,6 +1334,128 @@ report it as changed, so a version written in the same second as the one before 
 
 - **WHEN** a secret is rotated twice within the same second
 - **THEN** the watch reports a change after the second rotation, and the new value is read
+### Requirement: AWS Secrets Manager adapter
+
+The `awssm` adapter SHALL address a secret by its name or ARN, expose a JSON object secret as one
+field per key and any other string or binary secret as the field `value`, and select versions with
+`?version=<version-id>` and `?stage=<staging-label>`, AWSCURRENT by default. A stage no version holds
+SHALL read as not found. Listing and watch SHALL use ListSecrets and never fetch a value.
+
+#### Scenario: Previous version by stage
+
+- **WHEN** a secret has been written twice and a rule reads `aws-sm://app/db?stage=AWSPREVIOUS#token`
+- **THEN** scrim returns the first version's `token`, reports its version ID, and labels it
+  `awssm.stage.AWSPREVIOUS = true`
+
+#### Scenario: Binary and JSON secrets
+
+- **WHEN** one secret holds a binary value and another the JSON object `{"token":"...","port":5432}`
+- **THEN** the binary secret reads byte for byte as `value`, and the JSON secret reads as fields
+  `token` and `port`, the number as its JSON text
+
+#### Scenario: Rotation
+
+- **WHEN** AWSCURRENT moves to a new version of a watched secret
+- **THEN** the watch reports a change and the refresh reads the new version
+
+#### Scenario: Secret scheduled for deletion
+
+- **WHEN** a secret is scheduled for deletion
+- **THEN** it disappears from listings, a watch reports it deleted, and a read fails as not found
+
+### Requirement: AWS Secrets Manager writes
+
+An `awssm` write SHALL add a version with PutSecretValue and create a missing secret with
+CreateSecret unless `create-secrets` is off; a create-only write SHALL use CreateSecret alone.
+
+#### Scenario: Create-only write of an existing secret
+
+- **WHEN** a create-only write names a secret that exists
+- **THEN** it fails with a conflict and the secret keeps its value
+
+#### Scenario: Creation turned off
+
+- **WHEN** `create-secrets` is false and a write names a missing secret
+- **THEN** it fails as not found and nothing is created
+
+### Requirement: AWS SSM Parameter Store adapter
+
+The `ssm` adapter SHALL address a parameter by its name without the leading slash, expose its value
+as the field `value` (SecureString decrypted), and select versions with `?version=<n>`,
+`?label=<label>` or the native `:<n>` and `:<label>` suffixes. Listing SHALL follow the hierarchy
+through DescribeParameters without fetching values. A write SHALL create a parameter of the
+configured type, or add a version that keeps an existing parameter's type.
+
+#### Scenario: Labelled version
+
+- **WHEN** version 1 of `/app/db` carries the label `stable` and version 2 is current
+- **THEN** `aws-ssm://app/db?label=stable` and `aws-ssm://app/db:stable` read version 1, and
+  `aws-ssm://app/db:missing` fails as not found
+
+#### Scenario: Update keeps the type
+
+- **WHEN** scrim writes a new value to an existing `String` parameter while `parameter-type` is
+  `SecureString`
+- **THEN** the parameter gets a new version and stays a `String`
+
+### Requirement: AWS adapters authenticate with ambient identity
+
+The AWS adapters SHALL find credentials through the AWS SDK default chain (environment, shared
+config profile, web identity token, container credentials, instance metadata), MAY assume a
+configured IAM role on top, and SHALL accept static access keys only as secret references. They
+SHALL never log a credential, and SHALL add the secret access key and session token they sign with to
+the redaction set.
+
+#### Scenario: Credentials from the environment
+
+- **WHEN** an `awssm` instance has no credential options and the environment holds access keys
+- **THEN** its requests are signed with those keys, and the secret key is in the redaction set
+
+#### Scenario: Assumed role
+
+- **WHEN** an instance sets `assume-role.arn`
+- **THEN** scrim calls STS AssumeRole with the configured session name and external ID and signs
+  with the session credentials, refreshing them before they expire
+
+### Requirement: AWS native labels
+
+The AWS adapters SHALL label secrets with AWS's own attributes under `awssm.<attr>` and `ssm.<attr>`
+and resource tags under `<kind>.meta.<key>`, and SHALL return the same labels without a value
+through DescribeSecret, or DescribeParameters and ListTagsForResource. A tag SHALL NOT set a native
+label, and only tags under `scrim.` SHALL set a label outside the `meta` namespace.
+
+#### Scenario: Tag cannot forge a native label
+
+- **WHEN** a secret carries the tag `awssm.name = forged` and the tag `team = payments`
+- **THEN** its labels say `awssm.name` = its real name, `awssm.meta.awssm.name = forged` and
+  `awssm.meta.team = payments`, and no `team` label
+
+#### Scenario: Labels without the value
+
+- **WHEN** a rule needs the labels of `aws-sm://app/db`, which is in no redaction set
+- **THEN** scrim calls DescribeSecret only, and the labels equal those a read reports
+
+### Requirement: AWS write labels become tags
+
+Labels passed with an AWS write SHALL be stored as resource tags, with characters AWS refuses in a
+tag value encoded, and `scrim.*` tags SHALL be decoded on read.
+
+#### Scenario: Host binding round trip
+
+- **WHEN** scrim writes a secret with the label `scrim.hosts = a.example,b.example`
+- **THEN** the tag holds `a.example=2Cb.example` and a later read labels the secret
+  `scrim.hosts = a.example,b.example`
+
+### Requirement: AWS write errors carry no value
+
+An error from an AWS write SHALL keep AWS's error code and drop AWS's message, since validation
+messages can quote the request; read, list and health errors MAY keep the message.
+
+#### Scenario: Validation error echoing the value
+
+- **WHEN** AWS refuses a PutParameter with a ValidationException whose message quotes the value
+- **THEN** the write fails as unsupported, the error names `ValidationException`, and no part of
+  the error chain contains the value
 
 ### Requirement: Adapter conformance suite
 
