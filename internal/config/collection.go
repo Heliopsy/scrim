@@ -49,6 +49,10 @@ type CollectionSpec struct {
 	// Validate, if set, checks one instance. It must not include secret
 	// values in its errors.
 	Validate func(Instance) error
+	// ValidateAll, if set, checks the instances together, for rules between
+	// them. It runs after Validate and before any secret field is resolved.
+	// It must not include secret values in its errors.
+	ValidateAll func([]Instance) error
 	// FieldSchemas are JSON schemas of further instance fields, for the
 	// generated schema.
 	FieldSchemas map[string]map[string]any
@@ -514,6 +518,15 @@ func (c *Config) checkCollections() []error {
 				if err := col.Validate(*inst.clone()); err != nil {
 					errs = append(errs, &Problem{Key: col.Key + "." + name, Source: instSrc, Err: err})
 				}
+			}
+		}
+		if col.ValidateAll != nil && len(st) > 0 {
+			all := make([]Instance, 0, len(st))
+			for _, name := range slices.Sorted(maps.Keys(st)) {
+				all = append(all, *st[name].clone())
+			}
+			if err := col.ValidateAll(all); err != nil {
+				errs = append(errs, &Problem{Key: col.Key, Err: err})
 			}
 		}
 	}

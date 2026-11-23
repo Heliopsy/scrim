@@ -247,6 +247,10 @@ func TestConformanceInfisical(t *testing.T) {
 		testLabelsLive(t, adm, main, newInf(t))
 	})
 
+	t.Run("AgentOIDC", func(t *testing.T) {
+		testAgentOIDC(t, adm, main, other, newInf)
+	})
+
 	t.Run("UnknownEnvironment", func(t *testing.T) {
 		a := newInf(t)
 		defer func() { _ = a.Close() }()

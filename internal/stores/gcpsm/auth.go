@@ -46,8 +46,10 @@ var allowedTypes = []google.CredentialsType{
 type authenticator struct {
 	s    *settings
 	http *http.Client
-	// iam is the IAM Credentials endpoint (tests point it at a fake).
+	// iam is the IAM Credentials endpoint and sts Google's STS, used for
+	// agents' own identities (tests point them at a fake).
 	iam string
+	sts string
 
 	mu      sync.Mutex
 	ts      oauth2.TokenSource
@@ -62,7 +64,7 @@ type authenticator struct {
 }
 
 func newAuthenticator(s *settings, hc *http.Client) *authenticator {
-	return &authenticator{s: s, http: hc, iam: iamCredentialsEndpoint}
+	return &authenticator{s: s, http: hc, iam: iamCredentialsEndpoint, sts: stsEndpoint}
 }
 
 // authError is a failure to obtain a token, classified, without the

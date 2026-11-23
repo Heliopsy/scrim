@@ -51,6 +51,7 @@ import (
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/dataplane"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
+	"github.com/heliopsy/scrim/internal/identity/issuer"
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/placeholder"
@@ -116,6 +117,8 @@ type Addrs struct {
 	Databases map[string]string `json:"databases,omitempty"`
 	// Edge is the edge listener agent pods' forwarders connect to, host:port.
 	Edge string `json:"edge,omitempty"`
+	// Issuer is the identity issuer's discovery and JWKS listener, host:port.
+	Issuer string `json:"issuer,omitempty"`
 }
 
 // Info describes a running daemon. It holds no secret.
@@ -186,12 +189,16 @@ type Daemon struct {
 	// kubeTokens are the service account tokens scrim verified, redacted
 	// until they expire.
 	kubeTokens *sessionTokens
-	pusher     *pusher
-	log        *slog.Logger
-	started    time.Time
-	capture    string
-	infoPath   string
-	trust      func() string
+	// issued are the identity tokens scrim signed for agents, redacted
+	// until they expire; issuer signs them (nil when it is off).
+	issued   *sessionTokens
+	issuer   *issuer.Issuer
+	pusher   *pusher
+	log      *slog.Logger
+	started  time.Time
+	capture  string
+	infoPath string
+	trust    func() string
 
 	// project are the values scrim run found in each session's project
 	// files, redacted until the session ends.
@@ -311,23 +318,45 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	d.cleanup = append(d.cleanup, d.tokens.close)
 	d.kubeTokens = newSessionTokens(kubeTokenStore, func() { d.pusher.Trigger() })
 	d.cleanup = append(d.cleanup, d.kubeTokens.close)
+	d.issued = newSessionTokens(issuedTokenStore, func() { d.pusher.Trigger() })
+	d.cleanup = append(d.cleanup, d.issued.close)
+	d.issuer, err = issuer.FromConfig(cfg, nil, obs.WithComponent(a.Log, "issuer"), d.issued.addValue)
+	if err != nil {
+		return nil, err
+	}
+	if d.issuer != nil {
+		d.cleanup = append(d.cleanup, d.issuer.Close)
+	}
 	d.project = newProjectValues(d.pushNow)
 	d.cleanup = append(d.cleanup, d.project.close)
-	values := make([]ValueSource, 0, len(a.Refreshers)+3)
+	values := make([]ValueSource, 0, len(a.Refreshers)+5)
 	for _, r := range a.Refreshers {
 		values = append(values, r)
 	}
-	values = append(values, d.tokens, d.kubeTokens, d.project, databasePasswords{cfg: a.Config.Current})
+	values = append(values, d.tokens, d.kubeTokens, d.issued, d.project, databasePasswords{cfg: a.Config.Current})
 	pp := a.PolicyParts
 	// Per-agent store identity: the gate checks it on every use of a
 	// governed store's secrets, and the snapshot sends those uses to the
 	// control plane.
-	access, err := agentstore.New(agentstore.Options{
+	ao := agentstore.Options{
 		Login: agentstore.Login.Get(cfg), Credentials: agentstore.Credentials.Get(cfg), Lookup: a.Stores.Lookup,
 		Resolve: func(ctx context.Context, ref config.SecretRef) (secret.Value, error) {
 			return a.Config.Current().ResolveRef(ctx, ref)
 		},
-	})
+		RequireIssuer: true,
+		Adapter: func(name string) (stores.Adapter, bool) {
+			for _, ad := range a.Stores.Adapters() {
+				if ad.Name() == name {
+					return ad, true
+				}
+			}
+			return nil, false
+		},
+	}
+	if d.issuer != nil {
+		ao.Issuer = d.issuer
+	}
+	access, err := agentstore.New(ao)
 	if err != nil {
 		return nil, err
 	}
@@ -401,6 +430,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		return nil, err
 	}
 	d.runtime.SetSessionValues(d.project.set, func(id string) {
+		d.sessionEnded(id)
 		if d.project.end(id) {
 			d.pusher.Trigger()
 		}
@@ -424,8 +454,12 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	}
 	d.setDataPlaneAddrs(nil)
 
-	// Everything is bound: start the loops.
+	// Everything is bound: start the loops. The catalog's secrets are part
+	// of each store's first load; warmCatalog logs those that cannot be
+	// read.
+	d.keepCatalog(d.catalog.Current())
 	a.Start(runCtx)
+	go d.warmCatalog(runCtx)
 	d.watchFirstLoads(runCtx)
 	d.goRun("policy", func() error { a.RunPolicy(runCtx); return nil })
 	d.goRun("catalog", func() error { return ignoreCanceled(d.catalog.Run(runCtx)) })
@@ -436,6 +470,9 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	d.goRun("addresses", func() error { d.watchReady(runCtx); return nil })
 	if o.CARun != nil {
 		d.goRun("ca", func() error { o.CARun(runCtx, d.pusher.Trigger); return nil })
+	}
+	if d.issuer != nil {
+		d.goRun("issuer", func() error { d.issuer.Run(runCtx); return nil })
 	}
 	if err := d.writeInfo(); err != nil {
 		d.log.Warn("could not write the daemon info file; scrim run finds the daemon through the admin socket only", "err", err)
@@ -485,8 +522,37 @@ func (d *Daemon) subscribe(ctx context.Context) {
 	a.PolicyParts.BreakGlass.OnChange(func(bool) { d.pusher.Trigger() })
 	d.cleanup = append(d.cleanup, a.Config.Subscribe(func(old, cur *config.Config) {
 		d.reloadKeys(ctx, old, cur)
+		d.warnUnloadedProviderRefs(cur)
 		d.pusher.Trigger()
 	}))
+}
+
+// warnUnloadedProviderRefs names, by setting, every cloud provider
+// credential no store loads. Provider credentials become redact targets at
+// start; one added by a reload is loaded after a restart, and until then its
+// route answers credential_unavailable. The log names the setting and the
+// store, not the reference.
+func (d *Daemon) warnUnloadedProviderRefs(cfg *config.Config) {
+	for _, p := range CloudProviders(cfg) {
+		for field, ref := range p.refFields() {
+			setting := providersKey + "." + p.Name + "." + field
+			r, err := d.refresherFor(ref)
+			if err != nil {
+				d.log.Warn("cloud provider credential names no configured store", "setting", setting)
+				continue
+			}
+			covered := false
+			for _, ts := range r.Status().Targets {
+				if t, err := refresh.ParseTarget(ts.Target); err == nil && t.Covers(ref.Secret()) {
+					covered = true
+					break
+				}
+			}
+			if !covered {
+				d.log.Warn("cloud provider credential added by a reload is loaded after a restart", "setting", setting, "store", r.Store())
+			}
+		}
+	}
 }
 
 // reloadKeys loads the placeholder keys again when their configuration
@@ -516,18 +582,49 @@ func keysEqual(a, b []config.Instance) bool {
 	return true
 }
 
-// warmCatalog reads, into the redaction set, every catalog-bound secret
-// that no store's redact list loads, so it can be redacted and injected.
-// Reads happen here, off the request path; a failure is retried on the next
-// catalog change or refresh.
+// keepCatalog hands each store's refresher the catalog-bound secrets it
+// holds, so every refresh reads them like redact targets: they stay in the
+// redaction set and injectable for as long as the catalog binds them.
+// Before the stores start it makes them part of the first load.
+func (d *Daemon) keepCatalog(cat *catalog.Catalog) {
+	keep := make(map[*refresh.Refresher][]stores.Ref, len(d.app.Refreshers))
+	for _, r := range d.app.Refreshers {
+		keep[r] = nil
+	}
+	if cat != nil {
+		for _, e := range cat.Entries() {
+			if !e.OK || e.Binding.Ref.IsZero() {
+				continue
+			}
+			if r, err := d.refresherFor(e.Binding.Ref); err == nil {
+				keep[r] = append(keep[r], e.Binding.Ref)
+			}
+		}
+	}
+	for r, refs := range keep {
+		r.Keep(refs)
+	}
+}
+
+// warmCatalog keeps the catalog-bound secrets with their stores and reads,
+// into the redaction set, every one that no store holds a current value of
+// yet, so it can be redacted and injected before the next refresh. Reads
+// happen here, off the request path; a failure is retried by the next
+// refresh.
 func (d *Daemon) warmCatalog(ctx context.Context) {
 	cat := d.catalog.Current()
+	d.keepCatalog(cat)
 	if cat == nil {
 		return
 	}
 	have := map[stores.Ref]bool{}
 	for _, r := range d.app.Refreshers {
-		r.EachValue(func(s refresh.Source, _ secret.Value) { have[s.Ref] = true; have[s.Ref.Secret()] = true })
+		r.EachValue(func(s refresh.Source, _ secret.Value) {
+			if !s.Retained && !s.Pending {
+				have[s.Ref] = true
+				have[s.Ref.Secret()] = true
+			}
+		})
 	}
 	for _, e := range cat.Entries() {
 		if !e.OK || e.Binding.Ref.IsZero() || have[e.Binding.Ref] || have[e.Binding.Ref.Secret()] {
@@ -589,7 +686,28 @@ func (d *Daemon) listenControl(cfg *config.Config) error {
 		d.addrs.Decision = ln.Addr().String()
 		d.serve("decision", ln, dm, nil)
 	}
+	if err := d.listenIssuer(cfg); err != nil {
+		return err
+	}
 	return d.listenMetrics(cfg)
+}
+
+// listenIssuer binds identity.issuer.listen, which serves the identity
+// issuer's discovery document and JWKS (public keys only) and nothing else.
+func (d *Daemon) listenIssuer(cfg *config.Config) error {
+	if d.issuer == nil {
+		return nil
+	}
+	ln, err := net.Listen("tcp", issuer.ListenSetting.Get(cfg))
+	if err != nil {
+		return fmt.Errorf("%s: %w", issuer.ListenSetting.Name(), err)
+	}
+	d.addrs.Issuer = ln.Addr().String()
+	d.serve("issuer", ln, d.issuer.Handler(), nil)
+	signing, published := d.issuer.KeyIDs()
+	d.log.Info("identity issuer serving discovery and JWKS", "listen", d.addrs.Issuer, "issuer", d.issuer.URL(),
+		"signing_kid", signing, "published_keys", len(published))
+	return nil
 }
 
 // listenMetrics binds metrics.listen. With metrics.enabled it serves the
@@ -773,13 +891,29 @@ func (d *Daemon) sweepSessions(ctx context.Context) {
 			s, err := d.runtime.Sessions.Get(ctx, id)
 			return err == nil && s.Active(time.Now())
 		}
-		if a, b, c := d.tokens.prune(), d.kubeTokens.prune(), d.project.prune(active); a || b || c {
+		if a, b, c, e := d.tokens.prune(), d.kubeTokens.prune(), d.issued.prune(), d.project.prune(active); a || b || c || e {
 			d.pusher.Trigger()
 		}
 		if gone, err := d.runtime.Sessions.Sweep(ctx); err != nil {
 			d.log.Warn("session sweep failed", "err", err)
 		} else if len(gone) > 0 {
+			for _, s := range gone {
+				d.sessionEnded(s.ID)
+			}
 			d.log.Info("revoked sessions whose process exited", "count", len(gone))
+		}
+	}
+}
+
+// sessionEnded drops what scrim holds for a session that ended: identity
+// tokens and store credentials cached for it are never used again.
+func (d *Daemon) sessionEnded(id string) {
+	if d.issuer != nil {
+		d.issuer.Forget(id)
+	}
+	for _, a := range d.app.Stores.Adapters() {
+		if f, ok := a.(stores.SessionForgetter); ok {
+			f.ForgetSession(id)
 		}
 	}
 }

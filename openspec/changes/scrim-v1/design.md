@@ -412,8 +412,119 @@ namespace, service account and pod as labels. When a store checks each agent's o
 (`identity.store-login`, `identity.store-credentials`), the control plane adds a residual rule in
 front of the snapshot so every injection or restore of that store's secrets is asked about, and
 after scrim's rules allow it asks the store, as the agent, whether it may read the path (OpenBao
-`sys/capabilities-self`, after a Kubernetes login with the pod's own token for passthrough). The
-value is still loaded with scrim's identity, so redaction never depends on the agent's.
+`sys/capabilities-self`, after a Kubernetes login with the pod's own token for passthrough; D16 for
+token exchange). The value is still loaded with scrim's identity, so redaction never depends on the
+agent's.
+
+### D15. scrim signs its own identity tokens
+
+Stores and clouds that federate (OpenBao and Vault JWT auth, AWS `AssumeRoleWithWebIdentity`,
+Google workload identity federation, Entra ID federated credentials, Infisical OIDC) all take a JWT
+from an issuer they trust through its discovery document. On a laptop or for `scrim run` sessions
+there is no such issuer for an agent, so scrim is one (`internal/identity/issuer`):
+
+- **Tokens.** RS256, one audience each, `sub` = `agent:<name>` (or `k8s:<name>`), stable across
+  sessions so a trust policy can name it exactly (Entra ID matches the subject verbatim), with
+  `agent`, `agent_kind`, `session`, `host` or `namespace`/`service_account`/`pod`, and `profile`
+  claims to bind roles on. Lifetime `identity.issuer.token-ttl` (10 minutes), capped at the session's
+  end. Minted only for an identity scrim resolved from the transport and only for scrim's own use
+  toward a store, never returned to an agent. Each new token goes into the redaction set (store
+  `scrim-issuer`, redaction only) until it expires; a token is reused for the same claims while two
+  thirds of its life remain, so a burst of store calls is one snapshot push, not many.
+- **Why RS256 and not ES256.** Entra ID accepts RSA keys only; every other verifier takes both.
+  One algorithm keeps the JWKS and the docs simple. Keys are 2048 bits, like the issuers of the
+  managed Kubernetes services.
+- **Keys and rotation.** Generated keys live in `identity.issuer.key-dir` (0700, `keys.json` plus
+  one PKCS#8 file per key, `keys.json` replaced atomically as the commit point, like the CA). The
+  key set is always current, next and retiring: the next key is published a full
+  `identity.issuer.rotate-every` before it signs, so any JWKS a verifier cached since the last
+  rotation already holds it; a replaced key stays published for one token lifetime plus five minutes
+  of leeway, then its file is deleted. Key IDs are RFC 7638 thumbprints. A private key never
+  formats as anything but its key ID.
+- **Replicas.** Each replica generating its own keys would publish a different JWKS behind one URL.
+  Replicas instead share operator-managed keys by reference (`identity.issuer.signing-keys`,
+  first signs, all published); the operator rotates by prepending a new key, waiting a token
+  lifetime plus the verifiers' JWKS cache, then removing the old one. Private keys are values, so
+  they are not put in the state backend (D9).
+- **Serving.** A listener of its own (`identity.issuer.listen`) serves the discovery document and
+  JWKS and nothing else, so exposing it to stores exposes no other API. The URL must be https or
+  loopback http; plain http elsewhere is the weakening `identity.issuer.insecure-http`, because a
+  verifier that fetches keys over plain http can be handed an attacker's keys.
+
+### D16. Per-agent store identity by token exchange
+
+`identity.store-login` names one method per store. Kubernetes passthrough (D14) presents the pod's
+own token; the exchange methods present a token scrim's issuer (D15) signs for the agent, with the
+store's audience, and trade it for a store credential: an OpenBao or Vault login token (`jwt`),
+assumed-role keys (`aws-web-identity`, session name `<agent>.<session>` so CloudTrail names the
+agent), a federated or impersonated Google access token (`gcp-workload-identity`), an Entra ID
+access token for the vault (`azure-federated`), or an Infisical access token (`infisical-oidc`).
+Role names, ARNs, client and identity IDs are templates over `{agent}`, `{agent_slug}`,
+`{namespace}` and `{service_account}`.
+
+- **Where the exchange lives.** `agentstore` renders the options for the caller and hands the
+  adapter a `stores.Federation` with a minter instead of a token, so a token is signed (and pushed
+  into the redaction set) only when the adapter has no cached credential. Adapters cache by a key
+  covering the agent principal, pod and options, for two thirds of the credential's life, and wipe
+  a session's entries when it ends (`stores.SessionForgetter`). An adapter declares the methods it
+  takes (`stores.AgentFederation`); scrim refuses to start on a method the store does not take, or
+  on an exchange method with the issuer off, rather than refusing every use later.
+- **How the store decides.** The check runs after scrim's rules allow a use, so neither side can
+  widen the other. Where the store can answer what an identity may do, scrim asks without reading:
+  Vault and OpenBao `sys/capabilities-self` on the API path, Google `testIamPermissions`
+  (`secretmanager.versions.access`). AWS, Azure Key Vault and Infisical have no such call that
+  covers resource policies, KMS keys and access policies, so the check is the read itself with the
+  agent's credential, and the value is wiped unread. The alternative, a policy simulation with
+  scrim's own credential (`iam:SimulatePrincipalPolicy`), would need broad IAM read rights for
+  scrim and still miss resource and key policies. The extra read happens only for a use scrim's
+  rules already allowed, of a value scrim already holds for redaction, and it puts the agent's
+  session in the store's audit.
+- **Writes.** The gate checks reads (inject and restore). Of the stores above only OpenBao, Vault
+  and Google can check a write without performing it; the others report it as unsupported.
+
+### D15. Plugins are processes speaking the boundary protocol over an inherited socket
+
+A store or notifier plugin is a separate executable scrim starts with one end of a socketpair as fd 3
+and talks gRPC to, schema in `proto/scrim/plugin/v1`, the same shape as the data plane boundary
+(D12): the plugin serves, scrim is the only client, nothing else can reach the socket, and every
+message carries the protocol version. The lifecycle is Handshake (protocol, kind, capabilities),
+Configure (options as JSON, credentials resolved by scrim), then the kind's own service. Validation
+runs a throwaway copy with ValidateConfig and no credential values, called from the collection's
+validate hook (`stores` with `kind: plugin`, `notify.plugins`), so `scrim config validate` reports a
+plugin's own option errors.
+
+Alternatives considered:
+
+- **Go `plugin` packages or WebAssembly in process.** Rejected: a plugin bug or crash would be a
+  crash of the process that holds every value, and Go plugins need the exact toolchain and module
+  versions of the scrim build. A separate process confines a fault to one store.
+- **JSON lines over stdio.** Simpler to write by hand in any language, but Go's encoder copies
+  values into pooled buffers nobody wipes, a stray `print` in the plugin corrupts the channel, and a
+  stream needs its own framing for watch. gRPC has generated servers in every common language, the
+  repository already generates and checks protobuf code, and a codec can zero the messages that
+  carry values.
+- **A Unix socket the plugin listens on (go-plugin style).** Rejected: a path in the file system
+  is a second thing to protect and clean up; an inherited socketpair has no name.
+
+The plugin inherits nothing but fd 3, stdin and stdout on `/dev/null`, stderr relayed into the
+scrubbing log, and an environment of its own `env` map plus `SCRIM_PLUGIN_*`, so it sees only the
+configuration of its instance. Before every start scrim checks the binary: absolute path, regular
+executable, it and every directory above it owned by root or scrim's user and writable by no one
+else (sticky directories excepted), and an optional pinned SHA-256. The check and the exec are not
+atomic; the ownership rule is what makes that safe.
+
+scrim fails closed on every fault: a start that does not complete within `start-timeout`, a
+protocol or kind mismatch, an exit, a call past `timeout` (the process group is killed), or an
+answer out of contract (another path, a listing outside the prefix, an unconfirmed watch) fails the
+call as unavailable, naming the plugin and what happened. A plugin's status message is never shown,
+only its code, because a store's own message can echo request data. The next call restarts the
+plugin after a backoff that doubles from 1s to 30s, re-resolving the credentials; the refresher keeps
+the last known values meanwhile, as for any outage. Capabilities that change across a restart stop
+it. The Go SDK in `pkg/plugin` (public, so plugins live outside this repository) zeroes credentials
+and values once used; the codec zeroes the copies scrim makes and the marshalled bytes, with gRPC's
+transport buffers out of reach as at the data plane boundary. Store plugins pass the store
+conformance suite and notifier plugins the notifier contract suite (`internal/notify/notifytest`)
+through the bridge, against the example plugins in `examples/plugins`.
 
 ## Risks / Trade-offs
 

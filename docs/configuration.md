@@ -153,6 +153,14 @@ A reference that cannot be resolved (missing file, unset variable, empty value, 
 start-up or rejects the reload, naming the setting and the reference. scrim never falls back to an
 empty value.
 
+A store reference is read from the store instance its scheme names each time the configuration is
+built: at start-up, so the store has to be reachable then, and on every reload, so a rotated value
+applies with the next reload (or the next restart, for a setting that needs one). Commands that
+send one of these values to the daemon or a backend (`scrim approve` and the other admin commands,
+`scrim status`, `scrim ca` with the operator CA key) read it from the store themselves. A store's
+own credentials can be references into another store, but not into the store itself or around a
+cycle of stores; see [stores](stores/README.md).
+
 A literal value is accepted with a warning naming the setting, except for settings marked
 "literals rejected" in the reference, which refuse it. Outputs never contain a resolved value:
 `scrim config show` prints `[scrim:redacted]` with the reference form, and a literal appears as
@@ -160,7 +168,8 @@ A literal value is accepted with a warning naming the setting, except for settin
 `***@`.
 
 `scrim config validate` resolves `env:`, `file:` and `cred:` references and checks store references
-for syntax only; it does not contact stores.
+for syntax, and store credentials for references into themselves or cycles; it does not contact
+stores.
 
 ## Profiles
 
@@ -290,6 +299,13 @@ is out of date.
 | [`exec.user`](#execuser) | string | `""` | hot |
 | [`grants.default-ttl`](#grantsdefault-ttl) | duration | `30m0s` | hot |
 | [`grants.max-ttl`](#grantsmax-ttl) | duration | `8h0m0s` | hot |
+| [`identity.issuer.insecure-http`](#identityissuerinsecure-http) | bool | `false` | restart required |
+| [`identity.issuer.key-dir`](#identityissuerkey-dir) | string | `""` | restart required |
+| [`identity.issuer.listen`](#identityissuerlisten) | string | `""` | restart required |
+| [`identity.issuer.rotate-every`](#identityissuerrotate-every) | duration | `24h0m0s` | restart required |
+| [`identity.issuer.signing-keys`](#identityissuersigning-keys) | secret-ref | empty | restart required |
+| [`identity.issuer.token-ttl`](#identityissuertoken-ttl) | duration | `10m0s` | restart required |
+| [`identity.issuer.url`](#identityissuerurl) | string | `""` | restart required |
 | [`identity.kubernetes.agents`](#identitykubernetesagents) | map | `{}` | restart required |
 | [`identity.kubernetes.api-server`](#identitykubernetesapi-server) | string | `""` | restart required |
 | [`identity.kubernetes.audience`](#identitykubernetesaudience) | string | `scrim` | restart required |
@@ -405,6 +421,7 @@ is out of date.
 | [`catalog.entries.<name>.*`](#catalogentriesname) | collection | empty | hot |
 | [`databases.<name>.*`](#databasesname) | collection | empty | restart required |
 | [`exec.commands.<name>.*`](#execcommandsname) | collection | empty | hot |
+| [`notify.plugins.<name>.*`](#notifypluginsname) | collection | empty | restart required |
 | [`providers.<name>.*`](#providersname) | collection | empty | hot |
 | [`redaction.placeholder-keys.<name>.*`](#redactionplaceholder-keysname) | collection | empty | hot |
 | [`restore.tools.<name>.*`](#restoretoolsname) | collection | empty | hot |
@@ -444,6 +461,18 @@ Commands the exec broker may run with secrets, by the name agents call them: `pa
 | Environment | `SCRIM_EXEC_COMMANDS` (JSON object of instances, replaces the collection); `SCRIM_EXEC_COMMANDS_<NAME>_<FIELD>` for one field |
 | Required fields | `path`, `secrets` |
 | Reload | hot |
+
+### `notify.plugins.<name>`
+
+Notifier plugins by name (docs/plugins.md): `command` (absolute path of the plugin binary, owned by root or scrim's user and writable by no one else), `args`, `env` (the plugin's environment; never a credential), `options` (the plugin's own settings, validated by the plugin), `sha256` (pins the binary), `timeout` (per delivery, default 10s), `start-timeout` (default 5s), and the credential fields `token`, `password`, `secret` and `credentials` (references, resolved at every start and sent only to the plugin).
+
+| | |
+|---|---|
+| Type | collection of named instances (names: lower-case words with dashes) |
+| Environment | `SCRIM_NOTIFY_PLUGINS` (JSON object of instances, replaces the collection); `SCRIM_NOTIFY_PLUGINS_<NAME>_<FIELD>` for one field |
+| Required fields | `command` |
+| Secret fields | `token`, `password`, `secret`, `credentials` (references; a literal is warned about) |
+| Reload | restart required |
 
 ### `providers.<name>`
 
@@ -1485,6 +1514,91 @@ Longest grant any rule or approver can create. A rule's grant.max_ttl can only l
 
 ### identity
 
+#### `identity.issuer.insecure-http`
+
+Allow an http:// identity.issuer.url on a host other than loopback. Anyone on the path between a store and scrim could then substitute signing keys, and the store would trust tokens they sign.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_IDENTITY_ISSUER_INSECURE_HTTP` |
+| Flag | none |
+| Reload | restart required |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `identity.issuer.key-dir`
+
+Directory of the issuer's generated signing keys and their rotation state. Empty means $XDG_STATE_HOME/scrim/issuer (~/.local/state/scrim/issuer). Created with mode 0700. Not used with identity.issuer.signing-keys.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_IDENTITY_ISSUER_KEY_DIR` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.issuer.listen`
+
+TCP address that serves the issuer's discovery document and JWKS, and nothing else. Required when identity.issuer.url is set.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_IDENTITY_ISSUER_LISTEN` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.issuer.rotate-every`
+
+How often a generated signing key is replaced. The next key is published one period before it signs, and a replaced key stays published until the last token it signed has expired. At least 1h.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `24h0m0s` |
+| Environment | `SCRIM_IDENTITY_ISSUER_ROTATE_EVERY` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.issuer.signing-keys`
+
+Reference to operator-managed signing keys: one or more PKCS#8 PEM RSA private keys (2048 bits or more). The first signs and all are published, so replicas that share the reference agree on the JWKS. scrim does not rotate these; empty means scrim generates and rotates its own keys in identity.issuer.key-dir.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; literals rejected) |
+| Default | empty |
+| Environment | `SCRIM_IDENTITY_ISSUER_SIGNING_KEYS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.issuer.token-ttl`
+
+Lifetime of each identity token, never past the end of the session it is minted for. Between 1m and 1h.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `10m0s` |
+| Environment | `SCRIM_IDENTITY_ISSUER_TOKEN_TTL` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.issuer.url`
+
+Issuer URL of the identity tokens scrim signs for agents (the iss claim). Stores and clouds fetch <url>/.well-known/openid-configuration and the JWKS it names from here, so it must reach identity.issuer.listen, usually through a TLS reverse proxy. https, or http on a loopback host; plain http elsewhere needs identity.issuer.insecure-http. Empty turns the issuer off.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_IDENTITY_ISSUER_URL` |
+| Flag | none |
+| Reload | restart required |
+
 #### `identity.kubernetes.agents`
 
 Agents by service account: agent name to space-separated selectors sa:NAMESPACE/NAME (globs allowed), scope:SCOPE, label:K=V. A service account no rule maps is the agent NAMESPACE/NAME, or unknown with identity.kubernetes.unmapped: unknown.
@@ -1609,7 +1723,7 @@ Static per-agent store credentials: `<store>/<agent>` to a reference (env:, file
 
 #### `identity.store-login`
 
-Per-agent store login, by store instance: `kubernetes role:<template> [mount:<path>]` logs in to the store (OpenBao Kubernetes auth) with the calling pod's own service account token at the role the template names; {namespace}, {service_account} and {agent} are replaced. A store listed here refuses agents that have no usable identity of their own.
+Per-agent store login, by store instance. `kubernetes role:<template> [mount:<path>]` logs in to the store (OpenBao Kubernetes auth) with the calling pod's own service account token. The token exchange methods present an identity token scrim's issuer (identity.issuer.url) signs for the agent: `jwt role:<template> audience:<aud> [mount:jwt]` (Vault and OpenBao JWT auth), `aws-web-identity role-arn:<template> [audience:sts.amazonaws.com] [duration:15m]`, `gcp-workload-identity provider://iam.googleapis.com/projects/<n>/locations/global/workloadIdentityPools/<pool>/providers/<p> [service-account:<template>] [audience:<aud>]`, `azure-federated tenant:<id> client-id:<template> [audience:api://AzureADTokenExchange] [authority:<url>]` and `infisical-oidc identity-id:<template> audience:<aud>`. In templates {agent}, {agent_slug}, {namespace} and {service_account} are replaced. A store listed here refuses agents that have no usable identity of their own.
 
 | | |
 |---|---|

@@ -914,6 +914,72 @@
     "identity": {
       "additionalProperties": false,
       "properties": {
+        "issuer": {
+          "additionalProperties": false,
+          "properties": {
+            "insecure-http": {
+              "default": false,
+              "description": "Allow an http:// identity.issuer.url on a host other than loopback. Anyone on the path between a store and scrim could then substitute signing keys, and the store would trust tokens they sign.",
+              "type": "boolean",
+              "x-scrim-env": "SCRIM_IDENTITY_ISSUER_INSECURE_HTTP",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": true
+            },
+            "key-dir": {
+              "default": "",
+              "description": "Directory of the issuer's generated signing keys and their rotation state. Empty means $XDG_STATE_HOME/scrim/issuer (~/.local/state/scrim/issuer). Created with mode 0700. Not used with identity.issuer.signing-keys.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_ISSUER_KEY_DIR",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "listen": {
+              "default": "",
+              "description": "TCP address that serves the issuer's discovery document and JWKS, and nothing else. Required when identity.issuer.url is set.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_ISSUER_LISTEN",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "rotate-every": {
+              "default": "24h0m0s",
+              "description": "How often a generated signing key is replaced. The next key is published one period before it signs, and a replaced key stays published until the last token it signed has expired. At least 1h.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_ISSUER_ROTATE_EVERY",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "signing-keys": {
+              "default": "",
+              "description": "Reference to operator-managed signing keys: one or more PKCS#8 PEM RSA private keys (2048 bits or more). The first signs and all are published, so replicas that share the reference agree on the JWKS. scrim does not rotate these; empty means scrim generates and rotates its own keys in identity.issuer.key-dir.",
+              "pattern": "^$|^(env:[A-Za-z_][A-Za-z0-9_]*|file:/.*|cred:[A-Za-z0-9_@.:-]+|[a-z][a-z0-9+.-]*://[^#].*)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_ISSUER_SIGNING_KEYS",
+              "x-scrim-restart-required": true,
+              "x-scrim-secret-ref": true,
+              "x-scrim-weakening": false
+            },
+            "token-ttl": {
+              "default": "10m0s",
+              "description": "Lifetime of each identity token, never past the end of the session it is minted for. Between 1m and 1h.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_ISSUER_TOKEN_TTL",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "url": {
+              "default": "",
+              "description": "Issuer URL of the identity tokens scrim signs for agents (the iss claim). Stores and clouds fetch <url>/.well-known/openid-configuration and the JWKS it names from here, so it must reach identity.issuer.listen, usually through a TLS reverse proxy. https, or http on a loopback host; plain http elsewhere needs identity.issuer.insecure-http. Empty turns the issuer off.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_ISSUER_URL",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
         "kubernetes": {
           "additionalProperties": false,
           "properties": {
@@ -1019,7 +1085,7 @@
             "type": "string"
           },
           "default": {},
-          "description": "Per-agent store login, by store instance: `kubernetes role:<template> [mount:<path>]` logs in to the store (OpenBao Kubernetes auth) with the calling pod's own service account token at the role the template names; {namespace}, {service_account} and {agent} are replaced. A store listed here refuses agents that have no usable identity of their own.",
+          "description": "Per-agent store login, by store instance. `kubernetes role:<template> [mount:<path>]` logs in to the store (OpenBao Kubernetes auth) with the calling pod's own service account token. The token exchange methods present an identity token scrim's issuer (identity.issuer.url) signs for the agent: `jwt role:<template> audience:<aud> [mount:jwt]` (Vault and OpenBao JWT auth), `aws-web-identity role-arn:<template> [audience:sts.amazonaws.com] [duration:15m]`, `gcp-workload-identity provider://iam.googleapis.com/projects/<n>/locations/global/workloadIdentityPools/<pool>/providers/<p> [service-account:<template>] [audience:<aud>]`, `azure-federated tenant:<id> client-id:<template> [audience:api://AzureADTokenExchange] [authority:<url>]` and `infisical-oidc identity-id:<template> audience:<aud>`. In templates {agent}, {agent_slug}, {namespace} and {service_account} are replaced. A store listed here refuses agents that have no usable identity of their own.",
           "type": "object",
           "x-scrim-env": "SCRIM_IDENTITY_STORE_LOGIN",
           "x-scrim-restart-required": true,
@@ -1323,6 +1389,40 @@
             }
           },
           "type": "object"
+        },
+        "plugins": {
+          "additionalProperties": {
+            "properties": {
+              "credentials": {
+                "type": "string",
+                "x-scrim-secret-ref": true
+              },
+              "password": {
+                "type": "string",
+                "x-scrim-secret-ref": true
+              },
+              "secret": {
+                "type": "string",
+                "x-scrim-secret-ref": true
+              },
+              "token": {
+                "type": "string",
+                "x-scrim-secret-ref": true
+              }
+            },
+            "required": [
+              "command"
+            ],
+            "type": "object"
+          },
+          "description": "Notifier plugins by name (docs/plugins.md): `command` (absolute path of the plugin binary, owned by root or scrim's user and writable by no one else), `args`, `env` (the plugin's environment; never a credential), `options` (the plugin's own settings, validated by the plugin), `sha256` (pins the binary), `timeout` (per delivery, default 10s), `start-timeout` (default 5s), and the credential fields `token`, `password`, `secret` and `credentials` (references, resolved at every start and sent only to the plugin).",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+          },
+          "type": "object",
+          "x-scrim-collection": true,
+          "x-scrim-env": "SCRIM_NOTIFY_PLUGINS",
+          "x-scrim-restart-required": true
         },
         "terminal": {
           "additionalProperties": false,

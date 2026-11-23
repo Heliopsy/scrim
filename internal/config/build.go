@@ -345,8 +345,10 @@ func (c *Config) Secret(k Key[SecretRef]) (v secret.Value, ok bool) {
 func (c *Config) Unresolved() []string { return slices.Clone(c.deferred) }
 
 // ResolveStores returns a copy of c with its unresolved store references
-// resolved by sr. c itself is not changed. Every failure is reported.
-func (c *Config) ResolveStores(ctx context.Context, sr StoreResolver) (*Config, error) {
+// resolved by sr: those of the settings named by keys, or all of them when
+// keys is empty. The others stay unresolved. c itself is not changed. Every
+// failure is reported.
+func (c *Config) ResolveStores(ctx context.Context, sr StoreResolver, keys ...string) (*Config, error) {
 	n := c.clone()
 	n.secrets = make(map[string]secret.Value, len(c.secrets)+len(c.deferred))
 	for k, v := range c.secrets {
@@ -360,6 +362,10 @@ func (c *Config) ResolveStores(ctx context.Context, sr StoreResolver) (*Config, 
 	}
 	n.resolver.stores = sr
 	for _, key := range c.deferred {
+		if len(keys) > 0 && !slices.Contains(keys, key) {
+			n.deferred = append(n.deferred, key)
+			continue
+		}
 		f := fields[key]
 		v, err := n.resolver.resolve(ctx, f.ref)
 		if err != nil {

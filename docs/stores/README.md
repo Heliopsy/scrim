@@ -20,6 +20,7 @@ value back.
 | SOPS-encrypted files | `sops` | [sops.md](sops.md) |
 | OS keyring (Secret Service, Keychain, Credential Manager) | `keyring` | [keyring.md](keyring.md) |
 | Memory (tests, throwaway runs) | `memory` | none |
+| Anything else, through an out-of-process plugin | `plugin` | [../plugins.md](../plugins.md) |
 
 ## Capabilities
 
@@ -44,6 +45,9 @@ support is refused before anything is attempted.
 | `sops`        | yes  | yes  | yes   | no     | no       | no      |
 | `keyring`     | yes  | yes  | no    | no     | no       | no      |
 | `memory`      | yes  | yes  | yes   | yes    | no       | no      |
+| `plugin`      | (1)  | (1)  | (1)   | (1)    | no       | no      |
+
+(1) What the plugin declares, narrowed by the instance's `capabilities` field.
 
 Watch on OpenBao, Vault (KV v2), Infisical, 1Password, Bitwarden Secrets Manager, the AWS stores,
 Google Secret Manager and Azure Key Vault polls version metadata. It never fetches values, so it
@@ -102,7 +106,11 @@ Credential fields (`token`, `role-id`, `secret-id`, `client-id`, `client-secret`
 `unlock`, `age-identity`, `credentials`, `certificate`, `access-key-id`, `secret-access-key`, `jwt`)
 take a reference instead of a literal: `env:NAME`, `file:/path`, `cred:NAME` (a systemd credential),
 or a reference into another configured store. They are resolved at start; a reference that cannot be
-resolved stops start-up, and no store is contacted with an empty credential. `scrim config show`
+resolved stops start-up, and no store is contacted with an empty credential. A reference into
+another store is read through that store each time this one logs in, so it follows rotation there.
+It cannot name the store itself (by name or alias) or a store that is not configured, and a chain of
+such references cannot lead back to a store already in it (`bao` reading its token from `doppler`
+whose token is in `bao`); the configuration is rejected naming the field or the cycle. `scrim config show`
 masks them. A literal still works, but scrim logs a warning naming the field. scrim also adds the
 credentials it holds, and the session tokens a store issues at login, to the redaction set.
 
@@ -232,11 +240,11 @@ collection named `id`).
 
 ## Conformance
 
-Every adapter passes the shared conformance suite in `internal/stores/storetest`, which covers
-read, field and version selectors, value fidelity, list, write, create-only, rejected writes,
-write-only paths, labels, watch (including deletes and recovery after an outage), health, outage
-and concurrent use. It also checks that no value ever appears in an error, metadata or change
-notification. The suite is itself tested against deliberately broken adapters.
+Every adapter, built-in or [plugin](../plugins.md), passes the shared conformance suite in
+`internal/stores/storetest`, which covers read, field and version selectors, value fidelity, list,
+write, create-only, rejected writes, write-only paths, labels, watch (including deletes and recovery
+after an outage), health, outage and concurrent use. It also checks that no value ever appears in an
+error, metadata or change notification. The suite is itself tested against deliberately broken adapters.
 
 The integration runs start each store in rootless podman, and docker is not supported:
 

@@ -331,10 +331,11 @@ identity allow it. Neither side SHALL be able to widen what the other denies.
 
 ### Requirement: scrim as an identity provider for agents
 
-scrim SHALL be able to issue short-lived signed identity tokens for each agent session, with claims
-for agent name, session, host or namespace, profile and audience, and SHALL publish standard
-discovery and signing keys so stores and clouds can trust it as an identity provider. Signing keys
-SHALL rotate without breaking live sessions.
+scrim SHALL be able to issue short-lived signed identity tokens (RS256 JWTs) for an agent identity
+it established from the transport, one audience per token, and SHALL publish an OpenID Connect
+discovery document and a JWKS under the issuer URL so stores and clouds can trust it as an identity
+provider. Tokens SHALL be presented by scrim to stores on the agent's behalf and SHALL NOT be handed
+to agents. An unknown caller SHALL get no token.
 
 #### Scenario: OpenBao trusts scrim's tokens
 
@@ -342,17 +343,181 @@ SHALL rotate without breaking live sessions.
   `agent=claude-laptop`
 - **THEN** scrim logs in to OpenBao for that agent with a scrim-issued token and gets only that role's policy
 
+#### Scenario: Another agent's token
+
+- **WHEN** a token scrim signed for agent `intruder` is presented at the role bound to
+  `agent=claude-laptop`
+- **THEN** OpenBao refuses the login
+
+#### Scenario: Wrong audience
+
+- **WHEN** a token scrim signed for another audience is presented to OpenBao
+- **THEN** OpenBao refuses the login
+
+#### Scenario: Expired token
+
+- **WHEN** a token scrim signed has expired
+- **THEN** OpenBao refuses the login
+
+#### Scenario: Unknown caller
+
+- **WHEN** a token is requested for a caller scrim could not identify
+- **THEN** no token is minted
+
+### Requirement: Identity token claims
+
+A token SHALL carry the agent name, how the agent was identified (`agent_kind`), the session, the
+host for a local agent or the namespace, service account and pod for a Kubernetes agent, scrim's
+profile and the audience. Its subject SHALL name the agent the same way in every session:
+`agent:<name>`, or `k8s:<name>` for a Kubernetes agent.
+
+#### Scenario: Two sessions of one agent
+
+- **WHEN** tokens are minted for two `scrim run` sessions of agent `claude-laptop`
+- **THEN** both have the subject `agent:claude-laptop` and each names its own session
+
+### Requirement: The issuer listener serves discovery only
+
+`identity.issuer.listen` SHALL serve the discovery document and the JWKS under the issuer URL's path
+and nothing else. Both SHALL hold public keys only.
+
+#### Scenario: Another path
+
+- **WHEN** a client requests any other path on the issuer listener
+- **THEN** it gets 404
+
+### Requirement: Identity tokens are short-lived and redacted
+
+An identity token SHALL expire after `identity.issuer.token-ttl` (between one minute and one hour,
+ten minutes by default) and never after the session it names. Every token scrim mints SHALL enter
+the redaction set when it is minted, for redaction only (never injectable), and SHALL leave it when
+it expires. A token minted for the same claims and audience SHALL be reused while two thirds of its
+lifetime remain, and tokens held for a session SHALL be dropped when the session ends.
+
+#### Scenario: Token in a tool result
+
+- **WHEN** a token scrim minted appears in text an agent sends to a provider
+- **THEN** the provider receives scrim's placeholder for it
+
+#### Scenario: Session ends first
+
+- **WHEN** a token is minted for a session that ends in five minutes
+- **THEN** the token expires when the session does
+
+#### Scenario: Session ended
+
+- **WHEN** a session ends while a token minted for it is cached
+- **THEN** the cached token is never handed out again
+
+### Requirement: Signing keys rotate without breaking tokens
+
+scrim SHALL generate its signing keys in a private directory (mode 0700, key files 0600) and rotate
+them every `identity.issuer.rotate-every`, and at start-up when overdue. The key that signs next
+SHALL be published one rotation period before it signs. A replaced key SHALL stay published until
+the last token it signed has expired plus five minutes, and then be deleted.
+
+#### Scenario: Rotation with a live token
+
+- **WHEN** the signing key rotates while a token it signed is still valid
+- **THEN** the JWKS still holds the old key, OpenBao accepts both that token and a token from the new
+  key, and the old key leaves the JWKS once the token has expired
+
+### Requirement: Operator-managed signing keys
+
+With `identity.issuer.signing-keys` set, scrim SHALL sign with the first of the operator's keys,
+publish all of them and never rotate them, so replicas that share the reference agree on the JWKS.
+
+#### Scenario: Replicas with operator keys
+
+- **WHEN** two replicas share the same `identity.issuer.signing-keys` reference
+- **THEN** both publish the same JWKS and sign with the same key
+
+### Requirement: Signing keys are never disclosed
+
+A signing key's private part SHALL NOT appear in any log line, error, metric, snapshot, API response
+or the JWKS; logs and errors SHALL name keys only by their key ID (the RFC 7638 thumbprint). The
+issuer URL SHALL be https, or http on a loopback host; plain http elsewhere SHALL require
+`identity.issuer.insecure-http`, a weakening setting, since a verifier fetching keys over plain
+http can be handed someone else's keys.
+
+#### Scenario: Keys formatted for a log
+
+- **WHEN** the issuer or one of its keys is formatted, logged or marshalled
+- **THEN** the output holds the key ID and no private key material
+
+#### Scenario: Plain http issuer
+
+- **WHEN** `identity.issuer.url` is `http://scrim.example.test` without `identity.issuer.insecure-http`
+- **THEN** scrim refuses to start and names both settings
+
 ### Requirement: Token exchange per store
 
-Each adapter that supports federated login SHALL exchange the agent's identity token for a
-short-lived store credential: Vault and OpenBao JWT/OIDC auth, AWS AssumeRoleWithWebIdentity, Google
-Workload Identity Federation, Azure federated credentials, Infisical OIDC machine identities. Store
-credentials SHALL be cached per agent session and dropped when it ends.
+Each adapter that supports federated login SHALL exchange an identity token scrim signs for the
+agent for a short-lived store credential, as `identity.store-login` configures per store: `jwt`
+(Vault and OpenBao JWT auth), `aws-web-identity` (AssumeRoleWithWebIdentity),
+`gcp-workload-identity` (Google STS, optionally impersonating a service account), `azure-federated`
+(Entra ID client assertion) or `infisical-oidc` (Infisical OIDC machine identities).
 
 #### Scenario: AWS role per agent
 
 - **WHEN** the IAM role `agent-claude-laptop` trusts scrim's identity provider for that agent's claims
-- **THEN** scrim assumes that role for the agent and AWS CloudTrail shows the agent's session name
+- **THEN** scrim assumes that role for the agent with the session name `claude-laptop.<session>` and
+  AWS CloudTrail shows the agent's session name
+
+#### Scenario: OpenBao role per agent
+
+- **WHEN** OpenBao's JWT auth trusts scrim's issuer, the role for `claude-laptop` may read
+  `kv/agents/shared/*` and the role for `intruder` may not, and scrim's rules allow both to use
+  `bao://kv/agents/shared/db`
+- **THEN** the use by `claude-laptop` passes and the use by `intruder` is refused with OpenBao's denial
+
+### Requirement: Exchanged store credentials are cached per agent
+
+Store credentials obtained by token exchange SHALL be cached per agent identity, and per pod for a
+Kubernetes agent, until two thirds of their lifetime has passed, and SHALL be wiped when the agent's
+`scrim run` session ends.
+
+#### Scenario: Session ends
+
+- **WHEN** a `scrim run` session whose agent logged in to a store ends
+- **THEN** the store credential cached for it is wiped and a later session of that agent logs in again
+
+### Requirement: Store checks as the agent
+
+After scrim's rules allow a use of a governed store's secret, the control plane SHALL check it with
+the agent's own store identity, so the store's policy and audit apply to the agent. Where the store
+can say what an identity may do (Vault and OpenBao `sys/capabilities-self`, Google Secret Manager
+`testIamPermissions`) the value SHALL NOT be read with the agent's identity; elsewhere (AWS, Azure
+Key Vault, Infisical) the check SHALL read it as the agent and wipe it unused.
+
+#### Scenario: AWS role without access
+
+- **WHEN** the role an agent assumes may not read the secret
+- **THEN** the use is refused with the store's denial, although scrim's rules allow it
+
+#### Scenario: Google principal without access
+
+- **WHEN** the federated principal of an agent lacks `secretmanager.versions.access` on the secret
+- **THEN** the use is refused without the value being read
+
+### Requirement: Token exchange is configured safely
+
+scrim SHALL refuse to start when `identity.store-login` names a store that does not exist or does
+not take the method, or a token exchange method while `identity.issuer.url` is empty, naming the
+setting. Options outside a method's list, a placeholder outside a templated option and malformed
+values SHALL be refused the same way. `scrim doctor` SHALL report each agent of such a store as
+`federated` with the method and options, which hold no credential.
+
+#### Scenario: Method the store does not take
+
+- **WHEN** `identity.store-login.bao` is `aws-web-identity role-arn:...` for an OpenBao store
+- **THEN** scrim refuses to start and says the store takes `jwt`
+
+#### Scenario: Issuer off
+
+- **WHEN** a store logs agents in with `jwt` and `identity.issuer.url` is empty
+- **THEN** scrim refuses to start and `scrim doctor` fails the store with a fix naming
+  `identity.issuer.url`
 
 ### Requirement: Kubernetes identity passed through
 
@@ -389,8 +554,8 @@ sent to the control plane, whatever the rules say, so the agent's store identity
 
 For stores without federated login, the system SHALL support a separate store credential per agent,
 held by scrim and given by reference in `identity.store-credentials`, and SHALL report in `scrim doctor`,
-per store and agent, which identity applies: passthrough, static, shared (a store without per-agent
-identity) or none. An agent with no usable identity for a store that has per-agent identity SHALL be
+per store and agent, which identity applies: passthrough, federated (token exchange), static,
+shared (a store without per-agent identity) or none. An agent with no usable identity for a store that has per-agent identity SHALL be
 refused for it.
 
 #### Scenario: Vaultwarden per agent

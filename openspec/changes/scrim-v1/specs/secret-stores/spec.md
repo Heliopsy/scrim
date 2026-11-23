@@ -60,6 +60,15 @@ forwarded with an incomplete redaction set.
 - **THEN** the request is refused with an error saying redaction is not ready
 - **AND** nothing is forwarded to the provider
 
+#### Scenario: Catalog secret without a redact entry
+
+- **WHEN** a catalog entry binds `files://cat-token` and no `redact` entry of the file store covers it
+- **THEN** the value is loaded with the store's first load and read again at every refresh
+- **AND** it is redacted from provider requests and injected toward its bound hosts from start-up on,
+  across any number of refreshes, not only after the catalog changes
+- **AND** once the entry leaves the catalog the value stays redacted for the retention period and is
+  no longer injected
+
 ### Requirement: Redact targets name secrets, folders or globs
 
 A redact target SHALL be one secret, every secret under a folder (`<folder>/*`), or a glob: a
@@ -1477,14 +1486,55 @@ suite SHALL run in CI against each store or a compatible emulator.
 ### Requirement: Store plugins
 
 The system SHALL load additional store adapters as plugins through a documented, versioned contract
-covering read, list, watch, write and health. A plugin SHALL run with only the configuration of its
-own store, and a plugin crash SHALL be reported as that store being degraded without stopping scrim.
+covering read, list, watch, write and health (docs/plugins.md, design D15). A plugin SHALL run with
+only the configuration of its own store, and a plugin crash SHALL be reported as that store being
+degraded without stopping scrim.
 
 #### Scenario: Plugin crashes
 
 - **WHEN** a store plugin process exits unexpectedly
 - **THEN** that store is reported as degraded and restarted with backoff
 - **AND** the last known values from it are still redacted
+
+#### Scenario: Plugin hangs
+
+- **WHEN** a store plugin does not answer a call within its timeout
+- **THEN** the call fails as the store being unavailable, naming the plugin and the timeout, and the
+  plugin process is killed
+
+### Requirement: Plugin processes are checked and fail closed
+
+The system SHALL start a plugin only from a binary that it and every directory above it make
+writable by root or scrim's user alone, SHALL refuse a plugin whose handshake reports another
+protocol version, kind or no read capability, and SHALL fail any call the plugin does not answer in
+contract as the store being unavailable.
+
+#### Scenario: Untrusted plugin binary
+
+- **WHEN** the configured plugin binary, or a directory above it, is writable by another user, or
+  its digest differs from a pinned `sha256`
+- **THEN** scrim refuses to start it and the error names the check that failed
+
+#### Scenario: Protocol or kind mismatch
+
+- **WHEN** a plugin answers the handshake with another protocol version, as a notifier, or without
+  the read capability
+- **THEN** scrim stops it and the error names both sides
+
+#### Scenario: Capabilities narrowed by configuration
+
+- **WHEN** an instance lists `capabilities: [read, list]` for a plugin that also writes
+- **THEN** scrim refuses writes and watches to that store before the plugin is called
+
+### Requirement: Plugin errors carry only their kind
+
+The system SHALL map a plugin's error to a store error kind and SHALL NOT show, log or return the
+plugin's own error message.
+
+#### Scenario: Plugin echoes a value in an error
+
+- **WHEN** a plugin returns an error whose message contains a secret value
+- **THEN** the store error scrim reports carries the error kind and no part of the message
 
 ### Requirement: Scrim's store credentials are never exposed
 

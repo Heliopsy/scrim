@@ -12,6 +12,7 @@ import (
 	"github.com/heliopsy/scrim/internal/agentapi"
 	"github.com/heliopsy/scrim/internal/agentstore"
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/identity/issuer"
 	"github.com/heliopsy/scrim/internal/status"
 	"github.com/heliopsy/scrim/internal/stores/storeconfig"
 )
@@ -80,10 +81,19 @@ func storeIdentityFindings(cfg *config.Config) []status.Finding {
 		agents[a] = true
 	}
 	var out []status.Finding
+	for _, store := range slices.Sorted(maps.Keys(c.Methods())) {
+		if m := c.Methods()[store]; m != agentstore.MethodKubernetes && issuer.URLSetting.Get(cfg) == "" {
+			out = append(out, status.Finding{Check: check, Outcome: status.Fail,
+				Message: fmt.Sprintf("store %s logs agents in with %s, which presents a token scrim signs, but scrim's identity issuer is off", store, m),
+				Fix:     "set identity.issuer.url and identity.issuer.listen, and trust the issuer in the store"})
+		}
+	}
 	for _, r := range c.Report(storeNames, slices.Sorted(maps.Keys(agents))) {
 		f := status.Finding{Check: check, Outcome: status.Pass,
 			Message: fmt.Sprintf("store %s, agent %s: %s (%s)", r.Store, r.Agent, r.Source, r.Detail)}
 		switch r.Source {
+		case agentstore.SourceFederated:
+			f.Message = fmt.Sprintf("store %s, agent %s: token exchange (%s)", r.Store, r.Agent, r.Detail)
 		case agentstore.SourceShared:
 			f.Message = fmt.Sprintf("store %s: every agent uses scrim's own identity (no per-agent credential)", r.Store)
 		case agentstore.SourceNone:

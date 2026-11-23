@@ -108,6 +108,23 @@ func (a *App) valuesChanged(store string) {
 	}
 }
 
+// redactSources list the store references configuration uses as secret
+// values outside the stores collection. Each becomes a redact target of its
+// store (storeconfig.Options.Redact).
+var redactSources = []func(*config.Config) []string{dbproxy.StoreRefs}
+
+// AddRedactRefs registers fn as a source of such references, for packages
+// app cannot import (the daemon's cloud providers). Call it from init.
+func AddRedactRefs(fn func(*config.Config) []string) { redactSources = append(redactSources, fn) }
+
+func redactRefs(cfg *config.Config) []string {
+	var out []string
+	for _, fn := range redactSources {
+		out = append(out, fn(cfg)...)
+	}
+	return out
+}
+
 // New builds the components from the configuration opts names and starts
 // watching it for reloads until Close. Log output goes to logw.
 func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error) {
@@ -131,6 +148,20 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 	if a.Log, err = obs.LoggerFromConfig(logw, boot, a.Scrubber); err != nil {
 		return nil, err
 	}
+	// Store references in settings (admin.token: bao://...) are read from
+	// the stores when the configuration is built, at start and on every
+	// reload. Until the running stores below are open, they are read
+	// through stores opened from the first build. A store credential that
+	// is a reference into another store is read through the same set when
+	// the store logs in; the configuration check refuses cycles.
+	bootStores, err := storeconfig.Open(ctx, boot, stores.DefaultRegistry)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = bootStores.Close() }()
+	resolver := &storeconfig.Resolver{}
+	resolver.Use(bootStores.Set)
+	opts.Stores = resolver
 	if a.Config, err = config.NewManager(opts, obs.WithComponent(a.Log, "config")); err != nil {
 		return nil, err
 	}
@@ -199,9 +230,10 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 	opened, err := storeconfig.OpenWith(ctx, cfg, stores.DefaultRegistry, storeconfig.Options{
 		OnChange: a.valuesChanged,
 		Log:      obs.WithComponent(a.Log, "stores"),
-		// Database passwords given as store references stay in the
-		// redaction set and follow rotation like any redact target.
-		Redact: dbproxy.StoreRefs(cfg),
+		// Database passwords and cloud provider credentials given as store
+		// references stay in the redaction set and follow rotation like
+		// any redact target.
+		Redact: redactRefs(cfg),
 		OnStatus: func(st refresh.Status) {
 			a.Instruments.StoreHealth(st.Store, st.Healthy, st.LastSuccess, st.Values, st.State == refresh.StateDegraded)
 			a.Instruments.StoreRefresh(st.Store, st.LastDuration, st.LastError != "")
@@ -213,6 +245,7 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 		return nil, err
 	}
 	a.Stores, a.Refreshers = opened.Set, opened.Refreshers
+	resolver.Use(a.Stores)
 	if a.PolicyParts != nil && a.PolicyParts.Gate != nil {
 		a.PolicyParts.Gate.Labels = a.SecretLabels
 	}
@@ -262,6 +295,11 @@ func (a *App) Close() error {
 	}
 	if a.Stores != nil {
 		errs = append(errs, a.Stores.Close())
+	}
+	if a.PolicyParts != nil {
+		for _, n := range a.PolicyParts.plugins {
+			errs = append(errs, n.Close())
+		}
 	}
 	errs = append(errs, a.closeAuditSinks(), a.RateLimits.Close())
 	if a.State != nil {

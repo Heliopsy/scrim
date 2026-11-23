@@ -184,6 +184,12 @@ reused request ID. `webhook.Verify` in `internal/notify/webhook` is a reference 
 nono's signed variant (ECDSA keys from platform enrollment) is not supported; responses are
 trusted on the strength of TLS to the configured URL.
 
+### Plugins
+
+Any other channel can be added as a notifier plugin, a separate executable configured under
+`notify.plugins.<name>`. It gets the same summary and decision links as the built-in notifiers and,
+like them, only delivers. See [plugins.md](plugins.md).
+
 ### Terminal
 
 With `notify.terminal.enabled` (default on) the control plane prints each approval to its terminal:
