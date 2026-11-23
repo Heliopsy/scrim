@@ -51,6 +51,8 @@ func (c *conversation) user(text string) {
 	switch c.api {
 	case fp.OpenAIResponses:
 		c.items = append(c.items, map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": text}}})
+	case fp.Gemini:
+		c.items = append(c.items, map[string]any{"role": "user", "parts": []any{map[string]any{"text": text}}})
 	default:
 		c.items = append(c.items, map[string]any{"role": "user", "content": text})
 	}
@@ -88,6 +90,25 @@ func (c *conversation) assistant(p fp.Parsed) {
 		for _, tc := range p.ToolCalls {
 			c.items = append(c.items, map[string]any{"type": "function_call", "call_id": tc.ID, "name": tc.Name, "arguments": tc.Arguments})
 		}
+	case fp.Gemini:
+		var parts []any
+		if p.Text != "" {
+			parts = append(parts, map[string]any{"text": p.Text})
+		}
+		for _, tc := range p.ToolCalls {
+			call := map[string]any{"name": tc.Name, "args": json.RawMessage(orEmpty(tc.Arguments))}
+			if tc.ID != "" {
+				call["id"] = tc.ID
+			}
+			part := map[string]any{"functionCall": call}
+			// The signature goes back unchanged with its call, as Gemini
+			// requires for thinking models.
+			if tc.Signature != "" {
+				part["thoughtSignature"] = tc.Signature
+			}
+			parts = append(parts, part)
+		}
+		c.items = append(c.items, map[string]any{"role": "model", "parts": parts})
 	}
 }
 
@@ -114,6 +135,18 @@ func (c *conversation) toolResults(calls []fp.ParsedCall, outputs []string) {
 		for i, tc := range calls {
 			c.items = append(c.items, map[string]any{"type": "function_call_output", "call_id": tc.ID, "output": outputs[i]})
 		}
+	case fp.Gemini:
+		// Gemini ties a functionResponse to its call by name (and by id
+		// when the call had one), all of a turn's responses in one content.
+		var parts []any
+		for i, tc := range calls {
+			resp := map[string]any{"name": tc.Name, "response": map[string]any{"output": outputs[i]}}
+			if tc.ID != "" {
+				resp["id"] = tc.ID
+			}
+			parts = append(parts, map[string]any{"functionResponse": resp})
+		}
+		c.items = append(c.items, map[string]any{"role": "user", "parts": parts})
 	}
 }
 
@@ -128,6 +161,8 @@ func (c *conversation) request() matrix.Request {
 			tools = append(tools, map[string]any{"type": "function", "function": map[string]any{"name": n, "description": desc, "parameters": params}})
 		case fp.OpenAIResponses:
 			tools = append(tools, map[string]any{"type": "function", "name": n, "description": desc, "parameters": params})
+		case fp.Gemini:
+			tools = append(tools, map[string]any{"name": n, "description": desc, "parameters": params})
 		}
 	}
 	var body map[string]any
@@ -139,15 +174,28 @@ func (c *conversation) request() matrix.Request {
 		body = map[string]any{"model": "gpt-5", "messages": msgs, "tools": tools}
 	case fp.OpenAIResponses:
 		body = map[string]any{"model": "gpt-5", "instructions": systemPrompt, "input": c.items, "tools": tools, "store": false}
+	case fp.Gemini:
+		// Gemini declares every function in one tools entry and streams by
+		// path, not by a body field.
+		body = map[string]any{
+			"systemInstruction": map[string]any{"parts": []any{map[string]any{"text": systemPrompt}}},
+			"tools":             []any{map[string]any{"functionDeclarations": tools}},
+			"contents":          c.items,
+			"generationConfig":  map[string]any{"maxOutputTokens": 4096, "thinkingConfig": map[string]any{"includeThoughts": false}},
+		}
 	}
-	if c.stream {
+	if c.stream && c.api != fp.Gemini {
 		body["stream"] = true
 	}
 	h := http.Header{"Content-Type": {"application/json"}}
 	if c.api == fp.Anthropic {
 		h.Set("Anthropic-Version", "2023-06-01")
 	}
-	return matrix.Request{API: c.api, Path: c.api.Path(), Header: h, Body: marshal(body), Stream: c.stream}
+	r := matrix.Request{API: c.api, Path: c.api.Path(), Header: h, Body: marshal(body), Stream: c.stream}
+	if c.stream {
+		r.Path, r.Query = c.api.StreamPath(true)
+	}
+	return r
 }
 
 // session is what one run of a scenario did.

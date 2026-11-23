@@ -1462,6 +1462,14 @@
               "x-scrim-restart-required": false,
               "x-scrim-weakening": false
             },
+            "gemini": {
+              "default": "https://generativelanguage.googleapis.com",
+              "description": "Base URL Gemini API (generateContent, streamGenerateContent, countTokens) requests are forwarded to after redaction.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_PROXY_UPSTREAM_GEMINI",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            },
             "openai": {
               "default": "https://api.openai.com",
               "description": "Base URL OpenAI Chat Completions and Responses requests are forwarded to after redaction.",
@@ -1934,6 +1942,10 @@
     "stores": {
       "additionalProperties": {
         "properties": {
+          "age-identity": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          },
           "client-id": {
             "type": "string",
             "x-scrim-secret-ref": true

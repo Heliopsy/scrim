@@ -18,6 +18,9 @@ type ParsedCall struct {
 	Name string
 	// Arguments is the raw JSON of the call input.
 	Arguments string
+	// Signature is a Gemini functionCall part's thoughtSignature, which the
+	// client sends back unchanged with the call. Empty elsewhere.
+	Signature string
 }
 
 // Parsed is a reply as an agent receives it, reassembled from either wire
@@ -30,8 +33,13 @@ type Parsed struct {
 	Events []string
 }
 
-// ParseReply reassembles a reply body of the given API, streamed or not.
+// ParseReply reassembles a reply body of the given API, streamed or not. A
+// streamed Gemini reply may be server-sent events or a JSON array; the body
+// tells which. Gemini function calls carry no ID unless the provider sent one.
 func ParseReply(api API, stream bool, body []byte) (Parsed, error) {
+	if api == Gemini {
+		return parseGemini(stream, body)
+	}
 	if !stream {
 		return parseJSON(api, body)
 	}
@@ -59,7 +67,7 @@ func parseJSON(api API, body []byte) (Parsed, error) {
 			case "text":
 				p.Text += c.Text
 			case "tool_use":
-				p.ToolCalls = append(p.ToolCalls, ParsedCall{c.ID, c.Name, string(c.Input)})
+				p.ToolCalls = append(p.ToolCalls, ParsedCall{ID: c.ID, Name: c.Name, Arguments: string(c.Input)})
 			}
 		}
 	case OpenAIChat:
@@ -88,7 +96,7 @@ func parseJSON(api API, body []byte) (Parsed, error) {
 			p.Text = *msg.Content
 		}
 		for _, tc := range msg.ToolCalls {
-			p.ToolCalls = append(p.ToolCalls, ParsedCall{tc.ID, tc.Function.Name, tc.Function.Arguments})
+			p.ToolCalls = append(p.ToolCalls, ParsedCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
 		}
 	case OpenAIResponses:
 		var m struct {
@@ -127,7 +135,7 @@ func (p *Parsed) add(it responsesItem) {
 			}
 		}
 	case "function_call":
-		p.ToolCalls = append(p.ToolCalls, ParsedCall{it.CallID, it.Name, it.Args})
+		p.ToolCalls = append(p.ToolCalls, ParsedCall{ID: it.CallID, Name: it.Name, Arguments: it.Args})
 	}
 }
 
@@ -280,7 +288,82 @@ func parseSSE(api API, body []byte) (Parsed, error) {
 	sort.Ints(idx)
 	for _, i := range idx {
 		c := calls[i]
-		p.ToolCalls = append(p.ToolCalls, ParsedCall{c.id, c.name, c.args.String()})
+		p.ToolCalls = append(p.ToolCalls, ParsedCall{ID: c.id, Name: c.name, Arguments: c.args.String()})
+	}
+	return p, nil
+}
+
+// geminiResponse is the part of a GenerateContentResponse a client reads.
+type geminiResponse struct {
+	Candidates []struct {
+		Content struct {
+			Parts []struct {
+				Text         string `json:"text"`
+				Thought      bool   `json:"thought"`
+				FunctionCall *struct {
+					ID   string          `json:"id"`
+					Name string          `json:"name"`
+					Args json.RawMessage `json:"args"`
+				} `json:"functionCall"`
+				ThoughtSignature string `json:"thoughtSignature"`
+			} `json:"parts"`
+		} `json:"content"`
+	} `json:"candidates"`
+}
+
+func (p *Parsed) addGemini(r geminiResponse) {
+	if len(r.Candidates) == 0 {
+		return
+	}
+	for _, part := range r.Candidates[0].Content.Parts {
+		switch {
+		case part.FunctionCall != nil:
+			args := string(part.FunctionCall.Args)
+			if args == "" {
+				args = "{}"
+			}
+			p.ToolCalls = append(p.ToolCalls, ParsedCall{ID: part.FunctionCall.ID, Name: part.FunctionCall.Name, Arguments: args, Signature: part.ThoughtSignature})
+		case !part.Thought:
+			p.Text += part.Text
+		}
+	}
+}
+
+func parseGemini(stream bool, body []byte) (Parsed, error) {
+	var p Parsed
+	if !stream {
+		var r geminiResponse
+		if err := json.Unmarshal(body, &r); err != nil {
+			return p, err
+		}
+		if len(r.Candidates) == 0 {
+			return p, errors.New("no candidates")
+		}
+		p.addGemini(r)
+		return p, nil
+	}
+	if trimmed := bytes.TrimSpace(body); len(trimmed) > 0 && trimmed[0] == '[' {
+		var arr []geminiResponse
+		if err := json.Unmarshal(trimmed, &arr); err != nil {
+			return p, fmt.Errorf("json array stream: %w", err)
+		}
+		for _, r := range arr {
+			p.Events = append(p.Events, "chunk")
+			p.addGemini(r)
+		}
+		return p, nil
+	}
+	evs, err := sseEvents(body)
+	if err != nil {
+		return p, err
+	}
+	for _, e := range evs {
+		var r geminiResponse
+		if err := json.Unmarshal([]byte(e[1]), &r); err != nil {
+			return p, fmt.Errorf("sse chunk: %w", err)
+		}
+		p.Events = append(p.Events, "chunk")
+		p.addGemini(r)
 	}
 	return p, nil
 }

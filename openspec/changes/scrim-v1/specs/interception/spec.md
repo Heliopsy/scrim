@@ -43,7 +43,8 @@ a warning.
 
 ### Requirement: Wrapper environment
 
-`scrim run` SHALL point the provider SDKs at the LLM proxy (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`),
+`scrim run` SHALL point the provider SDKs at the LLM proxy (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`,
+`GOOGLE_GEMINI_BASE_URL`),
 point the proxy variables at the forward proxy when it runs, trust scrim's CA for the child only
 through a per-session bundle, and remove inherited proxy settings that would bypass the forward
 proxy. The session token SHALL never appear on a command line or in `scrim run`'s output.

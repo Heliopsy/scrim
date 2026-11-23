@@ -14,14 +14,17 @@ Spec: `openspec/changes/scrim-v1/specs/llm-proxy`, plus the base-URL and forward
 - **Listeners.** TCP and Unix socket (mode 0600), HTTP/1.1 and HTTP/2 prior knowledge on the same
   port, graceful shutdown. `LlmIntercept` (feature `intercept`) plugs into `scrim-toolproxy` so
   provider hosts reached through `HTTPS_PROXY` take the same path.
-- **Routing.** By path prefix on whole segments (`/anthropic`, `/openai` by default) or by provider
-  host (`api.anthropic.com`, `api.openai.com`) for forward-proxy traffic. The API follows from the
-  path: Anthropic Messages (and `count_tokens`), OpenAI Chat Completions, OpenAI Responses (and
-  `/responses/compact`). Other paths are forwarded with the whole body redacted.
+- **Routing.** By path prefix on whole segments (`/anthropic`, `/openai`, `/gemini` by default) or
+  by provider host (`api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`) for
+  forward-proxy traffic. The API follows from the path: Anthropic Messages (and `count_tokens`),
+  OpenAI Chat Completions, OpenAI Responses (and `/responses/compact`), Gemini `generateContent`,
+  `streamGenerateContent` (SSE with `alt=sse`, otherwise a streamed JSON array framed element by
+  element) and `countTokens`. Other paths are forwarded with the whole body redacted.
 - **Upstream.** Pooled hyper client, rustls with webpki and/or native roots plus an optional extra
-  CA bundle, ALPN `h2` and `http/1.1`. The agent's own `authorization` and `x-api-key` pass
-  through untouched; hop-by-hop headers are dropped and `accept-encoding` is set to `identity` so
-  responses can be restored.
+  CA bundle, ALPN `h2` and `http/1.1`. The agent's own `authorization`, `x-api-key` and
+  `x-goog-api-key`, and on a Gemini route the `key` query parameter, pass through untouched;
+  hop-by-hop headers are dropped and `accept-encoding` is set to `identity` so responses can be
+  restored.
 - **Request head** (`head`). Every other header value, every path segment and every query key and
   value is redacted on its raw bytes and again percent-decoded (`+` as a space in the query), and
   re-encoded where it changed. Placeholders in header values leave in percent form

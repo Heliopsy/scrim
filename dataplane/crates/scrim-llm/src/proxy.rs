@@ -200,6 +200,33 @@ fn is_upgrade(h: &HeaderMap) -> bool {
         })
 }
 
+/// `uri` with the values of the credential query parameters `creds` replaced by `masked`, for
+/// capture files.
+fn mask_query(uri: &http::Uri, creds: &[&str]) -> http::Uri {
+    let Some(q) = uri.query() else {
+        return uri.clone();
+    };
+    if creds.is_empty() {
+        return uri.clone();
+    }
+    let masked: Vec<String> = q
+        .split('&')
+        .map(|p| match p.split_once('=') {
+            Some((k, _)) if creds.contains(&k) => format!("{k}=masked"),
+            _ => p.to_string(),
+        })
+        .collect();
+    let pq = format!("{}?{}", uri.path(), masked.join("&"));
+    let mut parts = uri.clone().into_parts();
+    parts.path_and_query = pq.parse().ok();
+    http::Uri::from_parts(parts).unwrap_or_else(|_| {
+        // Never record the credential: fall back to the path alone.
+        let mut p = uri.clone().into_parts();
+        p.path_and_query = uri.path().parse().ok();
+        http::Uri::from_parts(p).unwrap_or_default()
+    })
+}
+
 fn is_identity(h: &HeaderMap) -> bool {
     h.get_all(header::CONTENT_ENCODING).iter().all(|v| {
         v.to_str()
@@ -379,8 +406,14 @@ impl Proxy {
             HeaderValue::from_static("identity"),
         );
         // The request target and headers leave too: same redactor, same guard.
-        let head = match head::prepare(&snap, &parts.method, rest, parts.uri.query(), &mut headers)
-        {
+        let head = match head::prepare_with(
+            &snap,
+            &parts.method,
+            rest,
+            parts.uri.query(),
+            &mut headers,
+            route.provider.query_credentials(),
+        ) {
             Ok(h) => h,
             Err(r) => return self.refuse(Some(route), api, &r),
         };
@@ -529,8 +562,9 @@ impl Proxy {
     ) -> Result<(Response<hyper::body::Incoming>, Option<Record>), SendError> {
         let mut record = None;
         if let Some(cap) = &self.capture {
+            let shown = mask_query(&uri, t.route.provider.query_credentials());
             match cap
-                .request(&t.route.name, t.method, &uri, t.headers, &out.body)
+                .request(&t.route.name, t.method, &shown, t.headers, &out.body)
                 .await
             {
                 Ok(r) => record = Some(r),
@@ -590,6 +624,28 @@ impl Proxy {
         });
     }
 
+    /// Reads `body` into `buf` until it holds a byte that is not whitespace, the body ends or
+    /// the response limit is passed. `false` when the body failed.
+    async fn peek_array(&self, body: &mut hyper::body::Incoming, buf: &mut Vec<u8>) -> bool {
+        while buf.iter().all(u8::is_ascii_whitespace)
+            && buf.len() <= self.cfg.limits.max_response_body
+        {
+            match body.frame().await {
+                Some(Ok(f)) => {
+                    if let Ok(d) = f.into_data() {
+                        buf.extend_from_slice(&d);
+                    }
+                }
+                Some(Err(e)) => {
+                    tracing::warn!(error = %e, "upstream response body failed");
+                    return false;
+                }
+                None => break,
+            }
+        }
+        true
+    }
+
     async fn respond(
         &self,
         route: &Route,
@@ -633,7 +689,23 @@ impl Proxy {
             let mut body = body;
             let mut buf = Vec::new();
             let mut overflow = false;
-            while let Some(frame) = body.frame().await {
+            if codec::streams_json_array(api) {
+                // A JSON array here is a stream (Gemini `streamGenerateContent` without
+                // `alt=sse`), restored element by element.
+                if !self.peek_array(&mut body, &mut buf).await {
+                    return bad_gateway();
+                }
+                if buf.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'[')
+                    && let Some(r) = SseRestorer::json_array(api, snap.clone(), &self.cfg.limits)
+                {
+                    let b =
+                        Restoring::new(body, Some(Bytes::from(buf)), tee, Some(r), Some(on_end))
+                            .timed(rm);
+                    return Response::from_parts(parts, BodyExt::boxed_unsync(b));
+                }
+                overflow = buf.len() > self.cfg.limits.max_response_body;
+            }
+            while !overflow && let Some(frame) = body.frame().await {
                 match frame {
                     Ok(f) => {
                         if let Ok(d) = f.into_data() {
@@ -646,11 +718,7 @@ impl Proxy {
                     }
                     Err(e) => {
                         tracing::warn!(error = %e, "upstream response body failed");
-                        return Response::builder()
-                            .status(StatusCode::BAD_GATEWAY)
-                            .header(crate::error::ERROR_HEADER, "upstream_unavailable")
-                            .body(full(Bytes::new()))
-                            .unwrap_or_else(|_| Response::new(full(Bytes::new())));
+                        return bad_gateway();
                     }
                 }
             }
@@ -680,9 +748,33 @@ impl Proxy {
     }
 }
 
+/// The answer when the provider's response body fails part way.
+fn bad_gateway() -> Response<ProxyBody> {
+    Response::builder()
+        .status(StatusCode::BAD_GATEWAY)
+        .header(crate::error::ERROR_HEADER, "upstream_unavailable")
+        .body(full(Bytes::new()))
+        .unwrap_or_else(|_| Response::new(full(Bytes::new())))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_credentials_masked_for_capture() {
+        let u: http::Uri =
+            "https://g.example/v1beta/models/m:generateContent?alt=sse&key=AIzaSyFake-0123&x=1"
+                .parse()
+                .unwrap();
+        assert_eq!(
+            mask_query(&u, &["key"]).to_string(),
+            "https://g.example/v1beta/models/m:generateContent?alt=sse&key=masked&x=1"
+        );
+        assert_eq!(mask_query(&u, &[]), u);
+        let plain: http::Uri = "https://g.example/a".parse().unwrap();
+        assert_eq!(mask_query(&plain, &["key"]), plain);
+    }
 
     #[test]
     fn strips_hop_by_hop_and_connection_listed() {

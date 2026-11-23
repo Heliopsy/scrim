@@ -182,13 +182,83 @@ func responsesToolTurn(command string, output any) []any {
 	}
 }
 
+// bashToolGemini is a Gemini tools entry declaring the Bash function.
+func bashToolGemini(desc string) any {
+	return obj("functionDeclarations", []any{obj("name", toolName, "description", desc, "parameters", obj(
+		"type", "object",
+		"properties", obj("command", obj("type", "string", "description", "The command to run")),
+		"required", []any{"command"},
+	))})
+}
+
+// geminiParts assembles a generateContent request. Gemini streams by path,
+// so the body is the same either way.
+type geminiParts struct {
+	system   any
+	tools    []any
+	contents []any
+	extra    []kv
+}
+
+func (p geminiParts) body() any {
+	if p.system == nil {
+		p.system = obj("parts", []any{obj("text", sysText)})
+	}
+	if p.tools == nil {
+		p.tools = []any{bashToolGemini("Run a shell command.")}
+	}
+	m := obj("contents", p.contents, "systemInstruction", p.system, "tools", p.tools,
+		"generationConfig", obj("temperature", 1, "maxOutputTokens", 1024))
+	return append(m, p.extra...)
+}
+
+func geminiText(role string, texts ...string) any {
+	parts := make([]any, 0, len(texts))
+	for _, t := range texts {
+		parts = append(parts, obj("text", t))
+	}
+	return obj("role", role, "parts", parts)
+}
+
+func geminiCall(command string) any {
+	return obj("functionCall", obj("name", toolName, "args", obj("command", command)))
+}
+
+func geminiResult(response any) any {
+	return obj("functionResponse", obj("name", toolName, "response", response))
+}
+
+// geminiToolTurn is a user ask, a model turn calling Bash and the user turn
+// carrying the functionResponse. Gemini ties a response to its call by name.
+func geminiToolTurn(command string, response any) []any {
+	return []any{
+		geminiText("user", userAsk),
+		obj("role", "model", "parts", []any{obj("text", "I'll look at the service configuration."), geminiCall(command)}),
+		obj("role", "user", "parts", []any{geminiResult(response)}),
+	}
+}
+
+// geminiMCPContent is a functionResponse.response in the shape Gemini CLI
+// sends MCP tool results: a list of MCP content blocks.
+func geminiMCPContent(texts ...string) any {
+	blocks := make([]any, 0, len(texts))
+	for _, t := range texts {
+		blocks = append(blocks, obj("type", "text", "text", t))
+	}
+	return obj("content", blocks)
+}
+
 func req(api fp.API, body any, mode Escape, stream bool) Request {
 	h := http.Header{}
 	h.Set("Content-Type", "application/json")
 	if api == fp.Anthropic {
 		h.Set("Anthropic-Version", "2023-06-01")
 	}
-	return Request{API: api, Path: api.Path(), Header: h, Body: encode(body, mode), Stream: stream}
+	r := Request{API: api, Path: api.Path(), Header: h, Body: encode(body, mode), Stream: stream}
+	if stream {
+		r.Path, r.Query = api.StreamPath(true)
+	}
+	return r
 }
 
 // standard builds the primary tool-result request, with optional changes.
@@ -200,6 +270,8 @@ func standard(api fp.API, c Content, mode Escape, stream bool) Request {
 		return req(api, chatParts{messages: chatToolTurn(c.Command, c.Text()), stream: stream}.body(), mode, stream)
 	case fp.OpenAIResponses:
 		return req(api, responsesParts{input: responsesToolTurn(c.Command, c.Text()), stream: stream}.body(), mode, stream)
+	case fp.Gemini:
+		return req(api, geminiParts{contents: geminiToolTurn(c.Command, obj("output", c.Text()))}.body(), mode, stream)
 	}
 	return Request{}
 }
@@ -242,6 +314,8 @@ var Placements = []Placement{
 				return one(req(api, chatParts{messages: chatToolTurn(c.Command, []any{obj("type", "text", "text", c.Text())})}.body(), mode, false))
 			case fp.OpenAIResponses:
 				return one(req(api, responsesParts{input: responsesToolTurn(c.Command, []any{obj("type", "input_text", "text", c.Text())})}.body(), mode, false))
+			case fp.Gemini:
+				return one(req(api, geminiParts{contents: geminiToolTurn(c.Command, geminiMCPContent(c.Text()))}.body(), mode, false))
 			}
 			return nil
 		}},
@@ -254,6 +328,8 @@ var Placements = []Placement{
 				return one(req(api, chatParts{messages: []any{obj("role", "user", "content", c.Text())}}.body(), mode, false))
 			case fp.OpenAIResponses:
 				return one(req(api, responsesParts{input: []any{obj("role", "user", "content", c.Text())}}.body(), mode, false))
+			case fp.Gemini:
+				return one(req(api, geminiParts{contents: []any{geminiText("user", c.Text())}}.body(), mode, false))
 			}
 			return nil
 		}},
@@ -266,6 +342,8 @@ var Placements = []Placement{
 				return one(req(api, chatParts{messages: []any{obj("role", "user", "content", []any{obj("type", "text", "text", c.Text())})}}.body(), mode, false))
 			case fp.OpenAIResponses:
 				return one(req(api, responsesParts{input: []any{obj("type", "message", "role", "user", "content", []any{obj("type", "input_text", "text", c.Text())})}}.body(), mode, false))
+			case fp.Gemini:
+				return one(req(api, geminiParts{contents: []any{geminiText("user", "Here is the service's output:", c.Text())}}.body(), mode, false))
 			}
 			return nil
 		}},
@@ -278,6 +356,8 @@ var Placements = []Placement{
 				return one(req(api, chatParts{messages: []any{obj("role", "developer", "content", c.Text()), obj("role", "user", "content", userAsk)}}.body(), mode, false))
 			case fp.OpenAIResponses:
 				return one(req(api, responsesParts{instructions: c.Text(), input: []any{obj("role", "user", "content", userAsk)}}.body(), mode, false))
+			case fp.Gemini:
+				return one(req(api, geminiParts{system: obj("parts", []any{obj("text", sysText), obj("text", c.Text())}), contents: []any{geminiText("user", userAsk)}}.body(), mode, false))
 			}
 			return nil
 		}},
@@ -291,6 +371,8 @@ var Placements = []Placement{
 				return one(req(api, chatParts{messages: chatToolTurn(cmd, "")}.body(), mode, false))
 			case fp.OpenAIResponses:
 				return one(req(api, responsesParts{input: responsesToolTurn(cmd, "")}.body(), mode, false))
+			case fp.Gemini:
+				return one(req(api, geminiParts{contents: geminiToolTurn(cmd, obj("output", ""))}.body(), mode, false))
 			}
 			return nil
 		}},
@@ -306,6 +388,8 @@ var Placements = []Placement{
 				return one(req(api, chatParts{messages: hist(obj("role", "assistant", "content", c.Text()))}.body(), mode, false))
 			case fp.OpenAIResponses:
 				return one(req(api, responsesParts{input: hist(obj("type", "message", "role", "assistant", "content", []any{obj("type", "output_text", "text", c.Text())}))}.body(), mode, false))
+			case fp.Gemini:
+				return one(req(api, geminiParts{contents: []any{geminiText("user", userAsk), geminiText("model", c.Text()), geminiText("user", "Thanks, go on.")}}.body(), mode, false))
 			}
 			return nil
 		}},
@@ -319,6 +403,8 @@ var Placements = []Placement{
 				return one(req(api, chatParts{tools: []any{bashToolChat(c.Text())}, messages: msgs}.body(), mode, false))
 			case fp.OpenAIResponses:
 				return one(req(api, responsesParts{tools: []any{bashToolResponses(c.Text())}, input: msgs}.body(), mode, false))
+			case fp.Gemini:
+				return one(req(api, geminiParts{tools: []any{bashToolGemini(c.Text())}, contents: []any{geminiText("user", userAsk)}}.body(), mode, false))
 			}
 			return nil
 		}},
@@ -333,6 +419,9 @@ var Placements = []Placement{
 			case fp.OpenAIResponses:
 				return one(req(api, responsesParts{input: msgs, extra: []kv{{"metadata", obj("session", c.Text())}}}.body(), mode, false))
 			}
+			// The Gemini API has no metadata or user field (Vertex AI's
+			// labels are not accepted by generativelanguage.googleapis.com);
+			// an arbitrary top-level field is the unknown-field row.
 			return nil
 		}},
 	{ID: "unknown-field", Desc: "an undocumented top-level field (like Claude Code's safeguards field)", Expect: Redacted,
@@ -346,6 +435,8 @@ var Placements = []Placement{
 				return one(req(api, chatParts{messages: msgs, extra: extra}.body(), mode, false))
 			case fp.OpenAIResponses:
 				return one(req(api, responsesParts{input: msgs, extra: extra}.body(), mode, false))
+			case fp.Gemini:
+				return one(req(api, geminiParts{contents: []any{geminiText("user", userAsk)}, extra: extra}.body(), mode, false))
 			}
 			return nil
 		}},
@@ -358,6 +449,8 @@ var Placements = []Placement{
 				return one(req(api, chatParts{messages: []any{obj("role", "user", "content", userAsk, "x_source", c.Text())}}.body(), mode, false))
 			case fp.OpenAIResponses:
 				return one(req(api, responsesParts{input: []any{obj("type", "message", "role", "user", "content", []any{obj("type", "input_text", "text", userAsk, "x_source", c.Text())})}}.body(), mode, false))
+			case fp.Gemini:
+				return one(req(api, geminiParts{contents: []any{obj("role", "user", "parts", []any{obj("text", userAsk, "x_source", c.Text())})}}.body(), mode, false))
 			}
 			return nil
 		}},
@@ -376,6 +469,9 @@ var Placements = []Placement{
 				file := obj("type", "input_file", "filename", ".env", "file_data", data)
 				return one(req(api, responsesParts{input: []any{obj("type", "message", "role", "user", "content", []any{file, obj("type", "input_text", "text", userAsk)})}}.body(), mode, false))
 			}
+			// Gemini takes a document as an inlineData part, which scrim
+			// treats as binary whatever its mimeType (see image-metadata),
+			// and a text part, which is user-blocks.
 			return nil
 		}},
 	{ID: "header", Desc: "a custom HTTP request header", Expect: Guard,
@@ -404,6 +500,9 @@ var Placements = []Placement{
 			case fp.OpenAIResponses:
 				img := obj("type", "input_image", "image_url", "data:image/png;base64,"+png)
 				return one(req(api, responsesParts{input: []any{obj("type", "message", "role", "user", "content", []any{img, obj("type", "input_text", "text", "What does this screenshot show?")})}}.body(), mode, false))
+			case fp.Gemini:
+				img := obj("inlineData", obj("mimeType", "image/png", "data", png))
+				return one(req(api, geminiParts{contents: []any{obj("role", "user", "parts", []any{img, obj("text", "What does this screenshot show?")})}}.body(), mode, false))
 			}
 			return nil
 		}},
@@ -418,6 +517,8 @@ var Placements = []Placement{
 				return one(req(api, chatParts{messages: chatToolTurn(c.Command, []any{obj("type", "text", "text", a), obj("type", "text", "text", b)})}.body(), mode, false))
 			case fp.OpenAIResponses:
 				return one(req(api, responsesParts{input: responsesToolTurn(c.Command, []any{obj("type", "input_text", "text", a), obj("type", "input_text", "text", b)})}.body(), mode, false))
+			case fp.Gemini:
+				return one(req(api, geminiParts{contents: geminiToolTurn(c.Command, geminiMCPContent(a, b))}.body(), mode, false))
 			}
 			return nil
 		}},
@@ -441,6 +542,11 @@ var Placements = []Placement{
 					obj("type", "function_call", "call_id", callID+"2", "name", toolName, "arguments", `{"command":"tail -c +41 .env"}`),
 					obj("type", "function_call_output", "call_id", callID+"2", "output", b))
 				return one(req(api, responsesParts{input: in}.body(), mode, false))
+			case fp.Gemini:
+				contents := append(geminiToolTurn("head -c 40 .env", obj("output", a)),
+					obj("role", "model", "parts", []any{geminiCall("tail -c +41 .env")}),
+					obj("role", "user", "parts", []any{geminiResult(obj("output", b))}))
+				return one(req(api, geminiParts{contents: contents}.body(), mode, false))
 			}
 			return nil
 		}},

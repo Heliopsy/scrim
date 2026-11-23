@@ -1,0 +1,39 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "**Reading the env file**\n\nDB_PASSWORD is {{P0}}, I should not repeat the Stripe key.",
+            "thought": true
+          },
+          {
+            "text": "The service reads `DB_PASSWORD={{P0}}` for user `{{P2}}`. The Stripe key {{P1}} is unused here."
+          },
+          {
+            "functionCall": {
+              "name": "run_shell_command",
+              "args": {
+                "command": "PGPASSWORD='{{P0}}' psql -h db.internal -U {{P2}} -c 'select 1'",
+                "description": "Check the database login."
+              }
+            },
+            "thoughtSignature": "CiQB0e2Kb3NpZ25hdHVyZUZvclRlc3RzT25seVt7e1AwfX1d"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 2214,
+    "candidatesTokenCount": 64,
+    "totalTokenCount": 2389,
+    "cachedContentTokenCount": 1800,
+    "thoughtsTokenCount": 111
+  },
+  "modelVersion": "gemini-2.5-pro",
+  "responseId": "q8kgaYXJDreGkdUP0YrI2Ac"
+}

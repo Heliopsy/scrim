@@ -20,7 +20,7 @@ import (
 )
 
 // DefaultRoutes are the LLM proxy's path prefixes per provider family.
-var DefaultRoutes = map[string]string{"anthropic": "/anthropic", "openai": "/openai"}
+var DefaultRoutes = map[string]string{"anthropic": "/anthropic", "openai": "/openai", "gemini": "/gemini"}
 
 // RunEndpoints is what a daemon offers an agent started by `scrim run`.
 // None of it is secret.

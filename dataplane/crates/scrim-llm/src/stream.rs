@@ -4,28 +4,41 @@
 
 use std::sync::Arc;
 
-use crate::codec::{self, Api, StreamCodec, StreamLimits};
+use crate::codec::{self, Api, ArrayCodec, StreamCodec, StreamLimits};
 use crate::config::Limits;
 use crate::engine::Snapshot;
+use crate::jsonarray::{self, ArrayFramer};
 use crate::restore::{Ctx, RestoreStats};
 use crate::sse::{Framer, Piece};
 
-/// Restores placeholders in one provider SSE stream.
+/// How the stream is framed.
+enum Framing {
+    /// Server-sent events.
+    Sse(Framer, Box<dyn StreamCodec>),
+    /// The elements of one JSON array (Gemini `streamGenerateContent` without `alt=sse`).
+    Array(ArrayFramer, Box<dyn ArrayCodec>),
+}
+
+/// Restores placeholders in one provider stream: SSE, or a streamed JSON array
+/// ([`SseRestorer::json_array`]).
 ///
-/// Memory is bounded by `limits.max_event` (one partial event) plus, per open content block,
-/// `Placeholders::max_len() - 1` held bytes, plus `limits.max_buffered_tool_input` across the
-/// stream for tools fed in buffered mode.
+/// Memory is bounded by `limits.max_event` (one partial event or array element) plus, per open
+/// content block, `Placeholders::max_len() - 1` held bytes, plus
+/// `limits.max_buffered_tool_input` across the stream for tools fed in buffered mode.
 pub struct SseRestorer {
-    framer: Framer,
-    codec: Box<dyn StreamCodec>,
+    framing: Framing,
     snap: Arc<Snapshot>,
     stats: RestoreStats,
 }
 
 impl std::fmt::Debug for SseRestorer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let buffered = match &self.framing {
+            Framing::Sse(fr, _) => fr.buffered(),
+            Framing::Array(fr, _) => fr.buffered(),
+        };
         f.debug_struct("SseRestorer")
-            .field("buffered", &self.framer.buffered())
+            .field("buffered", &buffered)
             .finish_non_exhaustive()
     }
 }
@@ -40,8 +53,23 @@ impl SseRestorer {
             },
         )?;
         Some(Self {
-            framer: Framer::new(limits.max_event),
-            codec,
+            framing: Framing::Sse(Framer::new(limits.max_event), codec),
+            snap,
+            stats: RestoreStats::default(),
+        })
+    }
+
+    /// A restorer for `api`'s streamed JSON array (Gemini `streamGenerateContent` without
+    /// `alt=sse`), or `None` when the API has no such stream.
+    pub fn json_array(api: Api, snap: Arc<Snapshot>, limits: &Limits) -> Option<Self> {
+        let codec = codec::array_codec(
+            api,
+            StreamLimits {
+                max_buffered_tool_input: limits.max_buffered_tool_input,
+            },
+        )?;
+        Some(Self {
+            framing: Framing::Array(ArrayFramer::new(limits.max_event), codec),
             snap,
             stats: RestoreStats::default(),
         })
@@ -53,11 +81,20 @@ impl SseRestorer {
             snap: &self.snap,
             stats: &self.stats,
         };
-        let codec = &mut self.codec;
-        self.framer.push(chunk, &mut |p| match p {
-            Piece::Event(e) => codec.event(&ctx, e, out),
-            Piece::Raw(r) => out.extend_from_slice(r),
-        });
+        match &mut self.framing {
+            Framing::Sse(framer, codec) => framer.push(chunk, &mut |p| match p {
+                Piece::Event(e) => codec.event(&ctx, e, out),
+                Piece::Raw(r) => out.extend_from_slice(r),
+            }),
+            Framing::Array(framer, codec) => framer.push(chunk, &mut |p| match p {
+                jsonarray::Piece::Element(e) => codec.element(&ctx, e, out),
+                jsonarray::Piece::Raw(r) => out.extend_from_slice(r),
+                jsonarray::Piece::Close(c) => {
+                    codec.close(&ctx, out);
+                    out.extend_from_slice(c);
+                }
+            }),
+        }
     }
 
     /// Ends the stream: releases held text and any unterminated trailing bytes.
@@ -66,8 +103,17 @@ impl SseRestorer {
             snap: &self.snap,
             stats: &self.stats,
         };
-        self.codec.finish(&ctx, out);
-        out.extend_from_slice(&self.framer.finish());
+        match &mut self.framing {
+            Framing::Sse(framer, codec) => {
+                codec.finish(&ctx, out);
+                out.extend_from_slice(&framer.finish());
+            }
+            Framing::Array(framer, codec) => {
+                // An unterminated element goes first, so held text is not placed inside it.
+                out.extend_from_slice(&framer.finish());
+                codec.finish(&ctx, out);
+            }
+        }
     }
 
     /// Placeholders resolved so far.

@@ -452,8 +452,8 @@ fn ephemeral_key(taken: &[rc::PlaceholderKey]) -> Result<rc::PlaceholderKey, Rej
         .map_err(|e| invalid(format!("placeholder key: {e}")))
 }
 
-/// The LLM proxy's routes: the snapshot's, or the built-in Anthropic and `OpenAI` routes when it
-/// has none.
+/// The LLM proxy's routes: the snapshot's, or the built-in Anthropic, `OpenAI` and Gemini routes
+/// when it has none.
 fn route_configs(routes: &[v1::Route]) -> Result<Vec<RouteConfig>, Rejected> {
     if routes.is_empty() {
         return Ok(default_routes());
@@ -467,6 +467,7 @@ fn route_configs(routes: &[v1::Route]) -> Result<Vec<RouteConfig>, Rejected> {
             let provider = match r.provider.to_ascii_lowercase().as_str() {
                 "anthropic" => Provider::Anthropic,
                 "openai" => Provider::Openai,
+                "gemini" => Provider::Gemini,
                 other => {
                     return Err(invalid(format!(
                         "route {}: provider {other:?} is not supported by this data plane",
@@ -716,9 +717,9 @@ mod tests {
         });
         reject(&|s| {
             s.routes = vec![v1::Route {
-                name: "g".into(),
-                provider: "gemini".into(),
-                upstream: "https://g.example".into(),
+                name: "c".into(),
+                provider: "cohere".into(),
+                upstream: "https://c.example".into(),
                 ..Default::default()
             }];
         });

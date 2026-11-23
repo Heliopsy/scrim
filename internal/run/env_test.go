@@ -58,6 +58,7 @@ func TestBuildCommonEnvironment(t *testing.T) {
 	want := map[string]string{
 		"ANTHROPIC_BASE_URL":        "http://127.0.0.1:9790/anthropic",
 		"OPENAI_BASE_URL":           "http://127.0.0.1:9790/openai/v1",
+		"GOOGLE_GEMINI_BASE_URL":    "http://127.0.0.1:9790/gemini",
 		"HTTPS_PROXY":               "http://s1:<session-token>@127.0.0.1:9791",
 		"https_proxy":               "http://s1:<session-token>@127.0.0.1:9791",
 		"HTTP_PROXY":                "http://s1:<session-token>@127.0.0.1:9791",

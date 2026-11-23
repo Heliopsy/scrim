@@ -136,6 +136,73 @@ fn responses_text(out: &str) -> (String, String) {
     (t, done)
 }
 
+/// Gemini chunks, one text delta each, the last with `finishReason` (and the delta when
+/// `finish_with_text`); as SSE or as a JSON array.
+fn gemini(deltas: &[&str], finish_with_text: bool, sse: bool) -> String {
+    let chunk = |t: Option<&str>, fin: bool| {
+        let parts = t.map_or(String::new(), |t| format!("{{\"text\":{}}}", q(t)));
+        let fin = if fin {
+            ",\"finishReason\":\"STOP\""
+        } else {
+            ""
+        };
+        format!(
+            "{{\"candidates\":[{{\"content\":{{\"parts\":[{parts}],\"role\":\"model\"}}{fin},\"index\":0}}],\"modelVersion\":\"gemini-2.5-flash\",\"responseId\":\"r\"}}"
+        )
+    };
+    let n = deltas.len();
+    let mut chunks: Vec<String> = deltas
+        .iter()
+        .enumerate()
+        .map(|(i, d)| chunk(Some(d), finish_with_text && i == n - 1))
+        .collect();
+    if !finish_with_text {
+        chunks.push(chunk(None, true));
+    }
+    if sse {
+        chunks
+            .iter()
+            .map(|c| format!("data: {c}\r\n\r\n"))
+            .collect()
+    } else {
+        format!("[{}]", chunks.join("\r\n,"))
+    }
+}
+
+fn gemini_text(out: &str, sse: bool) -> String {
+    let chunks: Vec<serde_json::Value> = if sse {
+        events(&out.replace("\r\n", "\n"))
+            .into_iter()
+            .map(|(_, v)| v)
+            .collect()
+    } else {
+        serde_json::from_str(out).unwrap()
+    };
+    let mut t = String::new();
+    let mut finished = false;
+    for c in chunks {
+        let cand = &c["candidates"][0];
+        for p in cand["content"]["parts"].as_array().unwrap() {
+            let s = p["text"].as_str().unwrap();
+            assert!(!finished || s.is_empty(), "text after finishReason: {out}");
+            t.push_str(s);
+        }
+        if cand["finishReason"].is_string() {
+            finished = true;
+        }
+    }
+    t
+}
+
+fn run_array(fx: &Fixture, stream: &str) -> String {
+    let mut r =
+        SseRestorer::json_array(Api::Gemini, Arc::new(fx.snapshot()), &Limits::default()).unwrap();
+    let mut out = Vec::new();
+    r.push(stream.as_bytes(), &mut out);
+    r.finish(&mut out);
+    String::from_utf8(out).unwrap()
+}
+
 fn run(api: Api, fx: &Fixture, stream: &str) -> String {
     let mut r = SseRestorer::new(api, Arc::new(fx.snapshot()), &Limits::default()).unwrap();
     let mut out = Vec::new();
@@ -169,6 +236,10 @@ fn every_cut_point_every_api() {
                 for fin in [false, true] {
                     let c = chat_text(&run(Api::OpenAiChat, &fx, &chat(&parts, fin)));
                     assert_eq!(c, want, "cut {i} {j} {fin}");
+                    let g = gemini_text(&run(Api::Gemini, &fx, &gemini(&parts, fin, true)), true);
+                    assert_eq!(g, want, "gemini sse cut {i} {j} {fin}");
+                    let g = gemini_text(&run_array(&fx, &gemini(&parts, fin, false)), false);
+                    assert_eq!(g, want, "gemini array cut {i} {j} {fin}");
                 }
                 let (t, done) =
                     responses_text(&run(Api::OpenAiResponses, &fx, &responses(&parts, &full)));

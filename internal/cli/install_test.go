@@ -231,7 +231,7 @@ func TestInterceptionDryRunUsesTheProviderHosts(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, errb)
 	}
 	for _, w := range []string{"would write " + filepath.Join(f.root, install.DropInPath),
-		"would resolve api.anthropic.com, api.openai.com, chatgpt.com, ab.chatgpt.com to scrim (127.0.83.1)",
+		"would resolve api.anthropic.com, api.openai.com, generativelanguage.googleapis.com, chatgpt.com, ab.chatgpt.com to scrim (127.0.83.1)",
 		"connecting by address bypasses it"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("dry run lacks %q:\n%s", w, out)

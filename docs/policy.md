@@ -88,7 +88,7 @@ scrim adds one rule after the rules from your file:
 | `op` | string | `llm.forward`, `inject`, `restore`, `store.read`, `store.write`, `secret.gen`, `grant`, `exec`, `mcp.tool`, `secret.ask`, `ssh.sign`, `database.auth` |
 | `agent` | object | `id`, `kind` (`peer`, `session`, `k8s`, `mtls`, empty when unknown), `known` (bool), `session`, `labels` (map) |
 | `secret` | object | `ref`, `name` (catalog name), `store`, `class`, `labels` (map, see [Labels from stores](#labels-from-stores)) |
-| `provider` | string | `anthropic`, `openai`, ... |
+| `provider` | string | `anthropic`, `openai`, `gemini`, ... |
 | `dest` | object | `host`, `method`, `path` |
 | `tool` | object | `name`, `command` |
 | `now` | timestamp | request time |
