@@ -231,6 +231,13 @@ e2e-agentmodes *args:
 e2e-managed-settings:
     test/e2e/agentmodes/managed-settings.sh
 
+# The end-to-end matrix (tasks.md 16.1): the cells of one store (file, openbao, vault, awssm),
+# its server in rootless podman, the cells inside test/e2e/sandbox.sh with an nftables redirect for
+# the transparent mode. SCRIM_MATRIX_CELLS picks cells. See "End-to-end matrix" in
+# docs/leak-assurance.md.
+e2e-matrix store *args:
+    test/e2e/matrix/run.sh {{store}} {{args}}
+
 # Every end-to-end run above.
 e2e: e2e-tools e2e-chain e2e-session docs-test e2e-profiles e2e-agentmodes e2e-managed-settings
 

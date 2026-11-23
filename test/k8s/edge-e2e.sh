@@ -179,12 +179,7 @@ kwait 120 -n scrim-edge-e2e rollout status deploy/gitserver --timeout=100s
 # ---------------------------------------------------------------- chart
 
 log "install the chart"
-values=(-f "$here/values.yaml")
-have_exec=0
-if grep -q '^    "exec": {' "$root/schema/config-v1.json"; then
-  have_exec=1
-  values+=(-f "$here/values-exec.yaml")
-fi
+values=(-f "$here/values.yaml" -f "$here/values-exec.yaml")
 hl upgrade --install scrim "$root/deploy/helm/scrim" -n scrim "${values[@]}" \
   --set image.registry=localhost --set image.repository="$(basename "${img_scrim%:*}")" --set image.tag="$tag" \
   --set 'agents.namespaces={agents}' --set tests.enabled=false --wait --timeout 240s >/dev/null
@@ -270,7 +265,6 @@ record "$out"
 pass "psql by placeholder through the forwarded port logs in as scrim's database user"
 
 log "exec broker"
-if [ "$have_exec" = 1 ]; then
 want_sum="$(printf %s "$db_password" | sha256sum | cut -d' ' -f1)"
 out="$(in_agent curl -sS --unix-socket /run/scrim-edge/api.sock -X POST http://scrim/v1/exec \
   -H 'content-type: application/json' -d '{"command":["execprobe"],"env":{"PROBE_SECRET":"SCRIM_DB_PASSWORD"}}')"
@@ -280,9 +274,6 @@ grep -q "sha256=$want_sum" <<<"$(jq -r .stdout <<<"$out")" || fail "the command 
 if grep -q "value=$db_password" <<<"$(jq -r .stdout <<<"$out")"; then fail "the exec output carried the value"; fi
 jq -e '.redactions >= 1' <<<"$out" >/dev/null || fail "the exec output was not redacted: $out"
 pass "exec runs centrally with the real value and returns it as a placeholder"
-else
-  printf 'skip exec: this tree has no exec broker (exec.* in schema/config-v1.json)\n'
-fi
 
 log "fail closed"
 k -n scrim scale deploy/scrim --replicas=0 >/dev/null

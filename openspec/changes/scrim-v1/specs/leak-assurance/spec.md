@@ -150,6 +150,32 @@ redacted), and any uncontained transform SHALL fail the release.
 - **WHEN** CI runs the matrix through `scrim proxy` with the seeds in a file store
 - **THEN** no row expecting `redacted`, `guard` or `withheld` leaks
 
+### Requirement: End-to-end matrix
+
+The bypass matrix SHALL also run end to end, with the real data plane, across interception modes,
+stores and provider routes, the seeds in the store under test. Its cells SHALL cover every pair of
+values from two axes, and any gated leak, unexpected outcome, unauthenticated cloud request or seed
+in scrim's log SHALL fail CI.
+
+#### Scenario: Cloud route through the transparent listener
+
+- **WHEN** an agent with no configuration sends the matrix to a Bedrock route's host and the
+  redirect lands it on the transparent listener, with the AWS keys in OpenBao
+- **THEN** every request the fake Bedrock receives carries a valid signature made by scrim and no
+  row expecting `redacted`, `guard` or `withheld` leaks
+
+#### Scenario: MCP only
+
+- **WHEN** an agent lists, generates and captures secrets through `scrim mcp` and sends the tool
+  results to the provider itself
+- **THEN** neither the tool results nor what the provider received holds a seeded, generated or
+  captured value
+
+#### Scenario: Every pair covered
+
+- **WHEN** a mode, store or provider is added to the matrix
+- **THEN** the covering check fails until every pair it forms with the other axes runs in a cell
+
 ### Requirement: Matrix rows state their outcome
 
 Every matrix row SHALL name its transform, its placement in the request and its provider API, and

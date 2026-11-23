@@ -85,6 +85,11 @@ type Options struct {
 	AgentBin string
 	// Progress, when set, receives one line per finished case.
 	Progress io.Writer
+	// WrapUpstream, when set, wraps the fake provider before it is served,
+	// for example in a cloud provider front end (fakeprovider.NewCloud)
+	// that checks authentication and translates the wire format. Results
+	// are still read from the fake itself.
+	WrapUpstream func(*fp.Server) http.Handler
 }
 
 // ErrGate is returned when the run completed and the gate failed.
@@ -133,7 +138,11 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fake provider: %w", err)
 	}
-	up := &http.Server{Handler: fake, ReadHeaderTimeout: 10 * time.Second}
+	var handler http.Handler = fake
+	if o.WrapUpstream != nil {
+		handler = o.WrapUpstream(fake)
+	}
+	up := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = up.Serve(ln) }()
 	defer func() { _ = up.Close() }()
 	upURL := "http://" + ln.Addr().String()
