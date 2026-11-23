@@ -299,6 +299,13 @@ is out of date.
 | [`exec.user`](#execuser) | string | `""` | hot |
 | [`grants.default-ttl`](#grantsdefault-ttl) | duration | `30m0s` | hot |
 | [`grants.max-ttl`](#grantsmax-ttl) | duration | `8h0m0s` | hot |
+| [`identity.issuer.insecure-http`](#identityissuerinsecure-http) | bool | `false` | restart required |
+| [`identity.issuer.key-dir`](#identityissuerkey-dir) | string | `""` | restart required |
+| [`identity.issuer.listen`](#identityissuerlisten) | string | `""` | restart required |
+| [`identity.issuer.rotate-every`](#identityissuerrotate-every) | duration | `24h0m0s` | restart required |
+| [`identity.issuer.signing-keys`](#identityissuersigning-keys) | secret-ref | empty | restart required |
+| [`identity.issuer.token-ttl`](#identityissuertoken-ttl) | duration | `10m0s` | restart required |
+| [`identity.issuer.url`](#identityissuerurl) | string | `""` | restart required |
 | [`identity.kubernetes.agents`](#identitykubernetesagents) | map | `{}` | restart required |
 | [`identity.kubernetes.api-server`](#identitykubernetesapi-server) | string | `""` | restart required |
 | [`identity.kubernetes.audience`](#identitykubernetesaudience) | string | `scrim` | restart required |
@@ -1493,6 +1500,91 @@ Longest grant any rule or approver can create. A rule's grant.max_ttl can only l
 | Reload | hot |
 
 ### identity
+
+#### `identity.issuer.insecure-http`
+
+Allow an http:// identity.issuer.url on a host other than loopback. Anyone on the path between a store and scrim could then substitute signing keys, and the store would trust tokens they sign.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_IDENTITY_ISSUER_INSECURE_HTTP` |
+| Flag | none |
+| Reload | restart required |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `identity.issuer.key-dir`
+
+Directory of the issuer's generated signing keys and their rotation state. Empty means $XDG_STATE_HOME/scrim/issuer (~/.local/state/scrim/issuer). Created with mode 0700. Not used with identity.issuer.signing-keys.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_IDENTITY_ISSUER_KEY_DIR` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.issuer.listen`
+
+TCP address that serves the issuer's discovery document and JWKS, and nothing else. Required when identity.issuer.url is set.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_IDENTITY_ISSUER_LISTEN` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.issuer.rotate-every`
+
+How often a generated signing key is replaced. The next key is published one period before it signs, and a replaced key stays published until the last token it signed has expired. At least 1h.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `24h0m0s` |
+| Environment | `SCRIM_IDENTITY_ISSUER_ROTATE_EVERY` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.issuer.signing-keys`
+
+Reference to operator-managed signing keys: one or more PKCS#8 PEM RSA private keys (2048 bits or more). The first signs and all are published, so replicas that share the reference agree on the JWKS. scrim does not rotate these; empty means scrim generates and rotates its own keys in identity.issuer.key-dir.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; literals rejected) |
+| Default | empty |
+| Environment | `SCRIM_IDENTITY_ISSUER_SIGNING_KEYS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.issuer.token-ttl`
+
+Lifetime of each identity token, never past the end of the session it is minted for. Between 1m and 1h.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `10m0s` |
+| Environment | `SCRIM_IDENTITY_ISSUER_TOKEN_TTL` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.issuer.url`
+
+Issuer URL of the identity tokens scrim signs for agents (the iss claim). Stores and clouds fetch <url>/.well-known/openid-configuration and the JWKS it names from here, so it must reach identity.issuer.listen, usually through a TLS reverse proxy. https, or http on a loopback host; plain http elsewhere needs identity.issuer.insecure-http. Empty turns the issuer off.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_IDENTITY_ISSUER_URL` |
+| Flag | none |
+| Reload | restart required |
 
 #### `identity.kubernetes.agents`
 
