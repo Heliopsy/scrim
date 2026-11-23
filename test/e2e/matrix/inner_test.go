@@ -85,17 +85,20 @@ func TestMatrixInner(t *testing.T) {
 		t.Run(strings.ReplaceAll(c.String(), "/", "_"), func(t *testing.T) {
 			start := time.Now()
 			res := Result{Cell: c.String()}
+			// Deferred, so a cell that stops with t.Fatal is reported too.
+			defer func() {
+				res.Pass = !t.Failed()
+				res.Seconds = time.Since(start).Seconds()
+				if p.Results != "" {
+					b, _ := json.Marshal(res)
+					_ = os.WriteFile(filepath.Join(p.Results, fmt.Sprintf("%02d.json", i)), b, 0o600)
+				}
+			}()
 			cs := newCellStore(p.Store, addr, t.TempDir(), fmt.Sprintf("matrix/c%02d", i))
 			if c.Mode == ModeMCPOnly {
 				runMCPCell(t, bin, cs, &res)
 			} else {
 				runTrafficCell(t, bin, c, cs, &res)
-			}
-			res.Pass = !t.Failed()
-			res.Seconds = time.Since(start).Seconds()
-			if p.Results != "" {
-				b, _ := json.Marshal(res)
-				_ = os.WriteFile(filepath.Join(p.Results, fmt.Sprintf("%02d.json", i)), b, 0o600)
 			}
 		})
 	}
