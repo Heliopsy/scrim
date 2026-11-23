@@ -290,6 +290,40 @@ fn backslash_values_overlapping() {
     }
 }
 
+/// Escapes whose decoded bytes no value holds but which spell escapes for the next round
+/// (`\u005c` `\u0075` `\u0030`... is `\u0000`): the optimised guard must unescape as deep as
+/// the oracle, which never skips a round, at depth 3 and 4.
+#[test]
+fn escapes_that_spell_escapes() {
+    // One level: `\` doubled, and the bytes `esc` picks as `\u00XX`.
+    fn level(s: &[u8], esc: impl Fn(u8) -> bool) -> Vec<u8> {
+        s.iter()
+            .flat_map(|&b| match b {
+                b'\\' => b"\\\\".to_vec(),
+                b if esc(b) => format!("\\u{b:04x}").into_bytes(),
+                b => vec![b],
+            })
+            .collect()
+    }
+    let control = |b: u8| b < 0x20;
+    let every = |b: u8| b < 0x80;
+    for v in [
+        b">\t>\t>\t\x02\x08".to_vec(),
+        b"\xef\xf7\xf7\x92\xf7\x00\x00\xbf".to_vec(),
+    ] {
+        let go = level(&v, |b| control(b) || matches!(b, b'<' | b'>' | b'&'));
+        let three = level(&level(&go, every), |_| false);
+        let four = level(&level(&level(&go, every), every), |_| false);
+        for depth in [3, 4] {
+            let s = snap_depth(std::slice::from_ref(&v), 8, 64, 1, usize::MAX, depth).unwrap();
+            for form in [&three, &four] {
+                let body = [&b"{\"c\":\""[..], form, b"\"}"].concat();
+                assert_agrees(&s, &body);
+            }
+        }
+    }
+}
+
 /// A value whose hex form has no digit: hex spans without digits must be decoded as well.
 #[test]
 fn digit_free_hex_value() {

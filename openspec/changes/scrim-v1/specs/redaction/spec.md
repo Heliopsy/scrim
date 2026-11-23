@@ -64,6 +64,20 @@ SHALL unescape the outgoing bytes as often. Identical escaped forms SHALL be com
 - **THEN** the guard finds it in the matching unescaped view and repairs the escaped bytes, so
   the body stays valid JSON at every level
 
+#### Scenario: Escapes that spell escapes
+
+- **WHEN** a value's escapes are escaped again so that a level's escapes decode only to `\`, `u`
+  and hex digits, none of them bytes of any known value (`\u005c\u0075\u0030\u0030\u0030\u0030` for
+  `\u0000`)
+- **THEN** the guard still unescapes every round up to `redaction.json_depth` and finds the value
+
+#### Scenario: Nesting past the depth
+
+- **WHEN** a value is JSON-escaped more times than `redaction.json_depth`, including when
+  backslashes before an escaped form pair with its own and push it one round deeper
+- **THEN** the guard is not required to find it except as a fragment, and the documentation lists
+  the limitation with `redaction.json_depth` 4 as its mitigation
+
 ### Requirement: Short values
 
 Values shorter than the configured minimum length (`redaction.min_length`, default 8 bytes) SHALL

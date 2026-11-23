@@ -497,7 +497,9 @@ impl OracleGuard {
             self.raw_only(bytes, &json1, &mut vh);
             push_mapped(out, &vh, GuardView::Raw, |a, b| (a, b));
 
-            if self.json_escapes_matter(&json1.bytes) {
+            // Every round up to the depth while escapes remain: no guess about which escapes
+            // can matter, so the optimised guard's pruning is checked against all of them.
+            if has_json_escape(&json1.bytes) {
                 let mut json2 = std::mem::take(&mut s.json2);
                 json_unescape(&json1.bytes, &mut json2);
                 vh.clear();
@@ -745,7 +747,7 @@ impl OracleGuard {
     /// Rounds three to `json_depth` of JSON unescaping, each derived from the previous one and
     /// scanned near its decoded units: an occurrence that differs from the previous view must
     /// contain a byte one of its units produced, and the previous view is covered the same way down
-    /// to the fully scanned first one. Stops at the first view whose escapes cannot matter.
+    /// to the fully scanned first one. Stops at the first view without escapes.
     fn scan_deeper(
         &self,
         json1: &View,
@@ -761,7 +763,7 @@ impl OracleGuard {
         for k in 0..extra {
             let (done, rest) = deeper.split_at_mut(k);
             let parent = done.last().unwrap_or(json2);
-            if !self.json_escapes_matter(&parent.bytes) {
+            if !has_json_escape(&parent.bytes) {
                 break;
             }
             let view = &mut rest[0];
@@ -900,28 +902,6 @@ impl OracleGuard {
                 h.1 += a;
             }
         });
-    }
-
-    /// Whether any escape in `b` decodes to a byte some value contains.
-    fn json_escapes_matter(&self, b: &[u8]) -> bool {
-        let w = |c: u8| self.byte_width[usize::from(c)] != 0;
-        memchr::memchr_iter(b'\\', b).any(|i| match b.get(i + 1) {
-            Some(b'"') => w(b'"'),
-            Some(b'\\') => w(b'\\'),
-            Some(b'/') => w(b'/'),
-            Some(b'n') => w(b'\n'),
-            Some(b'r') => w(b'\r'),
-            Some(b't') => w(b'\t'),
-            Some(b'b') => w(0x08),
-            Some(b'f') => w(0x0c),
-            Some(b'u') => match hex4(&b[i + 2..]) {
-                Some(cp @ 0..0x80) => w(cp as u8),
-                // Non-ASCII: any value with a non-ASCII byte may need it.
-                Some(_) => self.byte_width[0x80..].iter().any(|&x| x != 0),
-                None => false,
-            },
-            _ => false,
-        })
     }
 
     /// Finds known values in one view. `with_short` enables exact short-value matching.
