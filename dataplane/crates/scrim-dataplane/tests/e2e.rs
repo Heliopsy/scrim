@@ -1147,7 +1147,7 @@ async fn every_engine_reads_one_bundle_version() {
     // A rejected snapshot changes nothing anywhere.
     let mut bad = snapshot(&s, &provider, 1, std::path::Path::new("/nonexistent"));
     bad.version = 41;
-    bad.routes[0].provider = "gemini".into();
+    bad.routes[0].provider = "cohere".into();
     assert!(shared.apply(bad).await.is_err());
     assert_eq!(shared.llm.snapshots().load().map(|l| l.version), Some(40));
     assert_eq!(shared.tool_proxy.status().snapshot_version, Some(40));

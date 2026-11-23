@@ -3,6 +3,7 @@
 package fakeprovider
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -326,4 +327,99 @@ func (g *gen) responses(w http.ResponseWriter, r Reply, stream bool) {
 		ev("response.output_item.done", map[string]any{"output_index": oi, "item": it.m})
 	}
 	ev("response.completed", map[string]any{"response": full("completed", true)})
+}
+
+// Google Gemini.
+
+func (g *gen) geminiUsage(out int) map[string]any {
+	return map[string]any{
+		"promptTokenCount":        g.input,
+		"candidatesTokenCount":    out,
+		"totalTokenCount":         g.input + out,
+		"cachedContentTokenCount": g.cached,
+		"promptTokensDetails":     []any{map[string]any{"modality": "TEXT", "tokenCount": g.input}},
+	}
+}
+
+// gemini writes a GenerateContentResponse, or a stream of them: server-sent
+// events (alt=sse) or a JSON array flushed element by element, as the real
+// API sends either. Text arrives in small deltas, one per chunk, so
+// placeholders split across chunks; a functionCall part arrives whole. The
+// first functionCall part carries a thoughtSignature, which the client must
+// send back unchanged with the call.
+func (g *gen) gemini(w http.ResponseWriter, r Reply, stream, sse bool) {
+	respID := g.id("")[:22]
+	var calls []map[string]any
+	for i, tc := range r.ToolCalls {
+		in := tc.Input
+		if in == nil {
+			in = map[string]any{}
+		}
+		p := map[string]any{"functionCall": map[string]any{"name": tc.Name, "args": in}}
+		if i == 0 {
+			p["thoughtSignature"] = base64.StdEncoding.EncodeToString([]byte(g.id("sig_")))
+		}
+		calls = append(calls, p)
+	}
+	out := outputTokens(r)
+	chunk := func(parts []any, last bool) map[string]any {
+		cand := map[string]any{"content": map[string]any{"role": "model", "parts": parts}, "index": 0}
+		m := map[string]any{"candidates": []any{cand}, "modelVersion": g.model, "responseId": respID}
+		if last {
+			cand["finishReason"] = "STOP"
+			m["usageMetadata"] = g.geminiUsage(out)
+		}
+		return m
+	}
+	if !stream {
+		parts := []any{}
+		if r.Text != "" {
+			parts = append(parts, map[string]any{"text": r.Text})
+		}
+		for _, c := range calls {
+			parts = append(parts, c)
+		}
+		writeJSON(w, http.StatusOK, chunk(parts, true))
+		return
+	}
+	var chunks [][]any
+	for _, p := range g.pieces(r.Text) {
+		chunks = append(chunks, []any{map[string]any{"text": p}})
+	}
+	for _, c := range calls {
+		chunks = append(chunks, []any{c})
+	}
+	if len(chunks) == 0 {
+		chunks = append(chunks, []any{map[string]any{"text": ""}})
+	}
+	f, _ := w.(http.Flusher)
+	write := func(s string) {
+		_, _ = fmt.Fprint(w, s)
+		if f != nil {
+			f.Flush()
+		}
+	}
+	if sse {
+		w.Header().Set("Content-Type", "text/event-stream")
+	} else {
+		w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	}
+	w.WriteHeader(http.StatusOK)
+	for i, parts := range chunks {
+		b, err := json.Marshal(chunk(parts, i == len(chunks)-1))
+		if err != nil {
+			b = []byte(`{}`)
+		}
+		switch {
+		case sse:
+			write("data: " + string(b) + "\r\n\r\n")
+		case i == 0:
+			write("[" + string(b) + "\r\n")
+		default:
+			write("," + string(b) + "\r\n")
+		}
+	}
+	if !sse {
+		write("]")
+	}
 }

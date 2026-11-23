@@ -5,9 +5,10 @@
 //
 //	scrim-fakeprovider -listen 127.0.0.1:18089 -capture-dir ./captures
 //
-// It answers Anthropic Messages (/v1/messages) and OpenAI Chat Completions
-// (/v1/chat/completions) and Responses (/v1/responses) under any path prefix,
-// and serves /_fake/health, /_fake/exchanges (GET, every recorded exchange as
+// It answers Anthropic Messages (/v1/messages), OpenAI Chat Completions
+// (/v1/chat/completions) and Responses (/v1/responses), and Gemini
+// (/v1beta/models/{model}:generateContent, :streamGenerateContent and
+// :countTokens) under any path prefix, and serves /_fake/health, /_fake/exchanges (GET, every recorded exchange as
 // JSON) and /_fake/reset (POST).
 package main
 

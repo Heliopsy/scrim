@@ -159,10 +159,11 @@ restore:
 		}
 	}
 	for h, want := range map[string]string{
-		"api.anthropic.com": "anthropic anthropic https://api.anthropic.com",
-		"api.openai.com":    "openai openai https://api.openai.com",
-		"chatgpt.com":       "chatgpt openai https://chatgpt.com",
-		"ab.chatgpt.com":    "chatgpt-ab openai https://ab.chatgpt.com",
+		"api.anthropic.com":                 "anthropic anthropic https://api.anthropic.com",
+		"api.openai.com":                    "openai openai https://api.openai.com",
+		"chatgpt.com":                       "chatgpt openai https://chatgpt.com",
+		"ab.chatgpt.com":                    "chatgpt-ab openai https://ab.chatgpt.com",
+		"generativelanguage.googleapis.com": "gemini gemini https://generativelanguage.googleapis.com",
 	} {
 		if hosts[h] != want {
 			t.Fatalf("host %s routed to %q, want %q", h, hosts[h], want)
@@ -579,5 +580,19 @@ func TestSnapshotSendsOnlyLabelsRulesRead(t *testing.T) {
 	}
 	if l := got["vw://Dev/db#password"]; len(l) != 0 {
 		t.Fatalf("Dev value labels = %v", l)
+	}
+}
+
+// A loopback Gemini upstream (a local fake or chained proxy) is reached
+// directly, like every other loopback upstream; a remote one is not listed.
+func TestBypassListsLoopbackGeminiUpstream(t *testing.T) {
+	cfg := buildConfig(t, "proxy:\n  upstream:\n    gemini: http://127.0.0.1:18089\n    openai: https://api.example.test\n")
+	if got := strings.Join(bypass(cfg), ","); got != "127.0.0.1:18089" {
+		t.Fatalf("bypass = %q", got)
+	}
+	for _, r := range routes(cfg) {
+		if r.GetName() == "gemini" && (r.GetUpstream() != "http://127.0.0.1:18089" || r.GetPathPrefix() != "/gemini" || r.GetProvider() != "gemini") {
+			t.Fatalf("gemini route = %v", r)
+		}
 	}
 }

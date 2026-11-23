@@ -380,6 +380,57 @@ scope, ambiguous, no such field).
 - **WHEN** the store is locked and a rule needs an item's labels
 - **THEN** the lookup fails and the request is decided with its labels unknown
 
+### Requirement: Bitwarden Secrets Manager adapter
+
+The system SHALL read, list, watch and write Bitwarden Secrets Manager secrets by project name or ID
+and key, or by secret ID, logging in as a machine account with its access token. Keys, values, notes
+and project names SHALL be encrypted and decrypted by scrim with the organization key the login
+yields, so Bitwarden only ever receives ciphertext, and the protocol steps SHALL be pinned by
+known-answer tests against vectors from the official SDK.
+
+#### Scenario: Read through a project name
+
+- **WHEN** scrim reads `bws://prod/db/PASSWORD` with a machine account that can read project `prod`
+- **THEN** it returns the decrypted value of key `db/PASSWORD` in that project as the field `value`
+- **AND** the note is returned only for `bws://prod/db/PASSWORD#note`
+
+#### Scenario: Write into a read-only project
+
+- **WHEN** an agent writes `bws://prod/NEW` and the machine account may only read `prod`
+- **THEN** the write fails with permission denied naming the store and reference, although Bitwarden
+  answers it with not found
+
+### Requirement: Bitwarden Secrets Manager names that are not unique
+
+Secrets Manager allows several secrets with one key and several projects with one name. A read,
+write or label lookup through a name that matches more than one SHALL fail as an invalid reference
+naming the IDs to use instead, and SHALL NOT pick one. A listing SHALL return secrets that share a
+key by their ID.
+
+#### Scenario: Two secrets share a key
+
+- **WHEN** project `app` holds two secrets with key `TOKEN` and an agent reads `bws://app/TOKEN`
+- **THEN** the read fails as an invalid reference naming both secret IDs
+- **AND** listing `bws://app` returns both as `bws://<secret-id>` so a redact target still loads them
+
+### Requirement: Bitwarden Secrets Manager labels without values
+
+The adapter SHALL label every secret with `bws.org`, `bws.id`, `bws.key`, its projects as
+`bws.project` and `bws.project-id` with presence keys, and `bws.created` and `bws.updated`. The
+labels of an existing secret SHALL come from the secret identifier list without fetching its value,
+SHALL equal those a read reports, and SHALL NOT contain the value or the note. A write target SHALL
+be labelled from its reference alone.
+
+#### Scenario: Labels of a write target
+
+- **WHEN** a rule asks for writes into project `prod` and an agent creates `bws://prod/NEW`
+- **THEN** the write is decided on `bws.project.prod = true` before the secret exists, and asks
+
+#### Scenario: Labels hold no value or note
+
+- **WHEN** a secret has a value and a note and a rule needs its labels
+- **THEN** no secret is fetched and neither the value nor the note appears in any label
+
 ### Requirement: Infisical adapter
 
 The system SHALL read and write Infisical secrets by project, environment, folder and key, and SHALL
@@ -476,6 +527,51 @@ note or the value of an encrypted metadata entry.
 - **WHEN** a secret has a value, a comment, a reminder note and an encrypted metadata entry
 - **THEN** none of them appears in any label key or value, and the encrypted entry is listed by key
   only in `infisical.encrypted-meta`
+
+### Requirement: SOPS file source
+
+The system SHALL provide a read-only `sops` source for SOPS-encrypted YAML, JSON, dotenv and INI files
+under a configured root, addressed as `<instance>://<path under root>[#key-path]`, a key path joining
+map keys and list positions with `/`. It SHALL decrypt only with the age identities its configuration
+names, never with ambient sops key locations, and SHALL declare read, list, watch and glob, refusing
+writes as read-only.
+
+#### Scenario: Decrypt with the configured age key
+
+- **WHEN** `prod/app.yaml` under the root was encrypted by sops for the age recipient of the identity
+  `age-identity` names
+- **THEN** reading `team://prod/app.yaml#db/password` returns the decrypted value of `db.password`
+- **AND** a file encrypted only for another recipient is refused with a permission error naming the
+  store and reference, without any value
+
+#### Scenario: Write refused as read-only
+
+- **WHEN** a rule targets a `sops` instance for `secret_capture` or `secret_gen`
+- **THEN** the call is refused with an error saying the sops source is read-only
+- **AND** nothing is written under the root
+
+### Requirement: SOPS files are authenticated before use
+
+The `sops` source SHALL verify a file's MAC over all of its values before returning any of them, and
+SHALL refuse a file whose MAC or values do not authenticate.
+
+#### Scenario: MAC failure refused
+
+- **WHEN** a value, the order of values, an unencrypted leaf or the MAC of a SOPS file was changed by
+  anything but sops
+- **THEN** the read fails with a permission error and no value of that file is returned
+
+### Requirement: SOPS native labels
+
+The `sops` source SHALL label every secret with its file's plaintext sops metadata under
+`sops.<attribute>` keys, read without decrypting, and the labels SHALL never hold a secret value.
+
+#### Scenario: Labels from sops metadata
+
+- **WHEN** a policy rule needs the labels of a SOPS file encrypted for two age recipients
+- **THEN** the labels include `sops.path`, `sops.format`, `sops.version`, `sops.lastmodified` and
+  `sops.age-recipient` with one presence key per recipient, read without the age key
+- **AND** no label key or value contains a decrypted value or the age identity
 
 ### Requirement: OpenBao adapter
 

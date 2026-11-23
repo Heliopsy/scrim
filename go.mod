@@ -4,6 +4,7 @@ go 1.27.4
 
 require (
 	cel.dev/cel-go v0.33.4
+	filippo.io/age v1.3.2
 	github.com/aws/aws-sdk-go-v2 v1.48.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.21
 	github.com/aws/aws-sdk-go-v2/credentials v1.21.3
@@ -38,6 +39,7 @@ require (
 
 require (
 	cel.dev/expr v0.25.3 // indirect
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.9 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.12 // indirect

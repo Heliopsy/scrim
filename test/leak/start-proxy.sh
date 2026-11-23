@@ -55,7 +55,7 @@ stores:
 proxy:
   listen: $listen
   forward-listen: ""
-  upstream: {anthropic: "$SCRIM_LEAK_UPSTREAM", openai: "$SCRIM_LEAK_UPSTREAM"}
+  upstream: {anthropic: "$SCRIM_LEAK_UPSTREAM", openai: "$SCRIM_LEAK_UPSTREAM", gemini: "$SCRIM_LEAK_UPSTREAM"}
 api: {socket: $dir/api.sock}
 admin: {url: "unix:$dir/admin.sock"}
 redaction: {placeholder-key-dir: $dir/keys}

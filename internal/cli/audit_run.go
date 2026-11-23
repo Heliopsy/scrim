@@ -107,7 +107,7 @@ suite itself.`,
 	f.StringVar(&o.SeedsIn, "seeds", "", "read seeds (fake values) from this file instead of generating them")
 	f.StringVar(&o.SeedsOut, "seeds-out", "", "write the seeds (fake values) to this file, mode 0600")
 	f.StringSliceVar(&o.Suites, "suite", nil, "suites to run: matrix, scenarios (default both)")
-	f.StringSliceVar(&apis, "api", nil, "APIs to run: anthropic, openai-chat, openai-responses (default all)")
+	f.StringSliceVar(&apis, "api", nil, "APIs to run: anthropic, openai-chat, openai-responses, gemini (default all)")
 	f.StringSliceVar(&o.Rows, "rows", nil, "run only matrix rows whose ID starts with one of these prefixes")
 	f.StringSliceVar(&routes, "route", nil, "route prefix of an API on the proxy, as api=prefix (for example anthropic=/anthropic)")
 	f.StringArrayVar(&headers, "header", nil, "header sent with every request, as 'Name: value' (the agent's provider auth; never a seed)")
