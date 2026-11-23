@@ -3,8 +3,9 @@
 //! Who sent a request, as far as the transport tells (specs `agent-identity`, "Identity is not
 //! taken from request content").
 //!
-//! The data plane holds no session tokens and no mapping from Unix users to agents, so it can
-//! establish what a request carries but not whose it is:
+//! The data plane holds no mapping from Unix users to agents and checks no session token (the
+//! tokens it holds are redaction values; only a redaction scope, [`crate::scopes`], looks at
+//! them), so it can establish what a request carries but not whose it is:
 //!
 //! | Transport | What the data plane reads |
 //! | --- | --- |

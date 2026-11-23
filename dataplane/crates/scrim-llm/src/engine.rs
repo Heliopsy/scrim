@@ -311,6 +311,25 @@ pub struct RequestInfo<'a> {
     pub extensions: &'a http::Extensions,
 }
 
+/// A narrower redactor and guard for one caller, built from the dictionary minus the values that
+/// caller's own store identity cannot read (agent-identity spec, "Redaction coverage is separate
+/// from use", only with the weakening setting `redaction.limit-to-agent-identity`). The two stay
+/// independent: each comes from the same narrowed dictionary, as the snapshot-wide pair comes
+/// from the whole one.
+#[derive(Clone)]
+pub struct ScopedRedaction {
+    /// Request-side redactor for this caller.
+    pub redactor: Arc<dyn Redactor>,
+    /// Guard over this caller's outgoing bytes.
+    pub guard: Arc<dyn Guard>,
+}
+
+impl fmt::Debug for ScopedRedaction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ScopedRedaction(..)")
+    }
+}
+
 /// A [`RequestGate`]'s answer.
 pub enum Admission {
     /// Forward the request; restore its response under `policy` (the snapshot's restore policy
@@ -318,6 +337,9 @@ pub enum Admission {
     Forward {
         /// Restore policy for this request.
         policy: Arc<dyn RestorePolicy>,
+        /// Redactor and guard for this request in place of the snapshot's, `None` for the
+        /// snapshot's (the whole dictionary).
+        redaction: Option<ScopedRedaction>,
     },
     /// Refuse with `policy_denied`. `detail` names the rule and never contains a value.
     Deny {

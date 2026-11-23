@@ -60,6 +60,7 @@ impl RequestGate for Gate {
             } else {
                 Admission::Forward {
                     policy: Arc::clone(&self.policy),
+                    redaction: None,
                 }
             }
         })

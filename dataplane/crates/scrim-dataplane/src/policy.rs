@@ -42,6 +42,7 @@ use scrim_toolproxy::{InjectionDecision, InjectionPolicy, InjectionRequest};
 use crate::asks::Broker;
 use crate::events::Bus;
 use crate::identity::Identity;
+use crate::scopes::Scopes;
 
 /// The decision engine this build runs, reported as `StatusResponse.policy_engine`: the
 /// decision table of format 1.
@@ -186,9 +187,16 @@ impl Decisions {
         LlmRestorePolicy::new(Arc::clone(&self.restore), caller)
     }
 
-    /// The request gate the LLM proxy runs per request.
+    /// The request gate the LLM proxy runs per request, with the whole dictionary for every
+    /// caller.
     pub fn llm_gate(self: &Arc<Self>) -> Arc<dyn RequestGate> {
-        Arc::new(LlmGate(Arc::clone(self)))
+        self.llm_gate_scoped(Arc::new(Scopes::default()))
+    }
+
+    /// The request gate the LLM proxy runs per request; a request that proves a session with a
+    /// scope is redacted with that scope's narrower redactor and guard.
+    pub fn llm_gate_scoped(self: &Arc<Self>, scopes: Arc<Scopes>) -> Arc<dyn RequestGate> {
+        Arc::new(LlmGate(Arc::clone(self), scopes))
     }
 
     /// The injection policy the tool proxy runs per credential and request.
@@ -367,8 +375,8 @@ impl Decisions {
 }
 
 /// The LLM proxy's per-request gate: `llm.forward` for the caller, then the restore policy
-/// bound to that caller.
-struct LlmGate(Arc<Decisions>);
+/// bound to that caller and, for a session with a redaction scope, its narrower redaction.
+struct LlmGate(Arc<Decisions>, Arc<Scopes>);
 
 impl RequestGate for LlmGate {
     fn admit<'a>(
@@ -390,6 +398,7 @@ impl RequestGate for LlmGate {
             }
             Admission::Forward {
                 policy: Arc::new(d.restore_policy(who.caller(Some(info.provider)))),
+                redaction: self.1.for_caller(&who),
             }
         })
     }

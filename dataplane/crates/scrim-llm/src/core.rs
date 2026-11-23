@@ -24,7 +24,8 @@ use scrim_redact as rc;
 
 use crate::engine::{
     BinaryPolicy, EngineError, Guard, GuardVerdict, PlaceholderMatch, Placeholders, RedactReport,
-    Redactor, Resolved, RestorePolicy, SecretRef, SecretValue, Snapshot, ValueClass,
+    Redactor, Resolved, RestorePolicy, ScopedRedaction, SecretRef, SecretValue, Snapshot,
+    ValueClass,
 };
 
 struct Inner {
@@ -92,6 +93,15 @@ impl CoreEngine {
     /// The core snapshot.
     pub fn core(&self) -> &Arc<rc::Snapshot> {
         &self.inner.snap
+    }
+
+    /// This core's redactor and guard, for a [`crate::Admission`] that narrows a caller's
+    /// redaction to a core built from fewer values.
+    pub fn redaction(&self) -> ScopedRedaction {
+        ScopedRedaction {
+            redactor: Arc::new(CoreRedactor(self.inner.clone())),
+            guard: Arc::new(CoreGuard(self.inner.clone())),
+        }
     }
 
     /// The engine snapshot for the proxy: this core's redactor, guard and placeholders with

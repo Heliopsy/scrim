@@ -312,6 +312,43 @@ implements the check so far; Infisical and Vaultwarden are used with scrim's own
 `scrim doctor` lists, per store and agent, which identity applies (`kubernetes`, `static`,
 `shared`, or `none` for refused).
 
+### Redaction identity
+
+Redaction reads with its own identity: each store's refresher loads the `redact` targets with the
+credentials configured on the store instance (`stores.<name>.auth`, `token`, `role-id`, ...),
+never with an agent's login or static credential. Give that identity read access to everything in
+the redaction set. Because the per-agent identities above only govern use and writes, a value an
+agent cannot use is still redacted when the agent sends it by accident, for example when it reads
+a log file that holds another team's secret.
+
+The opposite is available as a weakening setting, `redaction.limit-to-agent-identity`. With it on,
+scrim asks the store, as each agent with a static credential in `identity.store-credentials`,
+whether that agent can read each value of the redaction set (OpenBao `sys/capabilities-self`,
+never a read), and the provider requests of that agent's `scrim run` sessions are no longer
+redacted for the values its store refused it:
+
+```yaml
+redaction:
+  limit-to-agent-identity: true   # weakening: listed by scrim status and scrim doctor
+```
+
+It narrows as little as it can:
+
+- Only provider requests on the LLM proxy, and only from a session that sent its own token
+  (`x-scrim-session` or the forward proxy's `Proxy-Authorization`). A bare session id, a peer
+  without a session, a Kubernetes caller, the tool proxy and every other path keep the whole
+  redaction set. The data plane checks the token against the session tokens it already holds for
+  redaction. It does not check the process tree the token was minted for, so a process that stole
+  a session's token gets that session's narrower redaction.
+- Only stores with a static per-agent credential. Kubernetes passthrough is not checked: scrim
+  holds a pod's token only while one of its requests is in flight.
+- Only values the store refused. A value not checked yet, a check that failed and an answer older
+  than five minutes stay redacted until the next check.
+
+scrim logs a warning at start-up and each time an agent's set of unredacted values changes (agent
+and references, never values), `scrim status` lists the setting under weakened protections, and
+`scrim doctor` warns per store which agents' sessions it affects.
+
 ### Testing in a cluster
 
 `test/k8s/identity/run.sh` runs all of this in a kind cluster on rootless podman: OpenBao with

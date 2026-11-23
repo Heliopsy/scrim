@@ -71,8 +71,8 @@ pub use config::{ChainConfig, OnUnavailable, Provider, ProxyConfig, RouteConfig}
 pub use engine::{
     Admission, BinaryPolicy, EngineError, Guard, GuardVerdict, KeepAll, PlaceholderMatch,
     Placeholders, RedactReport, Redactor, RequestGate, RequestInfo, Resolved, RestoreDecision,
-    RestorePolicy, RestoreSite, SecretRef, SecretValue, Snapshot, SnapshotCell, SnapshotSource,
-    ToolInputRestore, ToolMode, ValueClass,
+    RestorePolicy, RestoreSite, ScopedRedaction, SecretRef, SecretValue, Snapshot, SnapshotCell,
+    SnapshotSource, ToolInputRestore, ToolMode, ValueClass,
 };
 pub use error::{ERROR_HEADER, Refusal};
 pub use metrics::LlmMetrics;

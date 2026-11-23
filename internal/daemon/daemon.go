@@ -55,6 +55,7 @@ import (
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/placeholder"
 	"github.com/heliopsy/scrim/internal/policy"
+	"github.com/heliopsy/scrim/internal/redactscope"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/status"
 	"github.com/heliopsy/scrim/internal/stores"
@@ -186,12 +187,15 @@ type Daemon struct {
 	// kubeTokens are the service account tokens scrim verified, redacted
 	// until they expire.
 	kubeTokens *sessionTokens
-	pusher     *pusher
-	log        *slog.Logger
-	started    time.Time
-	capture    string
-	infoPath   string
-	trust      func() string
+	// scopes checks what each agent's own store identity can read, only
+	// with redaction.limit-to-agent-identity on.
+	scopes   *redactscope.Checker
+	pusher   *pusher
+	log      *slog.Logger
+	started  time.Time
+	capture  string
+	infoPath string
+	trust    func() string
 
 	// project are the values scrim run found in each session's project
 	// files, redacted until the session ends.
@@ -356,6 +360,14 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	}
 	d.builder.SetKeys(ring)
 	d.cleanup = append(d.cleanup, func() { d.builder.SetKeys(nil) })
+	// The redaction set is loaded with each store's own credentials; only
+	// the weakening setting narrows it per agent.
+	if redactscope.LimitToAgentIdentity.Get(cfg) {
+		log := obs.WithComponent(a.Log, "redaction")
+		d.scopes = redactscope.New(redactscope.Options{Reader: access, OnChange: func() { d.pusher.Trigger() }, Log: log})
+		d.builder.RedactionScopes = redactionScopes(d.scopes, d.tokens.sessionsByAgent)
+		warnLimitedRedaction(log, access, governed)
+	}
 
 	a.SnapshotSource = d.builder.Build
 	d.sup, err = a.DataPlane()
@@ -433,6 +445,9 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	d.goRun("pusher", func() error { d.pusher.Run(runCtx); return nil })
 	d.goRun("dataplane", func() error { return ignoreCanceled(d.sup.Run(runCtx)) })
 	d.goRun("sessions", func() error { d.sweepSessions(runCtx); return nil })
+	if d.scopes != nil {
+		d.goRun("redaction scopes", func() error { d.scopes.Run(runCtx); return nil })
+	}
 	d.goRun("addresses", func() error { d.watchReady(runCtx); return nil })
 	if o.CARun != nil {
 		d.goRun("ca", func() error { o.CARun(runCtx, d.pusher.Trigger); return nil })

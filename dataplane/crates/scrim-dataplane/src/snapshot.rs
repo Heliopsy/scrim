@@ -30,6 +30,7 @@ use scrim_proto::v1;
 use scrim_redact as rc;
 
 use crate::policy::{self, Decisions, Hooks};
+use crate::scopes::Scopes;
 
 /// Shortest value matched in free text when the snapshot does not say
 /// (`RedactionSettings.min_value_length` unset).
@@ -83,6 +84,8 @@ pub struct Applied {
     pub min_value_length: u32,
     /// The redaction core built from the dictionary.
     pub redaction: Arc<rc::Snapshot>,
+    /// Narrower redaction for the sessions of `redaction_scopes`.
+    pub redaction_scopes: Arc<Scopes>,
 }
 
 impl fmt::Debug for Applied {
@@ -210,41 +213,31 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
         )
         .map_err(|e| invalid(e.to_string()))?,
     );
-    let entries = snap
-        .values
-        .iter()
-        .zip(&slugs)
-        .enumerate()
-        .map(|(i, (v, slug))| {
-            rc::Entry::new(
-                i as u64,
-                slug.clone(),
-                core_class(v.class()),
-                rc::SecretValue::from_slice(&v.value),
-            )
-            .with_shape(v.placeholder_format == "shape")
-        })
-        .collect();
     let config = rc::Config {
         min_len: usize::try_from(min_value_length).unwrap_or(usize::MAX),
         ..rc::Config::default()
     };
     let core = Arc::new(
-        rc::Snapshot::build(entries, Arc::clone(&keyring), &config)
-            .map_err(|e| invalid(format!("redaction: {e}")))?,
+        rc::Snapshot::build(
+            core_entries(&snap.values, &slugs, |_| true),
+            Arc::clone(&keyring),
+            &config,
+        )
+        .map_err(|e| invalid(format!("redaction: {e}")))?,
     );
+    let scopes = redaction_scopes(
+        &mut snap,
+        &slugs,
+        &keyring,
+        &config,
+        decisions.break_glass(),
+    )?;
 
     let bound_hosts: Vec<Vec<String>> = snap.values.iter().map(|v| v.bound_hosts.clone()).collect();
     let tool_proxy = tool_proxy_snapshot(&mut snap, &keyring, &core, &decisions)?;
 
     // The LLM proxy's engine.
-    let engine = CoreEngine::new(
-        Arc::clone(&core),
-        snap.values
-            .iter()
-            .enumerate()
-            .map(|(i, v)| (rc::EntryId(i as u64), SecretRef::new(v.r#ref.as_str()))),
-    );
+    let engine = CoreEngine::new(Arc::clone(&core), entry_refs(&snap.values));
     // The snapshot-wide policy is for an unknown caller; the gate binds it to each request's.
     let mut llm = engine.snapshot(
         snap.version,
@@ -252,7 +245,7 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
         BinaryPolicy::Pass,
     );
     llm.routes = Some(Arc::new(routes));
-    llm.gate = Some(decisions.llm_gate());
+    llm.gate = Some(decisions.llm_gate_scoped(Arc::clone(&scopes)));
 
     let values = snap
         .values
@@ -281,6 +274,7 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
         listeners: std::mem::take(&mut snap.listeners),
         min_value_length,
         redaction: core,
+        redaction_scopes: scopes,
     };
     Ok(Built {
         applied,
@@ -390,6 +384,72 @@ fn value_index(
         });
     }
     ix
+}
+
+/// Narrower cores for the sessions of `redaction_scopes`, with the same entry ids as the core, so
+/// audit events and restores name the same references. Break-glass drops them with everything
+/// else that lets a value through.
+fn redaction_scopes(
+    snap: &mut v1::Snapshot,
+    slugs: &[rc::RefSlug],
+    keyring: &Arc<rc::Keyring>,
+    config: &rc::Config,
+    break_glass: bool,
+) -> Result<Arc<Scopes>, Rejected> {
+    if break_glass {
+        snap.redaction_scopes.clear();
+    }
+    let scopes = Scopes::build(snap, |exempt| {
+        let narrow = rc::Snapshot::build(
+            core_entries(&snap.values, slugs, |v| !exempt.contains(v.r#ref.as_str())),
+            Arc::clone(keyring),
+            config,
+        )
+        .map_err(|e| invalid(format!("redaction scope: {e}")))?;
+        Ok::<_, Rejected>(CoreEngine::new(Arc::new(narrow), entry_refs(&snap.values)).redaction())
+    })?;
+    if !scopes.is_empty() {
+        tracing::info!(
+            version = snap.version,
+            sessions = scopes.sessions(),
+            scopes = ?scopes,
+            "redaction narrowed to each agent's own store identity for some sessions \
+             (redaction.limit-to-agent-identity, a weakening setting)"
+        );
+    }
+    Ok(Arc::new(scopes))
+}
+
+/// The secret reference of each entry id, for audit events.
+fn entry_refs(values: &[v1::ValueEntry]) -> impl Iterator<Item = (rc::EntryId, SecretRef)> + '_ {
+    values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| (rc::EntryId(i as u64), SecretRef::new(v.r#ref.as_str())))
+}
+
+/// The redaction core's entries for the values `keep` accepts. Entry id `i` is the i-th value of
+/// the snapshot whichever values are left out.
+fn core_entries(
+    values: &[v1::ValueEntry],
+    slugs: &[rc::RefSlug],
+    keep: impl Fn(&v1::ValueEntry) -> bool,
+) -> Vec<rc::Entry> {
+    values
+        .iter()
+        .zip(slugs)
+        .enumerate()
+        .filter(|(_, (v, _))| keep(v))
+        .map(|(i, (v, slug))| {
+            rc::Entry::new(
+                i as u64,
+                slug.clone(),
+                core_class(v.class()),
+                rc::SecretValue::from_slice(&v.value),
+            )
+            .with_shape(v.placeholder_format == "shape")
+        })
+        .collect()
 }
 
 fn core_class(c: v1::ValueClass) -> rc::ValueClass {
@@ -568,6 +628,8 @@ fn route_auth(route: &str, a: &v1::RouteAuth) -> Result<AuthConfig, Rejected> {
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
+    use crate::identity::Identity;
+    use crate::scopes;
 
     const VALUE: &[u8] = b"runtime-made-value-for-tests";
 
@@ -603,6 +665,127 @@ mod tests {
             Ok(b) => b,
             Err(e) => panic!("rejected: {e}"),
         }
+    }
+
+    /// A session token as the control plane mints it, with a generated secret part.
+    fn session_token(id: &str) -> String {
+        let mut b = [0u8; 32];
+        getrandom::fill(&mut b).unwrap();
+        let secret: String = b
+            .iter()
+            .flat_map(|x| [b'a' + (x >> 4), b'A' + (x & 15)])
+            .take(43)
+            .map(char::from)
+            .collect();
+        format!("scrim_st_{id}_{secret}")
+    }
+
+    fn session_entry(token: &str, store: &str, reference: &str) -> v1::ValueEntry {
+        let mut e = v1::ValueEntry::default();
+        e.r#ref = reference.into();
+        e.store = store.into();
+        e.slug = "scrim-sessions-credential".into();
+        e.value = token.as_bytes().to_vec();
+        e
+    }
+
+    fn redacts(r: &scrim_llm::ScopedRedaction, value: &[u8]) -> bool {
+        let mut out = Vec::new();
+        r.redactor.redact(value, &mut out).unwrap();
+        !out.windows(value.len()).any(|w| w == value)
+    }
+
+    fn guard_sees(r: &scrim_llm::ScopedRedaction, value: &[u8]) -> bool {
+        !matches!(
+            r.guard.check(value).unwrap(),
+            scrim_llm::GuardVerdict::Clean
+        )
+    }
+
+    /// A redaction scope leaves its exempt references out of both the redactor and the guard,
+    /// for a request that carries the session's token and for nobody else: not a bare session
+    /// id, not a token of the same id with another secret, not a token that only appears in an
+    /// ordinary store, not another session.
+    #[test]
+    fn redaction_scope_applies_only_to_a_proven_session() {
+        // Shares no run with VALUE: the guard also finds fragments of a value.
+        const OTHER: &[u8] = b"Zk82Lmq0PxW4vNa7HbR3";
+        let (sa, sb) = ("abcdefghijklmnop", "qrstuvwxyzabcd23");
+        let (ta, tb) = (session_token(sa), session_token(sb));
+        let forged = session_token(sa);
+        let planted = session_token("plantedsession23");
+        let mut s = snap(1);
+        let mut other = entry(OTHER);
+        other.r#ref = "bao://kv/agents/a#token".into();
+        other.slug = "agents-a".into();
+        s.values.push(other);
+        s.values.push(session_entry(
+            &ta,
+            scopes::SESSION_STORE,
+            scopes::SESSION_REF,
+        ));
+        s.values.push(session_entry(
+            &tb,
+            scopes::SESSION_STORE,
+            scopes::SESSION_REF,
+        ));
+        // A token-shaped value an agent wrote into an ordinary store proves nothing.
+        s.values
+            .push(session_entry(&planted, "bao", "bao://kv/inbox/x#token"));
+        s.redaction_scopes = vec![
+            v1::RedactionScope {
+                agent: "agent-a".into(),
+                sessions: vec![sa.into(), "plantedsession23".into()],
+                exempt_refs: vec!["bao://kv/a#token".into()],
+            },
+            // A scope without exemptions is dropped.
+            v1::RedactionScope {
+                agent: "agent-b".into(),
+                sessions: vec![sb.into()],
+                exempt_refs: vec![],
+            },
+        ];
+        // Break-glass drops every scope.
+        let mut glass = s.clone();
+        glass.policy = Some(v1::Policy {
+            break_glass: true,
+            ..Default::default()
+        });
+        assert!(ok(glass).applied.redaction_scopes.is_empty());
+        let b = ok(s);
+        let scopes = &b.applied.redaction_scopes;
+        assert_eq!(scopes.sessions(), 1);
+        let caller = |tok: &str| {
+            let mut h = http::HeaderMap::new();
+            h.insert(scrim_llm::SESSION_HEADER, tok.parse().unwrap());
+            Identity::of_llm(&h, &http::Extensions::new())
+        };
+        let Some(a) = scopes.for_caller(&caller(&ta)) else {
+            panic!("session a has no scope");
+        };
+        assert!(!redacts(&a, VALUE), "the exempt value was redacted");
+        assert!(
+            !guard_sees(&a, VALUE),
+            "the guard still sees the exempt value"
+        );
+        assert!(redacts(&a, OTHER) && guard_sees(&a, OTHER));
+        for (what, who) in [
+            ("bare session id", caller(sa)),
+            ("forged secret", caller(&forged)),
+            ("planted token", caller(&planted)),
+            ("session without exemptions", caller(&tb)),
+            ("anonymous", Identity::default()),
+        ] {
+            assert!(scopes.for_caller(&who).is_none(), "{what} got a scope");
+        }
+        // The snapshot-wide redaction still covers everything.
+        let mut out = Vec::new();
+        b.applied
+            .redaction
+            .redactor()
+            .redact(VALUE, &mut out)
+            .unwrap();
+        assert!(!out.windows(VALUE.len()).any(|w| w == VALUE));
     }
 
     #[test]

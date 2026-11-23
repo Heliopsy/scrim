@@ -415,6 +415,24 @@ after scrim's rules allow it asks the store, as the agent, whether it may read t
 `sys/capabilities-self`, after a Kubernetes login with the pod's own token for passthrough). The
 value is still loaded with scrim's identity, so redaction never depends on the agent's.
 
+Redaction reads with its own identity: the refreshers load `redact` targets with each store
+instance's credentials, and nothing in the per-agent path (store login, static credentials, the
+token exchange to come) touches them. The stricter option, `redaction.limit-to-agent-identity`
+(weakening), is built at that boundary instead of in the refreshers. `internal/redactscope` asks an
+`AgentReader` whether each agent's own identity can read each value of the redaction set; the
+static credentials of `internal/agentstore` implement it with `sys/capabilities-self`, and a
+federated per-agent identity implements the same two methods. Answers are cached for five minutes
+and computed off the snapshot path; anything unknown stays redacted. The snapshot carries
+`redaction_scopes` (an additive field, protocol 1): per agent, its live session ids and the
+references it cannot read. The data plane builds one more redaction core per scope, without those
+entries and with the same entry ids, and the LLM gate swaps the redactor and guard for a request
+whose session token matches a token of that id among the `scrim-sessions` values it already holds
+for redaction. A data plane that ignores the field, a caller without a verified session, the tool
+proxy and every other path keep the whole dictionary, so every gap falls on the redacting side.
+Alternatives: per-agent dictionaries loaded with each agent's identity would need a refresher per
+agent and store and would put agent credentials on the redaction path; filtering matches in the
+redaction core would make the guard and the redactor share a caller-dependent rule.
+
 ## Risks / Trade-offs
 
 - [An agent invents a transform the guard does not decode] → the bypass matrix grows with every

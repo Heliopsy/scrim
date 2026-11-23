@@ -387,6 +387,9 @@ bao write auth/kubernetes/role/agents-agent-a \
 Agents that are not pods can use a static token instead, `identity.store-credentials:
 {bao/laptop: file:/run/secrets/bao-laptop}`, checked the same way. With either setting, an agent
 that has neither is refused for this store. `scrim doctor` lists which one applies to each agent.
+None of this changes what is redacted: the `redact` targets are still read with scrim's own login,
+so a value an agent's role cannot read is redacted from its traffic all the same (see
+[Redaction identity](../identity.md#redaction-identity) for the weakening setting that changes that).
 
 ## Least privilege
 

@@ -40,6 +40,8 @@ const kubeTokenTTL = 24 * time.Hour
 type sessionToken struct {
 	v       secret.Value
 	expires time.Time
+	// agent is the session's agent; empty for a Kubernetes token.
+	agent string
 }
 
 func newSessionTokens(store string, onChange func()) *sessionTokens {
@@ -84,7 +86,7 @@ func (t *sessionTokens) add(s identity.Session, v secret.Value) {
 	if old, ok := t.tokens[s.ID]; ok {
 		old.v.Wipe()
 	}
-	t.tokens[s.ID] = sessionToken{v: v, expires: s.ExpiresAt}
+	t.tokens[s.ID] = sessionToken{v: v, expires: s.ExpiresAt, agent: s.Agent}
 	t.mu.Unlock()
 	if t.onChange != nil {
 		t.onChange()
@@ -105,6 +107,20 @@ func (t *sessionTokens) prune() bool {
 		}
 	}
 	return gone
+}
+
+// sessionsByAgent lists the ids of the unexpired sessions held, by agent.
+func (t *sessionTokens) sessionsByAgent() map[string][]string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.now()
+	out := map[string][]string{}
+	for id, tok := range t.tokens {
+		if tok.agent != "" && now.Before(tok.expires) {
+			out[tok.agent] = append(out[tok.agent], id)
+		}
+	}
+	return out
 }
 
 // EachValue implements ValueSource. Tokens carry no reference: they are
