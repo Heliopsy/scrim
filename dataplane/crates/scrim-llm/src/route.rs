@@ -2,7 +2,11 @@
 
 //! Routing by path prefix.
 
+use std::sync::Arc;
+
+use crate::auth::RouteAuth;
 use crate::config::{ChainConfig, Provider, RouteConfig};
+use crate::engine::SecretValue;
 
 /// Invalid route configuration.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -19,6 +23,10 @@ pub enum RouteError {
     /// Two routes share a prefix.
     #[error("routes {0} and {1} share the same prefix")]
     Duplicate(String, String),
+    /// The route's authentication is invalid, or combined with a chain (the chained upstream
+    /// would receive the credentials).
+    #[error("route {0}: auth: {1}")]
+    Auth(String, String),
 }
 
 /// A validated route.
@@ -35,6 +43,8 @@ pub struct Route {
     /// Chained upstream and its base URI.
     pub chain: Option<(ChainConfig, http::Uri)>,
     hosts: Vec<String>,
+    /// Authentication the route adds itself, with its credentials.
+    pub auth: Option<Arc<RouteAuth>>,
 }
 
 fn parse_base(name: &str, url: &str, what: &'static str) -> Result<http::Uri, RouteError> {
@@ -75,8 +85,18 @@ pub struct RouteTable {
 }
 
 impl RouteTable {
-    /// Validates and orders `configs`.
+    /// Validates and orders `configs`. Routes with authentication get no credentials: their
+    /// requests are refused with `credential_unavailable` (see [`RouteTable::with_credentials`]).
     pub fn new(configs: &[RouteConfig]) -> Result<Self, RouteError> {
+        Self::with_credentials(configs, &|_| None)
+    }
+
+    /// Validates and orders `configs`, looking the credentials of authenticated routes up with
+    /// `lookup` (by store reference).
+    pub fn with_credentials(
+        configs: &[RouteConfig],
+        lookup: &dyn Fn(&str) -> Option<SecretValue>,
+    ) -> Result<Self, RouteError> {
         let mut routes = Vec::with_capacity(configs.len());
         for c in configs {
             if !c.prefix.starts_with('/') {
@@ -91,6 +111,20 @@ impl RouteTable {
                 Some(ch) => Some((ch.clone(), parse_base(&c.name, &ch.url, "chain url")?)),
                 None => None,
             };
+            let auth = match &c.auth {
+                None => None,
+                Some(_) if chain.is_some() => {
+                    return Err(RouteError::Auth(
+                        c.name.clone(),
+                        "a route with its own authentication cannot be chained".into(),
+                    ));
+                }
+                Some(a) => {
+                    a.validate()
+                        .map_err(|e| RouteError::Auth(c.name.clone(), e))?;
+                    Some(Arc::new(RouteAuth::resolve(a, lookup)))
+                }
+            };
             routes.push(Route {
                 name: c.name.clone(),
                 prefix,
@@ -99,6 +133,7 @@ impl RouteTable {
                 strip_prefix: c.strip_prefix,
                 chain,
                 hosts: c.hosts.iter().map(|h| h.to_ascii_lowercase()).collect(),
+                auth,
             });
         }
         for (i, a) in routes.iter().enumerate() {
@@ -157,6 +192,7 @@ mod tests {
             strip_prefix: true,
             chain: None,
             hosts: vec![],
+            auth: None,
         });
         let t = RouteTable::new(&cfg).unwrap();
         let (r, rest) = t.find("/anthropic/v1/messages").unwrap();
@@ -182,6 +218,7 @@ mod tests {
             strip_prefix: false,
             chain: None,
             hosts: vec![],
+            auth: None,
         }];
         let t = RouteTable::new(&cfg).unwrap();
         assert_eq!(t.find("/v1/messages").unwrap().1, "/v1/messages");
@@ -224,5 +261,49 @@ mod tests {
             on_unavailable: crate::config::OnUnavailable::default(),
         });
         assert!(RouteTable::new(&c).is_err());
+    }
+
+    #[test]
+    fn auth_routes() {
+        use crate::auth::AuthConfig;
+        let mut c = default_routes();
+        c[0].auth = Some(AuthConfig::Header {
+            name: "x-api-key".into(),
+            prefix: String::new(),
+            value: "openbao://kv/a#key".into(),
+        });
+        let t = RouteTable::with_credentials(&c, &|r| {
+            (r == "openbao://kv/a#key").then(|| SecretValue::new(b"v".to_vec()))
+        })
+        .unwrap();
+        let auth = t
+            .find_host("api.anthropic.com")
+            .unwrap()
+            .auth
+            .clone()
+            .unwrap();
+        assert_eq!(auth.missing(), [] as [String; 0]);
+        let t = RouteTable::new(&c).unwrap();
+        assert_eq!(
+            t.find_host("api.anthropic.com")
+                .unwrap()
+                .auth
+                .as_ref()
+                .unwrap()
+                .missing(),
+            ["openbao://kv/a#key"]
+        );
+        c[0].chain = Some(ChainConfig {
+            url: "http://127.0.0.1:1".into(),
+            on_unavailable: crate::config::OnUnavailable::default(),
+        });
+        assert!(matches!(RouteTable::new(&c), Err(RouteError::Auth(..))));
+        c[0].chain = None;
+        c[0].auth = Some(AuthConfig::Header {
+            name: "bad name".into(),
+            prefix: String::new(),
+            value: "r".into(),
+        });
+        assert!(matches!(RouteTable::new(&c), Err(RouteError::Auth(..))));
     }
 }

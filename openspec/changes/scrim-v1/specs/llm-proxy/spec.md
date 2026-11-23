@@ -47,6 +47,35 @@ the proxy SHALL sign the request after redaction and SHALL refuse the request wh
 - **THEN** the proxy refuses the request with an error naming the missing credentials
 - **AND** nothing is sent to the provider
 
+#### Scenario: Agent credentials dropped
+
+- **WHEN** an agent sends a request with its own signature, API key or bearer token on a cloud provider route
+- **THEN** the provider receives only the authentication scrim added and none of the agent's
+
+#### Scenario: Placeholder inside an event stream frame
+
+- **WHEN** Bedrock streams a response whose text holds a placeholder split across two event stream frames
+- **THEN** the agent receives event stream frames with the placeholder resolved where the restore policy allows
+- **AND** every frame scrim changed carries recomputed prelude and message CRCs, and every other frame
+  is forwarded byte for byte
+
+#### Scenario: Base64 body in count-tokens
+
+- **WHEN** an agent sends a Bedrock count-tokens request whose embedded base64 body holds a known secret
+- **THEN** the provider receives the embedded body decoded, redacted and encoded again
+
+### Requirement: Cloud provider routes authenticate themselves
+
+A cloud provider route SHALL authenticate every request itself, toward its own upstream only, with
+credentials it reads from stores by reference, and SHALL drop the authentication the agent sent. A
+cloud provider route SHALL NOT be chained.
+
+#### Scenario: Chain configured
+
+- **WHEN** `proxy.chain.url` is set and a Bedrock provider route is configured
+- **THEN** the built-in routes go through the chain and the Bedrock route sends its signed requests
+  to Bedrock directly
+
 ### Requirement: Routing by path
 
 The proxy SHALL route each incoming request to a provider by the request path prefix and SHALL

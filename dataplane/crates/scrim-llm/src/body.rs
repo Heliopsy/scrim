@@ -13,7 +13,7 @@ use http_body_util::combinators::UnsyncBoxBody;
 
 use crate::capture::BodyTee;
 use crate::metrics::RouteMetrics;
-use crate::stream::SseRestorer;
+use crate::stream::ChunkRestore;
 
 /// Boxed error type of proxy bodies.
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -31,13 +31,13 @@ pub(crate) fn full(b: impl Into<Bytes>) -> ProxyBody {
 /// Called once when a response body ends (or is dropped) with the restore counters.
 pub(crate) type OnEnd = Box<dyn FnOnce(u64, u64) + Send>;
 
-/// Wraps an upstream body: copies it to capture, and when a codec is given, frames it as SSE
-/// and restores placeholders event by event.
+/// Wraps an upstream body: copies it to capture, and when a restorer is given, restores
+/// placeholders event by event (SSE or Amazon event stream).
 pub(crate) struct Restoring<B> {
     inner: B,
     prefix: Option<Bytes>,
     tee: Option<BodyTee>,
-    restorer: Option<SseRestorer>,
+    restorer: Option<Box<dyn ChunkRestore>>,
     trailers: Option<http::HeaderMap>,
     done: bool,
     on_end: Option<OnEnd>,
@@ -49,7 +49,7 @@ impl<B> Restoring<B> {
         inner: B,
         prefix: Option<Bytes>,
         tee: Option<BodyTee>,
-        restorer: Option<SseRestorer>,
+        restorer: Option<Box<dyn ChunkRestore>>,
         on_end: Option<OnEnd>,
     ) -> Self {
         Self {

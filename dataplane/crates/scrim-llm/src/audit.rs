@@ -36,6 +36,9 @@ pub enum RefusalReason {
     PolicyDenied,
     /// A protocol upgrade (WebSocket): the upgraded stream cannot be redacted.
     UpgradeUnsupported,
+    /// The route authenticates with credentials scrim holds and they are not loaded, or could
+    /// not be used to sign the request.
+    CredentialUnavailable,
 }
 
 impl RefusalReason {
@@ -56,6 +59,7 @@ impl RefusalReason {
             Self::UpstreamUnavailable => "upstream_unavailable",
             Self::PolicyDenied => "policy_denied",
             Self::UpgradeUnsupported => "upgrade_unsupported",
+            Self::CredentialUnavailable => "credential_unavailable",
         }
     }
 }

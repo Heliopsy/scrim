@@ -14,7 +14,7 @@ default = []
 # Test doubles (fake redactor, guard, placeholders, policy, audit sink, recording upstream).
 # Used by this crate's tests and benches and by downstream integration tests. Never enable in
 # a release build.
-test-util = ["dep:aho-corasick", "dep:hmac", "dep:sha2", "dep:getrandom"]
+test-util = ["dep:aho-corasick", "dep:getrandom"]
 # InterceptHandler adapter for scrim-toolproxy: provider hosts reached through the forward
 # proxy (HTTPS_PROXY) are served by this crate.
 intercept = ["dep:scrim-toolproxy"]
@@ -23,8 +23,11 @@ redact = ["dep:scrim-redact"]
 
 [dependencies]
 arc-swap = "1.7"
+base64 = "0.23"
 bytes = "1"
+crc32fast = "1.5"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+hmac = "0.13"
 http = "1"
 http-body = "1"
 http-body-util = "0.1"
@@ -37,6 +40,7 @@ rustls-native-certs = "0.8"
 rustls-pemfile = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.11"
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "fs", "io-util", "macros"] }
 tracing = "0.1"
@@ -51,8 +55,6 @@ scrim-redact = { path = "../scrim-redact", optional = true }
 # test-util only
 aho-corasick = { version = "1.1", optional = true }
 getrandom = { version = "0.4", optional = true }
-hmac = { version = "0.13", optional = true }
-sha2 = { version = "0.11", optional = true }
 
 [dev-dependencies]
 proptest = "1"

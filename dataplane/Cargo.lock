@@ -1426,7 +1426,9 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "arc-swap",
+ "base64 0.23.1",
  "bytes",
+ "crc32fast",
  "futures-util",
  "getrandom 0.4.3",
  "hmac",
