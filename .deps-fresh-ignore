@@ -18,3 +18,5 @@
 # Example:
 #
 #   cargo rcgen 2027-01-31 waits for x509-parser 0.18 support, https://github.com/<owner>/<repo>/issues/<n>
+
+go k8s.io/client-go 2027-01-31 its v1.4 and v1.5 tags are 2016 releases from before the v0.x scheme matching Kubernetes minors; v0.37 is the current line, nothing newer exists

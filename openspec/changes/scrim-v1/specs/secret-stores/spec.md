@@ -920,6 +920,80 @@ fail the operation closed.
 - **THEN** the operation waits, the approver is notified, and the value is used only after
   authorisation
 
+### Requirement: Kubernetes Secrets adapter
+
+The system SHALL read Secrets from a Kubernetes cluster, each data key a field, addressed as
+`<instance>://<namespace>/<name>` or, for an instance confined to one namespace, `<instance>://<name>`,
+with each dot of a Secret name written as `/`. It SHALL use only the namespaces the configuration
+lists and SHALL refuse any other before calling the API server.
+
+#### Scenario: Namespace outside the instance
+
+- **WHEN** an instance lists `namespaces: [agents]` and a reference names `kube-system/token`
+- **THEN** the read or write is refused with a permission error naming the reference, before any API
+  call
+
+### Requirement: Kubernetes cluster named explicitly
+
+The Kubernetes adapter SHALL authenticate with the pod's service account, or with a kubeconfig file
+and a context that are both named in the configuration. It SHALL NOT use `KUBECONFIG`,
+`~/.kube/config` or a kubeconfig's current context.
+
+#### Scenario: Kubeconfig context named explicitly
+
+- **WHEN** an instance sets `auth.method: kubeconfig` and `auth.kubeconfig` without `auth.context`
+- **THEN** configuration validation fails naming `auth.context`
+- **AND** with a context named, scrim connects to that context's cluster even when the file's
+  current context and `KUBECONFIG` point elsewhere
+
+### Requirement: Kubernetes source read-only by default
+
+The Kubernetes adapter SHALL be read-only unless the configuration sets `writable: true`. A read-only
+instance SHALL NOT declare write and SHALL refuse a write before any API call.
+
+#### Scenario: Read-only by default
+
+- **WHEN** an agent writes `k8s://prod/new-token` and the instance does not set `writable: true`
+- **THEN** the write is refused with an error saying the kubernetes source is read-only
+- **AND** no request reaches the API server and the caller's value is not wiped
+
+### Requirement: Kubernetes watch
+
+The Kubernetes adapter SHALL watch through the API server's metadata-only watch, resuming from the
+last resource version, and SHALL list again and report the difference when that version has expired
+or the API server was unreachable.
+
+#### Scenario: Watch survives an outage
+
+- **WHEN** the API server becomes unreachable while a watch runs and comes back
+- **THEN** a Secret created after it came back is reported as changed on the same watch
+
+### Requirement: Kubernetes labels cannot be forged
+
+The Kubernetes adapter SHALL label a Secret with `kubernetes.namespace`, `kubernetes.name` and
+`kubernetes.type`, and SHALL file its labels and annotations as `kubernetes.meta.label.<key>` and
+`kubernetes.meta.annotation.<key>`, never over a native key. Annotations whose key starts with
+`scrim.` SHALL also be reported under their own key, and write labels SHALL be stored as such
+annotations.
+
+#### Scenario: Labels cannot forge native keys
+
+- **WHEN** a Secret in namespace `dev` carries the label `kubernetes.namespace: prod`
+- **THEN** its labels hold `kubernetes.namespace: dev` and
+  `kubernetes.meta.label.kubernetes.namespace: prod`
+
+### Requirement: Kubernetes labels hold no data
+
+The Kubernetes adapter SHALL NOT read the `kubectl.kubernetes.io/last-applied-configuration`
+annotation into a label. Its metadata lookups, list and watch SHALL use requests that return no
+Secret data, and a metadata lookup SHALL report the labels a read reports.
+
+#### Scenario: Applied data stays out of labels
+
+- **WHEN** a Secret was created with `kubectl apply`, so its last-applied annotation holds its data
+- **THEN** no label key or value contains that data
+- **AND** a metadata lookup of the Secret returns the labels a read returns
+
 ### Requirement: Built-in store adapters
 
 The system SHALL ship adapters for Vaultwarden, Infisical, OpenBao, HashiCorp Vault, AWS Secrets
