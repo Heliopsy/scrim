@@ -91,6 +91,7 @@ scrim adds one rule after the rules from your file:
 | `provider` | string | `anthropic`, `openai`, `gemini`, ... |
 | `dest` | object | `host`, `method`, `path` |
 | `tool` | object | `name`, `command` |
+| `ssh` | object | `kind` (`userauth`, `sshsig`, `list`), `user`, `namespace`, `key`, `host_key` (SHA256 fingerprints); set for `ssh.sign` only, see [ssh-agent.md](ssh-agent.md) |
 | `now` | timestamp | request time |
 
 For `database.auth` (the database proxies and the read-only database tool, see
@@ -186,6 +187,18 @@ Agents may create secrets, but only under their own prefix, and never at night:
 - name: no-night-writes
   decision: deny
   when: op == "store.write" && now.getHours("Europe/Berlin") < 6
+```
+
+Git over SSH with scrim's ssh-agent: logins as `git` to github.com ask once, then a 15 minute
+grant covers that host ([ssh-agent.md](ssh-agent.md)):
+
+```yaml
+- name: git-over-ssh
+  decision: ask
+  when: >-
+    op == "ssh.sign" && secret.name == "deploy" && ssh.kind == "userauth" &&
+    ssh.user == "git" && dest.host == "github.com"
+  grant: {ttl: 15m, scope: host}
 ```
 
 Allow with a duration: the first allowed read leaves a grant behind, visible in `scrim grants list`

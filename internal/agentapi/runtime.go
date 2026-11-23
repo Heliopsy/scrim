@@ -187,6 +187,10 @@ func (r *Runtime) SetSessionValues(fn func(ctx context.Context, sessionID string
 // Serve.
 func (r *Runtime) SetDatabases(d localapi.Databases) { r.api.Databases = d }
 
+// SetSSHAgent serves POST /v1/ssh/keys and /v1/ssh/sign with a, scrim's
+// ssh-agent keyring. Call it before Serve.
+func (r *Runtime) SetSSHAgent(a localapi.SSHAgent) { r.api.SSH = a }
+
 // lookupGroup resolves api.group to a group ID; empty is 0 (unchanged).
 func lookupGroup(name string) (int, error) {
 	if name == "" {

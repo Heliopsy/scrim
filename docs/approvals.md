@@ -216,6 +216,7 @@ A grant belongs to one agent identity and one secret reference, and covers:
 | `request` (default) | same destination host and same tool |
 | `host` | same destination host, any tool |
 | `secret` | anything on that reference that policy would send to ask |
+| `once` | nothing: the approval releases the one operation, and the next one asks again |
 
 A grant only ever turns an ask into an allow. A deny rule still denies, break-glass still denies,
 and another agent never matches it. `grant.uses` limits how many operations it lets through; the

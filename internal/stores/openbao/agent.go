@@ -73,16 +73,16 @@ func (a *Adapter) AgentCan(ctx context.Context, cred stores.AgentCredential, op 
 	if err != nil {
 		return a.err(op, ref, stores.ErrInvalidRef, "cannot encode the path")
 	}
-	resp, err := a.c.do(ctx, request{
-		op: op, ref: ref, method: http.MethodPost, path: "sys/capabilities-self",
-		body: wire.NewBody(append(buf, "]}"...)), token: tok, involved: []secret.Value{tok},
+	resp, err := a.c.Do(ctx, request{
+		Op: op, Ref: ref, Method: http.MethodPost, Path: "sys/capabilities-self",
+		Body: wire.NewBody(append(buf, "]}"...)), Token: tok, Involved: []secret.Value{tok},
 	})
-	defer resp.wipe()
+	defer resp.Wipe()
 	if err != nil {
 		return err
 	}
 	var cr map[string]json.RawMessage
-	if err := json.Unmarshal(resp.body, &cr); err != nil {
+	if err := json.Unmarshal(resp.Body, &cr); err != nil {
 		return a.err(op, ref, stores.ErrUnavailable, "capabilities answer is not valid JSON")
 	}
 	var caps []string
@@ -120,7 +120,7 @@ func (a *Adapter) agentToken(ctx context.Context, op stores.Op, ref stores.Ref, 
 		return t, nil
 	}
 	a.agents.mu.Unlock()
-	tok, ttl, _, err := a.c.loginKubernetes(ctx, op, ref, mount, cred.Role, cred.KubernetesJWT)
+	tok, ttl, _, err := a.c.LoginKubernetes(ctx, op, ref, mount, cred.Role, cred.KubernetesJWT)
 	if err != nil {
 		return secret.Value{}, err
 	}

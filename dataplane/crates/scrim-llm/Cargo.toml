@@ -35,6 +35,7 @@ hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "ring", "tls12", "webpki-roots", "native-tokio", "logging"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "server-graceful", "client-legacy", "http1", "http2"] }
 memchr = "2.7"
+ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-native-certs = "0.8"
 rustls-pemfile = "2"

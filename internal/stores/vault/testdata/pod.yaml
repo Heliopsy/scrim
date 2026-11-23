@@ -1,0 +1,40 @@
+# HashiCorp Vault in dev mode, with a PostgreSQL for the database secrets
+# engine, for the adapter's integration tests, run with rootless podman:
+#
+#   podman kube play --publish 127.0.0.1:<port>:8200 pod.yaml
+#
+# The test harness (vault_integration_test.go) expands the ${...} variables
+# with freshly generated values before playing the file. Both containers
+# share the pod's network, so Vault reaches PostgreSQL on localhost. Vault is
+# under the Business Source License, which permits this use (running it to
+# test software against it); scrim does not ship or offer Vault.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${POD_NAME}
+  labels:
+    app.kubernetes.io/part-of: scrim-stores-test
+spec:
+  restartPolicy: Never
+  containers:
+    - name: postgres
+      image: docker.io/library/postgres:19.0-alpine3.24
+      env:
+        - name: POSTGRES_USER
+          value: vault
+        - name: POSTGRES_PASSWORD
+          value: ${DB_PASSWORD}
+        - name: POSTGRES_DB
+          value: app
+    - name: vault
+      image: ${VAULT_IMAGE}
+      args: ["server", "-dev", "-dev-listen-address=0.0.0.0:8200"]
+      env:
+        # Rootless podman cannot grant IPC_LOCK; dev mode keeps nothing on
+        # disk anyway.
+        - name: SKIP_SETCAP
+          value: "true"
+        - name: VAULT_DEV_ROOT_TOKEN_ID
+          value: ${ROOT_TOKEN}
+      ports:
+        - containerPort: 8200

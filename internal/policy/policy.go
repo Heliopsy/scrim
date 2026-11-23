@@ -151,9 +151,29 @@ type Request struct {
 	// Tool is the agent tool or command name; Command its argv[0].
 	Tool    string
 	Command string
+	// SSH describes an ssh-agent signature (ActionSign).
+	SSH SSHRequest `json:",omitzero"`
 	// Time is when the request was made; zero means now.
 	Time time.Time
 }
+
+// SSHRequest is what scrim's ssh-agent knows about a signature request. It
+// holds fingerprints and names, never key material. Fields are documented
+// on [RuleSSH], the form rules see.
+type SSHRequest struct {
+	Kind      string `json:",omitempty"`
+	User      string `json:",omitempty"`
+	Namespace string `json:",omitempty"`
+	Key       string `json:",omitempty"`
+	HostKey   string `json:",omitempty"`
+}
+
+// SSH signature kinds (RuleSSH.Kind).
+const (
+	SSHKindUserauth = "userauth"
+	SSHKindSSHSig   = "sshsig"
+	SSHKindList     = "list"
+)
 
 // Decision is an engine's answer.
 type Decision struct {

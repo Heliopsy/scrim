@@ -482,6 +482,7 @@ fn route_configs(routes: &[v1::Route]) -> Result<Vec<RouteConfig>, Rejected> {
                 "openai" => Provider::Openai,
                 "gemini" => Provider::Gemini,
                 "bedrock" => Provider::Bedrock,
+                "vertex" => Provider::Vertex,
                 other => {
                     return Err(invalid(format!(
                         "route {}: provider {other:?} is not supported by this data plane",
@@ -539,6 +540,23 @@ fn route_auth(route: &str, a: &v1::RouteAuth) -> Result<AuthConfig, Rejected> {
             name: h.name.clone(),
             prefix: h.prefix.clone(),
             value: h.value_ref.clone(),
+        }),
+        Some(v1::route_auth::Kind::GoogleServiceAccount(g)) => {
+            Ok(AuthConfig::GoogleServiceAccount {
+                key: g.key_ref.clone(),
+                token_url: g.token_url.clone(),
+                scope: g.scope.clone(),
+            })
+        }
+        Some(v1::route_auth::Kind::GoogleMetadata(g)) => Ok(AuthConfig::GoogleMetadata {
+            url: g.url.clone(),
+            scope: g.scope.clone(),
+        }),
+        Some(v1::route_auth::Kind::EntraClientSecret(e)) => Ok(AuthConfig::EntraClientSecret {
+            token_url: e.token_url.clone(),
+            client_id: e.client_id.clone(),
+            client_secret: e.client_secret_ref.clone(),
+            scope: e.scope.clone(),
         }),
         None => Err(invalid(format!(
             "route {route}: auth names no kind this data plane supports"

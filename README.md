@@ -177,6 +177,7 @@ directly, so write-only access, approvals and grants behave the same on every st
 | Store | Kind | read | list | watch | write |
 | --- | --- | --- | --- | --- | --- |
 | OpenBao, and Vault-compatible KV v2 | `openbao` | yes | yes | yes | yes |
+| HashiCorp Vault, KV v1 and v2 (plus dynamic secrets per grant) | `vault` | yes | yes | yes | yes |
 | Infisical | `infisical` | yes | yes | yes | yes |
 | Google Secret Manager | `gcpsm` | yes | yes | yes | yes |
 | Azure Key Vault | `azkv` | yes | yes | yes | yes |
@@ -474,6 +475,7 @@ veil's per-tool policy.
 | [docs/configuration.md](docs/configuration.md) | Config files, environment, flags, precedence, reload and every setting |
 | [docs/stores/README.md](docs/stores/README.md) | Store adapters, capabilities, freshness and outages |
 | [docs/stores/openbao.md](docs/stores/openbao.md) | OpenBao and Vault-compatible KV v2 |
+| [docs/stores/vault.md](docs/stores/vault.md) | HashiCorp Vault: KV v1 and v2, namespaces, dynamic secrets leased per grant |
 | [docs/stores/infisical.md](docs/stores/infisical.md) | Infisical |
 | [docs/stores/gcp.md](docs/stores/gcp.md) | Google Secret Manager |
 | [docs/stores/azure.md](docs/stores/azure.md) | Azure Key Vault |
