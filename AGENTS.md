@@ -9,7 +9,10 @@ Rules for anyone, human or agent, changing scrim. Terse by design. Read before w
   when printed or serialised.
 - Redaction failure refuses the request. Nothing is ever forwarded unredacted as a fallback.
 - Every outbound provider request passes two independent checks: the redactor, then a separate
-  guard over the exact outgoing bytes. The two never share matching code.
+  guard over the exact outgoing bytes. The guard's check of the outgoing bytes never uses the
+  redactor's matching code. The one exception runs the other way: around a value nested inside a
+  longer one, the redactor asks the guard's decoders about its own input, so it can replace the
+  longer value whole (design D4).
 - Fields of a provider request that are not known configuration are redacted by default.
 - A credential is injected only on connections to the hosts it is bound to. It is never restored
   into an agent's command, file edit or tool argument unless the tool policy names that tool and

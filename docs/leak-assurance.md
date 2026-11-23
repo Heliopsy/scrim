@@ -254,6 +254,13 @@ agent's own tools make of a value, because agents run `cat`, `rev`, `base64`, `b
 | truncation and substrings | any run of at least half a value (at least the minimum length, at most 24 bytes) outside its format-fixed parts (PEM armour, a JWT header) |
 | the above inside a text document sent as a base64 data URL | the document is decoded and the same views are taken over its text |
 
+A value that lies inside another one (LocalStack's `test` credentials inside an `sk-test-...` key)
+is handled before the guard: in a form only the guard decodes, replacing the shorter value would
+cut the longer one apart and leave the guard nothing whole to find. Around such a match the
+redactor runs the guard's decoders over the request as it came in and replaces the whole longer
+value. The gate's proxy (`test/leak/start-proxy.sh`) redacts `test` next to the seeds to keep this
+covered.
+
 Each decoder is linear in the input and allocates nothing on a clean request once its buffers have
 grown. Lower-case base32, look-alike Unicode, spelling alphabets, compression, the base85 family
 and ciphers beyond rot13 and rot47 are not decoded: none is a common shell tool's output, and each
