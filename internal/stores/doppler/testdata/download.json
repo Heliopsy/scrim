@@ -1,0 +1,6 @@
+{
+  "STRIPE": "stripe-fixture-not-a-key-0001",
+  "ALGOLIA": "N9TOPUCTO",
+  "DATABASE": "brian@aws.dynamodb.com:9876",
+  "USER": "brian"
+}

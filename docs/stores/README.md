@@ -8,6 +8,7 @@ value back.
 | ------- | ------ | ------- |
 | OpenBao (and Vault-compatible KV v2) | `openbao` | [openbao.md](openbao.md) |
 | Infisical | `infisical` | [infisical.md](infisical.md) |
+| Doppler | `doppler` | [doppler.md](doppler.md) |
 | Bitwarden Secrets Manager | `bws` | [bws.md](bws.md) |
 | Environment variables, files | `env`, `file` | [local.md](local.md) |
 | SOPS-encrypted files | `sops` | [sops.md](sops.md) |
@@ -22,6 +23,7 @@ support is refused before anything is attempted.
 |-------------|------|------|-------|-------|----------|---------|
 | `openbao`   | yes  | yes  | yes   | yes   | no       | no      |
 | `infisical` | yes  | yes  | yes   | yes   | no       | no      |
+| `doppler`   | yes  | yes  | yes   | yes   | no       | no      |
 | `bws`       | yes  | yes  | yes   | yes   | no       | no      |
 | `env`       | yes  | yes  | no    | no    | no       | no      |
 | `file`      | yes  | yes  | yes   | no    | no       | no      |
@@ -29,8 +31,10 @@ support is refused before anything is attempted.
 | `memory`    | yes  | yes  | yes   | yes   | no       | no      |
 
 Watch on OpenBao, Infisical and Bitwarden Secrets Manager polls version metadata. It never fetches
-values, so it stays cheap even with a short interval. Generated secrets are produced by scrim and
-then written, so generate needs write and no store-side support.
+values, so it stays cheap even with a short interval. Watch on Doppler polls the config download
+with its ETag: an unchanged config is answered without values, a changed one is fingerprinted and
+wiped. Generated secrets are produced by scrim and then written, so generate needs write and no
+store-side support.
 
 ## Configuring an instance
 
@@ -64,7 +68,7 @@ its guide.
 | ----- | --------- | --------- |
 | `stores.<name>.kind` | required | Adapter kind. |
 | `stores.<name>.aliases` | none | Extra schemes that address this instance. |
-| `stores.<name>.redact` | none | References loaded into the redaction set at start and kept fresh. A reference ending in `/*` loads every secret under that folder; one ending in `*` right after part of a name (`APP_*`, `dir/app-*`) is a glob that loads every secret whose path starts with the text before the `*` (env and file stores only); a `#field` limits a single secret to one field. A `*` anywhere else is refused. References must use the instance name as their scheme. |
+| `stores.<name>.redact` | none | References loaded into the redaction set at start and kept fresh. A reference ending in `/*` loads every secret under that folder; one ending in `*` right after part of a name (`APP_*`, `dir/app-*`) is a glob that loads every secret whose path starts with the text before the `*` (env, file and doppler stores only); a `#field` limits a single secret to one field. A `*` anywhere else is refused. References must use the instance name as their scheme. |
 | `stores.<name>.refresh.interval` | `5m` | Full refresh period, spread by ±20% jitter. |
 | `stores.<name>.refresh.retention` | `24h` | How long a rotated, deleted or overwritten value stays in the redaction set. |
 | `stores.<name>.refresh.staleness` | `15m` | How long a value confirmed by the store may still be injected without a newer confirmation, and how long the store may be unreachable before it is reported unhealthy. |
