@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
+	"github.com/heliopsy/scrim/internal/plugin/plugintest"
 	"github.com/heliopsy/scrim/internal/testing/pgtest"
 	"github.com/heliopsy/scrim/internal/testing/testhome"
 )
@@ -42,6 +43,7 @@ func TestMain(m *testing.M) {
 	valkeySvc.Stop()
 	natsSvc.Stop()
 	dbtestPostgres.Stop()
+	plugintest.Cleanup()
 	os.Exit(code)
 }
 
