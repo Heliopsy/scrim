@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use arc_swap::ArcSwapOption;
+use zeroize::Zeroizing;
 
 use crate::detect::{DetectorConfig, Detectors};
 use crate::error::{BuildError, Error};
@@ -158,6 +159,231 @@ pub struct Redactor {
     /// Most threads matching one body uses, and the shortest body matched in parallel.
     threads: usize,
     parallel_min: usize,
+    /// Set when some value lies inside a longer one (see [`Nested`]).
+    nested: Option<Nested>,
+}
+
+/// Values that lie inside longer values (`test` inside `sk-test-...`, ASCII case ignored).
+///
+/// The redactor finds the longer value only in the forms it compiles. In a form it does not
+/// compile but the guard decodes (a hex dump wrapped at 60 columns, `xxd`, `hexdump -C`), it would
+/// still find the shorter value, raw in the dump's text column or as a hex form inside a line, and
+/// replacing that cuts the longer value apart: the guard then finds no whole value in the outgoing
+/// bytes and the rest of it goes out. So around every match of a nested value the redactor asks
+/// the guard's decoders what they read in the input, and a value found there that overlaps the
+/// match and reaches past it is replaced whole instead ([`Variant::Enclosing`]).
+struct Nested {
+    /// Per entry, how far around one of its matches a longer value containing it can reach in the
+    /// input (0 when no longer value contains it).
+    reach: Vec<u32>,
+    /// Per entry, the bytes that can sit right before and right after its raw or JSON form when
+    /// that lies inside a longer value's encoding ([`Enclosure`]). Inside one, at least one side
+    /// of the match touches the longer value (one of its bytes, an escape of one, a line or
+    /// column end of a dump or wrapped text); a match with other bytes on both sides is not
+    /// inside one, and the guard is not asked.
+    sides: Vec<Option<Box<(ByteSet, ByteSet)>>>,
+    guard: Arc<Guard>,
+}
+
+/// A set of bytes. It says which bytes border a value inside another, so it has no `Debug`.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct ByteSet([u64; 4]);
+
+impl ByteSet {
+    const ALL: Self = Self([u64::MAX; 4]);
+
+    fn of(bytes: &[u8]) -> Self {
+        let mut s = Self::default();
+        for &b in bytes {
+            s.add(b);
+        }
+        s
+    }
+
+    fn add(&mut self, b: u8) {
+        self.0[usize::from(b >> 6)] |= 1 << (b & 63);
+    }
+
+    /// Adds a longer value's byte next to a nested one: in both cases, as rot13 and rot47 (the
+    /// guard reads those forms too), as `.` when unprintable (a dump's text column), as `+` when
+    /// a space (form encoding) and as the letter of its JSON escape when a control character.
+    /// The other escapes of it end in a hex digit or `;` and start with `\\`, `%` or `&`, which
+    /// [`BEFORE`] and [`AFTER`] hold.
+    fn add_neighbour(&mut self, b: u8) {
+        for c in [b, rot13(b), rot47(b)] {
+            self.add(c.to_ascii_lowercase());
+            self.add(c.to_ascii_uppercase());
+        }
+        if !(0x20..0x7f).contains(&b) {
+            self.add(b'.');
+        }
+        match b {
+            b' ' => self.add(b'+'),
+            0x08 => self.add(b'b'),
+            0x0c => self.add(b'f'),
+            b'\n' => self.add(b'n'),
+            b'\r' => self.add(b'r'),
+            b'\t' => self.add(b't'),
+            _ => {}
+        }
+    }
+
+    fn has(&self, b: u8) -> bool {
+        self.0[usize::from(b >> 6)] & (1 << (b & 63)) != 0
+    }
+
+    fn union(&mut self, o: &Self) {
+        for (a, b) in self.0.iter_mut().zip(o.0) {
+            *a |= b;
+        }
+    }
+}
+
+fn rot13(c: u8) -> u8 {
+    match c {
+        b'a'..=b'z' => (c - b'a' + 13) % 26 + b'a',
+        b'A'..=b'Z' => (c - b'A' + 13) % 26 + b'A',
+        _ => c,
+    }
+}
+
+fn rot47(c: u8) -> u8 {
+    if (33..=126).contains(&c) {
+        33 + (c - 33 + 47) % 94
+    } else {
+        c
+    }
+}
+
+/// What can sit right before a nested value's characters inside a longer value's encoding
+/// besides the longer value's own bytes: a line break, raw or as the end of a JSON `\\n` or
+/// `\\r`, and the end of an escape of any character (`\\uXXXX`, `%XX` and `\\xNN` end in a
+/// hex digit, `&#NN;` in a semicolon).
+const BEFORE: &[u8] = b"\n\rnr;0123456789abcdefABCDEF";
+/// What can sit right after them: a line break, the end of a `hexdump -C` text column, and the
+/// start of an escape. The space and `|` that open a dump's text column only ever come before,
+/// with one of these or a byte of the longer value after.
+const AFTER: &[u8] = b"\n\r\\|%&";
+
+/// How many input bytes one value byte can take in a form the guard decodes, at most: a `\xNN`
+/// escape under three levels of JSON escaping plus a separator is about 17.
+const ENCODED_SPREAD: usize = 24;
+/// Bytes a dump line adds around its data (offset column, padding).
+const ENCODED_SLACK: usize = 256;
+
+thread_local! {
+    /// Guard buffers for [`Redactor::widen`], reused per thread and wiped after every use.
+    static WIDEN_SCRATCH: std::cell::RefCell<GuardScratch> =
+        std::cell::RefCell::new(GuardScratch::new());
+}
+
+/// A replacement decided by [`Redactor::widen`]: input range and entry index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Widen {
+    start: usize,
+    end: usize,
+    owner: u32,
+}
+
+/// How a value lies inside longer ones, from [`enclosures`]. No `Debug`, like [`ByteSet`].
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct Enclosure {
+    /// Length of the longest value containing it (0: none does).
+    len: usize,
+    /// Bytes next to it in those values (both sides, as reversal swaps them; [`ByteSet::ALL`]
+    /// where it starts or ends one, or lies inside one's hex form).
+    before: ByteSet,
+    after: ByteSet,
+}
+
+/// For each value, how it lies inside other values, ASCII case ignored: raw inside a longer
+/// value, raw inside another value's hex form (a PIN of digits inside a hex dump), or in hex
+/// form inside another value (a hex token). Base64 and the other forms are not compared: a value
+/// of four or more characters matching inside one by chance is about as likely as any other
+/// coincidence of that length.
+///
+/// Needles are indexed by a hash of their first four bytes (every value has at least four),
+/// every position of every haystack is probed and candidates are compared in full. Linear in
+/// the total length of the values for sets without shared prefixes.
+fn enclosures(values: &[&[u8]]) -> Vec<Enclosure> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let hex = |v: &[u8]| {
+        let mut h = Zeroizing::new(Vec::with_capacity(v.len() * 2));
+        for &b in v {
+            h.extend_from_slice(&[HEX[usize::from(b >> 4)], HEX[usize::from(b & 15)]]);
+        }
+        h
+    };
+    let key = |b: &[u8]| {
+        let x = u32::from_le_bytes([b[0], b[1], b[2], b[3]]) | 0x2020_2020;
+        x.wrapping_mul(0x9E37_79B1).rotate_left(13)
+    };
+    let hexes: Vec<Zeroizing<Vec<u8>>> = values.iter().map(|v| hex(v)).collect();
+    // (form, owner, raw?) for needles and haystacks alike.
+    let forms: Vec<(&[u8], u32, bool)> = values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| (*v, i as u32, true))
+        .chain(
+            hexes
+                .iter()
+                .enumerate()
+                .map(|(i, h)| (h.as_slice(), i as u32, false)),
+        )
+        .collect();
+    let mut index: Vec<(u32, u32)> = forms
+        .iter()
+        .enumerate()
+        .filter(|(_, (f, _, _))| f.len() >= 4)
+        .map(|(n, (f, _, _))| (key(f), n as u32))
+        .collect();
+    index.sort_unstable();
+    let mut out = vec![Enclosure::default(); values.len()];
+    for &(hay, hay_owner, hay_raw) in &forms {
+        for p in 0..hay.len().saturating_sub(3) {
+            let k = key(&hay[p..]);
+            let from = index.partition_point(|&(h, _)| h < k);
+            for &(h, n) in &index[from..] {
+                if h != k {
+                    break;
+                }
+                let (needle, owner, needle_raw) = forms[n as usize];
+                // Hex inside hex is the raw case again.
+                if owner == hay_owner || !(needle_raw || hay_raw) {
+                    continue;
+                }
+                let long = values[hay_owner as usize].len();
+                let q = p + needle.len();
+                if (needle_raw && hay_raw && needle.len() >= long)
+                    || q > hay.len()
+                    || !hay[p..q].eq_ignore_ascii_case(needle)
+                {
+                    continue;
+                }
+                let e = &mut out[owner as usize];
+                e.len = e.len.max(long);
+                match (p.checked_sub(1).map(|i| hay[i]), hay.get(q)) {
+                    (Some(l), Some(&r)) if needle_raw && hay_raw => {
+                        for side in [&mut e.before, &mut e.after] {
+                            side.add_neighbour(l);
+                            side.add_neighbour(r);
+                        }
+                    }
+                    _ => {
+                        e.before = ByteSet::ALL;
+                        e.after = ByteSet::ALL;
+                    }
+                }
+            }
+        }
+    }
+    zeroize::Zeroize::zeroize(&mut index);
+    let (before, after) = (ByteSet::of(BEFORE), ByteSet::of(AFTER));
+    for e in &mut out {
+        e.before.union(&before);
+        e.after.union(&after);
+    }
+    out
 }
 
 impl std::fmt::Debug for Redactor {
@@ -187,7 +413,7 @@ impl Redactor {
         out: &mut Vec<u8>,
         on_hit: &mut dyn FnMut(Hit<'_>),
     ) -> Result<Stats, Error> {
-        self.redact_core(input, out, on_hit, None)
+        self.redact_core(input, out, &mut |h| on_hit(h), None)
     }
 
     /// [`Redactor::redact`] for [`Snapshot::protect`]: on bodies of at least
@@ -201,12 +427,116 @@ impl Redactor {
         self.redact_core(input, out, &mut |_| {}, Some(ms))
     }
 
-    fn redact_core(
-        &self,
+    fn redact_core<'r>(
+        &'r self,
         input: &[u8],
         out: &mut Vec<u8>,
-        on_hit: &mut dyn FnMut(Hit<'_>),
+        on_hit: &mut dyn FnMut(Hit<'r>),
+        mut ms: Option<&mut MatchScratch>,
+    ) -> Result<Stats, Error> {
+        if self.nested.is_none() {
+            return self.redact_pass(input, out, on_hit, ms, &[], None);
+        }
+        // Hits are held back until it is known whether a second pass replaces them.
+        let mut hits: Vec<Hit<'r>> = Vec::new();
+        let mut inner = Vec::new();
+        let st = self.redact_pass(
+            input,
+            out,
+            &mut |h| hits.push(h),
+            ms.as_deref_mut(),
+            &[],
+            Some(&mut inner),
+        )?;
+        let widen = if inner.is_empty() {
+            Vec::new()
+        } else {
+            self.widen(input, &inner)
+        };
+        if widen.is_empty() {
+            for h in hits {
+                on_hit(h);
+            }
+            return Ok(st);
+        }
+        // The first output cut a longer value apart; it never leaves this function.
+        zeroize::Zeroize::zeroize(out);
+        self.redact_pass(input, out, on_hit, ms, &widen, None)
+    }
+
+    /// Asks the guard what it reads around each match of a nested value (`inner`, input ranges)
+    /// and returns the values it finds there that overlap such a match and reach past it, merged
+    /// where they overlap, in input order. Windows around matches are joined where they meet, so
+    /// the guard reads each input byte at most once.
+    fn widen(&self, input: &[u8], inner: &[(usize, usize, u32)]) -> Vec<Widen> {
+        let Some(nested) = &self.nested else {
+            return Vec::new();
+        };
+        let mut found: Vec<(usize, usize, u32)> = Vec::new();
+        let mut spans: Vec<(usize, usize, u32)> = Vec::new();
+        let mut run = |scratch: &mut GuardScratch| {
+            let mut i = 0;
+            while i < inner.len() {
+                let reach = |&(a, b, r): &(usize, usize, u32)| {
+                    (
+                        a.saturating_sub(r as usize),
+                        (b + r as usize).min(input.len()),
+                    )
+                };
+                let (mut w0, mut w1) = reach(&inner[i]);
+                let first = i;
+                i += 1;
+                while i < inner.len() && reach(&inner[i]).0 <= w1 {
+                    let (a, b) = reach(&inner[i]);
+                    w0 = w0.min(a);
+                    w1 = w1.max(b);
+                    i += 1;
+                }
+                spans.clear();
+                nested.guard.spans(&input[w0..w1], scratch, &mut spans);
+                for &(a, b, owner) in &spans {
+                    let (a, b) = (a + w0, b + w0);
+                    if inner[first..i]
+                        .iter()
+                        .any(|&(s, e, _)| a < e && s < b && (a < s || e < b))
+                    {
+                        found.push((a, b, owner));
+                    }
+                }
+            }
+            scratch.wipe();
+        };
+        WIDEN_SCRATCH.with(|cell| match cell.try_borrow_mut() {
+            Ok(mut scratch) => run(&mut scratch),
+            // Re-entered on the same thread (never expected): use fresh buffers.
+            Err(_) => run(&mut GuardScratch::new()),
+        });
+        found.sort_unstable_by_key(|&(a, b, o)| (a, std::cmp::Reverse(b), o));
+        let mut out: Vec<Widen> = Vec::with_capacity(found.len());
+        for (a, b, owner) in found {
+            match out.last_mut() {
+                Some(w) if a < w.end => w.end = w.end.max(b),
+                _ => out.push(Widen {
+                    start: a,
+                    end: b,
+                    owner,
+                }),
+            }
+        }
+        out
+    }
+
+    /// One pass over `input`. Matches overlapping a `widen` range are replaced together with it
+    /// by that range's value. With `inner`, records every match of a nested value as
+    /// `(start, end, reach)`.
+    fn redact_pass<'r>(
+        &'r self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        on_hit: &mut dyn FnMut(Hit<'r>),
         ms: Option<&mut MatchScratch>,
+        widen: &[Widen],
+        mut inner: Option<&mut Vec<(usize, usize, u32)>>,
     ) -> Result<Stats, Error> {
         if input.len() > self.max_input {
             return Err(Error::InputTooLarge);
@@ -222,7 +552,48 @@ impl Redactor {
             _ => Stream::engine(),
         };
         let mut pos = 0;
-        while let Some(m) = cur.next(&*self.engine, &self.set, input) {
+        let mut k = 0;
+        let mut pending: Option<Match> = None;
+        loop {
+            let next = match pending.take() {
+                Some(m) => Some(m),
+                None => cur.next(&*self.engine, &self.set, input),
+            };
+            while widen.get(k).is_some_and(|w| w.end <= pos) {
+                k += 1;
+            }
+            if let Some(w) = widen.get(k)
+                && next.is_none_or(|m| m.end > w.start)
+            {
+                let (mut start, mut end) = (w.start, w.end);
+                match next {
+                    Some(m) if m.start < w.end => {
+                        start = start.min(m.start);
+                        end = end.max(m.end);
+                    }
+                    Some(m) => pending = Some(m),
+                    None => {}
+                }
+                let start = start.max(pos);
+                self.gap(input, pos, start, out, &mut st, on_hit);
+                let e = &self.entries[w.owner as usize];
+                out.extend_from_slice(&e.placeholder);
+                match e.meta.class {
+                    ValueClass::Credential => st.credential += 1,
+                    ValueClass::Display => st.display += 1,
+                }
+                on_hit(Hit::Known {
+                    meta: &e.meta,
+                    variant: Variant::Enclosing,
+                    start,
+                    end,
+                });
+                pos = end;
+                cur.seek(end);
+                k += 1;
+                continue;
+            }
+            let Some(m) = next else { break };
             if let Some((ps, pe)) = self.resolver.covering(input, m.start, m.end)
                 && ps >= pos
             {
@@ -246,6 +617,23 @@ impl Redactor {
                 start: m.start,
                 end: m.end,
             });
+            if let (Some(inner), Some(nested)) = (inner.as_deref_mut(), &self.nested) {
+                let o = info.owner as usize;
+                let reach = nested.reach[o];
+                // A textual match with bytes on both sides that cannot border it inside a longer
+                // value's encoding is not inside one.
+                let apart = info.variant.is_textual()
+                    && nested.sides[o].as_ref().is_some_and(|sides| {
+                        let (before, after) = &**sides;
+                        m.start
+                            .checked_sub(1)
+                            .is_some_and(|i| !before.has(input[i]))
+                            && input.get(m.end).is_some_and(|&c| !after.has(c))
+                    });
+                if reach > 0 && !apart {
+                    inner.push((m.start, m.end, reach));
+                }
+            }
             pos = m.end;
         }
         self.gap(input, pos, input.len(), out, &mut st, on_hit);
@@ -308,14 +696,14 @@ impl Redactor {
     }
 
     /// Copies `input[from..to]`, running the fallback detectors over it.
-    fn gap(
-        &self,
+    fn gap<'r>(
+        &'r self,
         input: &[u8],
         from: usize,
         to: usize,
         out: &mut Vec<u8>,
         st: &mut Stats,
-        on_hit: &mut dyn FnMut(Hit<'_>),
+        on_hit: &mut dyn FnMut(Hit<'r>),
     ) {
         if from >= to {
             return;
@@ -344,14 +732,14 @@ impl Redactor {
     }
 
     /// Copies `input[from..to]` with fallback detector matches replaced.
-    fn detect(
-        &self,
+    fn detect<'r>(
+        &'r self,
         input: &[u8],
         from: usize,
         to: usize,
         out: &mut Vec<u8>,
         st: &mut Stats,
-        on_hit: &mut dyn FnMut(Hit<'_>),
+        on_hit: &mut dyn FnMut(Hit<'r>),
     ) {
         if from >= to {
             return;
@@ -551,7 +939,7 @@ fn detector_slug(rule: &str) -> RefSlug {
 /// `&self`. A request should load one snapshot and use it from start to end.
 pub struct Snapshot {
     redactor: Redactor,
-    guard: Guard,
+    guard: Arc<Guard>,
     resolver: Arc<Resolver>,
     report: BuildReport,
 }
@@ -759,15 +1147,39 @@ impl Snapshot {
                 placeholder: &c.placeholder,
             })
             .collect();
-        let guard = Guard::build(
+        let guard = Arc::new(Guard::build(
             &guard_inputs,
             config.min_len,
             config.guard_max_repairs,
             config.json_depth,
             (config.parallel_threads, config.parallel_min_bytes),
             resolver.clone(),
-        );
+        ));
         drop(guard_inputs);
+        let enclosing = enclosures(
+            &resolver
+                .entries()
+                .iter()
+                .map(|e| e.value.expose())
+                .collect::<Vec<_>>(),
+        );
+        let nested = enclosing.iter().any(|e| e.len > 0).then(|| Nested {
+            reach: enclosing
+                .iter()
+                .map(|e| {
+                    if e.len == 0 {
+                        0
+                    } else {
+                        u32::try_from(e.len * ENCODED_SPREAD + ENCODED_SLACK).unwrap_or(u32::MAX)
+                    }
+                })
+                .collect(),
+            sides: enclosing
+                .iter()
+                .map(|e| (e.len > 0).then(|| Box::new((e.before, e.after))))
+                .collect(),
+            guard: guard.clone(),
+        });
 
         let report = BuildReport {
             values: compiled.len(),
@@ -799,6 +1211,7 @@ impl Snapshot {
             threads: config.parallel_threads.clamp(1, MAX_THREADS),
             parallel_min: config.parallel_min_bytes,
             set,
+            nested,
         };
         Ok(Self {
             redactor,
@@ -999,5 +1412,93 @@ mod tests {
                 prop_assert_eq!(got, want);
             }
         }
+    }
+
+    #[test]
+    fn enclosures_find_values_inside_other_values() {
+        let vals: [&[u8]; 9] = [
+            b"test",
+            b"xx-TEST-yy-zz",
+            b"xx-test",
+            b"unrelated-value",
+            b"Test",
+            b"lue",
+            b"2d74",
+            b"spaced test value",
+            b"<-74657374->",
+        ];
+        let got: Vec<usize> = enclosures(&vals).iter().map(|e| e.len).collect();
+        // `test` and `Test` are in `xx-TEST-yy-zz` (13 bytes), `xx-test` (7), `spaced test
+        // value` (17) and, in hex form, in `<-74657374->` (12); `xx-test` is a prefix of
+        // `xx-TEST-yy-zz`; `2d74` is the hex form of `-t` in `xx-test` (`xx-TEST` has `-T`,
+        // 2d54); `lue` is below four bytes and never indexed.
+        assert_eq!(got, vec![17, 0, 13, 0, 17, 0, 7, 0, 0]);
+        let e = enclosures(&vals);
+        // Hex containment and prefixes allow anything next to the match.
+        assert!(e[0].before == ByteSet::ALL);
+        assert!(e[2].before == ByteSet::ALL);
+        assert!(e[6].after == ByteSet::ALL);
+
+        // Strictly inside, raw only: the neighbours (and their case, rot13 and rot47 forms) and
+        // the structural bytes.
+        let vals: [&[u8]; 2] = [b"test", b"sk-test-value"];
+        let e = enclosures(&vals)[0];
+        assert_eq!(e.len, 13);
+        // The neighbour `-` and its rot47 form `\`, line breaks.
+        for c in *b"-\\\n" {
+            assert!(e.before.has(c) && e.after.has(c), "{}", c as char);
+        }
+        // The end of an escape, the end of a JSON line break.
+        for c in *b"f7;n" {
+            assert!(e.before.has(c) && !e.after.has(c), "{}", c as char);
+        }
+        // The start of an escape, the end of a `hexdump -C` text column.
+        for c in *b"%&|" {
+            assert!(!e.before.has(c) && e.after.has(c), "{}", c as char);
+        }
+        for c in *b" \"._(,xX!+" {
+            assert!(!e.before.has(c) && !e.after.has(c), "{}", c as char);
+        }
+        // An unprintable or space neighbour shows as `.` in a dump, as `+` in a form.
+        let vals: [&[u8]; 2] = [b"test", b"sk\x01test value"];
+        let e = enclosures(&vals)[0];
+        for c in *b".+ " {
+            assert!(e.before.has(c) && e.after.has(c), "{}", c as char);
+        }
+    }
+
+    #[test]
+    fn bench_sets_have_no_nested_values() {
+        // The reference sets take the plain path, so the benchmarks measure it unchanged.
+        let kr = Arc::new(Keyring::new(PlaceholderKey::new(1, &[3; 32]).unwrap()));
+        for n in [10usize, 1_000, 10_000] {
+            let entries = crate::guard_tests::fixtures::gen_secrets(20_261_120 + n as u64, n)
+                .into_iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    Entry::new(
+                        i as u64 + 1,
+                        RefSlug::new(&format!("s{i}")).unwrap(),
+                        ValueClass::Credential,
+                        SecretValue::from_slice(v.as_bytes()),
+                    )
+                })
+                .collect();
+            let s = Snapshot::build(entries, kr.clone(), &Config::default()).unwrap();
+            assert!(s.redactor().nested.is_none(), "set of {n}");
+        }
+    }
+
+    #[test]
+    fn nested_values_take_the_widening_path() {
+        let s = snap(
+            &[b"test".to_vec(), b"sk-test-0123456789abcdef".to_vec()],
+            EngineKind::AhoCorasick,
+            1,
+            8,
+        );
+        let n = s.redactor().nested.as_ref().unwrap();
+        assert_eq!(n.reach[0] as usize, 24 * ENCODED_SPREAD + ENCODED_SLACK);
+        assert_eq!(n.reach[1], 0);
     }
 }

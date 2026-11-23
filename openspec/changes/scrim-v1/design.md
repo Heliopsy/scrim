@@ -123,6 +123,22 @@ decoding transforms the redactor does not attempt, and either repairs or withhol
 either refuses the request. Unknown request fields are redacted by default, because a provider can
 add a field that carries data (Claude Code's `safeguards` field carried the home directory).
 
+One case needs the guard's decoders before the guard runs. When a value lies inside a longer one
+(LocalStack's `test` credentials next to an API key `sk-test-...`), the redactor still finds the
+short value inside forms of the long one it does not compile, such as a wrapped hex dump or an
+`xxd` text column. Replacing it cuts the long value apart, and the guard, which looks for whole
+values (or at least half of one), then finds nothing: the end-to-end matrix saw 41 of 48 bytes of
+such a key reach the provider. The bytes the guard would have needed are gone from the outgoing
+body, so the guard cannot repair this after the fact. Instead the redactor, around each match of
+a nested value, runs the guard's decoders over its own input and replaces any value they find
+there that overlaps the match and reaches past it as a whole. Sets without nested values never
+take this path. A match with bytes on both sides that cannot border it inside an encoding of the
+longer value (prose, identifiers) is left alone, which keeps the cost to the matches that can be
+inside one. Measured single-threaded on the 1 MB reference bodies (805 matches of `test`), against
+the same set with `test` not nested: 13 % more at 1,000 values and 19 % at 10,000, and 1.8 and 2.1
+times when every match borders bytes that could belong to the key. The guard's own check of the outgoing
+bytes is unchanged and still independent.
+
 ### D5. Credentials are injected at the network edge, never restored into commands
 
 Restoring a credential into a `curl` command lets a prompt-injected model send it anywhere. So a

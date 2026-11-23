@@ -92,6 +92,27 @@ not protected.
 - **WHEN** a store holds a three-byte value
 - **THEN** the value set builds without it and the status command names its reference as unprotected
 
+### Requirement: Values inside other values
+
+When a known value lies inside another one, raw or in hex form, replacing the shorter value
+SHALL NOT leave the rest of the longer one in the outgoing bytes: the redactor SHALL replace the
+whole occurrence of the longer value, in any form the guard decodes, with its placeholder, or the
+request SHALL be refused.
+
+#### Scenario: Cloud emulator credential inside an API key
+
+- **WHEN** `test` (LocalStack's default credentials) and an API key `sk-test-...` are both known,
+  and a tool result holds the key as hex wrapped at 60 columns, `xxd` or `hexdump -C` output, or
+  truncated to the part that ends with or starts at the shorter value
+- **THEN** the whole occurrence of the key is replaced with the key's placeholder and no run of the
+  key's bytes reaches the provider in any form the guard decodes
+
+#### Scenario: Shorter value on its own
+
+- **WHEN** the shorter value appears with bytes on both sides that cannot border it inside an
+  encoding of the longer value (spaces in prose, `test_case`)
+- **THEN** it is replaced with its own placeholder and the guard is not asked about it
+
 ### Requirement: Deterministic placeholders
 
 Each value SHALL map to a placeholder derived from a keyed hash of the value, so the same value
@@ -241,7 +262,10 @@ enabled, disabled or tuned in configuration.
 
 After redaction, an independent guard SHALL scan the exact outgoing bytes for every known value and
 its variants, repair any it finds, and refuse the request when it cannot repair. The guard SHALL
-not share matching logic with the redactor.
+not share matching logic with the redactor. The one exception runs the other way: around a match
+of a value that lies inside another one, the redactor asks the guard's decoders what they read in
+its input (see "Values inside other values"); the guard's check of the outgoing bytes does not
+depend on it.
 
 #### Scenario: Redactor misses a value
 
