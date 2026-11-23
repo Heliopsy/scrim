@@ -79,6 +79,9 @@ type Server struct {
 	// (internal/execbroker), which runs an allow-listed command with
 	// the secrets its placeholders name and returns redacted output.
 	Exec func(ctx context.Context, id identity.Identity, req agenttools.ExecInput) (agenttools.ExecOutput, error)
+	// Databases, when set, serves GET /v1/databases and POST
+	// /v1/databases/query, the read-only database tool.
+	Databases Databases
 	// SSH, when set, serves POST /v1/ssh/keys and POST /v1/ssh/sign: the
 	// control plane's side of scrim's ssh-agent. Neither returns key
 	// material: public keys and signatures only.
@@ -271,6 +274,8 @@ func (s *Server) Handler() http.Handler {
 	authed("GET "+v+"/grants", s.grants)
 	authed("POST "+v+"/redact", s.redact)
 	authed("POST "+v+"/exec", s.exec)
+	authed("GET "+v+"/databases", s.databaseList)
+	authed("POST "+v+"/databases/query", s.databaseQuery)
 	authed("POST "+v+"/ssh/keys", s.sshKeys)
 	authed("POST "+v+"/ssh/sign", s.sshSign)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {

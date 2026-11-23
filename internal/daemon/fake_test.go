@@ -41,6 +41,7 @@ func TestMain(m *testing.M) {
 	pgtest.Stop()
 	valkeySvc.Stop()
 	natsSvc.Stop()
+	dbtestPostgres.Stop()
 	os.Exit(code)
 }
 

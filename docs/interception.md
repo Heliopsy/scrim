@@ -315,8 +315,8 @@ the data plane status as unsupported.
 - A client that pins the provider's certificate: it fails closed rather than leaking, but it does
   not work through scrim.
 - Protocols other than HTTP over TLS. SSH, database ports and plain TCP are not proxied. SSH logins
-  sign through scrim's ssh-agent instead ([ssh-agent.md](ssh-agent.md)); the database proxies are
-  separate work, tasks.md 15.5.
+  sign through scrim's ssh-agent instead ([ssh-agent.md](ssh-agent.md)); PostgreSQL and MySQL have
+  their own local auth proxies ([databases.md](databases.md)).
 
 ### TLS and CA
 

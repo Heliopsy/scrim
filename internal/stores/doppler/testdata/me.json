@@ -1,0 +1,12 @@
+{
+  "slug": "5ba6e0fd-a80a-4c39-9e85-3d5230d44e62",
+  "name": "scrim",
+  "created_at": "2023-06-15T20:17:33.539Z",
+  "last_seen_at": "2023-06-16T17:09:16.079Z",
+  "type": "service_token",
+  "token_preview": "dp.st...b8aked",
+  "workplace": {
+    "slug": "2faa85f6610102d983522",
+    "name": "Doppler University"
+  }
+}

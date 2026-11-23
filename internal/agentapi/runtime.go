@@ -189,6 +189,10 @@ func (r *Runtime) SetExec(fn func(ctx context.Context, id identity.Identity, in 
 	r.api.Exec = fn
 }
 
+// SetDatabases serves the read-only database tool with d. Call it before
+// Serve.
+func (r *Runtime) SetDatabases(d localapi.Databases) { r.api.Databases = d }
+
 // SetSSHAgent serves POST /v1/ssh/keys and /v1/ssh/sign with a, scrim's
 // ssh-agent keyring. Call it before Serve.
 func (r *Runtime) SetSSHAgent(a localapi.SSHAgent) { r.api.SSH = a }

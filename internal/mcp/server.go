@@ -141,6 +141,9 @@ func NewServer(api API, version string) *sdk.Server {
 				return ex.Exec(ctx, in)
 			}))
 	}
+	if d, ok := api.(DatabaseAPI); ok {
+		addDatabaseTools(srv, d)
+	}
 	return srv
 }
 
