@@ -325,7 +325,7 @@ auditSinks:
     # -- Entries waiting for the sink at most.
     queueSize: 10000
 
-# -- Kubernetes identity (identity.kubernetes.*): agent pods present a projected service account token for `audience`, which scrim verifies with TokenReview. Per-agent store login (identity.store-login) goes in `config.identity`.
+# -- Kubernetes identity (identity.kubernetes.*): agent pods present a projected service account token for `audience`, which scrim verifies with TokenReview. The identity issuer (identity.issuer.*): scrim signs tokens for agents that stores trust. Per-agent store login (identity.store-login) goes in `config.identity`.
 # @default -- See the keys below.
 identity:
   kubernetes:
@@ -351,6 +351,70 @@ identity:
     agents: {}
     # -- What a service account no rule maps becomes: derive (NAMESPACE/NAME) or unknown.
     unmapped: derive
+  # scrim as an OpenID Connect issuer for agents (identity.issuer.*, docs/identity.md "scrim as an
+  # identity provider"), central scrim only: it signs short-lived JWTs for the agents it has
+  # identified and presents them to stores for token exchange (`config.identity.store-login`
+  # methods jwt, aws-web-identity, gcp-workload-identity, azure-federated, infisical-oidc).
+  # Stores fetch the discovery document and JWKS (public keys only) from `url`, which must reach
+  # the Service `<fullname>-issuer` (docs/kubernetes.md, "Identity issuer").
+  issuer:
+    # -- Turn the issuer on (central scrim). Needs `url`. More than one replica (replicaCount, the
+    # HPA, global.ha) needs `signingKeys.existingSecret`: replicas behind one URL must publish the
+    # same keys.
+    enabled: false
+    # -- Issuer URL (identity.issuer.url, the `iss` claim), without a trailing slash. https,
+    # terminated by an Ingress or Gateway in front of the Service `<fullname>-issuer`; plain http
+    # needs insecureHTTP.
+    url: ""
+    # -- Port of the discovery and JWKS listener (identity.issuer.listen on the pod IP), on the
+    # container and on the issuer Service.
+    port: 9795
+    # -- Allow an http:// url on a host other than loopback (identity.issuer.insecure-http, a
+    # weakening scrim logs at start-up): anyone between a store and scrim could substitute the
+    # keys, and the store would trust tokens they sign.
+    insecureHTTP: false
+    # -- Lifetime of each token (identity.issuer.token-ttl), 1m to 1h, never past the session's end.
+    tokenTTL: 10m
+    # -- How often generated keys rotate (identity.issuer.rotate-every), at least 1h. Not used with
+    # signingKeys.existingSecret.
+    rotateEvery: 24h
+    # -- Operator-managed signing keys (identity.issuer.signing-keys). scrim never rotates them.
+    # @default -- See the keys below.
+    signingKeys:
+      # -- Secret holding one or more PKCS#8 PEM RSA private keys (2048 bits or more) under `key`.
+      # The first signs and all are published. Required with more than one replica. Empty: scrim
+      # generates and rotates its keys in `keyStore`.
+      existingSecret: ""
+      # -- Key of the PEM bundle in existingSecret.
+      key: keys.pem
+    # -- Where generated keys live (identity.issuer.key-dir) when signingKeys.existingSecret is
+    # empty, one replica only. emptyDir: the keys live as long as the pod; a new pod (rollout,
+    # reschedule) signs with a new key, and tokens the old pod signed stop verifying once a store
+    # refetches the JWKS. pvc: the keys and their rotation survive restarts; only one pod may use the directory
+    # at a time, so it needs central.strategy.type Recreate.
+    # @default -- See the keys below.
+    keyStore:
+      # -- emptyDir or pvc.
+      type: emptyDir
+      # -- pvc: an existing PersistentVolumeClaim. Empty: the chart creates `<fullname>-issuer-keys`.
+      existingClaim: ""
+      # -- pvc: size of the created claim (the keys take a few KiB).
+      size: 64Mi
+      # -- pvc: storageClassName of the created claim (empty: the cluster default).
+      storageClassName: ""
+      # -- pvc: access modes of the created claim.
+      accessModes: [ReadWriteOnce]
+      # -- pvc: annotations of the created claim.
+      annotations: {}
+    # -- The Service `<fullname>-issuer`, with the issuer port only.
+    # @default -- See the keys below.
+    service:
+      # -- Service type. ClusterIP behind an Ingress or Gateway that terminates TLS.
+      type: ClusterIP
+      # -- Service annotations.
+      annotations: {}
+      # -- Service labels.
+      labels: {}
 
 # -- Edge forwarder (central mode): Kyverno adds a native sidecar running `scrim edge` to agent pods labelled `central`. It serves SSH_AUTH_SOCK, loopback database ports and the agent API socket (the exec broker included) in the pod and carries every connection to central scrim's edge listener over TLS, with the pod's projected identity token. Keys, database passwords and exec secrets stay in central scrim. Needs identity.kubernetes.enabled and kyverno.enabled (or the sidecar copied into the pod spec).
 # @default -- See the keys below.
@@ -739,6 +803,10 @@ networkPolicy:
     podSelector: {}
   # -- Peers allowed to the admin TCP port (NetworkPolicy `from` entries).
   adminFrom: []
+  # -- Peers allowed to the issuer port with identity.issuer.enabled (NetworkPolicy `from`
+  # entries: the Ingress controller, in-cluster stores). Empty allows every source: the port
+  # serves public keys only.
+  issuerFrom: []
   # -- Labels on every NetworkPolicy the chart renders (tpl).
   labels: {}
   # -- Annotations on every NetworkPolicy the chart renders.

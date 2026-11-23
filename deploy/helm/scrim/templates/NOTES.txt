@@ -21,6 +21,14 @@ No agents.namespaces: no agent namespace has the CA, the environment or the Netw
 Agents are identified by their service account: run the agent through
 {{ .Values.agents.trustPath }}/scrim-exec, or it is an unknown caller and gets no credential injected.
 {{- end }}
+{{- if and .Values.central.enabled .Values.identity.issuer.enabled }}
+
+Identity issuer {{ .Values.identity.issuer.url }}: publish the Service {{ include "scrim.fullname" . }}-issuer
+(port {{ .Values.identity.issuer.port }}, discovery and JWKS only) at that URL over TLS (docs/kubernetes.md, "Identity issuer").
+{{- if and (not .Values.identity.issuer.signingKeys.existingSecret) (eq .Values.identity.issuer.keyStore.type "emptyDir") }}
+Signing keys are generated in an emptyDir: every new pod signs with new keys.
+{{- end }}
+{{- end }}
 {{- if not .Values.kyverno.enabled }}
 
 kyverno.enabled is off: reference the {{ include "scrim.fullname" . }}-agent-env ConfigMap and mount

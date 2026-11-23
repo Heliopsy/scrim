@@ -1,0 +1,5 @@
+# expect: needs identity.issuer.signingKeys.existingSecret
+identity: {issuer: {enabled: true, url: "https://scrim.example.com/idp"}}
+global: {ha: {enabled: true}}
+postgres: {enabled: true}
+secrets: {existing: {postgres: scrim-pg}}

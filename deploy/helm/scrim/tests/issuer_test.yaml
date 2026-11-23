@@ -1,0 +1,173 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: identity issuer (issuer.yaml, deployment.yaml, config.yaml, networkpolicy.yaml, tests/tests.yaml)
+templates:
+  - issuer.yaml
+  - deployment.yaml
+  - config.yaml
+  - networkpolicy.yaml
+  - tests/tests.yaml
+release:
+  name: rel
+  namespace: ns
+set:
+  identity.issuer.enabled: true
+  identity.issuer.url: https://scrim.example.com/idp
+tests:
+  - it: renders no issuer object, port, setting or test when off
+    set:
+      identity.issuer.enabled: false
+      networkPolicy.enabled: true
+    asserts:
+      - hasDocuments: {count: 0}
+        template: issuer.yaml
+      - notContains: {path: 'spec.template.spec.containers[0].ports', content: {name: issuer, containerPort: 9795, protocol: TCP}}
+        template: deployment.yaml
+        documentSelector: {path: kind, value: Deployment}
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: 'issuer:'}
+        template: config.yaml
+      - notContains: {path: spec.ingress, content: {ports: [{port: 9795, protocol: TCP}]}}
+        template: networkpolicy.yaml
+        documentSelector: {path: metadata.name, value: rel-scrim}
+      - hasDocuments: {count: 2}
+        template: tests/tests.yaml
+  - it: a Service with the issuer port only, selecting central scrim
+    template: issuer.yaml
+    asserts:
+      - hasDocuments: {count: 1}
+      - isKind: {of: Service}
+      - equal: {path: metadata.name, value: rel-scrim-issuer}
+      - equal: {path: spec.type, value: ClusterIP}
+      - equal: {path: spec.ports, value: [{name: issuer, port: 9795, targetPort: issuer, protocol: TCP, appProtocol: http}]}
+      - equal: {path: 'spec.selector["app.kubernetes.io/name"]', value: rel-scrim-proxy}
+  - it: the central Service does not carry the issuer port
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Service}
+    asserts:
+      - notContains: {path: spec.ports, content: {name: issuer}, any: true}
+  - it: generated keys in an emptyDir, below the volume root
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - contains: {path: 'spec.template.spec.containers[0].ports', content: {name: issuer, containerPort: 9795, protocol: TCP}}
+      - contains: {path: 'spec.template.spec.containers[0].volumeMounts', content: {name: issuer-keys, mountPath: /var/lib/scrim-issuer}}
+      - contains: {path: spec.template.spec.volumes, content: {name: issuer-keys, emptyDir: {sizeLimit: 16Mi}}}
+      - notExists: {path: spec.template.spec.securityContext.fsGroupChangePolicy}
+  - it: chart.yaml sets url, listen, token-ttl, key-dir and rotate-every
+    template: config.yaml
+    set:
+      identity.issuer: {tokenTTL: 15m, rotateEvery: 12h, port: 9800}
+    asserts:
+      - matchRegex:
+          path: 'data["chart.yaml"]'
+          pattern: "identity:\n  kubernetes:\n(    .*\n)+  issuer:\n    url: \"https://scrim.example.com/idp\"\n    listen: 0\\.0\\.0\\.0:9800\n    token-ttl: 15m\n    key-dir: /var/lib/scrim-issuer/keys\n    rotate-every: 12h\n"
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: 'insecure-http|signing-keys'}
+  - it: insecureHTTP sets the weakening
+    template: config.yaml
+    set:
+      identity.issuer: {url: "http://scrim-issuer.ns.svc:9795", insecureHTTP: true}
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "insecure-http: true"}
+  - it: operator keys come from the Secret, with no key directory
+    set:
+      identity.issuer.signingKeys: {existingSecret: issuer-keys, key: bundle.pem}
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "signing-keys: file:/run/secrets/scrim/issuer-keys/bundle\\.pem"}
+        template: config.yaml
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: 'key-dir|rotate-every'}
+        template: config.yaml
+      - contains:
+          path: spec.template.spec.volumes
+          content: {name: issuer-keys, secret: {secretName: issuer-keys, defaultMode: 0440, items: [{key: bundle.pem, path: bundle.pem}]}}
+        template: deployment.yaml
+        documentSelector: {path: kind, value: Deployment}
+      - contains:
+          path: 'spec.template.spec.containers[0].volumeMounts'
+          content: {name: issuer-keys, mountPath: /run/secrets/scrim/issuer-keys, readOnly: true}
+        template: deployment.yaml
+        documentSelector: {path: kind, value: Deployment}
+      - hasDocuments: {count: 1}
+        template: issuer.yaml
+  - it: several replicas with operator keys
+    template: config.yaml
+    set:
+      postgres.enabled: true
+      secrets.existing.postgres: pg
+      global.ha.enabled: true
+      identity.issuer.signingKeys.existingSecret: issuer-keys
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "signing-keys: file:"}
+  - it: keyStore pvc creates a claim and mounts it without a recursive fsGroup change
+    set:
+      identity.issuer.keyStore: {type: pvc, size: 128Mi, storageClassName: fast}
+      central.strategy: {type: Recreate, rollingUpdate: null}
+    asserts:
+      - hasDocuments: {count: 2}
+        template: issuer.yaml
+      - equal: {path: spec, value: {accessModes: [ReadWriteOnce], storageClassName: fast, resources: {requests: {storage: 128Mi}}}}
+        template: issuer.yaml
+        documentSelector: {path: kind, value: PersistentVolumeClaim}
+      - equal: {path: metadata.name, value: rel-scrim-issuer-keys}
+        template: issuer.yaml
+        documentSelector: {path: kind, value: PersistentVolumeClaim}
+      - contains: {path: spec.template.spec.volumes, content: {name: issuer-keys, persistentVolumeClaim: {claimName: rel-scrim-issuer-keys}}}
+        template: deployment.yaml
+        documentSelector: {path: kind, value: Deployment}
+      - equal: {path: spec.template.spec.securityContext.fsGroupChangePolicy, value: OnRootMismatch}
+        template: deployment.yaml
+        documentSelector: {path: kind, value: Deployment}
+      - equal: {path: spec.strategy.type, value: Recreate}
+        template: deployment.yaml
+        documentSelector: {path: kind, value: Deployment}
+  - it: keyStore pvc with an existing claim creates none, and a set fsGroupChangePolicy wins
+    set:
+      identity.issuer.keyStore: {type: pvc, existingClaim: my-keys}
+      central.strategy: {type: Recreate, rollingUpdate: null}
+      central.podSecurityContext.fsGroupChangePolicy: Always
+    asserts:
+      - hasDocuments: {count: 1}
+        template: issuer.yaml
+      - contains: {path: spec.template.spec.volumes, content: {name: issuer-keys, persistentVolumeClaim: {claimName: my-keys}}}
+        template: deployment.yaml
+        documentSelector: {path: kind, value: Deployment}
+      - equal: {path: spec.template.spec.securityContext.fsGroupChangePolicy, value: Always}
+        template: deployment.yaml
+        documentSelector: {path: kind, value: Deployment}
+  - it: the NetworkPolicy opens the issuer port to every source by default
+    template: networkpolicy.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim}
+    set:
+      networkPolicy.enabled: true
+    asserts:
+      - contains: {path: spec.ingress, content: {ports: [{port: 9795, protocol: TCP}]}}
+  - it: networkPolicy.issuerFrom narrows the issuer port
+    template: networkpolicy.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim}
+    set:
+      networkPolicy.enabled: true
+      networkPolicy.issuerFrom: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress}}}]
+    asserts:
+      - contains:
+          path: spec.ingress
+          content: {from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress}}}], ports: [{port: 9795, protocol: TCP}]}
+      - notContains: {path: spec.ingress, content: {ports: [{port: 9795, protocol: TCP}]}}
+  - it: the helm test pods reach the issuer port
+    template: networkpolicy.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim}
+    set:
+      networkPolicy.enabled: true
+    asserts:
+      - contains:
+          path: spec.ingress
+          content:
+            from: [{podSelector: {matchLabels: {scrim.dev/helm-test: "true"}}}]
+            ports: [{port: 9790, protocol: TCP}, {port: 9791, protocol: TCP}, {port: 9792, protocol: TCP}, {port: 9795, protocol: TCP}]
+  - it: a helm test fetches discovery and the JWKS under the URL's path through the issuer Service
+    template: tests/tests.yaml
+    asserts:
+      - hasDocuments: {count: 3}
+      - equal: {path: metadata.name, value: rel-scrim-test-issuer}
+        documentIndex: 2
+      - matchRegex:
+          path: 'spec.containers[0].args[0]'
+          pattern: 'http://rel-scrim-issuer\.ns\.svc\.cluster\.local:9795/idp/\.well-known/openid-configuration .*/idp/\.well-known/jwks\.json'
+        documentIndex: 2

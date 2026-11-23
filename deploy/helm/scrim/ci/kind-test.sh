@@ -6,9 +6,11 @@
 # .github/workflows/ci.yaml, a GitHub-hosted runner). test/k8s/e2e.sh is the
 # full end-to-end test on rootless podman for a workstation.
 #
-#   1. ct install: install ci/install-values.yaml into a fresh namespace with
-#      the scrim image built from this commit, wait for every pod, run
-#      `helm test` (the listeners answer through the Service), uninstall
+#   1. ct install: install ci/install-values.yaml and
+#      ci/install-issuer-values.yaml, each into a fresh namespace with the
+#      scrim image built from this commit, wait for every pod, run `helm test`
+#      (the listeners, and the issuer's discovery and JWKS, answer through
+#      their Services), uninstall
 #   2. upgrade (once a release tag has the chart): install that release's
 #      chart, `helm upgrade` to the working tree with the same values and
 #      image, `helm test` again. Helm refuses an upgrade that changes an
@@ -77,10 +79,10 @@ if [[ "${SKIP_INSTALL:-}" != 1 ]]; then
   step "ct install"
   # ct installs every ci/*-values.yaml; the others are render-only cases
   # (CRDs, stores, Secrets assumed), so ct runs on a copy of the chart that
-  # keeps install-values.yaml alone.
+  # keeps the install*-values.yaml cases alone.
   rm -rf "$OUT/ct" && mkdir -p "$OUT/ct/charts"
   cp -r "$CHART" "$OUT/ct/charts/$NAME"
-  find "$OUT/ct/charts/$NAME/ci" -name '*-values.yaml' ! -name install-values.yaml -delete
+  find "$OUT/ct/charts/$NAME/ci" -name '*-values.yaml' ! -name 'install*-values.yaml' -delete
   ( cd "$OUT/ct" && ct install --config "$CHART/ci/ct.yaml" --charts "charts/$NAME" \
       --helm-extra-set-args "${image_args[*]}" )
 fi

@@ -1,0 +1,861 @@
+---
+# Source: scrim/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: scrim
+  namespace: scrim
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/name: scrim-proxy
+    app.kubernetes.io/component: proxy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: scrim-proxy
+      app.kubernetes.io/instance: scrim
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchExpressions:
+          - key: kubernetes.io/metadata.name
+            operator: In
+            values:
+            - agents
+        podSelector:
+          matchLabels:
+            scrim.dev/inject: central
+      ports:
+      - port: 9790
+        protocol: TCP
+      - port: 9791
+        protocol: TCP
+    - ports:
+      - port: 9795
+        protocol: TCP
+    - from:
+      - podSelector:
+          matchLabels:
+            scrim.dev/helm-test: "true"
+      ports:
+      - port: 9790
+        protocol: TCP
+      - port: 9791
+        protocol: TCP
+      - port: 9792
+        protocol: TCP
+      - port: 9795
+        protocol: TCP
+  egress:
+    - ports:
+      - port: 53
+        protocol: UDP
+      - port: 53
+        protocol: TCP
+      to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector:
+          matchLabels:
+            k8s-app: kube-dns
+    - ports:
+      - port: 443
+        protocol: TCP
+      - port: 6443
+        protocol: TCP
+    - ports:
+      - port: 443
+        protocol: TCP
+---
+# Source: scrim/templates/networkpolicy.yaml
+# Agent pods labelled scrim.dev/inject=central reach only scrim and DNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: scrim-agents-central
+  namespace: agents
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+spec:
+  podSelector:
+    matchLabels:
+      scrim.dev/inject: central
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: scrim
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: scrim-proxy
+              app.kubernetes.io/instance: scrim
+      ports:
+        - port: 9790
+          protocol: TCP
+        - port: 9791
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# Source: scrim/templates/deployment.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: scrim
+  namespace: scrim
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/name: scrim-proxy
+    app.kubernetes.io/component: proxy
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scrim-proxy
+      app.kubernetes.io/instance: scrim
+---
+# Source: scrim/templates/deployment.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: scrim-proxy
+  namespace: scrim
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/name: scrim-proxy
+    app.kubernetes.io/component: proxy
+automountServiceAccountToken: true
+---
+# Source: scrim/templates/ca.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: scrim-ca
+  namespace: scrim
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+  annotations:
+    # Agents trust this CA; deleting it with the release would break them, so it stays.
+    helm.sh/resource-policy: keep
+type: kubernetes.io/tls
+data:
+  tls.crt: <generated>
+  tls.key: <generated>
+---
+# Source: scrim/templates/placeholder-keys.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: scrim-placeholder-keys
+  namespace: scrim
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+  annotations:
+    # Placeholders in running conversations are derived from this key.
+    helm.sh/resource-policy: keep
+type: Opaque
+data:
+  k1: <generated>
+---
+# Source: scrim/templates/agents.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scrim-agent-env
+  namespace: agents
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+data:
+  ANTHROPIC_BASE_URL: "http://scrim.scrim.svc.cluster.local:9790/anthropic"
+  OPENAI_BASE_URL: "http://scrim.scrim.svc.cluster.local:9790/openai/v1"
+  HTTPS_PROXY: "http://scrim.scrim.svc.cluster.local:9791"
+  https_proxy: "http://scrim.scrim.svc.cluster.local:9791"
+  HTTP_PROXY: "http://scrim.scrim.svc.cluster.local:9791"
+  http_proxy: "http://scrim.scrim.svc.cluster.local:9791"
+  NO_PROXY: "localhost,127.0.0.1,::1,scrim.scrim.svc.cluster.local,scrim,scrim.scrim,scrim.scrim.svc"
+  no_proxy: "localhost,127.0.0.1,::1,scrim.scrim.svc.cluster.local,scrim,scrim.scrim,scrim.scrim.svc"
+  NODE_EXTRA_CA_CERTS: "/etc/scrim/trust/scrim-ca.pem"
+  SSL_CERT_FILE: "/etc/scrim/trust/ca-bundle.pem"
+  REQUESTS_CA_BUNDLE: "/etc/scrim/trust/ca-bundle.pem"
+  CURL_CA_BUNDLE: "/etc/scrim/trust/ca-bundle.pem"
+  GIT_SSL_CAINFO: "/etc/scrim/trust/ca-bundle.pem"
+  AWS_CA_BUNDLE: "/etc/scrim/trust/ca-bundle.pem"
+  PIP_CERT: "/etc/scrim/trust/ca-bundle.pem"
+  NPM_CONFIG_CAFILE: "/etc/scrim/trust/ca-bundle.pem"
+  CARGO_HTTP_CAINFO: "/etc/scrim/trust/ca-bundle.pem"
+  DENO_CERT: "/etc/scrim/trust/ca-bundle.pem"
+  CODEX_CA_CERTIFICATE: "/etc/scrim/trust/ca-bundle.pem"
+  SCRIM_K8S_TOKEN_FILE: "/var/run/secrets/scrim/token"
+---
+# Source: scrim/templates/ca.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scrim-ca
+  namespace: scrim
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+data:
+  # scrim's interception CA, for runtimes that add to their roots (NODE_EXTRA_CA_CERTS).
+  scrim-ca.pem: |
+    -----BEGIN CERTIFICATE-----
+    -----END CERTIFICATE-----
+  # For runtimes that replace their roots (SSL_CERT_FILE and friends). Agent pods reach only
+  # scrim, so every TLS connection they make ends at a scrim leaf; extra cluster CAs go in
+  # ca.extraTrustedCerts.
+  ca-bundle.pem: |
+    -----BEGIN CERTIFICATE-----
+    -----END CERTIFICATE-----
+  # Runs an agent command with the pod's projected token as its scrim identity.
+  scrim-exec: |
+    #!/bin/sh
+    # scrim-exec COMMAND [ARGS...]: run COMMAND identified to scrim by this pod's service account
+    # (docs/kubernetes.md, "Identity"). Generated by the scrim Helm chart.
+    set -eu
+    f="${SCRIM_K8S_TOKEN_FILE:?scrim-exec: SCRIM_K8S_TOKEN_FILE is not set}"
+    [ "$#" -gt 0 ] || { echo "scrim-exec: no command" >&2; exit 2; }
+    tok=
+    IFS= read -r tok < "$f" || true
+    [ -n "$tok" ] || { echo "scrim-exec: $f is empty" >&2; exit 1; }
+    for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy; do
+      eval "u=\${$v:-}"
+      case $u in
+        http://*@*) ;;
+        http://*) export "$v=http://k8s:$tok@${u#http://}" ;;
+      esac
+    done
+    # git sends proxy credentials only after a 407, which scrim never sends.
+    export GIT_HTTP_PROXY_AUTHMETHOD=basic
+    nl='
+    '
+    hdrs=
+    old_ifs=$IFS
+    IFS=$nl
+    set -f
+    for line in ${ANTHROPIC_CUSTOM_HEADERS:-}; do
+      case $line in
+        [Xx]-[Ss][Cc][Rr][Ii][Mm]-[Ss][Ee][Ss][Ss][Ii][Oo][Nn]:*) ;;
+        *) hdrs="$hdrs$line$nl" ;;
+      esac
+    done
+    set +f
+    IFS=$old_ifs
+    export ANTHROPIC_CUSTOM_HEADERS="${hdrs}x-scrim-session: $tok"
+    unset f tok u v hdrs line nl old_ifs
+    exec "$@"
+---
+# Source: scrim/templates/ca.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scrim-ca
+  namespace: agents
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+data:
+  # scrim's interception CA, for runtimes that add to their roots (NODE_EXTRA_CA_CERTS).
+  scrim-ca.pem: |
+    -----BEGIN CERTIFICATE-----
+    -----END CERTIFICATE-----
+  # For runtimes that replace their roots (SSL_CERT_FILE and friends). Agent pods reach only
+  # scrim, so every TLS connection they make ends at a scrim leaf; extra cluster CAs go in
+  # ca.extraTrustedCerts.
+  ca-bundle.pem: |
+    -----BEGIN CERTIFICATE-----
+    -----END CERTIFICATE-----
+  # Runs an agent command with the pod's projected token as its scrim identity.
+  scrim-exec: |
+    #!/bin/sh
+    # scrim-exec COMMAND [ARGS...]: run COMMAND identified to scrim by this pod's service account
+    # (docs/kubernetes.md, "Identity"). Generated by the scrim Helm chart.
+    set -eu
+    f="${SCRIM_K8S_TOKEN_FILE:?scrim-exec: SCRIM_K8S_TOKEN_FILE is not set}"
+    [ "$#" -gt 0 ] || { echo "scrim-exec: no command" >&2; exit 2; }
+    tok=
+    IFS= read -r tok < "$f" || true
+    [ -n "$tok" ] || { echo "scrim-exec: $f is empty" >&2; exit 1; }
+    for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy; do
+      eval "u=\${$v:-}"
+      case $u in
+        http://*@*) ;;
+        http://*) export "$v=http://k8s:$tok@${u#http://}" ;;
+      esac
+    done
+    # git sends proxy credentials only after a 407, which scrim never sends.
+    export GIT_HTTP_PROXY_AUTHMETHOD=basic
+    nl='
+    '
+    hdrs=
+    old_ifs=$IFS
+    IFS=$nl
+    set -f
+    for line in ${ANTHROPIC_CUSTOM_HEADERS:-}; do
+      case $line in
+        [Xx]-[Ss][Cc][Rr][Ii][Mm]-[Ss][Ee][Ss][Ss][Ii][Oo][Nn]:*) ;;
+        *) hdrs="$hdrs$line$nl" ;;
+      esac
+    done
+    set +f
+    IFS=$old_ifs
+    export ANTHROPIC_CUSTOM_HEADERS="${hdrs}x-scrim-session: $tok"
+    unset f tok u v hdrs line nl old_ifs
+    exec "$@"
+---
+# Source: scrim/templates/config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scrim-config
+  namespace: scrim
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/name: scrim-proxy
+    app.kubernetes.io/component: proxy
+data:
+  config.yaml: |
+    apiVersion: scrim.dev/v1
+    kind: Config
+    identity:
+      store-login:
+        bao: jwt role:agent-{agent_slug} audience:openbao mount:jwt
+    stores:
+      bao:
+        address: https://bao.example.com:8200
+        auth:
+          kubernetes:
+            role: scrim
+            token-file: /var/run/secrets/scrim/store-token
+          method: kubernetes
+        kind: openbao
+        redact:
+        - bao://kv/agents/*
+  chart.yaml: |
+    # Settings the chart owns. This file comes last, so they win over config.yaml.
+    apiVersion: scrim.dev/v1
+    kind: Config
+    profile: k8s
+    log:
+      level: info
+      format: json
+    api:
+      socket: /run/scrim/api.sock
+    entry:
+      listen: 127.0.0.1:0
+    tool-proxy:
+      ca:
+        cert-file: /etc/scrim/ca/tls.crt
+        key: file:/etc/scrim/ca/tls.key
+    proxy:
+      listen: 0.0.0.0:9790
+      forward-listen: 0.0.0.0:9791
+    metrics:
+      listen: 0.0.0.0:9792
+      enabled: false
+    identity:
+      kubernetes:
+        enabled: true
+        audience: scrim
+        unmapped: derive
+      issuer:
+        url: "https://scrim.example.com/idp"
+        listen: 0.0.0.0:9795
+        token-ttl: 10m
+        key-dir: /var/lib/scrim-issuer/keys
+        rotate-every: 24h
+    admin:
+      url: unix:/run/scrim/admin.sock
+    redaction:
+      placeholder-keys:
+        k1:
+          version: 1
+          key: file:/etc/scrim/placeholder/k1
+    deployment:
+      # Replicas sharing this state; more than one needs postgres for state (and postgres, valkey or nats for events).
+      replicas: 1
+    state:
+      backend: memory
+    events:
+      backend: local
+---
+# Source: scrim/templates/rbac.yaml
+# TokenReview only, to verify the projected tokens agent pods present. Narrower than
+# system:auth-delegator, which also allows SubjectAccessReviews.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: scrim-scrim-tokenreview
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+rules:
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+---
+# Source: scrim/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: scrim-scrim-tokenreview
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: scrim-scrim-tokenreview
+subjects:
+  - kind: ServiceAccount
+    name: scrim-proxy
+    namespace: scrim
+---
+# Source: scrim/templates/deployment.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: scrim
+  namespace: scrim
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/name: scrim-proxy
+    app.kubernetes.io/component: proxy
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: scrim-proxy
+    app.kubernetes.io/instance: scrim
+  ports:
+    - appProtocol: http
+      name: llm
+      port: 9790
+      protocol: TCP
+      targetPort: llm
+    - name: forward
+      port: 9791
+      protocol: TCP
+      targetPort: forward
+---
+# Source: scrim/templates/issuer.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: scrim-issuer
+  namespace: scrim
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/name: scrim-proxy
+    app.kubernetes.io/component: proxy
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: scrim-proxy
+    app.kubernetes.io/instance: scrim
+  ports:
+    - appProtocol: http
+      name: issuer
+      port: 9795
+      protocol: TCP
+      targetPort: issuer
+---
+# Source: scrim/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrim
+  namespace: scrim
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/name: scrim-proxy
+    app.kubernetes.io/component: proxy
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scrim-proxy
+      app.kubernetes.io/instance: scrim
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: scrim-1.2.3
+        app.kubernetes.io/part-of: scrim
+        app.kubernetes.io/instance: scrim
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/version: "1.2.3"
+        app.kubernetes.io/name: scrim-proxy
+        app.kubernetes.io/component: proxy
+      annotations:
+        checksum/config: 32d31a32ee1fde2dfc4812a7274ae15384a60df7bf16e9a5e708845bdd7ffe09
+    spec:
+      serviceAccountName: scrim-proxy
+      automountServiceAccountToken: true
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      enableServiceLinks: false
+      containers:
+        - args:
+          - proxy
+          env:
+          - name: SCRIM_CONFIG
+            value: /etc/scrim/config/config.yaml:/etc/scrim/config/chart.yaml
+          - name: XDG_RUNTIME_DIR
+            value: /run/scrim
+          image: ghcr.io/heliopsy/scrim:1.2.3
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /livez
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 3
+          name: scrim
+          ports:
+          - containerPort: 9790
+            name: llm
+            protocol: TCP
+          - containerPort: 9791
+            name: forward
+            protocol: TCP
+          - containerPort: 9792
+            name: health
+            protocol: TCP
+          - containerPort: 9795
+            name: issuer
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 2
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            limits:
+              memory: 1Gi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          startupProbe:
+            failureThreshold: 30
+            httpGet:
+              path: /livez
+              port: health
+            periodSeconds: 2
+          volumeMounts:
+          - mountPath: /etc/scrim/config
+            name: config
+            readOnly: true
+          - mountPath: /etc/scrim/ca
+            name: ca
+            readOnly: true
+          - mountPath: /etc/scrim/placeholder
+            name: placeholder-keys
+            readOnly: true
+          - mountPath: /var/lib/scrim
+            name: state
+          - mountPath: /run/scrim
+            name: run
+          - mountPath: /tmp
+            name: tmp
+          - mountPath: /var/run/secrets/scrim
+            name: store-token
+            readOnly: true
+          - mountPath: /var/lib/scrim-issuer
+            name: issuer-keys
+      volumes:
+        - configMap:
+            name: scrim-config
+          name: config
+        - name: ca
+          secret:
+            defaultMode: 288
+            items:
+            - key: tls.crt
+              path: tls.crt
+            - key: tls.key
+              path: tls.key
+            secretName: scrim-ca
+        - name: placeholder-keys
+          secret:
+            defaultMode: 288
+            secretName: scrim-placeholder-keys
+        - emptyDir: {}
+          name: state
+        - emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+          name: run
+        - emptyDir:
+            sizeLimit: 64Mi
+          name: tmp
+        - name: store-token
+          projected:
+            defaultMode: 288
+            sources:
+            - serviceAccountToken:
+                audience: openbao
+                expirationSeconds: 3600
+                path: store-token
+        - emptyDir:
+            sizeLimit: 16Mi
+          name: issuer-keys
+---
+# Source: scrim/templates/tests/tests.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scrim-test-llm
+  namespace: scrim
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/name: scrim-test
+    app.kubernetes.io/component: test
+    scrim.dev/helm-test: "true"
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsGroup: 101
+    runAsNonRoot: true
+    runAsUser: 100
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: curl
+      image: "docker.io/curlimages/curl:8.23.0@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93"
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c"]
+      args:
+        - |
+          set -eu
+          for i in $(seq 1 12); do
+            if c="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 http://scrim.scrim.svc.cluster.local:9790/)" && [ "$c" != 000 ]; then
+              echo "ok LLM listener"; exit 0
+            fi
+            sleep 5
+          done
+          echo "LLM listener: no answer"; exit 1
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+      resources:
+        limits:
+          memory: 64Mi
+        requests:
+          cpu: 10m
+          memory: 16Mi
+---
+# Source: scrim/templates/tests/tests.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scrim-test-forward
+  namespace: scrim
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/name: scrim-test
+    app.kubernetes.io/component: test
+    scrim.dev/helm-test: "true"
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsGroup: 101
+    runAsNonRoot: true
+    runAsUser: 100
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: curl
+      image: "docker.io/curlimages/curl:8.23.0@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93"
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c"]
+      args:
+        - |
+          set -eu
+          for i in $(seq 1 12); do
+            if c="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 --proxy http://scrim.scrim.svc.cluster.local:9791 http://scrim-helm-test.invalid/)" && [ "$c" != 000 ]; then
+              echo "ok forward proxy"; exit 0
+            fi
+            sleep 5
+          done
+          echo "forward proxy: no answer"; exit 1
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+      resources:
+        limits:
+          memory: 64Mi
+        requests:
+          cpu: 10m
+          memory: 16Mi
+---
+# Source: scrim/templates/tests/tests.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scrim-test-issuer
+  namespace: scrim
+  labels:
+    helm.sh/chart: scrim-1.2.3
+    app.kubernetes.io/part-of: scrim
+    app.kubernetes.io/instance: scrim
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/name: scrim-test
+    app.kubernetes.io/component: test
+    scrim.dev/helm-test: "true"
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsGroup: 101
+    runAsNonRoot: true
+    runAsUser: 100
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: curl
+      image: "docker.io/curlimages/curl:8.23.0@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93"
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c"]
+      args:
+        - |
+          set -eu
+          for i in $(seq 1 12); do
+            if curl -fsS --max-time 10 http://scrim-issuer.scrim.svc.cluster.local:9795/idp/.well-known/openid-configuration | grep -q jwks_uri && curl -fsS --max-time 10 http://scrim-issuer.scrim.svc.cluster.local:9795/idp/.well-known/jwks.json | grep -q '"kid"'; then
+              echo "ok issuer discovery and JWKS"; exit 0
+            fi
+            sleep 5
+          done
+          echo "issuer discovery and JWKS: no answer"; exit 1
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+      resources:
+        limits:
+          memory: 64Mi
+        requests:
+          cpu: 10m
+          memory: 16Mi

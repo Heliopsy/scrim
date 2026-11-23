@@ -147,6 +147,7 @@ These settings are written to a second file, `chart.yaml`, read after yours, so 
 | `metrics.listen` | `0.0.0.0:9792` (health for the probes; `/metrics` only with `metrics.enabled`) | the same |
 | `metrics.enabled`, `metrics.path`, `metrics.auth.token`, `metrics.allow-unauthenticated-remote` | from `metrics` | the same |
 | `identity.kubernetes.*` | from `identity.kubernetes`; scrim's own API token is the pod's mounted service account | the same, with the pod's API token from a projected volume only the scrim container mounts |
+| `identity.issuer.*` | from `identity.issuer` ([Identity issuer](#identity-issuer)); listener on `0.0.0.0:9795` | not set: the issuer runs in central scrim only |
 | `api.socket`, `admin.url` | `/run/scrim/api.sock`, `unix:/run/scrim/admin.sock` (or TCP with `admin.tcp`) | the same, Unix only |
 | `state.backend`, `events.backend` | `postgres` and `postgres` with `postgres.enabled` (the DSN from the Secret slot `postgres`), else `memory` and `local` | `memory`, `local` |
 | `deployment.replicas` | `central.replicaCount`, or `central.autoscaling.maxReplicas` with the HPA | `1` |
@@ -346,7 +347,7 @@ JSON, in the `initContainers` and `volumes` variables of the `-inject-sidecar` M
 
 | Policy | Namespace | Selects | Allows |
 | --- | --- | --- | --- |
-| `<release>-scrim` | release | scrim pods | ingress to 9790 and 9791 (and `edge.port` with `edge.enabled`) from pods labelled `central` in `agents.namespaces`; to the metrics port from `networkPolicy.prometheus` when `metrics.enabled`; to the admin port from `networkPolicy.adminFrom` when `admin.tcp.enabled`. Egress to DNS, the API server (`networkPolicy.apiServerEgress`, for TokenReview) and `networkPolicy.scrimEgress` |
+| `<release>-scrim` | release | scrim pods | ingress to 9790 and 9791 (and `edge.port` with `edge.enabled`) from pods labelled `central` in `agents.namespaces`; to the metrics port from `networkPolicy.prometheus` when `metrics.enabled`; to the admin port from `networkPolicy.adminFrom` when `admin.tcp.enabled`; to the issuer port from `networkPolicy.issuerFrom` (every source when empty) when `identity.issuer.enabled`. Egress to DNS, the API server (`networkPolicy.apiServerEgress`, for TokenReview) and `networkPolicy.scrimEgress` |
 | `<release>-scrim-agents-central` | each agent namespace | pods labelled `central` | egress to the scrim pods on 9790 and 9791 (and `edge.port` with `edge.enabled`), DNS and `networkPolicy.agentEgress` (empty by default). Nothing else |
 | `<release>-scrim-agents-sidecar` | each agent namespace | pods labelled `sidecar` | egress to DNS, the API server (`networkPolicy.apiServerEgress`) and `networkPolicy.sidecarEgress` (what the in-pod scrim needs; the guard keeps the agent off it) |
 
@@ -430,6 +431,111 @@ config:
 With that, every injection of a `bao` secret is also checked against the OpenBao role of the calling
 pod ([identity.md](identity.md#store-identity-per-agent)). The agent token's audience
 (`identity.kubernetes.audience`) must be one the role accepts.
+
+### Identity issuer
+
+`identity.issuer.enabled` makes central scrim an OpenID Connect issuer for its agents
+([identity.md](identity.md#scrim-as-an-identity-provider)): it signs short-lived tokens for the
+agents it has identified and presents them to stores that trust it, for the token exchange methods
+of `config.identity.store-login` (`jwt`, `aws-web-identity`, `gcp-workload-identity`,
+`azure-federated`, `infisical-oidc`). The agent never sees the token.
+
+```yaml
+identity:
+  issuer:
+    enabled: true
+    url: https://scrim.example.com/idp     # the iss claim; no trailing slash
+    tokenTTL: 10m
+config:
+  identity:
+    store-login:
+      bao: "jwt role:agent-{agent_slug} audience:openbao mount:jwt"
+```
+
+The chart runs the listener on `identity.issuer.port` (9795) on the pod IP and puts it on its own
+Service, `<release>-scrim-issuer`, with that port only, so publishing it exposes nothing else. The
+listener serves two public documents under the URL's path and answers 404 to everything else:
+`<url>/.well-known/openid-configuration` and `<url>/.well-known/jwks.json`. Stores fetch them from
+`url`, so `url` must reach that Service. Terminate TLS in front of it with an Ingress or a Gateway
+route, for example:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: scrim-issuer, namespace: scrim}
+spec:
+  ingressClassName: nginx
+  tls: [{hosts: [scrim.example.com], secretName: scrim-example-com-tls}]
+  rules:
+    - host: scrim.example.com
+      http:
+        paths:
+          - path: /idp/.well-known/
+            pathType: Prefix
+            backend: {service: {name: scrim-scrim-issuer, port: {name: issuer}}}
+```
+
+Route only the `.well-known` paths, and put no authentication in front of them: stores fetch them
+anonymously. A store inside the cluster that cannot reach the public name can be given the
+discovery URL directly (OpenBao's `oidc_discovery_url`), but the `iss` claim stays `url`, and
+`bound_issuer` must match it. The chart refuses an `http://` URL unless
+`identity.issuer.insecureHTTP` is set, a weakening scrim logs at start-up: a store that fetches
+keys over plain http can be handed an attacker's keys.
+
+With `networkPolicy.enabled` the issuer port is open to every source by default, since it serves
+public keys only; `networkPolicy.issuerFrom` narrows it to the Ingress controller and the stores
+that fetch the keys. `helm test` fetches both documents through the issuer Service.
+
+#### Signing keys
+
+Where the keys come from decides how many replicas can run:
+
+| Keys | Values | Replicas | On a pod restart |
+| --- | --- | --- | --- |
+| Operator-managed | `signingKeys.existingSecret` (PKCS#8 PEM RSA keys, 2048 bits or more, under `signingKeys.key`) | any | nothing changes |
+| Generated, `emptyDir` (default) | `keyStore.type: emptyDir` | one | a new pod has new keys; tokens signed by the old pod stop verifying |
+| Generated, PVC | `keyStore.type: pvc`, `central.strategy.type: Recreate` | one | the keys and their rotation carry on |
+
+Replicas behind one URL must publish the same JWKS, and generated keys are per pod, so the chart
+refuses to render the issuer with more than one replica (`central.replicaCount`, the HPA or
+`global.ha`) unless `signingKeys.existingSecret` is set. The first key in the Secret signs and all
+are published; scrim never rotates them. To rotate, put the new key first and keep the old one
+second, roll the Deployment, wait one `tokenTTL` plus the stores' JWKS cache time (scrim sends
+`max-age=300`), then remove the old key and roll again. Create the Secret with your secret
+tooling, never from values:
+
+```yaml
+identity:
+  issuer:
+    enabled: true
+    url: https://scrim.example.com/idp
+    signingKeys:
+      existingSecret: scrim-issuer-keys    # key keys.pem: one or more "PRIVATE KEY" PEM blocks
+```
+
+Without `signingKeys.existingSecret`, scrim generates its keys and rotates them every
+`rotateEvery`, publishing the next key a full period before it signs. They live in a directory
+scrim creates with mode 0700 inside the `issuer-keys` volume (`/var/lib/scrim-issuer/keys`); scrim
+refuses a key directory group or others can read, which is why it is one level below the volume
+root.
+
+- `emptyDir` (the default) lives as long as the pod: a container restart keeps the keys, but a
+  rollout, a reschedule or an evicted pod starts with none. The new pod signs with a new key that
+  no store has cached yet, and the old key is gone from the JWKS. A store
+  that refetches the JWKS for the unknown key ID verifies new tokens at once; tokens signed before
+  the restart stop verifying once the store's copy of the JWKS is refreshed. They live at most
+  `tokenTTL`, and scrim mints a new one for the next login, so the cost is a login that fails
+  within that window, not a lasting outage. A store that does not refetch on an unknown key ID
+  refuses new tokens until its cache expires.
+- `pvc` keeps the keys, so a restart changes nothing a store can see. The chart creates
+  `<release>-scrim-issuer-keys` (`keyStore.size`, `storageClassName`, `accessModes`) or uses
+  `keyStore.existingClaim`, and sets the pod's `fsGroupChangePolicy` to `OnRootMismatch` unless
+  `central.podSecurityContext` sets one: a recursive group change on every mount would make the key
+  files group-readable, and scrim would refuse them. scrim does not lock the directory, so two pods
+  must never use it at once; the chart refuses a PVC unless `central.strategy.type` is `Recreate`,
+  which takes the issuer, and scrim, down for the length of each rollout.
+
+For more than one replica, or to avoid the downtime of `Recreate`, use operator-managed keys.
 
 ## Secrets the chart mounts
 
@@ -661,5 +767,9 @@ namespace's directory under `$XDG_RUNTIME_DIR/libpod/tmp/rootless-netns/run` los
 - The chart lives in `oci://ghcr.io/heliopsy/charts/scrim` from the first release after it
   merged; earlier releases have no chart.
 - A standalone `scrim-dataplane` sidecar with a remote control plane (no transport is specified).
+- An Ingress or Gateway route for the identity issuer: the chart renders the Service, you publish
+  it ([Identity issuer](#identity-issuer)). The issuer runs in central scrim only; in-pod scrims in
+  sidecar mode sign no tokens, so token exchange logins (`config.identity.store-login` with `jwt` and
+  the other federated methods) work for central agents only.
 - Agents that cannot be started through a shell launcher get no identity. A long-running agent
   keeps the token it started with ([Identity](#identity)).

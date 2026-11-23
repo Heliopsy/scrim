@@ -66,10 +66,12 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   copies live as long as the SDK's own. Store tokens sent in an HTTP `Authorization` header (for
   example Infisical's access token) are strings for the length of the request. None of these can
   be wiped; they are freed and eventually overwritten.
-- **Notifier credentials are not in the redaction set.** The ntfy token, the webhook signing
-  secret and credentials given to notifier plugins are used to send approval requests but are not
-  redacted from provider requests. An agent that reads scrim's configuration or the file a
-  reference points to could send them to the provider. Keep those files unreadable by agents.
+- **Short credentials of scrim's own are not redacted.** scrim's own credentials (notifier
+  tokens, the admin and metrics tokens, audit sink, Valkey, NATS and Postgres passwords, signing
+  keys, store credentials) are in the redaction set, but a value shorter than 8 bytes is left out
+  and named in a start-up warning, because redacting it would rewrite unrelated text. Per-agent
+  store tokens (`identity.store-credentials`) and the edge forwarder's token file are not in the
+  set either: scrim does not keep the first in memory, and the second lives in the agent pod.
 - **The edge listener's certificate is issued by the interception CA.** One CA key signs the
   certificates scrim presents for TLS interception and the certificate the edge forwarders check.
   Anyone holding that key can impersonate scrim to the forwarders as well as to agents. Protect it

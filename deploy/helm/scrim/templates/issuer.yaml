@@ -1,0 +1,29 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- /*
+The identity issuer (identity.issuer.*): a Service with the issuer port only,
+so an Ingress or Gateway can publish the discovery document and the JWKS
+(public keys) without exposing the LLM, forward proxy or admin listeners, and
+the PersistentVolumeClaim of generated keys with keyStore.type pvc.
+*/ -}}
+{{- $i := .Values.identity.issuer -}}
+{{- if and .Values.central.enabled $i.enabled }}
+{{- include "chart.std.service" (dict "root" . "comp" "proxy" "values" (dict "service" $i.service)
+      "name" (printf "%s-issuer" (include "scrim.fullname" .))
+      "ports" (list (dict "name" "issuer" "port" (int $i.port) "targetPort" "issuer" "protocol" "TCP" "appProtocol" "http"))) }}
+{{- if and (not $i.signingKeys.existingSecret) (eq $i.keyStore.type "pvc") (not $i.keyStore.existingClaim) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  {{- include "chart.objectMeta" (dict "root" . "kind" "PersistentVolumeClaim" "comp" "proxy" "name" (include "scrim.issuerClaimName" .) "annotations" $i.keyStore.annotations) | nindent 2 }}
+spec:
+  accessModes:
+    {{- toYaml $i.keyStore.accessModes | nindent 4 }}
+  {{- with $i.keyStore.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $i.keyStore.size }}
+{{- end }}
+{{- end }}

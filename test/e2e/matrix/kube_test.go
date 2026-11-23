@@ -22,12 +22,12 @@ import (
 )
 
 // TestMatrixKubernetes is the Kubernetes cell of the matrix, run by
-// test/k8s/e2e.sh in two steps. Before the chart is installed, with
-// SCRIM_MATRIX_K8S_PHASE=seed, it generates the seeds into the file
-// SCRIM_MATRIX_K8S_SEEDS and writes them to OpenBao, so scrim loads them at
-// start like any secret it serves. Once the chart is installed it runs the
-// bypass matrix through the
-// central scrim Deployment and through an agent pod's scrim sidecar, with the
+// test/k8s/e2e.sh in two steps. Once the chart is installed and the agent
+// pods are running, with SCRIM_MATRIX_K8S_PHASE=seed, it generates the seeds
+// into the file SCRIM_MATRIX_K8S_SEEDS and writes them to OpenBao, so the
+// running scrims pick them up through their store watch, not the load at
+// start-up. Then it waits until every seed is redacted and runs the bypass
+// matrix through the central scrim Deployment and through an agent pod's scrim sidecar, with the
 // seeds in the cluster's OpenBao (read by scrim with its own service account
 // token) and the cluster's fake provider as the upstream. The script reaches
 // each with kubectl port-forward and names them here:
