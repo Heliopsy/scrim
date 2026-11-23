@@ -22,7 +22,8 @@ Spec: `openspec/changes/scrim-v1/specs/llm-proxy`, plus the base-URL and forward
   element) and `countTokens`. Other paths are forwarded with the whole body redacted.
 - **Upstream.** Pooled hyper client, rustls with webpki and/or native roots plus an optional extra
   CA bundle, ALPN `h2` and `http/1.1`. The agent's own `authorization`, `x-api-key` and
-  `x-goog-api-key`, and on a Gemini route the `key` query parameter, pass through untouched; hop-by-hop headers are dropped and `accept-encoding` is set to `identity` so
+  `x-goog-api-key`, and on a Gemini route the `key` query parameter, pass through untouched;
+  hop-by-hop headers are dropped and `accept-encoding` is set to `identity` so
   responses can be restored.
 - **Request head** (`head`). Every other header value, every path segment and every query key and
   value is redacted on its raw bytes and again percent-decoded (`+` as a space in the query), and
