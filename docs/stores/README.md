@@ -10,6 +10,7 @@ value back.
 | Infisical | `infisical` | [infisical.md](infisical.md) |
 | Doppler | `doppler` | [doppler.md](doppler.md) |
 | 1Password (through Connect) | `onepassword` | [onepassword.md](onepassword.md) |
+| AWS Secrets Manager, AWS SSM Parameter Store | `awssm`, `ssm` | [aws.md](aws.md) |
 | Bitwarden Secrets Manager | `bws` | [bws.md](bws.md) |
 | Google Secret Manager | `gcpsm` | [gcp.md](gcp.md) |
 | Azure Key Vault | `azkv` | [azure.md](azure.md) |
@@ -27,6 +28,8 @@ support is refused before anything is attempted.
 | `openbao`   | yes  | yes  | yes   | yes   | no       | no      |
 | `infisical` | yes  | yes  | yes   | yes   | no       | no      |
 | `doppler`   | yes  | yes  | yes   | yes   | no       | no      |
+| `awssm`     | yes  | yes  | yes   | yes   | no       | no      |
+| `ssm`       | yes  | yes  | yes   | yes   | no       | no      |
 | `bws`       | yes  | yes  | yes   | yes   | no       | no      |
 | `gcpsm`     | yes  | yes  | yes   | yes   | no       | no      |
 | `azkv`      | yes  | yes  | yes   | yes   | no       | no      |
@@ -57,6 +60,9 @@ store-side support.
 Watch on OpenBao, Infisical, 1Password and Bitwarden Secrets Manager polls version metadata. It
 never fetches values, so it stays cheap even with a short interval. Generated secrets are produced
 by scrim and then written, so generate needs write and no store-side support.
+Watch on OpenBao, Infisical, Bitwarden Secrets Manager and the AWS stores polls version metadata.
+It never fetches values, so it stays cheap even with a short interval. Generated secrets are
+produced by scrim and then written, so generate needs write and no store-side support.
 
 ## Configuring an instance
 
@@ -105,6 +111,9 @@ Credential fields (`token`, `role-id`, `secret-id`, `client-id`, `client-secret`
 `credentials`, `certificate`) take a reference instead of a literal: `env:NAME`, `file:/path`,
 `cred:NAME` (a systemd credential), or a reference into another configured store. They are
 resolved at start; a reference that cannot be resolved stops start-up, and no store is contacted
+`access-key-id`, `secret-access-key`) take a reference instead of a literal: `env:NAME`,
+`file:/path`, `cred:NAME` (a systemd credential), or a reference into another configured store. They
+are resolved at start; a reference that cannot be resolved stops start-up, and no store is contacted
 with an empty credential. `scrim config show` masks them. A literal still works, but scrim logs a
 warning naming the field. scrim also adds the credentials it holds, and the session tokens a store
 issues at login, to the redaction set.
@@ -252,6 +261,8 @@ SCRIM_TEST_PODMAN=1 go test -race ./internal/stores/...
 | `SCRIM_TEST_OPENBAO_IMAGE` | OpenBao image (default `quay.io/openbao/openbao:2.7.3`). |
 | `SCRIM_TEST_INFISICAL_VERSION` | Infisical image tag (default: `defaultInfisicalVersion` in `internal/stores/infisical/infisical_integration_test.go`). |
 | `SCRIM_TEST_INFISICAL_ADDR`, `SCRIM_TEST_INFISICAL_TOKEN`, `SCRIM_TEST_INFISICAL_ORG` | Use an existing Infisical (an organisation admin identity token and the organisation ID) instead of a pod. The outage case is skipped. |
+| `SCRIM_TEST_LOCALSTACK_ENDPOINT` | Use an existing LocalStack (`http://127.0.0.1:4566`) for the AWS adapters instead of a container. The outage cases are skipped. |
+| `SCRIM_TEST_LOCALSTACK_IMAGE` | LocalStack image (default: `defaultLocalStackImage` in `internal/stores/aws/localstack_test.go`, the last community release). |
 
 Containers and pods are named `scrim-stores-*` and are removed with their volumes when the tests
 finish.

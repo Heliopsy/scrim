@@ -1145,6 +1145,127 @@ report it as changed, so a version written in the same second as the one before 
 
 - **WHEN** a secret is rotated twice within the same second
 - **THEN** the watch reports a change after the second rotation, and the new value is read
+### Requirement: AWS Secrets Manager adapter
+
+The `awssm` adapter SHALL address a secret by its name or ARN, expose a JSON object secret as one
+field per key and any other string or binary secret as the field `value`, and select versions with
+`?version=<version-id>` and `?stage=<staging-label>`, AWSCURRENT by default. A stage no version holds
+SHALL read as not found. Listing and watch SHALL use ListSecrets and never fetch a value.
+
+#### Scenario: Previous version by stage
+
+- **WHEN** a secret has been written twice and a rule reads `aws-sm://app/db?stage=AWSPREVIOUS#token`
+- **THEN** scrim returns the first version's `token`, reports its version ID, and labels it
+  `awssm.stage.AWSPREVIOUS = true`
+
+#### Scenario: Binary and JSON secrets
+
+- **WHEN** one secret holds a binary value and another the JSON object `{"token":"...","port":5432}`
+- **THEN** the binary secret reads byte for byte as `value`, and the JSON secret reads as fields
+  `token` and `port`, the number as its JSON text
+
+#### Scenario: Rotation
+
+- **WHEN** AWSCURRENT moves to a new version of a watched secret
+- **THEN** the watch reports a change and the refresh reads the new version
+
+#### Scenario: Secret scheduled for deletion
+
+- **WHEN** a secret is scheduled for deletion
+- **THEN** it disappears from listings, a watch reports it deleted, and a read fails as not found
+
+### Requirement: AWS Secrets Manager writes
+
+An `awssm` write SHALL add a version with PutSecretValue and create a missing secret with
+CreateSecret unless `create-secrets` is off; a create-only write SHALL use CreateSecret alone.
+
+#### Scenario: Create-only write of an existing secret
+
+- **WHEN** a create-only write names a secret that exists
+- **THEN** it fails with a conflict and the secret keeps its value
+
+#### Scenario: Creation turned off
+
+- **WHEN** `create-secrets` is false and a write names a missing secret
+- **THEN** it fails as not found and nothing is created
+
+### Requirement: AWS SSM Parameter Store adapter
+
+The `ssm` adapter SHALL address a parameter by its name without the leading slash, expose its value
+as the field `value` (SecureString decrypted), and select versions with `?version=<n>`,
+`?label=<label>` or the native `:<n>` and `:<label>` suffixes. Listing SHALL follow the hierarchy
+through DescribeParameters without fetching values. A write SHALL create a parameter of the
+configured type, or add a version that keeps an existing parameter's type.
+
+#### Scenario: Labelled version
+
+- **WHEN** version 1 of `/app/db` carries the label `stable` and version 2 is current
+- **THEN** `aws-ssm://app/db?label=stable` and `aws-ssm://app/db:stable` read version 1, and
+  `aws-ssm://app/db:missing` fails as not found
+
+#### Scenario: Update keeps the type
+
+- **WHEN** scrim writes a new value to an existing `String` parameter while `parameter-type` is
+  `SecureString`
+- **THEN** the parameter gets a new version and stays a `String`
+
+### Requirement: AWS adapters authenticate with ambient identity
+
+The AWS adapters SHALL find credentials through the AWS SDK default chain (environment, shared
+config profile, web identity token, container credentials, instance metadata), MAY assume a
+configured IAM role on top, and SHALL accept static access keys only as secret references. They
+SHALL never log a credential, and SHALL add the secret access key and session token they sign with to
+the redaction set.
+
+#### Scenario: Credentials from the environment
+
+- **WHEN** an `awssm` instance has no credential options and the environment holds access keys
+- **THEN** its requests are signed with those keys, and the secret key is in the redaction set
+
+#### Scenario: Assumed role
+
+- **WHEN** an instance sets `assume-role.arn`
+- **THEN** scrim calls STS AssumeRole with the configured session name and external ID and signs
+  with the session credentials, refreshing them before they expire
+
+### Requirement: AWS native labels
+
+The AWS adapters SHALL label secrets with AWS's own attributes under `awssm.<attr>` and `ssm.<attr>`
+and resource tags under `<kind>.meta.<key>`, and SHALL return the same labels without a value
+through DescribeSecret, or DescribeParameters and ListTagsForResource. A tag SHALL NOT set a native
+label, and only tags under `scrim.` SHALL set a label outside the `meta` namespace.
+
+
+- **WHEN** a secret carries the tag `awssm.name = forged` and the tag `team = payments`
+- **THEN** its labels say `awssm.name` = its real name, `awssm.meta.awssm.name = forged` and
+  `awssm.meta.team = payments`, and no `team` label
+
+#### Scenario: Labels without the value
+
+- **WHEN** a rule needs the labels of `aws-sm://app/db`, which is in no redaction set
+- **THEN** scrim calls DescribeSecret only, and the labels equal those a read reports
+
+### Requirement: AWS write labels become tags
+
+Labels passed with an AWS write SHALL be stored as resource tags, with characters AWS refuses in a
+tag value encoded, and `scrim.*` tags SHALL be decoded on read.
+
+#### Scenario: Host binding round trip
+
+- **WHEN** scrim writes a secret with the label `scrim.hosts = a.example,b.example`
+- **THEN** the tag holds `a.example=2Cb.example` and a later read labels the secret
+  `scrim.hosts = a.example,b.example`
+
+### Requirement: AWS write errors carry no value
+
+An error from an AWS write SHALL keep AWS's error code and drop AWS's message, since validation
+messages can quote the request; read, list and health errors MAY keep the message.
+
+#### Scenario: Validation error echoing the value
+
+- **WHEN** AWS refuses a PutParameter with a ValidationException whose message quotes the value
+- **THEN** the write fails as unsupported, the error names `ValidationException`, and no part of
+  the error chain contains the value
 
 ### Requirement: Adapter conformance suite
 

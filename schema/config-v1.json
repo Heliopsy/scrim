@@ -1930,6 +1930,10 @@
     "stores": {
       "additionalProperties": {
         "properties": {
+          "access-key-id": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          },
           "age-identity": {
             "type": "string",
             "x-scrim-secret-ref": true
@@ -1986,6 +1990,10 @@
             "x-scrim-secret-ref": true
           },
           "role-id": {
+            "type": "string",
+            "x-scrim-secret-ref": true
+          },
+          "secret-access-key": {
             "type": "string",
             "x-scrim-secret-ref": true
           },
