@@ -17,4 +17,4 @@ replicas:
     count: 2
 images:
   - name: ghcr.io/heliopsy/scrim
-    newTag: 1.0.0 # x-release-please-version
+    newTag: 1.1.0 # x-release-please-version
