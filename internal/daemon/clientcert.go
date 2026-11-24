@@ -4,7 +4,11 @@ package daemon
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/heliopsy/scrim/internal/agentapi"
@@ -21,6 +25,70 @@ func checkTLSListeners(ls []*pb.Listener, trust *identity.CertTrustSource) error
 	for _, l := range ls {
 		if l.GetTls() {
 			return fmt.Errorf("listener %s (%s) needs %s", l.GetName(), l.GetAddress(), agentapi.CertEnabled.Name())
+		}
+	}
+	return nil
+}
+
+// checkSnapshotTLS refuses a snapshot the data plane would reject over its
+// TLS listeners and client certificate trust, so the error names the setting
+// here instead of the data plane keeping the previous snapshot: tls only on
+// listeners that serve HTTP to agents, a trust whenever a listener has tls,
+// and a trust that has at least one anchor, one server name and CRLs that
+// parse.
+func checkSnapshotTLS(s *pb.Snapshot) error {
+	anyTLS := false
+	for _, l := range s.GetListeners() {
+		if !l.GetTls() {
+			continue
+		}
+		anyTLS = true
+		switch l.GetKind() {
+		case pb.ListenerKind_LISTENER_KIND_BASE_URL, pb.ListenerKind_LISTENER_KIND_FORWARD_PROXY,
+			pb.ListenerKind_LISTENER_KIND_TOOL_PROXY:
+		default:
+			return fmt.Errorf("snapshot: listener %s: tls is only for base URL, forward proxy and tool proxy listeners", l.GetName())
+		}
+	}
+	t := s.GetClientCertificates()
+	if t == nil {
+		if anyTLS {
+			return fmt.Errorf("snapshot: a TLS listener needs %s", agentapi.CertEnabled.Name())
+		}
+		return nil
+	}
+	anchors := 0
+	rest := []byte(t.GetTrustAnchorsPem())
+	for {
+		var b *pem.Block
+		b, rest = pem.Decode(rest)
+		if b == nil {
+			break
+		}
+		if b.Type != "CERTIFICATE" {
+			continue
+		}
+		if _, err := x509.ParseCertificate(b.Bytes); err != nil {
+			return fmt.Errorf("snapshot: %s: trust anchor %d does not parse", agentapi.CertCA.Name(), anchors+1)
+		}
+		anchors++
+	}
+	if anchors == 0 {
+		return fmt.Errorf("snapshot: %s has no trust anchors", agentapi.CertCA.Name())
+	}
+	named := false
+	for _, n := range t.GetServerNames() {
+		if strings.TrimSuffix(strings.TrimSpace(n), ".") != "" {
+			named = true
+			break
+		}
+	}
+	if !named {
+		return fmt.Errorf("snapshot: %s is empty", agentapi.CertServerNames.Name())
+	}
+	for i, d := range t.GetCrlsDer() {
+		if _, err := x509.ParseRevocationList(d); err != nil {
+			return errors.Join(fmt.Errorf("snapshot: %s: CRL %d does not parse", agentapi.CertCRLFiles.Name(), i+1), err)
 		}
 	}
 	return nil

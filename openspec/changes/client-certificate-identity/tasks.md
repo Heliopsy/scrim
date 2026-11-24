@@ -23,3 +23,8 @@
 
 - [x] 4.1 Daemon e2e with the real data plane: mapped certificate allowed and audited as its agent, policy per certificate, untrusted, expired, revoked and unmapped refused and audited, redaction applies with the leak check
 - [x] 4.2 docs/identity.md, docs/limitations.md
+
+## 5. Follow-ups (not in this change)
+
+- [ ] 5.1 Optional operator-supplied certificate and key for the TLS listeners (needs a secret field in the snapshot)
+- [ ] 5.2 Helm chart values for `identity.client-certificates.*` and the TLS listener settings

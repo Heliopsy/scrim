@@ -34,6 +34,13 @@ as other identities do.
 - **THEN** the TLS handshake fails, nothing is forwarded, and an audit entry records the refusal
   with its reason
 
+#### Scenario: Unusable trust is refused before the data plane
+
+- **WHEN** the trust anchors do not parse, a CRL does not parse, no listener names are configured,
+  or a listener kind that does not serve HTTP to agents has TLS set
+- **THEN** the control plane refuses to build the snapshot with an error naming the setting, and
+  the data plane keeps the snapshot in force
+
 #### Scenario: Token on a certificate connection
 
 - **WHEN** a request on a TLS listener also carries `x-scrim-session` with another agent's token

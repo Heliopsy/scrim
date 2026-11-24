@@ -240,6 +240,9 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 	if b.ClientCertificates != nil {
 		snap.ClientCertificates = b.ClientCertificates()
 	}
+	if err := checkSnapshotTLS(snap); err != nil {
+		return nil, err
+	}
 	if b.RedactionScopes != nil {
 		snap.RedactionScopes = b.RedactionScopes(snap.Values)
 	}
