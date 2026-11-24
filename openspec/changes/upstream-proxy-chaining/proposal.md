@@ -29,8 +29,7 @@ default transport, with no way to configure a proxy, its credentials or its exce
 
 ## Impact
 
-- Specs: interception (new requirements), secret-stores ("Scrim's own credentials are never
-  exposed").
+- Specs: interception (new requirements), secret-stores (environment proxy password).
 - Code: new crate `dataplane/crates/scrim-upstream-proxy`; `scrim-llm` and `scrim-toolproxy`
   clients; `scrim-dataplane` snapshot apply; `proto/scrim/dataplane/v1`; new Go package
   `internal/netproxy`; `internal/app`, `internal/daemon`, `internal/run`.

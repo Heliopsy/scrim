@@ -29,6 +29,7 @@ tracing.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+getrandom = "0.4"
 scrim-upstream-proxy = { path = ".", features = ["test-util"] }
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 serde = { version = "1", features = ["derive"] }

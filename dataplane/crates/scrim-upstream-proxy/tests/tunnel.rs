@@ -118,6 +118,14 @@ where
     Ok(out)
 }
 
+/// A value generated for this run: tests never carry fixed secrets.
+fn generated(prefix: &str) -> String {
+    let mut b = [0u8; 12];
+    getrandom::fill(&mut b).unwrap();
+    let hex = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
+    format!("{prefix}{hex}")
+}
+
 fn basic(user: &str, pw: &str) -> String {
     format!(
         "Basic {}",
@@ -129,7 +137,9 @@ fn basic(user: &str, pw: &str) -> String {
 async fn tunnels_with_credentials_and_verifies_the_destination_inside() {
     let dest_ca = ca("dest CA");
     let echo = tls_echo(server_config(&dest_ca, &["api.provider.test"])).await;
-    let pw = "generated-proxy-pw-5e1d0c";
+    let pw = generated("proxy-pw-");
+    let pw = pw.as_str();
+    let inside = generated("value-in-tls-");
     let proxy = TestProxy::start(Options {
         require_authorization: Some(basic("scrim", pw)),
         redirect: Some(echo),
@@ -144,10 +154,10 @@ async fn tunnels_with_credentials_and_verifies_the_destination_inside() {
     let s = connect(&up, &client, "api.provider.test", 443, T)
         .await
         .unwrap();
-    let got = talk(s, &client, "api.provider.test", b"value-in-tls-7c1")
+    let got = talk(s, &client, "api.provider.test", inside.as_bytes())
         .await
         .unwrap();
-    assert_eq!(got, b"echo: value-in-tls-7c1");
+    assert_eq!(got, format!("echo: {inside}").as_bytes());
     let seen = proxy.seen();
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].target, "api.provider.test:443");
@@ -159,10 +169,15 @@ async fn tunnels_with_credentials_and_verifies_the_destination_inside() {
         "the proxy relayed {} bytes",
         relayed.len()
     );
-    assert!(!relayed.windows(16).any(|w| w == b"value-in-tls-7c1"));
+    assert!(
+        !relayed
+            .windows(inside.len())
+            .any(|w| w == inside.as_bytes())
+    );
 
     // No credentials, and wrong ones: 407, nothing opened.
-    for (user, pass) in [("", ""), ("scrim", "wrong-password-0000")] {
+    let wrong = generated("wrong-pw-");
+    for (user, pass) in [("", ""), ("scrim", wrong.as_str())] {
         let up = UpstreamProxy::new::<&str>(&url, &[], user, pass.as_bytes()).unwrap();
         let err = connect(&up, &client, "api.provider.test", 443, T)
             .await
@@ -170,10 +185,7 @@ async fn tunnels_with_credentials_and_verifies_the_destination_inside() {
             .unwrap();
         assert!(matches!(err, TunnelError::AuthRequired { .. }), "{err}");
         let msg = err.to_string();
-        assert!(
-            !msg.contains(pw) && !msg.contains("wrong-password"),
-            "{msg}"
-        );
+        assert!(!msg.contains(pw) && !msg.contains(&wrong), "{msg}");
     }
     assert_eq!(proxy.seen().iter().filter(|s| s.opened).count(), 1);
 }
@@ -216,15 +228,16 @@ async fn a_proxy_that_presents_its_own_certificate_is_refused() {
     let s = connect(&up, &client, "api.provider.test", 443, T)
         .await
         .unwrap();
-    let err = talk(s, &client, "api.provider.test", b"value-must-not-leave-a91")
+    let value = generated("value-must-not-leave-");
+    let err = talk(s, &client, "api.provider.test", value.as_bytes())
         .await
         .unwrap_err();
     assert!(err.to_string().contains("certificate"), "{err}");
     assert!(
         !proxy
             .tunnelled_bytes()
-            .windows(24)
-            .any(|w| w == b"value-must-not-leave-a91")
+            .windows(value.len())
+            .any(|w| w == value.as_bytes())
     );
 }
 

@@ -252,15 +252,18 @@ mod tests {
 
     #[test]
     fn credentials_become_basic_and_never_print() {
-        let pw = b"generated-proxy-pw-91c2";
+        let mut raw = [0u8; 12];
+        getrandom::fill(&mut raw).unwrap();
+        let pw = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
+        let pw = pw.as_bytes();
         let p = UpstreamProxy::new::<&str>("http://proxy:3128", &[], "scrim", pw).unwrap();
         let want = format!(
             "Basic {}",
-            base64::engine::general_purpose::STANDARD.encode(b"scrim:generated-proxy-pw-91c2")
+            base64::engine::general_purpose::STANDARD.encode([b"scrim:".as_slice(), pw].concat())
         );
         assert_eq!(p.authorization().unwrap(), want.as_bytes());
         let dbg = format!("{p:?} {:?}", ProxyHandle::default());
-        assert!(!dbg.contains("generated-proxy-pw"), "{dbg}");
+        assert!(!dbg.contains(std::str::from_utf8(pw).unwrap()), "{dbg}");
         assert!(!dbg.contains(&want[6..]), "{dbg}");
         assert!(dbg.contains("credentials: true"));
         assert_eq!(
