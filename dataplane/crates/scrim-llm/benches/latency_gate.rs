@@ -407,21 +407,51 @@ impl Sampler {
 struct Report {
     measurements: Vec<Value>,
     failures: Vec<String>,
-    /// The budget file's `speed`: the calibration time (µs) the budgets were set at and the
-    /// largest factor a slower machine stretches them by. `None` (no `speed`, or a CPU other than
-    /// its `cpu`, whose calibration time says nothing about this one's) compares budgets as
+    /// The budget file's `speed` entry for this CPU. `None` (no `speed`, or a CPU it does not
+    /// list, whose calibration time says nothing about the listed ones') compares budgets as
     /// written.
-    speed: Option<(f64, f64)>,
+    speed: Option<Speed>,
+}
+
+/// One reference CPU of the budget file's `speed.cpus`, with its `speed.max_slowdown`.
+#[derive(Clone, Copy)]
+struct Speed {
+    /// The calibration time (µs) this CPU measures at its usual speed.
+    reference: f64,
+    /// How much slower this CPU is than the one the budgets were written for, at its usual
+    /// speed: every budget is multiplied by it (a throughput floor divided).
+    factor: f64,
+    /// The largest stretch a slower calibration time adds on top of `factor`.
+    cap: f64,
+}
+
+/// The `speed.cpus` entry for `cpu`, if the budget file lists it.
+fn speed_for(budget: &Value, cpu: &str) -> Option<Speed> {
+    let s = budget.get("speed")?;
+    let cap = s.get("max_slowdown")?.as_f64()?;
+    s.get("cpus")?.as_array()?.iter().find_map(|c| {
+        (c.get("cpu")?.as_str()? == cpu).then_some(())?;
+        Some(Speed {
+            reference: c.get("reference_calibration_us")?.as_f64()?,
+            factor: c
+                .get("budget_factor")
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0),
+            cap,
+        })
+    })
 }
 
 impl Report {
-    /// How much slower than the budgets' reference the machine ran a measurement, from its
-    /// rounds' calibration times: at least 1 (a faster machine never tightens a budget), at most
-    /// the configured cap (a machine slower than that fails the budget as before).
+    /// How much a measurement's budget is stretched: the CPU's budget factor times how much
+    /// slower than its reference the machine ran, from the rounds' calibration times. The second
+    /// part is at least 1 (a faster spell never tightens a budget) and at most the configured cap
+    /// (a machine slower than that fails the budget as before).
     fn slowdown(&self, cal: &[f64]) -> f64 {
         match self.speed {
-            Some((reference, cap)) if !cal.is_empty() => (median(cal) / reference).clamp(1.0, cap),
-            _ => 1.0,
+            Some(s) if !cal.is_empty() => s.factor * (median(cal) / s.reference).clamp(1.0, s.cap),
+            Some(s) => s.factor,
+            None => 1.0,
         }
     }
 
@@ -575,16 +605,10 @@ fn main() {
     let sampler = Sampler { rounds, filter };
     let runner = std::env::var("SCRIM_PERF_RUNNER").unwrap_or_else(|_| "local".into());
     let (cpu, cpus) = machine();
-    let speed_cpu = budget
-        .get("speed")
-        .and_then(|s| s.get("cpu"))
-        .and_then(Value::as_str);
     let mut report = Report {
         measurements: Vec::new(),
         failures: Vec::new(),
-        speed: budget_at(&budget, &["speed", "reference_calibration_us"])
-            .zip(budget_at(&budget, &["speed", "max_slowdown"]))
-            .filter(|_| speed_cpu == Some(cpu.as_str())),
+        speed: speed_for(&budget, &cpu),
     };
     let mut rng = Rng(0x5c41_1d00_c0ff_ee01);
     let ms = 1e3;
@@ -607,15 +631,18 @@ fn main() {
         }
     );
     println!("- budget: {budget_path}");
-    if report.speed.is_none()
-        && let Some(c) = speed_cpu
-    {
-        println!("- speed: budgets are not stretched (calibrated on {c}, not this CPU)");
-    }
-    if let Some((reference, cap)) = report.speed {
-        println!(
-            "- speed: budgets were set at a calibration time of {reference} µs; a measurement whose rounds' median calibration time is longer has its budget stretched by that ratio, up to {cap}x; the tables show the budgets as configured, a failure and the JSON field \"slowdown\" show the stretch"
-        );
+    match report.speed {
+        None if budget.get("speed").is_some() => {
+            println!("- speed: budgets are not stretched (this CPU is not in speed.cpus)");
+        }
+        None => {}
+        Some(Speed {
+            reference,
+            factor,
+            cap,
+        }) => println!(
+            "- speed: this CPU's budgets are the written ones times {factor}, and its usual calibration time is {reference} µs; a measurement whose rounds' median calibration time is longer has its budget stretched by that ratio too, up to {cap}x; the tables show the budgets as configured, a failure and the JSON field \"slowdown\" show the stretch"
+        ),
     }
     println!(
         "- method: {rounds} rounds per measurement; each value is the median of the rounds' nearest-rank p50 or p99. {}",

@@ -68,15 +68,19 @@ The budgets are configuration, in `dataplane/crates/scrim-llm/benches/budget.jso
 when a gated p99 is above its budget or a gated throughput is below its minimum. A measurement with
 no budget is reported and recorded, never gated.
 
-The budgets are set for the reference runner at a known speed, the `speed` object of
-`budget.json`. ho-z10's 15 W CPU slows down under heat and load, and a slow spell moves every number
-together, the direct baseline included. So each measurement's budget is stretched by how much
-slower than `reference_calibration_us` its rounds' calibration workload ran (the median of the
-rounds), up to `max_slowdown`. A latency budget is multiplied and a throughput minimum divided. A
-faster machine never gets a tighter budget, and a machine slower than the cap fails as before. A
-failure names the budget it was held to and the slowdown. The stretch applies only on the CPU model
-named in `speed.cpu`: the calibration workload uses SHA instructions some CPUs lack, so its time
-compares one CPU with itself, not with another.
+The budgets are written for the reference runner's CPU at a known speed, the `speed` object of
+`budget.json`. The ho-z10 runner set has nodes with two CPU models, and each is listed in
+`speed.cpus` with its own `reference_calibration_us` (its usual calibration time) and
+`budget_factor` (how much slower it is than the CPU the budgets were written for: 1.0 for the Core
+Ultra 7 155U, 1.5 for the Core i7-10510U). A measurement's budget is multiplied by its CPU's factor,
+and by how much slower than its reference the rounds' calibration workload ran (the median of the
+rounds), between 1 and `max_slowdown`: the 15 W CPUs slow down under heat and load, and a slow
+spell moves every number together, the direct baseline included. A latency budget is multiplied and
+a throughput minimum divided. A faster spell never tightens a budget, and a machine slower than the
+cap fails as before. A failure names the budget it was held to and the slowdown. A CPU not in the
+list has its budgets compared as written: the calibration workload uses SHA instructions some CPUs
+lack, so its time compares one CPU with itself, not with another. A new runner CPU needs an entry
+measured from a few runs on it.
 
 The production engine does not meet the spec's initial targets for added request latency (5 ms for
 1 MB with 1,000 secrets, 10 ms with 10,000): the request takes about 25 ms per 1 MB at the median on
