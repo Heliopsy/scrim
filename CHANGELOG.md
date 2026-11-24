@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.1.0](https://github.com/Heliopsy/scrim/compare/v1.0.0...v1.1.0) (2026-11-24)
+
+
+### Features
+
+* **edge:** give the edge listener its own CA ([#151](https://github.com/Heliopsy/scrim/issues/151)) ([0fd666b](https://github.com/Heliopsy/scrim/commit/0fd666bda1a540083422cd7775da6036ce9e3f34))
+* **identity:** identify agents by client certificate ([#155](https://github.com/Heliopsy/scrim/issues/155)) ([9768457](https://github.com/Heliopsy/scrim/commit/9768457cec16cd743c6024da92d8cc6aec4bc71a))
+* **interception:** chain scrim's outbound connections through an upstream proxy ([#157](https://github.com/Heliopsy/scrim/issues/157)) ([213f94e](https://github.com/Heliopsy/scrim/commit/213f94e23506be243a12049be79d0cea55a05880))
+* **llm:** redact WebSocket connections to provider routes ([#156](https://github.com/Heliopsy/scrim/issues/156)) ([39b5821](https://github.com/Heliopsy/scrim/commit/39b58214266708ac07d0af910a9ca49f94aec735))
+* **llm:** scan images, PDFs and other binary parts for secrets ([#159](https://github.com/Heliopsy/scrim/issues/159)) ([18235e8](https://github.com/Heliopsy/scrim/commit/18235e80d0042c8ad03b06e1ad3661814b26bfff))
+* **redaction:** detect secrets in 37 known formats that no store holds ([#158](https://github.com/Heliopsy/scrim/issues/158)) ([8b84573](https://github.com/Heliopsy/scrim/commit/8b84573d984f356ced705a6abccd865a451d8890))
+* **state:** redact every replica's session and service account tokens on every replica ([#154](https://github.com/Heliopsy/scrim/issues/154)) ([a7bbb15](https://github.com/Heliopsy/scrim/commit/a7bbb15d6ce2529d2e047cf10aba3401ae82df8e))
+* Windows release and notarised macOS binaries ([#150](https://github.com/Heliopsy/scrim/issues/150)) ([d8f2500](https://github.com/Heliopsy/scrim/commit/d8f25004987418045ff78993aa35edb5df385d6d))
+
+
+### Bug Fixes
+
+* **interception:** send block_unrouted to the data plane ([#152](https://github.com/Heliopsy/scrim/issues/152)) ([39bf945](https://github.com/Heliopsy/scrim/commit/39bf945ca603ccee910300456a777d11b7600281))
+* **llm:** wait for the agent's close after refusing a WebSocket message ([#161](https://github.com/Heliopsy/scrim/issues/161)) ([33f1637](https://github.com/Heliopsy/scrim/commit/33f1637f7d67c5619e4a88600e6ba6b8ba66efa2))
+
 ## [1.0.0](https://github.com/Heliopsy/scrim/compare/v0.6.0...v1.0.0) (2026-11-24)
 
 
