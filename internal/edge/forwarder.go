@@ -34,7 +34,7 @@ import (
 type Forwarder struct {
 	// Central is host:port of the edge listener.
 	Central string
-	// TLS verifies the central scrim: RootCAs is scrim's CA, ServerName
+	// TLS verifies the central scrim: RootCAs is the edge CA, ServerName
 	// the name in its certificate.
 	TLS *tls.Config
 	// Token returns the pod's service account token. The forwarder wipes
@@ -49,14 +49,16 @@ type Forwarder struct {
 }
 
 // NewTLSConfig returns the client TLS configuration that trusts only the
-// CA certificates in caPEM, for serverName.
+// CA certificates in caPEM (the edge CA), for serverName. It announces
+// [EdgeCAProto] so a listener in its upgrade window serves it the edge
+// CA's certificate.
 func NewTLSConfig(caPEM []byte, serverName string) (*tls.Config, error) {
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caPEM) {
 		return nil, errors.New("edge: the CA file holds no PEM certificate")
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool, ServerName: serverName,
-		NextProtos: []string{"http/1.1"}}, nil
+		NextProtos: []string{EdgeCAProto, "http/1.1"}}, nil
 }
 
 // TokenFile returns a token source that reads path on every call.

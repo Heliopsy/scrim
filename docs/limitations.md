@@ -72,10 +72,13 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   and named in a start-up warning, because redacting it would rewrite unrelated text. Per-agent
   store tokens (`identity.store-credentials`) and the edge forwarder's token file are not in the
   set either: scrim does not keep the first in memory, and the second lives in the agent pod.
-- **The edge listener's certificate is issued by the interception CA.** One CA key signs the
-  certificates scrim presents for TLS interception and the certificate the edge forwarders check.
-  Anyone holding that key can impersonate scrim to the forwarders as well as to agents. Protect it
-  like the placeholder key ([ca.md](ca.md)).
+- **The chart's generated edge CA is not name-constrained.** The edge listener has a CA of its own,
+  trusted only by the edge forwarders, and a CA scrim generates is constrained to the edge names.
+  Helm cannot add name constraints, so the edge CA the chart generates can sign for any name; only
+  the forwarders trust it, but its key should be protected like the interception CA's. Supply a
+  constrained one with `edge.ca.existingSecret` ([edge-forwarder.md](edge-forwarder.md#the-edge-ca)).
+  While `edge.legacy-interception-certificate` is on during an upgrade, forwarders from 1.0 still
+  trust the interception CA for the edge listener.
 - **The latency gate measures a stand-in engine for added request latency.** Its proxy overhead and
   per-chunk budgets are enforced, but the redactor and guard in it are a simple Aho-Corasick
   implementation, and `budget.json` reports their numbers without enforcing them. The production

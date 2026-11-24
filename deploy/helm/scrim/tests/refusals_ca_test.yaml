@@ -18,3 +18,17 @@ tests:
   asserts:
   - failedTemplate:
       errorPattern: set ca.certificate to the public PEM
+- it: refuses the edge forwarder without an edge CA
+  set:
+    edge.enabled: true
+    edge.ca.create: false
+  asserts:
+  - failedTemplate:
+      errorPattern: edge.enabled needs an edge CA
+- it: refuses an existing edge CA it cannot read without its certificate
+  set:
+    edge.enabled: true
+    edge.ca.existingSecret: my-edge-ca
+  asserts:
+  - failedTemplate:
+      errorPattern: set edge.ca.certificate to the public PEM

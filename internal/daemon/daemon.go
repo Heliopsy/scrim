@@ -203,6 +203,8 @@ type Daemon struct {
 	capture  string
 	infoPath string
 	trust    func() string
+	// edgeTrust is the edge CA's trust bundle (nil without edge.listen).
+	edgeTrust func() string
 
 	// project are the values scrim run found in each session's project
 	// files, redacted until the session ends.

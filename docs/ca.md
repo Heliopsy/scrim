@@ -5,6 +5,11 @@ credential at the network edge. It signs a certificate for each host with scrim'
 authority. Clients have to trust that CA; its private key never leaves the control plane except
 in the snapshot pushed to scrim's own data plane.
 
+This CA does not authenticate scrim's edge listener. The edge forwarders verify central scrim
+against a separate edge CA with its own key, which issues nothing else and which no agent runtime
+trusts ([edge-forwarder.md](edge-forwarder.md#the-edge-ca)). `scrim ca export --edge` and
+`scrim ca rotate --edge` act on it; `scrim ca install` never installs it.
+
 `scrim ca` works without a running daemon. Every subcommand generates the CA on first use, as the
 daemon would, so `scrim ca export` before the first start gives the certificate the daemon will
 use.

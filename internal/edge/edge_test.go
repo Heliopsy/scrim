@@ -10,6 +10,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -607,5 +608,76 @@ func TestAPIRoutes(t *testing.T) {
 		if apiRoute(p) != want {
 			t.Errorf("apiRoute(%s) = %v, want %v", p, !want, want)
 		}
+	}
+}
+
+// handshake serves one TLS handshake with certs and dials it with tc,
+// returning the client's handshake error.
+func handshake(t *testing.T, certs *Certs, tc *tls.Config) error {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		sc := tls.Server(c, TLSConfig(certs.GetCertificate))
+		_ = sc.Handshake()
+		_ = sc.Close()
+	}()
+	c, err := tls.Dial("tcp", ln.Addr().String(), tc)
+	if err != nil {
+		return err
+	}
+	return c.Close()
+}
+
+// TestForwarderTrustsOnlyTheEdgeCA: the forwarder refuses a listener
+// certificate from the interception CA and accepts the edge CA's, also
+// while the listener serves 1.0 forwarders the interception CA's
+// certificate (edge.legacy-interception-certificate).
+func TestForwarderTrustsOnlyTheEdgeCA(t *testing.T) {
+	edgeCA, interception := newTestCA(t), newTestCA(t)
+	names := []string{"scrim.scrim.svc"}
+	forwarder := func(caPEM string) *tls.Config {
+		tc, err := NewTLSConfig([]byte(caPEM), names[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tc
+	}
+	old := func(caPEM string) *tls.Config {
+		pool := x509.NewCertPool()
+		pool.AppendCertsFromPEM([]byte(caPEM))
+		return &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool, ServerName: names[0], NextProtos: []string{"http/1.1"}}
+	}
+	var unknown x509.UnknownAuthorityError
+	for _, legacy := range []bool{false, true} {
+		certs := &Certs{CA: edgeCA.source, Names: names}
+		if legacy {
+			certs.Legacy = interception.source
+		}
+		if err := handshake(t, certs, forwarder(edgeCA.certPEM)); err != nil {
+			t.Errorf("legacy %v: forwarder trusting the edge CA: %v", legacy, err)
+		}
+		if err := handshake(t, certs, forwarder(interception.certPEM)); !errors.As(err, &unknown) {
+			t.Errorf("legacy %v: forwarder trusting the interception CA: %v", legacy, err)
+		}
+		err := handshake(t, certs, old(interception.certPEM))
+		switch {
+		case legacy && err != nil:
+			t.Errorf("1.0 forwarder in the upgrade window: %v", err)
+		case !legacy && !errors.As(err, &unknown):
+			t.Errorf("1.0 forwarder without the upgrade window: %v", err)
+		}
+	}
+	// Only an interception CA as the edge CA's stand-in: refused.
+	certs := &Certs{CA: interception.source, Names: names}
+	if err := handshake(t, certs, forwarder(edgeCA.certPEM)); !errors.As(err, &unknown) {
+		t.Errorf("listener with the interception CA's certificate: %v", err)
 	}
 }
