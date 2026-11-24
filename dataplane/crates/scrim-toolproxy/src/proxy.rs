@@ -27,7 +27,7 @@ use crate::ca::{CaOptions, CaRing, CertificateAuthority, LeafSettings};
 use crate::capture::{CaptureSink, CapturedValues, RefusingCaptureSink};
 use crate::clientcert::{OptionalClientCert, PresentedCertificate, presented_key};
 use crate::credential::ValidationError;
-use crate::decide::ClientInfo;
+use crate::decide::{ClientCertificate, ClientInfo};
 use crate::engine::{Engine, RequestSigner, Snapshot};
 use crate::error::{ErrorCode, Refusal};
 use crate::host::{Destination, Scheme};
@@ -346,10 +346,26 @@ impl ToolProxy {
     where
         IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
+        self.serve_connection_with_certificate(io, peer, None).await;
+    }
+
+    /// Serves one proxy client connection whose client presented `certificate` in the TLS
+    /// handshake of the listener (already verified there). Every request on the connection,
+    /// including those inside its `CONNECT` tunnels, carries it in its [`ClientInfo`], and no
+    /// `Proxy-Authorization` credentials are read: the certificate is the client's identity.
+    pub async fn serve_connection_with_certificate<IO>(
+        &self,
+        io: IO,
+        peer: Option<SocketAddr>,
+        certificate: Option<ClientCertificate>,
+    ) where
+        IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
         let this = self.clone();
         let svc = service_fn(move |req: Request<Incoming>| {
             let this = this.clone();
-            async move { Ok::<_, Infallible>(this.proxy_request(req, peer).await) }
+            let certificate = certificate.clone();
+            async move { Ok::<_, Infallible>(this.proxy_request(req, peer, certificate).await) }
         });
         if let Err(e) = hyper::server::conn::http1::Builder::new()
             .preserve_header_case(false)
@@ -365,13 +381,23 @@ impl ToolProxy {
         &self,
         mut req: Request<Incoming>,
         peer: Option<SocketAddr>,
+        certificate: Option<ClientCertificate>,
     ) -> Response<ProxyBody> {
-        let (session, verifier) = ClientInfo::credentials_from(req.headers()).unzip();
-        let client = ClientInfo {
-            peer,
-            session,
-            verifier: verifier.flatten(),
-            kubernetes_token: ClientInfo::kubernetes_from(req.headers()),
+        let client = if certificate.is_some() {
+            ClientInfo {
+                peer,
+                client_certificate: certificate,
+                ..ClientInfo::default()
+            }
+        } else {
+            let (session, verifier) = ClientInfo::credentials_from(req.headers()).unzip();
+            ClientInfo {
+                peer,
+                session,
+                verifier: verifier.flatten(),
+                kubernetes_token: ClientInfo::kubernetes_from(req.headers()),
+                client_certificate: None,
+            }
         };
         if req.method() == Method::CONNECT {
             let Some(dest) = req
