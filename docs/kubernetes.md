@@ -5,7 +5,7 @@ pods are configured to use it by a label, without changing their images, and Net
 them from reaching model providers or tool APIs except through scrim. This is interception method 5
 ([interception.md](interception.md#5-kubernetes-transparent)).
 
-Spec: `openspec/changes/scrim-v1/specs/deployment` (Helm chart, network policy, agent pod injection)
+Spec: `openspec/specs/deployment` (Helm chart, network policy, agent pod injection)
 and `specs/interception` (Kubernetes injection), design D8, D9 and D11.
 
 ## Two modes

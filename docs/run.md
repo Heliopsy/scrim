@@ -10,7 +10,7 @@ scrim run -- codex exec "fix the failing test"
 scrim run --print-env -- claude      # show what would be set, start nothing
 ```
 
-Spec: `openspec/changes/scrim-v1/specs/interception` ("Wrapper mode") and
+Spec: `openspec/specs/interception` ("Wrapper mode") and
 `specs/agent-identity` ("Session tokens from scrim run").
 
 ## What happens

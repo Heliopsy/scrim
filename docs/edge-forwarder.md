@@ -6,7 +6,7 @@ an agent at `SSH_AUTH_SOCK`, `psql` and database drivers connect to a port on lo
 exec`, `scrim mcp` and the database tool talk to the agent API on a Unix socket. The edge forwarder
 provides those endpoints inside the agent pod and carries every connection to the central scrim.
 
-Spec: `openspec/changes/scrim-v1/specs/credential-injection` ("Edge forwarder for local sockets") and
+Spec: `openspec/specs/credential-injection` ("Edge forwarder for local sockets") and
 `specs/deployment` ("Edge forwarder in the chart"). Code: `internal/edge` (both ends), `scrim edge`
 (`internal/cli/edge.go`), the edge listener in `internal/daemon/edge.go`.
 

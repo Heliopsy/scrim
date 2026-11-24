@@ -5,7 +5,7 @@ replaced by a deterministic placeholder, an independent guard re-checks the exac
 and placeholders in streamed responses are restored where the tool policy allows. No HTTP, no
 provider codecs, no policy files: the LLM proxy and the HTTPS tool proxy build on this crate.
 
-Specs: `openspec/changes/scrim-v1/specs/redaction/spec.md` (the contract), design D2, D3, D4 and
+Specs: `openspec/specs/redaction/spec.md` (the contract), design D2, D3, D4 and
 D13.
 
 ## Public API

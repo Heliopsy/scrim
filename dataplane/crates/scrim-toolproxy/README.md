@@ -5,7 +5,7 @@ commands, files and configuration; this proxy swaps in the real credential only 
 the hosts that credential is bound to, and redacts known values out of every response, so the agent
 sees placeholders back.
 
-Spec: `openspec/changes/scrim-v1/specs/credential-injection` and the forward-proxy requirement in
+Spec: `openspec/specs/credential-injection` and the forward-proxy requirement in
 `specs/interception`.
 
 ## What it does
