@@ -97,7 +97,7 @@ func TestSecretGolden(t *testing.T) {
 			stdin = strings.NewReader(c.stdin)
 		}
 		r := runCLI(ts, stdin, c.args...)
-		line := strings.ReplaceAll(strings.Join(c.args, " "), dir, "$TMP")
+		line := filepath.ToSlash(strings.ReplaceAll(strings.Join(c.args, " "), dir, "$TMP"))
 		fmt.Fprintf(&got, "$ scrim %s\n--- stdout\n%s--- stderr\n%s--- exit %d\n\n", line, r.stdout, r.stderr, r.code)
 	}
 	agenttoolstest.AssertNoValues(t, "CLI output", got.Bytes(), cliSeeded, cliPiped, cliCaptured)

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -76,6 +77,9 @@ func equalTo(v secret.Value, want string) bool {
 // settings are taken from the registry, so a new one is covered without
 // editing this test.
 func TestStoreReferencesInSettingsResolve(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("one of the settings is a plugin, and plugins are not supported on Windows")
+	}
 	f := newStoreRefFixture(t)
 	var env, keys []string
 	for _, s := range config.Default.Settings() {

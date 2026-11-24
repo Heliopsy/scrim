@@ -17,6 +17,9 @@ import (
 // status names the filesystem view scrim run gives sessions here, and on
 // macOS that is the home mirror fallback with its gaps.
 func TestStatusRunFSViewOnThisHost(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no session filesystem view; internal/fsview tests what it reports there")
+	}
 	e, out, errb := newEnv(isolatedEnv(t)...)
 	if code := Run(context.Background(), e, []string{"status", "-o", "json"}); code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
@@ -52,6 +55,9 @@ func TestStatusRunFSViewOnThisHost(t *testing.T) {
 // the fallback and its gaps and doctor warns; with run.fs-view namespace,
 // status reports scrim run as refusing and doctor fails.
 func TestStatusRunFSViewFallbackAndRefusal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no session filesystem view; internal/fsview tests what it reports there")
+	}
 	old := runViewProbe
 	runViewProbe = func(context.Context) fsview.Availability {
 		return fsview.Availability{Reason: "creating a user namespace is not allowed: operation not permitted"}

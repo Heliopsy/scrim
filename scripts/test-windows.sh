@@ -18,6 +18,7 @@ cd "$(dirname "$0")/.."
 
 # package (relative to the module) and why it does not run on Windows.
 excluded=(
+  "internal/execbroker: brokered commands (exec.commands, secret_exec) are refused at start-up on Windows; the broker runs Unix helpers with setuid and process groups"
   "internal/install: scrim install writes systemd and Quadlet units and runs Unix tools (nft, systemctl, keytool paths); there is no scrim install on Windows"
 )
 
