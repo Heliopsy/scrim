@@ -45,6 +45,7 @@ tokens. The formulas name the key; they do not contain one.
 """
 paths = [
   '''^openspec/specs/redaction/spec\.md$''',
+  '''^openspec/changes/scrim-v1/specs/redaction/spec\.md$''',
   '''^openspec/changes/archive/2026-11-24-scrim-v1/specs/redaction/spec\.md$''',
   '''^dataplane/crates/scrim-redact/src/placeholder\.rs$''',
   '''^internal/approval/token\.go$''',
