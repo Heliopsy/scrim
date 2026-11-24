@@ -4,11 +4,7 @@
 
 No state backend, event backend, rate-limit backend or audit sink SHALL ever receive a secret value
 or a mapping from placeholder to value. Only references, placeholders, identities, decisions and
-metadata SHALL be stored or sent. The one exception SHALL be scrim's own tokens shared between
-replicas (session tokens, verified Kubernetes service account tokens and issued identity tokens),
-which the state backend SHALL hold only sealed with AES-256-GCM under a key derived from the
-placeholder keys, never in plaintext, and which SHALL never be sent to an events backend in any
-form.
+metadata SHALL be stored or sent, and the sealed tokens that "Shared tokens are sealed" allows.
 
 #### Scenario: Inspect stored state
 
@@ -19,14 +15,6 @@ form.
 
 - **WHEN** a caller passes a known secret value inside a reason, target or attribute of a state change
 - **THEN** the stored row holds a redacted marker in its place
-
-#### Scenario: Shared tokens in the dump
-
-- **WHEN** several replicas share PostgreSQL state, a session is minted and a service account token
-  is verified, and the state database is dumped
-- **THEN** neither token appears in the dump in plaintext or in any supported encoding
-- **AND** the outbox holds the row ID of each shared token and nothing derived from its value but a
-  keyed hash
 
 ### Requirement: Replica count is declared
 
@@ -52,6 +40,22 @@ reject `local` events, a state backend that is not shared (`memory`, `sqlite`) a
 - **THEN** start-up fails with an error naming `redaction.placeholder-keys`
 
 ## ADDED Requirements
+
+### Requirement: Shared tokens are sealed
+
+The state backend SHALL hold scrim's own tokens shared between replicas (session tokens, verified
+Kubernetes service account tokens and issued identity tokens) only sealed with AES-256-GCM under a
+key derived from the placeholder keys, never in plaintext. No events backend SHALL receive them in
+any form.
+
+#### Scenario: Shared tokens in the dump
+
+- **WHEN** several replicas share PostgreSQL state, a session is minted and a service account token
+  is verified, and the state database is dumped
+- **THEN** neither token appears in the dump in plaintext or in any supported encoding
+- **AND** the outbox holds the row ID of each shared token and nothing derived from its value but a
+  keyed hash
+
 
 ### Requirement: Every replica redacts scrim's own tokens
 

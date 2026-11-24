@@ -37,7 +37,7 @@ None.
 
 ### Modified Capabilities
 
-- `state-and-scaling`: the no-secret rule allows sealed scrim tokens; every replica redacts every
+- `state-and-scaling`: the no-secret rule points to a new requirement that allows sealed scrim tokens; every replica redacts every
   live scrim token; replicas need shared placeholder keys.
 - `agent-identity`: narrowed redaction applies on every replica and ends when the session is
   revoked.

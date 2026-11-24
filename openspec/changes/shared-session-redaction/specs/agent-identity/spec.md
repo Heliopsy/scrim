@@ -6,9 +6,6 @@ The stricter option, `redaction.limit-to-agent-identity`, SHALL be off by defaul
 weakening in logs, `scrim status` and `scrim doctor`. It SHALL leave out only values the store
 refused that agent's identity, and only for provider requests carrying a token of that agent's
 session that has not been revoked; every other caller and path SHALL keep the whole redaction set.
-With shared session tokens (state-and-scaling "Every replica redacts scrim's own tokens") the
-narrowing SHALL apply on every replica alike, and a revocation made through any replica SHALL end it
-on every replica.
 
 #### Scenario: Stricter option narrows only proven sessions
 
@@ -26,6 +23,14 @@ on every replica.
 - **WHEN** `redaction.limit-to-agent-identity` is on and the check of a value as `agent-a` fails or
   has not run yet
 - **THEN** the value is redacted from `agent-a`'s sessions
+
+## ADDED Requirements
+
+### Requirement: Narrowed redaction is the same on every replica
+
+With shared session tokens (state-and-scaling "Every replica redacts scrim's own tokens"),
+`redaction.limit-to-agent-identity` SHALL narrow a session's redaction on every replica alike, and a
+revocation made through any replica SHALL end the narrowing on every replica.
 
 #### Scenario: Session minted on another replica
 
