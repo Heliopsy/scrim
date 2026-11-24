@@ -10,7 +10,7 @@ name: scrim
 
 services:
   scrim:
-    image: ghcr.io/heliopsy/scrim:0.6.0 # x-release-please-version
+    image: ghcr.io/heliopsy/scrim:1.0.0 # x-release-please-version
     container_name: scrim
     command: ["proxy"]
     read_only: true
