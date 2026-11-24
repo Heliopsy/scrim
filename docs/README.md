@@ -90,6 +90,7 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 | [state-and-observability.md](state-and-observability.md) | State backends, the audit log, metrics, traces, health, `scrim status` and `scrim doctor` |
 | [monitoring.md](monitoring.md) | Prometheus metrics behind `metrics.enabled`, every metric, alert runbooks, the Grafana dashboard, scrape config and endpoint security |
 | [leak-assurance.md](leak-assurance.md) | The leak suite, the bypass matrix, the end-to-end matrix, running it yourself and the results each release publishes |
+| [performance.md](performance.md) | The latency gate with the production engine, its budgets, the regression check against the previous release, and how to read and reproduce the published numbers |
 | [limitations.md](limitations.md) | What scrim does not protect against: redaction gaps, implementation limits, identity trade-offs and what the tests do not cover |
 
 Security issues go through [SECURITY.md](../SECURITY.md), not public issues.

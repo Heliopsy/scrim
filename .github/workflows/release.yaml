@@ -42,6 +42,9 @@ name: Release
 #   podman and user namespaces, fuzzing the full address space.
 # - results-bench: ho-z10, the runner the CI latency gate is measured on, so
 #   a release is held to the same budget the pull requests were.
+# - results-regression: GitHub-hosted. It measures nothing: it compares the
+#   results-bench JSON with the previous release's, which it downloads and
+#   checks against that release's signed checksums.
 # - sign, publish, image, verify: GitHub-hosted, so the Sigstore certificates
 #   and provenance record a GitHub-hosted signer.
 #
@@ -455,6 +458,7 @@ jobs:
       SCRIM_VERSION: ${{ needs.plan.outputs.version }}
       SCRIM_COMMIT: ${{ needs.plan.outputs.commit }}
       SOURCE_DATE_EPOCH: ${{ needs.plan.outputs.epoch }}
+      SCRIM_PERF_RUNNER: ho-z10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -475,6 +479,55 @@ jobs:
         with:
           name: results-bench
           path: dist/results/
+          if-no-files-found: error
+          retention-days: 1
+
+  # The latency gate's results against the previous release's (performance
+  # spec, "Regression gate"): the release fails when a gated value regressed
+  # beyond the noise-aware threshold in budget.json. The previous release's
+  # JSON is used only after cosign verifies its checksums.txt and the file
+  # matches it.
+  results-regression:
+    name: Results (latency regression)
+    needs: [plan, results-bench]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      SCRIM_VERSION: ${{ needs.plan.outputs.version }}
+      SCRIM_COMMIT: ${{ needs.plan.outputs.commit }}
+      SOURCE_DATE_EPOCH: ${{ needs.plan.outputs.epoch }}
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install cosign
+        run: |
+          scripts/release/tools.sh "$RUNNER_TEMP/tools" cosign
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: results-bench
+          path: dist/results
+      - name: Compare with the previous release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          scripts/release/results.sh baseline "$SCRIM_VERSION" dist/baseline
+          scripts/release/results.sh regression dist/results/latency-gate.json dist/baseline \
+            dist/regression/latency-regression.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: results-regression
+          path: dist/regression/
           if-no-files-found: error
           retention-days: 1
 
@@ -528,7 +581,7 @@ jobs:
 
   results:
     name: Results
-    needs: [plan, build, results-leak, results-matrix, results-bench, results-fuzz]
+    needs: [plan, build, results-leak, results-matrix, results-bench, results-regression, results-fuzz]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -553,6 +606,10 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: results-bench
+          path: dist/results
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: results-regression
           path: dist/results
       # One directory per store: every store numbers its cells from 00.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2

@@ -1,5 +1,5 @@
 {
-  "comment": "Latency budget for the LLM proxy (performance spec). Targets are configuration: change them here, with a recorded reason, never in code. 4MB set to 16 ms: a loaded shared host showed p99 tails near 12 ms at a 4.6 ms median.",
+  "comment": "Budgets of the latency gate (performance spec, benches/latency_gate.rs) on the reference runner (ho-z10). Targets are configuration: change them here, with a recorded reason, never in code. Every gated value is the median over the gate's rounds of a per-round p99 (or of the throughput). 4MB proxy overhead set to 16 ms: a loaded shared host showed p99 tails near 12 ms at a 4.6 ms median.",
   "proxy_overhead_p99_ms": {
     "100KB": 0.5,
     "1MB": 3.0,
@@ -7,11 +7,43 @@
   },
   "chunk_p99_us": 50.0,
   "engine": {
-    "comment": "Added latency with the redactor and guard (1 MB body). Enforced once the production engine (scrim-redact) is wired in; until then the fake engine's numbers are reported only.",
-    "enforce": false,
+    "comment": "Added request latency through the LLM proxy with the production engine (outgoing::prepare, scrim-redact redactor and guard) on the redaction benchmark's 1 MB bodies. The spec's initial targets are 5 ms (1,000 secrets) and 10 ms (10,000). The production guard does not meet them: on ho-z10 it takes about 20 ms per 1 MB at the median, about 30 ms at p99 (scrim 1.0.0 results). These budgets hold the engine to what it does today, with room for the runner's spread, so a slowdown fails here and a smaller one fails the regression check; tighten them as the guard gets faster.",
     "request_p99_ms": {
-      "1000": 5.0,
-      "10000": 10.0
+      "1MB": {
+        "10": 45.0,
+        "1000": 45.0,
+        "10000": 50.0
+      }
     }
+  },
+  "core": {
+    "comment": "The redaction core on its own, as the scrim-redact benchmarks measure it: Snapshot::protect per 1 MB request with the default thread count, and single-thread Redactor::redact throughput (the per-core minimum of the performance spec). Same reason as engine for the protect budgets.",
+    "protect_p99_ms": {
+      "1MB": {
+        "10": 45.0,
+        "1000": 45.0,
+        "10000": 50.0
+      }
+    },
+    "redact_min_mbps": {
+      "1MB": {
+        "10": 500.0,
+        "1000": 400.0,
+        "10000": 300.0
+      }
+    }
+  },
+  "regression": {
+    "comment": "The regression check against the previous release (scripts/perfgate). Each gated statistic is compared as the median of its rounds. It regresses when worse than the baseline by more than threshold + noise_factor x the larger relative spread (median absolute deviation) of the two runs' rounds, capped at max_allowed, and by more than the unit's floor. Only runs on the same reference conditions (the match fields) are compared.",
+    "threshold": 0.15,
+    "noise_factor": 3.0,
+    "max_allowed": 0.5,
+    "floor": {
+      "ms": 0.1,
+      "us": 1.0,
+      "MB/s": 25.0
+    },
+    "stats": ["p50", "p99", "mbps"],
+    "match": ["runner", "machine.cpu", "machine.logical_cpus", "machine.arch", "method.quick"]
   }
 }

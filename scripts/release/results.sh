@@ -18,12 +18,35 @@
 #       the release binaries, one JSON result per cell in OUT_DIR.
 #
 #   bench OUT_DIR
-#       The LLM proxy latency gate, which fails over budget
-#       (OUT_DIR/latency-gate.md), and the scrim-redact benchmarks
-#       (OUT_DIR/redact-bench.txt).
+#       The latency gate, which fails over budget: OUT_DIR/latency-gate.md is
+#       its report, OUT_DIR/latency-gate.json every measurement with its rounds
+#       and the machine. Then the scrim-redact criterion benchmarks
+#       (OUT_DIR/redact-bench.txt). SCRIM_PERF_RUNNER names the runner class
+#       recorded in the JSON (the release workflow sets ho-z10).
+#
+#   baseline VERSION|latest OUT_DIR
+#       The latency gate results of the newest published release older than
+#       VERSION (or of the newest release, for "latest" or a development
+#       version), checked the way docs/install.md checks published results:
+#       cosign verifies checksums.txt against the release workflow's identity,
+#       then the file is checked against it. Writes OUT_DIR/baseline.json and
+#       OUT_DIR/baseline.txt (the tag), or, when no release publishes the JSON
+#       yet, only OUT_DIR/none.txt saying so. Needs curl, jq and cosign;
+#       GITHUB_TOKEN raises the API rate limit, GITHUB_REPOSITORY picks the
+#       repository (default Heliopsy/scrim). SCRIM_PERF_BASELINE_ASSET fetches
+#       another results file the same way (for example latency-gate.md, to try
+#       the check against a release from before the JSON).
+#
+#   regression CURRENT_JSON BASELINE_DIR OUT_MD
+#       Compares CURRENT_JSON (latency-gate.json) with the baseline in
+#       BASELINE_DIR using scripts/perfgate and the "regression" settings of
+#       dataplane/crates/scrim-llm/benches/budget.json; writes the report to
+#       OUT_MD and fails on a regression. Without a baseline the report says
+#       why nothing was compared.
 #
 #   assemble RESULTS_DIR RELEASE_DIR
-#       Checks the results, copies them into RELEASE_DIR as
+#       Checks the results (latency-regression.md from the regression command
+#       among them), copies them into RELEASE_DIR as
 #       scrim_<version>_results*, writes the summary scrim_<version>_results.md
 #       and rewrites checksums.txt over every release file. RESULTS_DIR holds
 #       the output of leak and bench at its top, one directory per store with
@@ -77,9 +100,103 @@ cmd_bench() {
   out=$(abs "$1")
   cd "$ROOT/dataplane" || exit 1
   log "latency gate (crates/scrim-llm/benches/budget.json)"
-  cargo bench --locked --quiet -p scrim-llm --bench latency_gate | tee "$out/latency-gate.md"
+  SCRIM_PERF_JSON="$out/latency-gate.json" cargo bench --locked --quiet -p scrim-llm --bench latency_gate \
+    | tee "$out/latency-gate.md"
   log "scrim-redact benchmarks"
   cargo bench --locked --quiet -p scrim-redact --bench redact 2>&1 | tee "$out/redact-bench.txt"
+}
+
+# github_api PATH prints the GitHub API response for PATH.
+github_api() {
+  local auth=()
+  [ -z "${GITHUB_TOKEN:-}" ] || auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  curl --fail --silent --show-error --location --retry 3 --connect-timeout 20 --max-time 120 \
+    -H "Accept: application/vnd.github+json" "${auth[@]}" "https://api.github.com/$1"
+}
+
+# version_lt A B: A sorts before B as a version.
+version_lt() {
+  [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n 1)" = "$1" ]
+}
+
+cmd_baseline() {
+  [ $# -eq 2 ] || die "usage: $0 baseline VERSION|latest OUT_DIR"
+  local want=${1#v} out repo server releases tag v f url
+  out=$(abs "$2")
+  repo=${GITHUB_REPOSITORY:-Heliopsy/scrim}
+  server=${GITHUB_SERVER_URL:-https://github.com}
+  for f in curl jq cosign; do
+    command -v "$f" >/dev/null || die "$f is required"
+  done
+  rm -f "$out/baseline.json" "$out/baseline.txt" "$out/none.txt"
+  # A development or pull request build (0.0.0-...) compares with the newest
+  # release; a release, or a pre-release of it, with the newest one before it.
+  want=${want%%[-+]*}
+  [ "$want" != 0.0.0 ] || want=latest
+
+  releases=$(github_api "repos/$repo/releases?per_page=100")
+  # Published, non-pre-release vX.Y.Z tags that carry the JSON, newest first.
+  while read -r tag; do
+    v=${tag#v}
+    if [ "$want" != latest ] && ! version_lt "$v" "$want"; then
+      continue
+    fi
+    f="scrim_${v}_results_${SCRIM_PERF_BASELINE_ASSET:-latency-gate.json}"
+    if ! jq -e --arg t "$tag" --arg f "$f" \
+      'any(.[]; .tag_name == $t and any(.assets[]; .name == $f))' <<<"$releases" >/dev/null; then
+      log "$tag publishes no $f"
+      continue
+    fi
+    log "baseline: $tag"
+    url="$server/$repo/releases/download/$tag"
+    (
+      cd "$out"
+      for g in checksums.txt checksums.txt.sigstore.json "$f"; do
+        curl --fail --silent --show-error --location --retry 3 --connect-timeout 20 --max-time 120 \
+          -o "$g" "$url/$g"
+      done
+      cosign verify-blob \
+        --bundle checksums.txt.sigstore.json \
+        --certificate-identity-regexp "^${server//./\\.}/${repo//./\\.}/\\.github/workflows/release\\.yaml@refs/(heads/main|tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?)\$" \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        checksums.txt
+      grep -E "^[0-9a-f]{64}  ${f//./\\.}\$" checksums.txt | sha256sum --check --strict
+    ) >&2 || die "the results of $tag did not verify against their signed checksums"
+    mv "$out/$f" "$out/baseline.json"
+    rm -f "$out/checksums.txt" "$out/checksums.txt.sigstore.json"
+    echo "$tag" >"$out/baseline.txt"
+    return 0
+  done < <(jq -r '.[] | select(.draft == false and .prerelease == false) | .tag_name' <<<"$releases" \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -rV)
+
+  if [ "$want" = latest ]; then
+    echo "no published release of $repo has machine-readable latency results yet" >"$out/none.txt"
+  else
+    echo "no published release of $repo before $want has machine-readable latency results" >"$out/none.txt"
+  fi
+  log "$(cat "$out/none.txt")"
+}
+
+cmd_regression() {
+  [ $# -eq 3 ] || die "usage: $0 regression CURRENT_JSON BASELINE_DIR OUT_MD"
+  local cur base md
+  cur=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
+  base=$(cd "$2" && pwd)
+  mkdir -p "$(dirname "$3")"
+  md=$(cd "$(dirname "$3")" && pwd)/$(basename "$3")
+  [ -s "$cur" ] || die "missing $cur"
+  if [ ! -f "$base/baseline.json" ]; then
+    [ -s "$base/none.txt" ] || die "$base holds neither baseline.json nor none.txt"
+    printf '# Latency regression check\n\nNot compared: %s.\n' "$(cat "$base/none.txt")" | tee "$md"
+    return 0
+  fi
+  cd "$ROOT" || exit 1
+  {
+    printf 'Baseline: the results published with %s.\n\n' "$(cat "$base/baseline.txt")"
+  } >&2
+  GOFLAGS=-mod=readonly go run ./scripts/perfgate \
+    -current "$cur" -baseline "$base/baseline.json" \
+    -config dataplane/crates/scrim-llm/benches/budget.json -report "$md"
 }
 
 # summary RESULTS_DIR prints the Markdown summary of one release's results.
@@ -156,12 +273,19 @@ EOF
   echo
   echo "## Latency"
   echo
-  echo "The LLM proxy latency gate; the release fails when a p99 exceeds its budget"
-  echo "(\`scrim_${SCRIM_VERSION}_results_latency-gate.md\`). Redaction throughput per"
-  echo "secret set and body size is in \`scrim_${SCRIM_VERSION}_results_redact-bench.txt\`."
+  echo "The latency gate with the production engine; the release fails when a gated"
+  echo "value misses its budget (\`scrim_${SCRIM_VERSION}_results_latency-gate.md\`, every"
+  echo "measurement and its rounds in \`scrim_${SCRIM_VERSION}_results_latency-gate.json\`),"
+  echo "or when one regressed against the previous release beyond the noise-aware threshold"
+  echo "(\`scrim_${SCRIM_VERSION}_results_latency-regression.md\`). Criterion's redaction"
+  echo "throughput per secret set and body size is in"
+  echo "\`scrim_${SCRIM_VERSION}_results_redact-bench.txt\`. docs/performance.md says how to"
+  echo "read and reproduce them."
   echo
-  # One heading level down, so the gate's own title sits under this section.
+  # One heading level down, so each report's own title sits under this section.
   sed 's/^#/##/' "$res/latency-gate.md"
+  echo
+  sed 's/^#/##/' "$res/latency-regression.md"
 }
 
 cmd_assemble() {
@@ -171,7 +295,7 @@ cmd_assemble() {
   command -v jq >/dev/null || die "jq is required"
   [ -f "$rel/checksums.txt" ] || die "no checksums.txt in $rel"
   (cd "$rel" && sha256sum --check --strict --quiet checksums.txt) || die "$rel does not match its checksums.txt"
-  for f in leak-report.json leak-control.json latency-gate.md redact-bench.txt; do
+  for f in leak-report.json leak-control.json latency-gate.md latency-gate.json latency-regression.md redact-bench.txt; do
     [ -s "$res/$f" ] || die "missing $res/$f"
   done
 
@@ -179,6 +303,9 @@ cmd_assemble() {
     || die "the leak report did not pass"
   jq -e '.pass == false and .summary.gated_leaks > 0' "$res/leak-control.json" >/dev/null \
     || die "the pass-through control did not leak"
+  jq -e '.schema == 1 and .pass == true and .method.quick == false' "$res/latency-gate.json" >/dev/null \
+    || die "the latency gate did not pass, or ran in quick mode"
+  ! grep -q '^REGRESSION:' "$res/latency-regression.md" || die "the latency regression check failed"
 
   shopt -s nullglob
   local cells=("$res"/matrix/*/*.json) fuzz=("$res"/fuzz/*.json)
@@ -198,6 +325,8 @@ cmd_assemble() {
   install -m 0644 "$res/e2e-matrix.json" "$rel/${p}_e2e-matrix.json"
   install -m 0644 "$res/fuzz.json" "$rel/${p}_fuzz.json"
   install -m 0644 "$res/latency-gate.md" "$rel/${p}_latency-gate.md"
+  install -m 0644 "$res/latency-gate.json" "$rel/${p}_latency-gate.json"
+  install -m 0644 "$res/latency-regression.md" "$rel/${p}_latency-regression.md"
   install -m 0644 "$res/redact-bench.txt" "$rel/${p}_redact-bench.txt"
   summary "$res" >"$rel/$p.md"
   log "$rel/$p.md"
@@ -205,10 +334,10 @@ cmd_assemble() {
   cat "$rel/checksums.txt" >&2
 }
 
-[ $# -ge 1 ] || die "usage: $0 leak|matrix|bench|assemble ..."
+[ $# -ge 1 ] || die "usage: $0 leak|matrix|bench|baseline|regression|assemble ..."
 command=$1
 shift
 case "$command" in
-  leak | matrix | bench | assemble) "cmd_$command" "$@" ;;
+  leak | matrix | bench | baseline | regression | assemble) "cmd_$command" "$@" ;;
   *) die "unknown command: $command" ;;
 esac
