@@ -55,6 +55,11 @@ type Options struct {
 	// UpstreamListen is where the fake provider listens, so an externally
 	// configured proxy can point at it. Default 127.0.0.1:0.
 	UpstreamListen string
+	// UpstreamListener, when set, is where the fake provider serves, in
+	// place of UpstreamListen. A caller that must name the address before
+	// the run binds it first and passes it here, so no other process can
+	// take the port in between. The run closes it.
+	UpstreamListener net.Listener
 	// SeedsIn reads seeds from a file instead of generating them.
 	SeedsIn string
 	// SeedsOut writes the generated seeds (fake values) to a file, mode
@@ -130,13 +135,15 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 	}
 
 	fake := fp.New(fp.Options{PlaceholderPattern: o.Placeholder})
-	upAddr := o.UpstreamListen
-	if upAddr == "" {
-		upAddr = "127.0.0.1:0"
-	}
-	ln, err := net.Listen("tcp", upAddr)
-	if err != nil {
-		return nil, fmt.Errorf("fake provider: %w", err)
+	ln := o.UpstreamListener
+	if ln == nil {
+		upAddr := o.UpstreamListen
+		if upAddr == "" {
+			upAddr = "127.0.0.1:0"
+		}
+		if ln, err = net.Listen("tcp", upAddr); err != nil {
+			return nil, fmt.Errorf("fake provider: %w", err)
+		}
 	}
 	var handler http.Handler = fake
 	if o.WrapUpstream != nil {

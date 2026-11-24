@@ -323,7 +323,14 @@ func runTrafficCell(t *testing.T, bin harness.Binaries, c Cell, cs *cellStore, r
 		t.Fatal(err)
 	}
 
-	upAddr := harness.FreePort(t)
+	// Bound now and handed to the run, so a parallel cell cannot take the
+	// port between choosing it and the fake provider listening on it.
+	upLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = upLn.Close() })
+	upAddr := upLn.Addr().String()
 	_, upPort, _ := net.SplitHostPort(upAddr)
 	o := daemonOptions{store: cs, upstream: "http://" + upAddr, transparent: c.Mode == ModeTransparent}
 	var cloud *cloudSetup
@@ -358,7 +365,7 @@ func runTrafficCell(t *testing.T, bin harness.Binaries, c Cell, cs *cellStore, r
 	api := c.Provider.API()
 	var progress bytes.Buffer
 	ao := audit.Options{
-		Proxy: shim, UpstreamListen: upAddr, SeedsIn: seedFile,
+		Proxy: shim, UpstreamListener: upLn, SeedsIn: seedFile,
 		APIs: []fp.API{api}, Prefix: map[fp.API]string{api: "/" + c.Provider.Route()},
 		Progress: &progress,
 	}
