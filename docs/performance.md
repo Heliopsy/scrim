@@ -68,6 +68,16 @@ The budgets are configuration, in `dataplane/crates/scrim-llm/benches/budget.jso
 when a gated p99 is above its budget or a gated throughput is below its minimum. A measurement with
 no budget is reported and recorded, never gated.
 
+The budgets are set for the reference runner at a known speed, the `speed` object of
+`budget.json`. ho-z10's 15 W CPU slows down under heat and load, and a slow spell moves every number
+together, the direct baseline included. So each measurement's budget is stretched by how much
+slower than `reference_calibration_us` its rounds' calibration workload ran (the median of the
+rounds), up to `max_slowdown`. A latency budget is multiplied and a throughput minimum divided. A
+faster machine never gets a tighter budget, and a machine slower than the cap fails as before. A
+failure names the budget it was held to and the slowdown. The stretch applies only on the CPU model
+named in `speed.cpu`: the calibration workload uses SHA instructions some CPUs lack, so its time
+compares one CPU with itself, not with another.
+
 The production engine does not meet the spec's initial targets for added request latency (5 ms for
 1 MB with 1,000 secrets, 10 ms with 10,000): the request takes about 25 ms per 1 MB at the median on
 ho-z10. Its budgets hold it to what it does today with room for the runner's spread, so a large
@@ -119,7 +129,8 @@ Each release attaches, under its signed checksums:
 - `scrim_<version>_results_latency-gate.json`: the same measurements for machines. Top level:
   `schema` (1), `version`, `runner`, `machine` (`cpu`, `logical_cpus`, `os`, `arch`), `method`
   (`rounds`, `run_queue_filter`, `quick`), `pass`, `failures`, and `measurements`. Each measurement
-  has `id`, `unit` (`ms`, `us` or `MB/s`), `better` (`lower` or `higher`), `gated`, `budget`, the
+  has `id`, `unit` (`ms`, `us` or `MB/s`), `better` (`lower` or `higher`), `gated`, `budget`
+  (the configured value and the `applied` one), `slowdown`, the
   headline values (`p50` and `p99`, or `mbps`), `rounds` with the per-round values and the
   calibration time before each round (`cal`, µs), `samples`,
   `dropped`, `busy_rounds` and `conditions` (body size, secret count, hits, engine).
