@@ -297,6 +297,26 @@ fn run_delay() -> Option<u64> {
 /// another process preempted, or that its cgroup's CPU quota throttled, waits milliseconds.
 const DISTURBED_NS: u64 = 50_000;
 
+/// A fixed CPU workload (SHA-256 over 256 KiB), best of five, in µs. Run before every round, so
+/// the regression check can compare measurements relative to how fast the machine was at that
+/// moment: the reference runner's laptop-class CPU changes clock speed with load and heat, which
+/// shifts every number of a run together and which no sample filter sees.
+fn calibrate() -> f64 {
+    use sha2::{Digest, Sha256};
+    static BUF: [u8; 64 << 10] = [0x5c; 64 << 10];
+    let mut best = f64::MAX;
+    for _ in 0..5 {
+        let t = Instant::now();
+        let mut h = Sha256::new();
+        for _ in 0..4 {
+            h.update(BUF);
+        }
+        std::hint::black_box(h.finalize());
+        best = best.min(t.elapsed().as_secs_f64() * 1e6);
+    }
+    best
+}
+
 fn nearest_rank(sorted: &[f64], q: f64) -> f64 {
     let i = ((sorted.len() as f64) * q).ceil() as usize;
     sorted[i.saturating_sub(1).min(sorted.len() - 1)]
@@ -318,6 +338,8 @@ fn median(v: &[f64]) -> f64 {
 struct Rounds {
     p50: Vec<f64>,
     p99: Vec<f64>,
+    /// The calibration workload's time before each round, in µs.
+    cal: Vec<f64>,
     samples: usize,
     dropped: usize,
     busy: usize,
@@ -347,6 +369,7 @@ impl Sampler {
         let mut all = Vec::with_capacity(per_round);
         let mut kept = Vec::with_capacity(per_round);
         for _ in 0..self.rounds {
+            r.cal.push(calibrate());
             all.clear();
             kept.clear();
             for _ in 0..per_round {
@@ -409,7 +432,7 @@ impl Report {
             "budget": budget.map(|b| json!({"p99": {"max": b}})),
             "p50": round3(r.p50()),
             "p99": round3(p99),
-            "rounds": {"p50": r3(&r.p50), "p99": r3(&r.p99)},
+            "rounds": {"p50": r3(&r.p50), "p99": r3(&r.p99), "cal": r3(&r.cal)},
             "samples": r.samples,
             "dropped": r.dropped,
             "busy_rounds": r.busy,
@@ -418,7 +441,14 @@ impl Report {
     }
 
     /// Records a throughput measurement (higher is better); `min` is the floor, when gated.
-    fn throughput(&mut self, id: &str, rounds: &[f64], min: Option<f64>, conditions: Value) {
+    fn throughput(
+        &mut self,
+        id: &str,
+        rounds: &[f64],
+        cal: &[f64],
+        min: Option<f64>,
+        conditions: Value,
+    ) {
         let v = median(rounds);
         if let Some(m) = min
             && v < m
@@ -433,7 +463,8 @@ impl Report {
             "gated": min.is_some(),
             "budget": min.map(|m| json!({"mbps": {"min": m}})),
             "mbps": round3(v),
-            "rounds": {"mbps": rounds.iter().copied().map(round3).collect::<Vec<_>>()},
+            "rounds": {"mbps": rounds.iter().copied().map(round3).collect::<Vec<_>>(),
+                       "cal": cal.iter().copied().map(round3).collect::<Vec<_>>()},
             "conditions": conditions,
         }));
     }
@@ -784,6 +815,7 @@ fn main() {
             report.throughput(
             &format!("core/redact_throughput/{n}/1MB"),
             &mbps,
+            &r.cal,
             min,
             json!({"body_bytes": body.len(), "secrets": n, "hits": true, "body": "redact-bench", "threads": 1}),
         );

@@ -28,8 +28,9 @@ waited for the CPU.
   counted; a round with more than half dropped keeps all samples and is reported as busy.
 - Machine-readable results (`SCRIM_PERF_JSON`), published with each release as
   `scrim_<version>_results_latency-gate.json`.
-- `scripts/perfgate` compares two runs: gated measurements, medians of rounds, a threshold widened
-  by the runs' spread and capped, unit floors, only on the same runner class and CPU. Settings in
+- `scripts/perfgate` compares two runs: gated measurements, medians of rounds taken relative to a
+  calibration workload timed before each round (the runner's clock speed varies), a threshold
+  widened by the runs' spread and capped, unit floors, only on the same runner class and CPU. Settings in
   the `regression` object of `budget.json`.
 - `scripts/release/results.sh baseline` fetches the previous release's JSON and verifies it with
   cosign over `checksums.txt` and the file's checksum; `results.sh regression` compares. The

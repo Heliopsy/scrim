@@ -40,6 +40,11 @@ the newest release.
 - **WHEN** p99 added latency regresses by more than the threshold
 - **THEN** the release pipeline fails and names the measurement
 
+#### Scenario: Slower clock is not a regression
+
+- **WHEN** every measurement and the calibration workload of a run are slower by the same factor
+- **THEN** no measurement regresses
+
 #### Scenario: Noise is not a regression
 
 - **WHEN** one round of a measurement is slow and the median of the rounds is within the threshold
@@ -67,7 +72,8 @@ comparison with the previous release.
 
 Each budgeted measurement SHALL run in repeated rounds, and the value compared with its budget SHALL
 be the median of the rounds. Where the platform reports it, a sample during which the measuring
-thread waited for a CPU beyond a small bound SHALL be dropped and counted in the report.
+thread waited for a CPU beyond a small bound SHALL be dropped and counted in the report. Each round
+SHALL record the time of a fixed calibration workload run just before it.
 
 #### Scenario: Load from other processes
 

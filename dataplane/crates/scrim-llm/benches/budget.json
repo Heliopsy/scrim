@@ -17,24 +17,24 @@
     }
   },
   "core": {
-    "comment": "The redaction core on its own, as the scrim-redact benchmarks measure it: Snapshot::protect per 1 MB request with the default thread count, and single-thread Redactor::redact throughput (the per-core minimum of the performance spec). Measured on ho-z10 (PR #153): protect p99 21 to 34 ms; redact 1.6 to 2.4 GB/s on one core. Budgets about 1.5 times the p99 and half the throughput, for the same reason as engine.",
+    "comment": "The redaction core on its own, as the scrim-redact benchmarks measure it: Snapshot::protect per 1 MB request with the default thread count, and single-thread Redactor::redact throughput (the per-core minimum of the performance spec). Measured on ho-z10 (PR #153): protect p99 21 to 47 ms; redact throughput 0.76 to 2.4 GB/s on one core. The runner's CPU (a 15 W laptop part) changes clock with load and heat, and one run measured half the throughput of the previous one for the same code. Budgets therefore sit well outside that range (protect 60 ms, throughput floors at about half the slowest run); the regression check, which compares relative to a calibration workload, catches smaller changes.",
     "protect_p99_ms": {
       "1MB": {
-        "10": 50.0,
-        "1000": 50.0,
-        "10000": 50.0
+        "10": 60.0,
+        "1000": 60.0,
+        "10000": 60.0
       }
     },
     "redact_min_mbps": {
       "1MB": {
-        "10": 1200.0,
-        "1000": 800.0,
-        "10000": 800.0
+        "10": 600.0,
+        "1000": 400.0,
+        "10000": 400.0
       }
     }
   },
   "regression": {
-    "comment": "The regression check against the previous release (scripts/perfgate). Each gated statistic is compared as the median of its rounds. It regresses when worse than the baseline by more than threshold + noise_factor x the larger relative spread (median absolute deviation) of the two runs' rounds, capped at max_allowed, and by more than the unit's floor. Only runs on the same reference conditions (the match fields) are compared.",
+    "comment": "The regression check against the previous release (scripts/perfgate). Each gated statistic is compared as the median of its rounds. It regresses when worse than the baseline by more than threshold + noise_factor x the larger relative spread (median absolute deviation) of the two runs' rounds, capped at max_allowed, and by more than the unit's floor. With calibrate, each round's value is taken relative to the time of a fixed workload (SHA-256 over 256 KiB) measured just before it, so a run on a slower clock is not a regression. Only runs on the same reference conditions (the match fields) are compared.",
     "threshold": 0.15,
     "noise_factor": 3.0,
     "max_allowed": 0.5,
@@ -44,6 +44,7 @@
       "MB/s": 25.0
     },
     "stats": ["p50", "p99", "mbps"],
-    "match": ["runner", "machine.cpu", "machine.logical_cpus", "machine.arch", "method.quick"]
+    "match": ["runner", "machine.cpu", "machine.logical_cpus", "machine.arch", "method.quick"],
+    "calibrate": true
   }
 }

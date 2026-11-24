@@ -65,6 +65,7 @@ type Config struct {
 	NoiseFactor float64            `json:"noise_factor"`
 	MaxAllowed  float64            `json:"max_allowed"`
 	Floor       map[string]float64 `json:"floor"`
+	Calibrate   bool               `json:"calibrate"`
 	Stats       []string           `json:"stats"`
 	Match       []string           `json:"match"`
 }
@@ -86,6 +87,7 @@ type Row struct {
 	Base, Cur      float64
 	Change         float64 // relative, positive is worse
 	Allowed        float64 // relative
+	Calibrated     bool    // Change is relative to the calibration workload
 	Verdict        Verdict
 }
 
@@ -176,7 +178,18 @@ func Compare(cur, base Results, cfg Config) Comparison {
 				continue
 			}
 			row.Base = median(br)
-			row.Allowed = cfg.Threshold + cfg.NoiseFactor*math.Max(spread(br), spread(cr))
+			// With calibration, each round is compared relative to how long the
+			// fixed workload took before it: a run on a slower clock is slower
+			// everywhere, and that is not a regression.
+			nb, nc := br, cr
+			if cfg.Calibrate {
+				xb := calibrated(br, b.Rounds["cal"], m.Better)
+				xc := calibrated(cr, m.Rounds["cal"], m.Better)
+				if xb != nil && xc != nil {
+					nb, nc, row.Calibrated = xb, xc, true
+				}
+			}
+			row.Allowed = cfg.Threshold + cfg.NoiseFactor*math.Max(spread(nb), spread(nc))
 			if cfg.MaxAllowed > 0 {
 				row.Allowed = math.Min(row.Allowed, cfg.MaxAllowed)
 			}
@@ -186,8 +199,12 @@ func Compare(cur, base Results, cfg Config) Comparison {
 			if m.Better == "higher" {
 				worse = -worse
 			}
-			if row.Base != 0 {
-				row.Change = worse / math.Abs(row.Base)
+			if mb, mc := median(nb), median(nc); mb != 0 {
+				if m.Better == "higher" {
+					row.Change = (mb - mc) / math.Abs(mb)
+				} else {
+					row.Change = (mc - mb) / math.Abs(mb)
+				}
 			}
 			switch {
 			case row.Change > row.Allowed && worse > cfg.Floor[m.Unit]:
@@ -201,6 +218,27 @@ func Compare(cur, base Results, cfg Config) Comparison {
 		}
 	}
 	return c
+}
+
+// calibrated returns each round's value relative to its calibration time
+// (divided for a latency, multiplied for a throughput), or nil when the
+// rounds carry no calibration.
+func calibrated(v, cal []float64, better string) []float64 {
+	if len(cal) != len(v) || len(v) == 0 {
+		return nil
+	}
+	out := make([]float64, len(v))
+	for i, x := range v {
+		if cal[i] <= 0 {
+			return nil
+		}
+		if better == "higher" {
+			out[i] = x * cal[i]
+		} else {
+			out[i] = x / cal[i]
+		}
+	}
+	return out
 }
 
 func num(x float64) string {
@@ -220,7 +258,13 @@ func Markdown(w io.Writer, cur, base Results, cfg Config, c Comparison) {
 	if cfg.MaxAllowed > 0 {
 		printf(", at most %.0f %%", cfg.MaxAllowed*100)
 	}
-	printf(", and by more than the unit's floor.\n\n")
+	printf(", and by more than the unit's floor.")
+	if cfg.Calibrate {
+		printf(" Where both runs timed the calibration workload before each round, the change is computed " +
+			"on each round's value relative to it (marked *), so a machine running at a different clock " +
+			"speed does not count as a regression; the values shown are the raw medians.")
+	}
+	printf("\n\n")
 	if !c.Comparable {
 		printf("Not compared: %s. Results are compared only on the same reference conditions.\n", c.Reason)
 		return
@@ -230,6 +274,9 @@ func Markdown(w io.Writer, cur, base Results, cfg Config, c Comparison) {
 		change, allowed := "-", "-"
 		if r.Verdict != NoBaseline {
 			change = fmt.Sprintf("%+.1f %%", r.Change*100)
+			if r.Calibrated {
+				change += "*"
+			}
 			allowed = fmt.Sprintf("%.1f %%", r.Allowed*100)
 		}
 		printf("| `%s` | %s | %s %s | %s %s | %s | %s | %s |\n",

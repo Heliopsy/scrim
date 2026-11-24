@@ -46,6 +46,11 @@ The gate now:
    handful of samples.
 4. Reports the median over the rounds of each statistic. A regression is in every round; load from
    other processes lands in some of them.
+5. Times a fixed CPU workload (SHA-256 over 256 KiB, best of five) before every round and records
+   it with the round (`rounds.cal` in the JSON). The reference runner's CPU is a 15 W laptop part
+   whose clock follows load and heat: two runs of the same code measured single-thread redaction
+   at 1.57 and 0.76 GB/s. That moves every number of a run together, and no sample filter sees it.
+   The budgets leave room for it; the regression check divides it out.
 
 The filter covers the measuring thread only. The guard and `protect` split bodies of 512 KiB and
 more over worker threads; a worker that is preempted makes the measuring thread wait without a
@@ -76,6 +81,10 @@ previous release. `scripts/perfgate` compares two runs of the gate:
 
 - Only gated measurements are compared, each statistic the two runs both recorded rounds of (p50
   and p99 of a latency, MB/s of a throughput), as the median of the rounds.
+- With `calibrate` on and calibration times in both runs, each round's value is first taken
+  relative to its calibration time (divided for a latency, multiplied for a throughput), so a run
+  on a slower clock does not count as a regression. The report marks those changes with `*` and
+  still shows the raw medians.
 - A statistic regresses when it is worse than the baseline by more than
   `threshold + noise_factor x spread` and by more than the unit's floor. `spread` is the larger
   relative median absolute deviation of the two runs' rounds, so a noisy run needs a larger change
@@ -111,7 +120,8 @@ Each release attaches, under its signed checksums:
   `schema` (1), `version`, `runner`, `machine` (`cpu`, `logical_cpus`, `os`, `arch`), `method`
   (`rounds`, `run_queue_filter`, `quick`), `pass`, `failures`, and `measurements`. Each measurement
   has `id`, `unit` (`ms`, `us` or `MB/s`), `better` (`lower` or `higher`), `gated`, `budget`, the
-  headline values (`p50` and `p99`, or `mbps`), `rounds` with the per-round values, `samples`,
+  headline values (`p50` and `p99`, or `mbps`), `rounds` with the per-round values and the
+  calibration time before each round (`cal`, µs), `samples`,
   `dropped`, `busy_rounds` and `conditions` (body size, secret count, hits, engine).
 - `scrim_<version>_results_latency-regression.md`: the comparison with the previous release: each
   compared statistic with the baseline, this release, the change, the change allowed for that

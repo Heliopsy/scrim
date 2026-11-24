@@ -190,3 +190,47 @@ func TestRunExitStatus(t *testing.T) {
 		t.Fatalf("report: %v\n%s", err, b)
 	}
 }
+
+func TestCalibrationAbsorbsAClockChange(t *testing.T) {
+	with := func(p50, cal float64) Measurement {
+		m := latency("x", []float64{p50, p50, p50}, []float64{p50 * 1.5, p50 * 1.5, p50 * 1.5})
+		m.Rounds["cal"] = []float64{cal, cal, cal}
+		return m
+	}
+	c := cfg
+	c.Calibrate = true
+	base := results(with(20, 500))
+	// The whole machine ran 1.6 times slower: the workload took 1.6 times as long too.
+	slowClock := results(with(32, 800))
+	if r := Compare(slowClock, base, c).Regressions(); len(r) != 0 {
+		t.Fatalf("a slower clock counted as a regression: %+v", r)
+	}
+	if r := Compare(slowClock, base, cfg).Regressions(); len(r) == 0 {
+		t.Fatal("without calibration the same runs should regress")
+	}
+	// Same clock, slower code.
+	if r := Compare(results(with(32, 500)), base, c).Regressions(); len(r) != 2 {
+		t.Fatalf("a real slowdown at the same clock: %+v", r)
+	}
+	// A baseline without calibration falls back to the raw values.
+	raw := results(latency("x", []float64{20, 20, 20}, []float64{30, 30, 30}))
+	rows := Compare(slowClock, raw, c).Rows
+	if rows[0].Calibrated || rows[0].Verdict != Regressed {
+		t.Fatalf("fallback: %+v", rows[0])
+	}
+}
+
+func TestCalibratedThroughput(t *testing.T) {
+	m := func(v, cal float64) Measurement {
+		return Measurement{ID: "tp", Unit: "MB/s", Better: "higher", Gated: true,
+			Rounds: map[string][]float64{"mbps": {v, v, v}, "cal": {cal, cal, cal}}}
+	}
+	c := cfg
+	c.Calibrate = true
+	if r := Compare(results(m(800, 1000)), results(m(1600, 500)), c).Regressions(); len(r) != 0 {
+		t.Fatalf("half the throughput at half the clock: %+v", r)
+	}
+	if r := Compare(results(m(800, 500)), results(m(1600, 500)), c).Regressions(); len(r) != 1 {
+		t.Fatalf("half the throughput at the same clock: %+v", r)
+	}
+}

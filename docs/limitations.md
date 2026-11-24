@@ -84,9 +84,11 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   makes it meet the spec's targets ([performance.md](performance.md#budgets)).
 - **The performance gate measures on a shared runner.** The latency gate drops samples during which
   the measuring thread waited for a CPU, but not those where one of the guard's worker threads did;
-  those measurements rely on the median over rounds. The regression check only compares runs on the
-  same runner class and CPU, so a change of the reference runner's hardware skips a comparison
-  instead of failing it.
+  those measurements rely on the median over rounds. The runner's clock speed varies between runs
+  (up to about two times), so the budgets are wide and the regression check compares measurements
+  relative to a calibration workload, which tracks clock speed better than memory or cache
+  contention. It only compares runs on the same runner class and CPU, so a change of the reference
+  runner's hardware skips a comparison instead of failing it.
 
 ## Identity and per-agent settings
 
