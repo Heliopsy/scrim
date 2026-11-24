@@ -14,7 +14,7 @@
 - [x] 2.2 `results.sh baseline`: previous release, cosign over `checksums.txt`, file checksum; no baseline reported, not failed
 - [x] 2.3 `results.sh regression` and `assemble` publish the JSON and the regression report
 - [x] 2.4 Release workflow `results-regression` job; CI `latency-regression` job
-- [ ] 2.5 Calibrate the engine budgets from the ho-z10 CI runs
+- [x] 2.5 Calibrate the engine budgets from the ho-z10 CI runs
 
 ## 3. Docs
 

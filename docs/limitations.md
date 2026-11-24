@@ -78,10 +78,10 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   like the placeholder key ([ca.md](ca.md)).
 - **Added request latency is above the performance spec's targets for large bodies.** The spec
   aims for 5 ms on a 1 MB body with 1,000 secrets and 10 ms with 10,000; the guard takes about
-  20 ms per 1 MB at the median on the reference runner, and around 2 to 3 ms per 100 KB. The
-  latency gate holds the production engine to budgets set from what it does today, and the
-  regression check fails a release that got slower than the previous one, but neither makes it
-  meet the spec's targets ([performance.md](performance.md#budgets)).
+  25 ms per 1 MB at the median and up to about 40 ms at p99 on the reference runner, and 2 to 4 ms
+  per 100 KB. The latency gate holds the production engine to budgets set from what it does today,
+  and the regression check fails a release that got slower than the previous one, but neither
+  makes it meet the spec's targets ([performance.md](performance.md#budgets)).
 - **The performance gate measures on a shared runner.** The latency gate drops samples during which
   the measuring thread waited for a CPU, but not those where one of the guard's worker threads did;
   those measurements rely on the median over rounds. The regression check only compares runs on the

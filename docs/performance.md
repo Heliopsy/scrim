@@ -64,7 +64,7 @@ when a gated p99 is above its budget or a gated throughput is below its minimum.
 no budget is reported and recorded, never gated.
 
 The production engine does not meet the spec's initial targets for added request latency (5 ms for
-1 MB with 1,000 secrets, 10 ms with 10,000): its guard takes about 20 ms per 1 MB at the median on
+1 MB with 1,000 secrets, 10 ms with 10,000): the request takes about 25 ms per 1 MB at the median on
 ho-z10. Its budgets hold it to what it does today with room for the runner's spread, so a large
 slowdown fails at once and a smaller one fails the regression check below.
 [limitations.md](limitations.md#implementation) lists this.

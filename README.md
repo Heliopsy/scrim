@@ -446,8 +446,9 @@ per streamed chunk. The latency gate measures the production engine and fails CI
 when a value misses its budget in `dataplane/crates/scrim-llm/benches/budget.json`, or when it
 regressed against the previous release's published results. The proxy's own overhead and the
 per-chunk time meet the spec's targets; the guard does not yet meet the 5 ms and 10 ms request
-targets (about 20 ms per 1 MB on the reference runner), so those budgets are set from what it does
-today ([docs/performance.md](docs/performance.md), [docs/limitations.md](docs/limitations.md#implementation)).
+targets (about 25 ms per 1 MB at the median and 40 ms at p99 on the reference runner), so those
+budgets are set from what it does today ([docs/performance.md](docs/performance.md),
+[docs/limitations.md](docs/limitations.md#implementation)).
 
 Each release attaches the numbers measured for it: `scrim_<version>_results_latency-gate.md` and
 `.json` (every measurement against its budget, with the machine it ran on),

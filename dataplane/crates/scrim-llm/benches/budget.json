@@ -7,29 +7,29 @@
   },
   "chunk_p99_us": 50.0,
   "engine": {
-    "comment": "Added request latency through the LLM proxy with the production engine (outgoing::prepare, scrim-redact redactor and guard) on the redaction benchmark's 1 MB bodies. The spec's initial targets are 5 ms (1,000 secrets) and 10 ms (10,000). The production guard does not meet them: on ho-z10 it takes about 20 ms per 1 MB at the median, about 30 ms at p99 (scrim 1.0.0 results). These budgets hold the engine to what it does today, with room for the runner's spread, so a slowdown fails here and a smaller one fails the regression check; tighten them as the guard gets faster.",
+    "comment": "Added request latency through the LLM proxy with the production engine (outgoing::prepare, scrim-redact redactor and guard) on the redaction benchmark's 1 MB bodies. The spec's initial targets are 5 ms (1,000 secrets) and 10 ms (10,000); the production guard does not meet them. Measured on ho-z10 (PR #153): p50 24 to 29 ms, p99 31 to 42 ms across 10, 1,000 and 10,000 secrets, with about a third of the samples dropped for run-queue delay because the guard's four worker threads share three CPUs. Budgets are about 1.5 times the highest p99 so the runner's spread does not fail the gate; a larger slowdown fails here, a smaller one fails the regression check. Tighten them as the guard gets faster.",
     "request_p99_ms": {
       "1MB": {
-        "10": 45.0,
-        "1000": 45.0,
-        "10000": 50.0
+        "10": 60.0,
+        "1000": 60.0,
+        "10000": 60.0
       }
     }
   },
   "core": {
-    "comment": "The redaction core on its own, as the scrim-redact benchmarks measure it: Snapshot::protect per 1 MB request with the default thread count, and single-thread Redactor::redact throughput (the per-core minimum of the performance spec). Same reason as engine for the protect budgets.",
+    "comment": "The redaction core on its own, as the scrim-redact benchmarks measure it: Snapshot::protect per 1 MB request with the default thread count, and single-thread Redactor::redact throughput (the per-core minimum of the performance spec). Measured on ho-z10 (PR #153): protect p99 21 to 34 ms; redact 1.6 to 2.4 GB/s on one core. Budgets about 1.5 times the p99 and half the throughput, for the same reason as engine.",
     "protect_p99_ms": {
       "1MB": {
-        "10": 45.0,
-        "1000": 45.0,
+        "10": 50.0,
+        "1000": 50.0,
         "10000": 50.0
       }
     },
     "redact_min_mbps": {
       "1MB": {
-        "10": 500.0,
-        "1000": 400.0,
-        "10000": 300.0
+        "10": 1200.0,
+        "1000": 800.0,
+        "10000": 800.0
       }
     }
   },

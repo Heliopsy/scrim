@@ -21,7 +21,7 @@ waited for the CPU.
   chunk), the proxy's chunk restore with production placeholders, and metrics on and off. The
   stand-in engine sections are gone.
 - Budgets for the production engine and the core in `budget.json`, enforced, each with its
-  reason. The engine budgets are set from what the guard does today (about 20 ms per 1 MB at the
+  reason. The engine budgets are set from what the guard does today (about 25 ms per 1 MB at the
   median on ho-z10), above the spec's initial 5 ms and 10 ms targets; docs/limitations.md says so.
 - Robust measurement: rounds, median of per-round nearest-rank percentiles, and samples during
   which the measuring thread waited more than 50 µs for a CPU (Linux run-queue delay) dropped and
@@ -41,8 +41,8 @@ waited for the CPU.
 
 ## Impact
 
-- Specs: performance (Added request latency budget, Regression gate, Results published per
-  release).
+- Specs: performance (modified: Added request latency budget, Regression gate, Results published per
+  release; added: Measurement robust to machine load, Verified regression baseline).
 - Code: `dataplane/crates/scrim-llm/benches/latency_gate.rs`, `benches/budget.json`,
   `scripts/perfgate`, `scripts/release/results.sh`, `.github/workflows/ci.yaml`,
   `.github/workflows/release.yaml`.
