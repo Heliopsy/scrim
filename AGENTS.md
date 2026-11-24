@@ -172,7 +172,8 @@ an emulator in podman. State backends follow the same shape with `state.Register
   Its archive, checksum and signing steps are a few lines of shell here.
 - No cross linker, no cargo-zigbuild. Each Linux data plane is built on a native runner of its
   architecture (GitHub's `ubuntu-24.04` for amd64 and `ubuntu-24.04-arm` for arm64) against musl,
-  both darwin targets on GitHub's `macos-15` with Apple's toolchain. The Go
+  both darwin targets on GitHub's `macos-15` with Apple's toolchain, and each Windows target on a
+  runner of its architecture (`windows-2025`, `windows-11-arm`) with MSVC and a static C runtime. The Go
   control plane is `CGO_ENABLED=0` and cross-compiles from one Linux runner, embedding the data
   plane built for the same target. Zig would add a third toolchain whose libc and linker nobody else
   tests.
@@ -191,6 +192,15 @@ an emulator in podman. State backends follow the same shape with `state.Register
   SLSA provenance through `actions/attest-build-provenance`. Build jobs have a read-only token and
   no OIDC token; only the sign, image and publish jobs get `id-token`, `attestations` or `contents:
   write`.
+- macOS signing and notarisation (`scripts/release/macos-sign.sh`) run in two `macos-15` jobs that
+  build nothing and are the only ones given the Apple secrets: the data planes are signed before
+  the Go job embeds them, the `scrim` binaries after, then all four are notarised; packaging runs
+  after them. Without the secrets both jobs pass the binaries through and the release notes say the
+  darwin binaries are not notarised. The secrets are listed in docs/install.md (maintainers).
+- Windows: the data plane talks to the control plane over its stdin and stdout (`--stdio`), there
+  being no descriptor inheritance. Settings Windows cannot honour are refused at start-up in
+  `internal/daemon/platform_windows.go`; private-file checks go through `internal/fsperm`, never
+  mode bits. `scripts/test-windows.sh` lists Go packages excluded on Windows with their reason.
 - Release tools are pinned in `scripts/release/release.env`, downloads checked by sha256. Bump a
   tool by changing its version and checksum together.
 - The Helm chart is packaged at the release version (`scripts/release/chart.sh`), pushed to
