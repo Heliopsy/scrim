@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 // start runs a process to completion in its own process group, as who,
@@ -64,4 +65,19 @@ func sysProcAttr(who account) *syscall.SysProcAttr {
 	}
 	platformAttr(a)
 	return a
+}
+
+// strs views buffers as strings without copying them, so the only copies a
+// value has in this process are buffers the broker wipes (and the ones the
+// runtime makes while forking, which are garbage once the child runs). The
+// strings must not be used after the buffers are wiped: exec.Cmd reads
+// Args and Env only in Start.
+func strs(bufs [][]byte) []string {
+	out := make([]string, len(bufs))
+	for i, b := range bufs {
+		if len(b) > 0 {
+			out[i] = unsafe.String(&b[0], len(b)) //nolint:gosec // see the comment above: views of buffers wiped after Start
+		}
+	}
+	return out
 }

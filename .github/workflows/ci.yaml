@@ -342,6 +342,8 @@ jobs:
         shell: bash
     env:
       SCRIM_TEST_PODMAN: "0"
+    # Every step after vet runs even when an earlier one failed, so one run
+    # shows every Windows failure.
     steps:
       # Fixtures and goldens byte for byte as committed: no CRLF conversion.
       - run: git config --global core.autocrlf false
@@ -358,24 +360,31 @@ jobs:
           # renovate: datasource=github-releases depName=golangci/golangci-lint
           version: v2.15.0
       - name: Go tests
+        if: ${{ !cancelled() }}
         run: scripts/test-windows.sh -timeout 30m
       - name: Rust toolchain
+        if: ${{ !cancelled() }}
         working-directory: dataplane
         run: rustup toolchain install && cargo --version
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        if: ${{ !cancelled() }}
         with:
           workspaces: dataplane
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Rust clippy
+        if: ${{ !cancelled() }}
         working-directory: dataplane
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Rust tests
+        if: ${{ !cancelled() }}
         working-directory: dataplane
         run: cargo test --locked --workspace
       - name: Data plane binary
+        if: ${{ !cancelled() }}
         working-directory: dataplane
         run: cargo build --locked -p scrim-dataplane
       - name: Launch the real data plane from Go, the daemon end to end and scrim run
+        if: ${{ !cancelled() }}
         run: go test -count=1 -run 'TestRealDataPlane|TestEndToEndRealDataPlane|TestRunPrintEnvWithRealDaemon' -v ./internal/dataplane/ ./internal/daemon/ ./internal/cli/
         env:
           SCRIM_TEST_DATAPLANE: ${{ github.workspace }}/dataplane/target/debug/scrim-dataplane.exe

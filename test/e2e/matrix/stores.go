@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//go:build linux
+
+// Used by the Linux-only matrix tests (user and network namespaces).
+
 package matrix
 
 import (

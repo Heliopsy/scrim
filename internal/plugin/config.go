@@ -247,20 +247,6 @@ func duration(v any) (time.Duration, bool) {
 	return 0, false
 }
 
-// environ is the plugin's whole environment.
-func (c Config) environ() []string {
-	env := map[string]string{"PATH": DefaultPath}
-	maps.Copy(env, c.Env)
-	env["SCRIM_PLUGIN_FD"] = "3"
-	env["SCRIM_PLUGIN_PROTOCOL"] = fmt.Sprint(Protocol)
-	env["SCRIM_PLUGIN_INSTANCE"] = c.Instance
-	out := make([]string, 0, len(env))
-	for _, k := range slices.Sorted(maps.Keys(env)) {
-		out = append(out, k+"="+env[k])
-	}
-	return out
-}
-
 // OptionsJSON encodes the plugin's options.
 func OptionsJSON(opts map[string]any) ([]byte, error) {
 	if opts == nil {

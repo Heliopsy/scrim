@@ -18,11 +18,9 @@
 package plugin
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"slices"
 	"sync"
@@ -476,33 +474,6 @@ func Validate(ctx context.Context, cfg Config, log *slog.Logger) (*pb.HandshakeR
 		return nil, errors.Join(errs...)
 	}
 	return info, nil
-}
-
-// relay logs each stderr line, capped, at info level. The logger scrubs
-// every value scrim holds.
-func relay(r io.Reader, log *slog.Logger) {
-	br := bufio.NewReaderSize(r, 4096)
-	for {
-		line, err := br.ReadSlice('\n')
-		if len(line) > 0 {
-			log.Info("plugin stderr", "line", clip(string(trimEOL(line)), 2048))
-			// A line longer than the buffer arrives in pieces; drop the
-			// rest so one runaway line cannot flood the log.
-			for errors.Is(err, bufio.ErrBufferFull) {
-				_, err = br.ReadSlice('\n')
-			}
-		}
-		if err != nil && !errors.Is(err, bufio.ErrBufferFull) {
-			return
-		}
-	}
-}
-
-func trimEOL(b []byte) []byte {
-	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == '\r') {
-		b = b[:len(b)-1]
-	}
-	return b
 }
 
 func clip(s string, n int) string {
