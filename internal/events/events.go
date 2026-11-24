@@ -83,7 +83,7 @@ var (
 		Key:     "deployment.replicas",
 		Default: 1,
 		Description: "How many control plane replicas share this configuration and state. More than 1 needs a shared state backend " +
-			"(state.backend postgres) and a shared events backend (events.backend postgres, valkey or nats); start-up fails otherwise.",
+			"(state.backend postgres), a shared events backend (events.backend postgres, valkey or nats) and redaction.placeholder-keys; start-up fails otherwise.",
 		Validate: func(n int) error {
 			if n < 1 {
 				return errors.New("must be at least 1")
