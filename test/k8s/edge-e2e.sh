@@ -9,6 +9,9 @@
 #   - Kyverno added the forwarder as a native sidecar, SSH_AUTH_SOCK and
 #     SCRIM_API_SOCKET, and the agent (UID 1000) can use the sockets of the
 #     forwarder (UID 65532);
+#   - the edge listener's certificate chains to the edge CA, which is not the
+#     interception CA and is in none of the agent's trust files, and a client
+#     that trusts the interception CA is refused;
 #   - the agent cannot reach PostgreSQL itself (only the SSH session to the
 #     git server is its own, networkPolicy.agentEgress);
 #   - the forwarder's ssh-agent answers, and `git push` over SSH succeeds
@@ -209,6 +212,28 @@ env_out="$(in_agent printenv)"
 grep -qx 'SSH_AUTH_SOCK=/run/scrim-edge/ssh-agent.sock' <<<"$env_out" || fail "SSH_AUTH_SOCK is not the forwarder's"
 grep -qx 'SCRIM_API_SOCKET=/run/scrim-edge/api.sock' <<<"$env_out" || fail "SCRIM_API_SOCKET is not the forwarder's"
 pass "forwarder injected as a native sidecar with SSH_AUTH_SOCK and SCRIM_API_SOCKET"
+
+log "edge CA"
+jq -e '.spec.initContainers[] | select(.name == "scrim-edge") | .env[] |
+  select(.name == "SCRIM_EDGE_FORWARDER_CA_FILE" and .value == "/etc/scrim/edge-trust/scrim-edge-ca.pem")' \
+  <<<"$pod_json" >/dev/null || fail "the forwarder does not verify against the edge CA"
+edge_ca="$(k -n agents get configmap scrim-ca -o jsonpath='{.data.scrim-edge-ca\.pem}')"
+grep -q 'BEGIN CERTIFICATE' <<<"$edge_ca" || fail "no edge CA in the scrim-ca ConfigMap"
+edge_line="$(sed -n 2p <<<"$edge_ca")"
+for f in scrim-ca.pem ca-bundle.pem; do
+  trust="$(in_agent cat "/etc/scrim/trust/$f")"
+  if grep -qF "$edge_line" <<<"$trust"; then fail "the edge CA is in the agent's $f"; fi
+done
+in_agent sh -c "printf '%s\n' \"\$1\" > /tmp/edge-ca.pem" _ "$edge_ca"
+edge_url="https://scrim.scrim.svc.cluster.local:9794/v1/whoami"
+# No token: the listener answers 401 once TLS verified against the edge CA.
+code="$(in_agent curl -sS -o /dev/null -w '%{http_code}' --cacert /tmp/edge-ca.pem "$edge_url")" ||
+  fail "TLS to the edge listener with the edge CA failed"
+[ "$code" = 401 ] || fail "the edge listener answered $code without a token, want 401"
+rc=0
+in_agent curl -sS -o /dev/null --cacert /etc/scrim/trust/scrim-ca.pem "$edge_url" 2>/dev/null || rc=$?
+[ "$rc" = 60 ] || fail "a client trusting the interception CA was not refused by certificate (curl exit $rc)"
+pass "the edge listener's certificate chains to the edge CA only"
 
 log "no direct route to the database"
 if in_agent nc -z -w 5 postgres.scrim-edge-e2e.svc.cluster.local 5432 2>/dev/null; then

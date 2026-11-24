@@ -19,6 +19,27 @@ data:
   tls.crt: {{ index .Values.__scrimCA "crt" | b64enc }}
   tls.key: {{ index .Values.__scrimCA "key" | b64enc }}
 {{- end }}
+{{- $edgeCert := "" -}}
+{{- if .Values.edge.enabled }}
+{{- $edgeCert = include "scrim.edgeCACert" . | trim -}}
+{{- if and .Values.edge.ca.create (not .Values.edge.ca.existingSecret) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "scrim.fullname" . }}-edge-ca
+  namespace: {{ (include "scrim.namespace" $) }}
+  labels:
+    {{- include "scrim.labels" . | nindent 4 }}
+  annotations:
+    # Edge forwarders trust this CA; deleting it with the release would break them, so it stays.
+    helm.sh/resource-policy: keep
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ index .Values.__scrimEdgeCA "crt" | b64enc }}
+  tls.key: {{ index .Values.__scrimEdgeCA "key" | b64enc }}
+{{- end }}
+{{- end }}
 {{- $namespaces := uniq (prepend .Values.agents.namespaces (include "scrim.namespace" $)) }}
 {{- range $ns := $namespaces }}
 ---
@@ -38,6 +59,12 @@ data:
   # ca.extraTrustedCerts.
   ca-bundle.pem: |
     {{- $bundle | nindent 4 }}
+  {{- if $edgeCert }}
+  # The edge CA, for the edge forwarder only: it signs nothing but central scrim's edge listener
+  # certificate and is in neither file above, so no agent runtime trusts it.
+  scrim-edge-ca.pem: |
+    {{- $edgeCert | nindent 4 }}
+  {{- end }}
   {{- if $.Values.identity.kubernetes.enabled }}
   # Runs an agent command with the pod's projected token as its scrim identity.
   scrim-exec: |

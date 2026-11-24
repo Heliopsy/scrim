@@ -35,8 +35,20 @@ var (
 	// ServerNames are the names in the edge listener's certificate.
 	ServerNames = config.Register(config.Spec[[]string]{
 		Key: "edge.server-names",
-		Description: "Host names and IP addresses the edge listener's certificate carries, signed by scrim's CA, which " +
-			"forwarders already trust. Required with edge.listen.",
+		Description: "Host names and IP addresses the edge listener's certificate carries, signed by the edge CA (edge.ca.*), " +
+			"which the forwarders trust and nothing else does. A generated edge CA is name-constrained to these. Required with edge.listen.",
+		RestartRequired: true,
+	})
+
+	// LegacyInterceptionCertificate serves forwarders from before the edge CA
+	// a certificate from the interception CA.
+	LegacyInterceptionCertificate = config.Register(config.Spec[bool]{
+		Key: "edge.legacy-interception-certificate",
+		Description: "For an upgrade window: a forwarder that does not announce the edge CA (one from scrim 1.0, which " +
+			"trusts the interception CA) gets a listener certificate issued by the interception CA instead of the edge CA, " +
+			"so agent pods started before the upgrade keep working until they are restarted. Forwarders that announce the " +
+			"edge CA always get the edge CA's certificate. Turn it off once every agent pod runs the new forwarder.",
+		Weakening:       true,
 		RestartRequired: true,
 	})
 )
@@ -71,8 +83,8 @@ var (
 	CAFile = config.Register(config.Spec[string]{
 		Key:             "edge-forwarder.ca-file",
 		RestartRequired: true,
-		Default:         "/etc/scrim/trust/scrim-ca.pem",
-		Description:     "PEM file of the CA the central scrim's certificate must chain to: scrim's CA. No system roots are used.",
+		Default:         "/etc/scrim/edge-trust/scrim-edge-ca.pem",
+		Description:     "PEM file of the edge CA the central scrim's certificate must chain to (never the interception CA). No system roots are used.",
 		Flag:            true,
 	})
 

@@ -288,7 +288,7 @@ is out of date.
 | [`dataplane.upstream-ca-file`](#dataplaneupstream-ca-file) | string | `""` | restart required |
 | [`deployment.replicas`](#deploymentreplicas) | int | `1` | restart required |
 | [`edge-forwarder.api-socket`](#edge-forwarderapi-socket) | string | `""` | restart required |
-| [`edge-forwarder.ca-file`](#edge-forwarderca-file) | string | `/etc/scrim/trust/scrim-ca.pem` | restart required |
+| [`edge-forwarder.ca-file`](#edge-forwarderca-file) | string | `/etc/scrim/edge-trust/scrim-edge-ca.pem` | restart required |
 | [`edge-forwarder.central`](#edge-forwardercentral) | string | `""` | restart required |
 | [`edge-forwarder.connect-timeout`](#edge-forwarderconnect-timeout) | duration | `10s` | restart required |
 | [`edge-forwarder.databases`](#edge-forwarderdatabases) | map | `{}` | restart required |
@@ -296,6 +296,10 @@ is out of date.
 | [`edge-forwarder.socket-permissions`](#edge-forwardersocket-permissions) | string | `0666` | restart required |
 | [`edge-forwarder.ssh-agent-socket`](#edge-forwarderssh-agent-socket) | string | `""` | restart required |
 | [`edge-forwarder.token-file`](#edge-forwardertoken-file) | string | `/var/run/secrets/scrim/token` | restart required |
+| [`edge.ca.cert-file`](#edgecacert-file) | string | `""` | restart required |
+| [`edge.ca.dir`](#edgecadir) | string | `""` | restart required |
+| [`edge.ca.key`](#edgecakey) | secret-ref | empty | restart required |
+| [`edge.legacy-interception-certificate`](#edgelegacy-interception-certificate) | bool | `false` | restart required |
 | [`edge.listen`](#edgelisten) | string | `""` | restart required |
 | [`edge.server-names`](#edgeserver-names) | list | `[]` | restart required |
 | [`entry.listen`](#entrylisten) | string | `127.0.0.1:0` | restart required |
@@ -1250,12 +1254,12 @@ Unix socket the forwarder serves the agent API on, the exec broker included (poi
 
 #### `edge-forwarder.ca-file`
 
-PEM file of the CA the central scrim's certificate must chain to: scrim's CA. No system roots are used.
+PEM file of the edge CA the central scrim's certificate must chain to (never the interception CA). No system roots are used.
 
 | | |
 |---|---|
 | Type | string |
-| Default | `/etc/scrim/trust/scrim-ca.pem` |
+| Default | `/etc/scrim/edge-trust/scrim-edge-ca.pem` |
 | Environment | `SCRIM_EDGE_FORWARDER_CA_FILE` |
 | Flag | `--edge-forwarder-ca-file` |
 | Reload | restart required |
@@ -1346,6 +1350,55 @@ Projected service account token for scrim's audience, read again for every conne
 
 ### edge
 
+#### `edge.ca.cert-file`
+
+PEM certificate of an operator-supplied edge CA, used together with edge.ca.key. It must have its own key, not the interception CA's, and its name constraints, if any, must allow edge.server-names. Never rotated by scrim.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_EDGE_CA_CERT_FILE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `edge.ca.dir`
+
+Directory of the generated edge CA, which issues only the edge listener's certificate. Empty means $XDG_STATE_HOME/scrim/edge-ca (~/.local/state/scrim/edge-ca). Created with mode 0700. Never the interception CA's directory.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_EDGE_CA_DIR` |
+| Flag | none |
+| Reload | restart required |
+
+#### `edge.ca.key`
+
+Reference to the PKCS#8 PEM private key of the operator-supplied edge CA in edge.ca.cert-file (env:, file:, cred: or a store reference). Empty means scrim generates and rotates its own edge CA.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; literals rejected) |
+| Default | empty |
+| Environment | `SCRIM_EDGE_CA_KEY` |
+| Flag | none |
+| Reload | restart required |
+
+#### `edge.legacy-interception-certificate`
+
+For an upgrade window: a forwarder that does not announce the edge CA (one from scrim 1.0, which trusts the interception CA) gets a listener certificate issued by the interception CA instead of the edge CA, so agent pods started before the upgrade keep working until they are restarted. Forwarders that announce the edge CA always get the edge CA's certificate. Turn it off once every agent pod runs the new forwarder.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_EDGE_LEGACY_INTERCEPTION_CERTIFICATE` |
+| Flag | none |
+| Reload | restart required |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
 #### `edge.listen`
 
 Address of the edge listener the forwarders in agent pods connect to (TLS; callers present a Kubernetes service account token). Empty turns it off. Needs identity.kubernetes.enabled and edge.server-names.
@@ -1360,7 +1413,7 @@ Address of the edge listener the forwarders in agent pods connect to (TLS; calle
 
 #### `edge.server-names`
 
-Host names and IP addresses the edge listener's certificate carries, signed by scrim's CA, which forwarders already trust. Required with edge.listen.
+Host names and IP addresses the edge listener's certificate carries, signed by the edge CA (edge.ca.*), which the forwarders trust and nothing else does. A generated edge CA is name-constrained to these. Required with edge.listen.
 
 | | |
 |---|---|

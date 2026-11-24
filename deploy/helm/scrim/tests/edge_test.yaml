@@ -6,6 +6,7 @@ templates:
   - kyverno.yaml
   - networkpolicy.yaml
   - agents.yaml
+  - ca.yaml
 release:
   name: rel
   namespace: ns
@@ -53,8 +54,11 @@ tests:
       - matchRegex: {path: 'spec.variables[6].expression', pattern: '"name": "SCRIM_EDGE_FORWARDER_CENTRAL",\s+"value": "rel-scrim\.ns\.svc\.cluster\.local:9794"'}
       - matchRegex: {path: 'spec.variables[6].expression', pattern: '"name": "SCRIM_EDGE_FORWARDER_DATABASES",\s+"value": "app=127\.0\.0\.1:5432"'}
       - matchRegex: {path: 'spec.variables[6].expression', pattern: '"/usr/local/bin/scrim",\s+"edge",\s+"check"'}
-      # Nothing secret is mounted into the forwarder: the CA's public half and the pod's token.
+      # Nothing secret is mounted into the forwarder: the edge CA's public half and the pod's token.
       - notMatchRegex: {path: 'spec.variables[6].expression', pattern: 'secretName|tls\.key|placeholder'}
+      # It verifies central scrim against the edge CA only, never the interception CA.
+      - matchRegex: {path: 'spec.variables[6].expression', pattern: '"name": "SCRIM_EDGE_FORWARDER_CA_FILE",\s+"value": "/etc/scrim/edge-trust/scrim-edge-ca\.pem"'}
+      - notMatchRegex: {path: 'spec.variables[6].expression', pattern: 'scrim-ca\.pem|ca-bundle\.pem|"name": "scrim-trust"'}
       - matchRegex: {path: 'spec.mutations[0].jsonPatch.expression', pattern: initContainers}
   - it: lets central agent pods reach the edge port and nothing else new
     template: networkpolicy.yaml
@@ -92,3 +96,80 @@ tests:
       - contains:
           path: spec.egress
           content: {ports: [{port: 22, protocol: TCP}]}
+  - it: issues the edge listener's certificate from the edge CA, not the interception CA
+    template: config.yaml
+    asserts:
+      - matchRegex:
+          path: data["chart.yaml"]
+          pattern: "  ca:\n    cert-file: /etc/scrim/edge-ca/tls.crt\n    key: file:/etc/scrim/edge-ca/tls.key\n"
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: "legacy-interception-certificate"}
+  - it: turns on the upgrade window only when asked
+    template: config.yaml
+    set:
+      edge.ca.legacyInterceptionCertificate: true
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "  legacy-interception-certificate: true\n"}
+  - it: mounts the edge CA Secret into central scrim
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: {name: edge-ca, mountPath: /etc/scrim/edge-ca, readOnly: true}
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: edge-ca
+            secret:
+              secretName: rel-scrim-edge-ca
+              defaultMode: 0440
+              items: [{key: tls.crt, path: tls.crt}, {key: tls.key, path: tls.key}]
+  - it: mounts an operator's edge CA Secret
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    set:
+      edge.ca.existingSecret: my-edge-ca
+      edge.ca.certificate: "-----BEGIN CERTIFICATE-----\nMIIBedge\n-----END CERTIFICATE-----"
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: edge-ca
+            secret:
+              secretName: my-edge-ca
+              defaultMode: 0440
+              items: [{key: tls.crt, path: tls.crt}, {key: tls.key, path: tls.key}]
+  - it: generates an edge CA with its own key, kept across uninstalls
+    template: ca.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim-edge-ca}
+    asserts:
+      - isKind: {of: Secret}
+      - equal: {path: type, value: kubernetes.io/tls}
+      - equal: {path: 'metadata.annotations["helm.sh/resource-policy"]', value: keep}
+      - exists: {path: 'data["tls.key"]'}
+  - it: publishes the edge CA next to the interception CA, outside the agents' bundles
+    template: ca.yaml
+    documentSelector: {path: metadata.namespace, value: agents}
+    asserts:
+      - isKind: {of: ConfigMap}
+      - matchRegex: {path: 'data["scrim-edge-ca.pem"]', pattern: "BEGIN CERTIFICATE"}
+  - it: publishes an operator's edge CA certificate and creates no edge CA Secret
+    template: ca.yaml
+    set:
+      edge.ca.existingSecret: my-edge-ca
+      edge.ca.certificate: "-----BEGIN CERTIFICATE-----\nMIIBedge\n-----END CERTIFICATE-----"
+    asserts:
+      - notMatchRegex: {path: metadata.name, pattern: edge-ca}
+      - matchRegex:
+          path: 'data["scrim-edge-ca.pem"]'
+          pattern: "MIIBedge"
+        documentSelector: {path: metadata.namespace, value: agents}
+  - it: publishes no edge CA without edge.enabled
+    template: ca.yaml
+    set:
+      edge.enabled: false
+      edge.databases: {}
+    asserts:
+      - notExists: {path: 'data["scrim-edge-ca.pem"]'}
+        documentSelector: {path: metadata.namespace, value: agents}
+      - notMatchRegex: {path: metadata.name, pattern: edge-ca}
