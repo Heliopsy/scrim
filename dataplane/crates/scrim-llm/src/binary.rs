@@ -2032,7 +2032,7 @@ mod tests {
 
     /// A value generated for this run, shaped like a secret (lowercase hex and dashes, so it
     /// needs no escaping in any of the formats).
-    fn secret() -> String {
+    fn generated_value() -> String {
         use std::hash::BuildHasher as _;
         let h = std::collections::hash_map::RandomState::new().hash_one(0u8);
         format!("zq-test-value-{h:016x}")
@@ -2063,7 +2063,10 @@ mod tests {
     }
 
     fn scan_err_with(b: &[u8], limits: &Limits) -> Undecodable {
-        views_with(b, limits).expect_err("the scan should fail")
+        match views_with(b, limits) {
+            Ok(views) => panic!("the scan should fail; it gave {} views", views.len()),
+            Err(e) => e,
+        }
     }
 
     fn scan_err(b: &[u8]) -> Undecodable {
@@ -2500,7 +2503,7 @@ mod tests {
 
     #[test]
     fn every_part_has_raw_and_utf16_views() {
-        let v = secret();
+        let v = generated_value();
         let mut b = b"RIFF\0\0\0\0WEBPVP8 ".to_vec();
         b.extend_from_slice(v.as_bytes());
         b.push(0x01);
@@ -2520,7 +2523,7 @@ mod tests {
 
     #[test]
     fn markup_gets_an_entity_decoded_view() {
-        let v = secret();
+        let v = generated_value();
         let escaped = v.replace('-', "&#45;").replacen('z', "&#x7A;", 1);
         let svg = format!(
             "\u{feff}  <svg xmlns=\"http://www.w3.org/2000/svg\"><text>a &amp; {escaped}</text></svg>"
@@ -2538,7 +2541,7 @@ mod tests {
 
     #[test]
     fn png_text_chunks_and_profiles_are_read() {
-        let v = secret();
+        let v = generated_value();
         let text = format!("key={}", padded(&v));
         let mut exif = b"MM\0*".to_vec();
         exif.extend_from_slice(&utf16(&v, false));
@@ -2607,7 +2610,7 @@ mod tests {
 
     #[test]
     fn jpeg_segments_are_read_and_joined() {
-        let v = secret();
+        let v = generated_value();
         let (a, b) = v.as_bytes().split_at(9);
         let guid = [b'A'; 32];
         let ext = |off: u32, chunk: &[u8]| {
@@ -2679,7 +2682,7 @@ mod tests {
 
     #[test]
     fn gif_extensions_are_read_and_image_data_skipped() {
-        let v = secret();
+        let v = generated_value();
         let mut body = gif_image();
         body.extend_from_slice(&[0x21, 0xFE]);
         body.extend_from_slice(&sub(format!("comment {v}").as_bytes(), 5));
@@ -2723,7 +2726,7 @@ mod tests {
 
     #[test]
     fn gzip_is_inflated_and_scanned_again() {
-        let v = secret();
+        let v = generated_value();
         let g = gzip(format!("log line {}\n", padded(&v)).as_bytes());
         hidden_from_raw(&g, &v);
         assert_eq!(found(&g, &v), ["gzip content"]);
@@ -2737,7 +2740,7 @@ mod tests {
 
     #[test]
     fn zip_entries_are_read() {
-        let v = secret();
+        let v = generated_value();
         let doc = format!("<w:document><w:t>{v}</w:t></w:document>");
         let z = zip(&[
             ("mimetype", 0, 0, b"application/vnd.oasis.opendocument.text"),
@@ -2809,7 +2812,7 @@ mod tests {
 
     #[test]
     fn pdf_text_is_extracted_through_every_filter() {
-        let v = secret();
+        let v = generated_value();
         let text = content(&v, 9);
         let predicted = png_predict(&text, 7, 1);
         let tiff = tiff_predict(&text, 15, 3);
@@ -2852,22 +2855,25 @@ mod tests {
 
     #[test]
     fn pdf_strings_outside_streams_are_extracted() {
-        let v = secret();
+        let v = generated_value();
         // An octal escape and a line continuation inside the literal.
         let literal = format!("\\172{}\\\n{}", &v[1..5], &v[5..]);
         let hex: String = std::iter::once("FEFF".to_string())
             .chain(v.encode_utf16().map(|u| format!("{u:04X}")))
             .collect();
-        for info in [format!("/Title ({literal})"), format!("/Author <{hex}>")] {
+        for (key, info) in [
+            ("literal", format!("/Title ({literal})")),
+            ("hex", format!("/Author <{hex}>")),
+        ] {
             let p = pdf(&[("/Type /Catalog", None), (&info, None)], "/Info 2 0 R");
             hidden_from_raw(&p, &v);
-            assert_eq!(found(&p, &v), ["pdf strings"], "{info}");
+            assert_eq!(found(&p, &v), ["pdf strings"], "{key} string");
         }
     }
 
     #[test]
     fn pdf_dct_images_have_their_metadata_read() {
-        let v = secret();
+        let v = generated_value();
         let j = jpeg(&[(0xFE, padded(&v).into_bytes())]);
         let dict = "/Type /XObject /Subtype /Image /Filter [/FlateDecode /DCTDecode]";
         let p = pdf(&[(dict, Some(&zlib(&j)))], "");
@@ -2882,7 +2888,7 @@ mod tests {
     #[test]
     fn pdf_image_pixels_are_not_read() {
         // Documented limitation: text drawn into pixels is not decoded.
-        let v = secret();
+        let v = generated_value();
         let p = pdf(
             &[(
                 "/Subtype /Image /Filter /FlateDecode",
@@ -2895,7 +2901,7 @@ mod tests {
 
     #[test]
     fn pdf_stream_length_is_checked_against_endstream() {
-        let v = secret();
+        let v = generated_value();
         let data = zlib(&content(&v, 4));
         let good = pdf(&[("/Filter /FlateDecode", Some(&data))], "");
         let wrong = format!("/Length {}", data.len());
@@ -3085,7 +3091,7 @@ mod tests {
 
     #[test]
     fn nesting_is_bounded() {
-        let v = secret();
+        let v = generated_value();
         let p = pdf(
             &[("/Filter /FlateDecode", Some(&zlib(&content(&v, 3))))],
             "",
@@ -3224,7 +3230,7 @@ mod tests {
 
     #[test]
     fn the_visitor_can_stop_the_scan() {
-        let v = secret();
+        let v = generated_value();
         let p = png(&[ztxt(v.as_bytes()), ztxt(v.as_bytes())]);
         let mut seen = Vec::new();
         scan_views(&p, &Limits::default(), &mut |view| {
@@ -3334,7 +3340,7 @@ mod tests {
 
         #[test]
         fn a_value_split_by_kerning_is_found(split in 1usize..30, kern in -500i32..500) {
-            let v = secret();
+            let v = generated_value();
             let (a, b) = v.split_at(split);
             let text = format!("BT [({a}) {kern} ({b})] TJ ET");
             let p = pdf(&[("/Filter /FlateDecode", Some(&zlib(text.as_bytes())))], "");
