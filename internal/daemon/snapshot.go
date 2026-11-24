@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/heliopsy/scrim/internal/catalog"
 	"github.com/heliopsy/scrim/internal/config"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
@@ -594,7 +596,8 @@ func ListenersFrom(cfg *config.Config) []*pb.Listener {
 func cloneListeners(in []*pb.Listener) []*pb.Listener {
 	out := make([]*pb.Listener, len(in))
 	for i, l := range in {
-		out[i] = &pb.Listener{Name: l.GetName(), Kind: l.GetKind(), Address: l.GetAddress(), Tls: l.GetTls()}
+		// Every field: a hand copy once dropped BlockUnrouted.
+		out[i] = proto.Clone(l).(*pb.Listener)
 	}
 	return out
 }
