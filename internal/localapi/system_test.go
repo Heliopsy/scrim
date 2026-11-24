@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//go:build unix
+
+// The system service (scrim install --system) and its socket group exist on Linux and macOS only.
+
 package localapi
 
 import (

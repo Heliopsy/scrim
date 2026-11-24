@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"os/user"
 	"regexp"
 	"slices"
-	"strconv"
 )
 
 // PeerRule maps local users or groups to one agent. It is the configuration
@@ -35,32 +33,6 @@ type PeerRule struct {
 type Accounts interface {
 	UserID(name string) (uint32, error)
 	GroupID(name string) (uint32, error)
-}
-
-// SystemAccounts resolves names through os/user.
-type SystemAccounts struct{}
-
-// UserID looks up a user name.
-func (SystemAccounts) UserID(name string) (uint32, error) {
-	u, err := user.Lookup(name)
-	if err != nil {
-		return 0, err
-	}
-	return parseID(u.Uid)
-}
-
-// GroupID looks up a group name.
-func (SystemAccounts) GroupID(name string) (uint32, error) {
-	g, err := user.LookupGroup(name)
-	if err != nil {
-		return 0, err
-	}
-	return parseID(g.Gid)
-}
-
-func parseID(s string) (uint32, error) {
-	n, err := strconv.ParseUint(s, 10, 32)
-	return uint32(n), err
 }
 
 // agentName is the shape of an agent name: it appears in principals, audit
@@ -167,10 +139,10 @@ func (m *PeerMap) Lookup(p Peer) (Identity, bool) {
 // scrim runs as is one agent named after that user. Every other local user
 // is unknown and denied.
 func DefaultPeerRules() []PeerRule {
-	uid := uint32(os.Getuid()) // #nosec G115 -- uid_t is 32 bits
+	uid := uint32(os.Getuid()) // #nosec G115 -- uid_t is 32 bits; -1 on Windows, which is SelfUID there
 	name := "local"
-	if u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10)); err == nil && ValidAgentName(u.Username) {
-		name = u.Username
+	if n := selfName(); ValidAgentName(n) {
+		name = n
 	}
 	return []PeerRule{{Agent: name, UIDs: []uint32{uid}}}
 }

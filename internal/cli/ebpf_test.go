@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//go:build unix
+
+// eBPF interception is Linux only; these tests read Unix file ownership.
+
 package cli
 
 import (

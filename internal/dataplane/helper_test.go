@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -29,10 +30,17 @@ func TestMain(m *testing.M) {
 }
 
 func fakeDataPlane() int {
-	fd, _ := strconv.Atoi(os.Getenv("SCRIM_DP_FD"))
-	c, err := net.FileConn(os.NewFile(uintptr(fd), "control"))
-	if err != nil {
-		return 2
+	var c net.Conn
+	if os.Getenv("SCRIM_DP_STDIO") == "1" {
+		// Windows: the connection is stdin and stdout, as for the real one.
+		c = &stdioConn{}
+	} else {
+		fd, _ := strconv.Atoi(os.Getenv("SCRIM_DP_FD"))
+		var err error
+		c, err = net.FileConn(os.NewFile(uintptr(fd), "control"))
+		if err != nil {
+			return 2
+		}
 	}
 	protocol := Protocol
 	if v := os.Getenv("SCRIM_FAKE_PROTOCOL"); v != "" {
@@ -112,6 +120,19 @@ func (f *fake) Status(context.Context, *pb.StatusRequest) (*pb.StatusResponse, e
 	defer f.mu.Unlock()
 	return &pb.StatusResponse{Protocol: Protocol, Ready: f.applied > 0, AppliedSnapshotVersion: f.applied, CaTrustBundlePem: "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"}, nil
 }
+
+// stdioConn is the fake's end of the --stdio connection.
+type stdioConn struct{ net.Conn }
+
+func (stdioConn) Read(b []byte) (int, error)  { return os.Stdin.Read(b) }
+func (stdioConn) Write(b []byte) (int, error) { return os.Stdout.Write(b) }
+func (stdioConn) Close() error                { return os.Stdout.Close() }
+func (stdioConn) LocalAddr() net.Addr         { return pipeAddr{} }
+func (stdioConn) RemoteAddr() net.Addr        { return pipeAddr{} }
+func (stdioConn) SetDeadline(time.Time) error { return nil }
+
+func (stdioConn) SetReadDeadline(time.Time) error  { return nil }
+func (stdioConn) SetWriteDeadline(time.Time) error { return nil }
 
 // oneConn is a listener that yields one connection.
 type oneConn struct {

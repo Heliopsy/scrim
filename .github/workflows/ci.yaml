@@ -325,6 +325,59 @@ jobs:
         env:
           SCRIM_TEST_KEYCHAIN: "1"
 
+  # The release ships Windows binaries (docs/install.md). Unit tests of both
+  # halves on Windows, then the control plane against the real data plane
+  # over the stdio boundary Windows uses instead of an inherited socket.
+  # GitHub-hosted: there is no self-hosted Windows runner. Packages and test
+  # files that cannot run on Windows are listed with their reason in
+  # scripts/test-windows.sh and in `//go:build unix` constraints.
+  windows:
+    name: Windows
+    runs-on: windows-2025
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      SCRIM_TEST_PODMAN: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Go vet
+        run: go vet ./...
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
+        with:
+          # renovate: datasource=github-releases depName=golangci/golangci-lint
+          version: v2.15.0
+      - name: Go tests
+        run: scripts/test-windows.sh -timeout 30m
+      - name: Rust toolchain
+        working-directory: dataplane
+        run: rustup toolchain install && cargo --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          workspaces: dataplane
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Rust clippy
+        working-directory: dataplane
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Rust tests
+        working-directory: dataplane
+        run: cargo test --locked --workspace
+      - name: Data plane binary
+        working-directory: dataplane
+        run: cargo build --locked -p scrim-dataplane
+      - name: Launch the real data plane from Go, the daemon end to end and scrim run
+        run: go test -count=1 -run 'TestRealDataPlane|TestEndToEndRealDataPlane|TestRunPrintEnvWithRealDaemon' -v ./internal/dataplane/ ./internal/daemon/ ./internal/cli/
+        env:
+          SCRIM_TEST_DATAPLANE: ${{ github.workspace }}/dataplane/target/debug/scrim-dataplane.exe
+
   ntfy-e2e:
     name: ntfy end-to-end
     runs-on: ho-z10

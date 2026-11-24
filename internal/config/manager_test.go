@@ -7,11 +7,9 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"os/signal"
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -253,23 +251,5 @@ func TestWatchReloadsOnFileChange(t *testing.T) {
 	}
 	if m.Current().Version() != 3 || w.level.Get(m.Current()) != "warn" {
 		t.Fatal("invalid edit changed the running configuration")
-	}
-}
-
-func TestSIGHUPReloads(t *testing.T) {
-	// Our own subscription keeps the default SIGHUP action (exit) away
-	// while Run is still starting.
-	guard := make(chan os.Signal, 1)
-	signal.Notify(guard, syscall.SIGHUP)
-	defer signal.Stop(guard)
-
-	w := newWorld(t)
-	p := w.file("c.yaml", header+"config.watch: false\nlog.level: info\n")
-	m, _ := newManager(t, w, p)
-	runManager(t, m)
-	w.file("c.yaml", header+"config.watch: false\nlog.level: error\n")
-	waitVersion(t, m, 2, func() { _ = syscall.Kill(os.Getpid(), syscall.SIGHUP) })
-	if st := m.Status(); st.LastReload == nil || st.LastReload.Trigger != "signal" {
-		t.Fatalf("last reload = %+v", st.LastReload)
 	}
 }

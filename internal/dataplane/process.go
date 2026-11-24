@@ -13,9 +13,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
@@ -55,8 +53,9 @@ type Process struct {
 	stop sync.Once
 }
 
-// Start launches b. The child gets one end of a socketpair as fd 3 and an
-// environment holding only its own settings; it inherits nothing else.
+// Start launches b. The child gets its end of the boundary connection (a
+// socketpair end as fd 3 on Unix, its stdin and stdout pipes on Windows) and
+// an environment holding only its own settings; it inherits nothing else.
 func Start(b Binary, o StartOptions) (*Process, error) {
 	log := o.Log
 	if log == nil {
@@ -87,21 +86,13 @@ func Start(b Binary, o StartOptions) (*Process, error) {
 }
 
 func spawn(exe *executable, o StartOptions, log *slog.Logger) (*Process, error) {
-	// ForkLock keeps a concurrent exec elsewhere in the process from
-	// inheriting the pair before it is close-on-exec.
-	syscall.ForkLock.RLock()
-	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
-	if err == nil {
-		syscall.CloseOnExec(fds[0])
-		syscall.CloseOnExec(fds[1])
-	}
-	syscall.ForkLock.RUnlock()
+	ch, err := newChannel()
 	if err != nil {
-		return nil, fmt.Errorf("dataplane: socketpair: %w", err)
+		return nil, err
 	}
-	ours := os.NewFile(uintptr(fds[0]), "dataplane-control")
-	theirs := os.NewFile(uintptr(fds[1]), "dataplane-child")
-	defer func() { _ = theirs.Close() }()
+	// The child's ends are closed once it has started (or failed to), so
+	// the parent holds only its own and sees the child exit as EOF.
+	defer ch.closeChild()
 
 	mlock := o.Mlock
 	if mlock == "" {
@@ -111,21 +102,21 @@ func spawn(exe *executable, o StartOptions, log *slog.Logger) (*Process, error) 
 	if filter == "" {
 		filter = "info"
 	}
-	env := []string{"SCRIM_DP_FD=" + strconv.Itoa(ChildFD), "SCRIM_DP_MLOCK=" + mlock, "SCRIM_DP_LOG=" + filter}
+	env := append(ch.env(), "SCRIM_DP_MLOCK="+mlock, "SCRIM_DP_LOG="+filter)
 	if o.UpstreamCAFile != "" {
 		env = append(env, "SCRIM_DP_EXTRA_CA_FILE="+o.UpstreamCAFile)
 	}
 	cmd := &exec.Cmd{
-		Path:       exe.path,
-		Args:       []string{"scrim-dataplane", "--fd", strconv.Itoa(ChildFD)},
-		Env:        append(env, o.ExtraEnv...),
-		ExtraFiles: []*os.File{theirs}, // fd 3
+		Path: exe.path,
+		Args: append([]string{"scrim-dataplane"}, ch.args()...),
+		Env:  append(env, o.ExtraEnv...),
 	}
+	ch.attach(cmd)
 	// A plain pipe rather than StderrPipe, so Wait does not race the relay
 	// and the last lines before an exit are kept.
 	logR, logW, err := os.Pipe()
 	if err != nil {
-		_ = ours.Close()
+		ch.closeParent()
 		return nil, err
 	}
 	cmd.Stderr = logW
@@ -133,7 +124,7 @@ func spawn(exe *executable, o StartOptions, log *slog.Logger) (*Process, error) 
 	_ = logW.Close()
 	if err != nil {
 		_ = logR.Close()
-		_ = ours.Close()
+		ch.closeParent()
 		return nil, fmt.Errorf("dataplane: start (%s): %w", exe.how, err)
 	}
 	go func() {
@@ -141,8 +132,7 @@ func spawn(exe *executable, o StartOptions, log *slog.Logger) (*Process, error) 
 		_ = logR.Close()
 	}()
 
-	nc, err := net.FileConn(ours)
-	_ = ours.Close()
+	nc, err := ch.conn()
 	if err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
@@ -244,3 +234,9 @@ func level(s string) slog.Level {
 	}
 	return slog.LevelInfo
 }
+
+// pipeAddr names the ends of a boundary connection that has no address.
+type pipeAddr struct{}
+
+func (pipeAddr) Network() string { return "pipe" }
+func (pipeAddr) String() string  { return "dataplane" }

@@ -137,6 +137,10 @@ func TestWriteVerified(t *testing.T) {
 	if string(got) != string(img) {
 		t.Fatal("tampered file was not replaced")
 	}
+	if runtime.GOOS == "windows" {
+		// Mode bits do not reach a DACL; internal/fsperm tests a loose DACL.
+		return
+	}
 	if err := os.Chmod(dir, 0o777); err != nil {
 		t.Fatal(err)
 	}

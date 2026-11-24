@@ -6,7 +6,8 @@ package identity
 
 import "golang.org/x/sys/unix"
 
-func peerOfFD(fd int) (Peer, error) {
+func peerOfFD(h uintptr) (Peer, error) {
+	fd := int(h) // #nosec G115 -- a file descriptor fits in an int
 	u, err := unix.GetsockoptUcred(fd, unix.SOL_SOCKET, unix.SO_PEERCRED)
 	if err != nil {
 		return Peer{}, err
