@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/testing/testpodman"
+
 	"github.com/godbus/dbus/v5"
 
 	"github.com/heliopsy/scrim/internal/secret"
@@ -44,7 +46,7 @@ func requirePodman(t *testing.T) {
 		}
 		t.Skip("podman not installed: skipping the Secret Service run (set SCRIM_TEST_PODMAN=1 to require it)")
 	}
-	if out, err := exec.Command("podman", "info", "--format", "{{.Host.Security.Rootless}}").CombinedOutput(); err != nil {
+	if out, err := testpodman.Command("info", "--format", "{{.Host.Security.Rootless}}").CombinedOutput(); err != nil {
 		if mode == "1" {
 			t.Fatalf("SCRIM_TEST_PODMAN=1 but podman does not work: %v: %s", err, out)
 		}
@@ -54,7 +56,7 @@ func requirePodman(t *testing.T) {
 
 func podman(t *testing.T, env []string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("podman", args...)
+	cmd := testpodman.Command(args...)
 	cmd.Env = append(os.Environ(), env...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -74,12 +76,12 @@ func startSecretService(t *testing.T) *secretServiceContainer {
 	t.Helper()
 	requirePodman(t)
 	podman(t, nil, "build", "-q", "-t", keyringImage, "testdata/secretservice")
-	t.Cleanup(func() { _ = exec.Command("podman", "rmi", "-f", keyringImage).Run() })
+	t.Cleanup(func() { _ = testpodman.Command("rmi", "-f", keyringImage).Run() })
 	c := &secretServiceContainer{name: "scrim-keyring-" + gen(t)[3:15], password: gen(t)}
 	// The keyring password goes through podman's environment, not argv.
 	podman(t, []string{"KEYRING_PASSWORD=" + c.password}, "run", "-d", "--name", c.name,
 		"-e", "KEYRING_PASSWORD", "-p", "127.0.0.1::7777", keyringImage)
-	t.Cleanup(func() { _ = exec.Command("podman", "rm", "-f", "-v", "-t", "2", c.name).Run() })
+	t.Cleanup(func() { _ = testpodman.Command("rm", "-f", "-v", "-t", "2", c.name).Run() })
 	hostport := strings.SplitN(podman(t, nil, "port", c.name, "7777"), "\n", 2)[0]
 	host, port, _ := strings.Cut(strings.TrimSpace(hostport), ":")
 	c.addr = fmt.Sprintf("tcp:host=%s,port=%s", host, port)
@@ -95,7 +97,7 @@ func startSecretService(t *testing.T) *secretServiceContainer {
 			}
 		}
 		if time.Now().After(deadline) {
-			logs, _ := exec.Command("podman", "logs", c.name).CombinedOutput()
+			logs, _ := testpodman.Command("logs", c.name).CombinedOutput()
 			t.Fatalf("Secret Service not ready: %v\n%s", err, logs)
 		}
 		time.Sleep(200 * time.Millisecond)

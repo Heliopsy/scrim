@@ -27,6 +27,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/heliopsy/scrim/internal/testing/testpodman"
 )
 
 // Service describes one container.
@@ -119,14 +121,14 @@ func (s *Service) setup() {
 	args = append(args, s.RunArgs...)
 	args = append(args, image)
 	args = append(args, extra...)
-	out, err := exec.Command("podman", args...).CombinedOutput()
+	out, err := testpodman.Command(args...).CombinedOutput()
 	if err != nil {
 		s.skip = fmt.Sprintf("podman run %s failed: %v: %s", image, err, strings.TrimSpace(string(out)))
 		return
 	}
 	s.ports = map[string]string{}
 	for _, p := range append([]string{s.Port}, s.Extra...) {
-		hp, err := exec.Command("podman", "port", s.name, p).Output()
+		hp, err := testpodman.Command("port", s.name, p).Output()
 		if err != nil {
 			s.Stop()
 			s.skip = fmt.Sprintf("podman port %s %s: %v", s.name, p, err)
@@ -141,7 +143,7 @@ func (s *Service) setup() {
 			d = 90 * time.Second
 		}
 		if err := waitReady(s.Ready, s.addr, d); err != nil {
-			logs, _ := exec.Command("podman", "logs", "--tail", "20", s.name).CombinedOutput()
+			logs, _ := testpodman.Command("logs", "--tail", "20", s.name).CombinedOutput()
 			s.Stop()
 			s.addr = ""
 			s.skip = fmt.Sprintf("%s in %s never became ready: %v\n%s", s.Name, s.name, err, bytes.TrimSpace(logs))
@@ -201,12 +203,12 @@ func (s *Service) Pause(t testing.TB) (resume func()) {
 	if s.name == "" {
 		t.Skip("pausing needs a container this test started; " + s.Env + " points at an external server")
 	}
-	if out, err := exec.Command("podman", "pause", s.name).CombinedOutput(); err != nil {
+	if out, err := testpodman.Command("pause", s.name).CombinedOutput(); err != nil {
 		t.Skipf("podman pause %s: %v: %s (rootless pause needs cgroup v2 with the freezer)", s.name, err, out)
 	}
 	var once sync.Once
 	resume = func() {
-		once.Do(func() { _ = exec.Command("podman", "unpause", s.name).Run() })
+		once.Do(func() { _ = testpodman.Command("unpause", s.name).Run() })
 	}
 	t.Cleanup(resume)
 	return resume
@@ -217,7 +219,7 @@ func (s *Service) Stop() {
 	s.stopMu.Lock()
 	defer s.stopMu.Unlock()
 	if s.name != "" {
-		_ = exec.Command("podman", "rm", "-f", "-v", s.name).Run()
+		_ = testpodman.Command("rm", "-f", "-v", s.name).Run()
 	}
 }
 

@@ -34,6 +34,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/testing/testpodman"
+
 	"github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib" // the pgx database/sql driver
 
@@ -127,7 +129,7 @@ func (s *Server) Stop() {
 		_ = s.db.Close()
 	}
 	if s.name != "" {
-		_ = exec.Command("podman", "rm", "-f", "-v", s.name).Run()
+		_ = testpodman.Command("rm", "-f", "-v", s.name).Run()
 	}
 }
 
@@ -185,12 +187,12 @@ func (s *Server) setup() {
 		"-p", "127.0.0.1::" + port, "--entrypoint", "sh"}
 	args = append(args, env...)
 	args = append(args, image, "-c", script)
-	if out, err := exec.Command("podman", args...).CombinedOutput(); err != nil {
+	if out, err := testpodman.Command(args...).CombinedOutput(); err != nil {
 		s.skip = fmt.Sprintf("podman run %s failed: %v: %s", image, err, strings.TrimSpace(string(out)))
 		s.name = ""
 		return
 	}
-	hp, err := exec.Command("podman", "port", s.name, port+"/tcp").Output()
+	hp, err := testpodman.Command("port", s.name, port+"/tcp").Output()
 	if err != nil {
 		s.Stop()
 		s.skip = fmt.Sprintf("podman port %s: %v", s.name, err)
@@ -198,7 +200,7 @@ func (s *Server) setup() {
 	}
 	addr := strings.TrimSpace(strings.Split(string(hp), "\n")[0])
 	if err := s.connect(addr); err != nil {
-		logs, _ := exec.Command("podman", "logs", "--tail", "30", s.name).CombinedOutput()
+		logs, _ := testpodman.Command("logs", "--tail", "30", s.name).CombinedOutput()
 		s.Stop()
 		s.skip = fmt.Sprintf("%s in %s never became ready: %v\n%s", s.Kind, s.name, err, bytes.TrimSpace(logs))
 		return
