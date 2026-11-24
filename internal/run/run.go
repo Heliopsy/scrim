@@ -318,7 +318,7 @@ func (p *Prepared) writeFiles() error {
 		if err := os.MkdirAll(filepath.Dir(l), 0o700); err != nil {
 			return refused("creating the directory of %s failed: %v", name, err)
 		}
-		if err := os.Symlink(target, l); err != nil {
+		if err := linkBin(target, l); err != nil {
 			return refused("linking %s failed: %v", name, err)
 		}
 	}

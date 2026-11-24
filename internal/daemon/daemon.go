@@ -51,6 +51,7 @@ import (
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/dataplane"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
+	"github.com/heliopsy/scrim/internal/fsperm"
 	"github.com/heliopsy/scrim/internal/identity/issuer"
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/obs"
@@ -1111,7 +1112,7 @@ func (p placeholders) Placeholder(ref stores.Ref) string { return p.b.Placeholde
 // refuses one group or others can access (leak-assurance "Capture mode").
 // The data plane checks again before it writes.
 func prepareCaptureDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := fsperm.MkdirPrivate(dir); err != nil {
 		return fmt.Errorf("proxy.capture.dir: %w", err)
 	}
 	fi, err := os.Stat(dir)
@@ -1121,8 +1122,10 @@ func prepareCaptureDir(dir string) error {
 	if !fi.IsDir() {
 		return fmt.Errorf("proxy.capture.dir: %s is not a directory", dir)
 	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("proxy.capture.dir: %s is accessible to group or others (mode %04o); use mode 0700", dir, fi.Mode().Perm())
+	if loose, detail, err := fsperm.Loose(dir, fi); err != nil {
+		return fmt.Errorf("proxy.capture.dir: %w", err)
+	} else if loose {
+		return fmt.Errorf("proxy.capture.dir: %s is accessible to group or others (%s); %s", dir, detail, fsperm.FixHint(dir, true))
 	}
 	return nil
 }

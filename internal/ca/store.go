@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/fsperm"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -91,7 +92,7 @@ func homeDir(getenv func(string) string) (string, error) {
 // ensureDir creates dir with mode 0700 and refuses one that others can
 // reach.
 func ensureDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := fsperm.MkdirPrivate(dir); err != nil {
 		return fmt.Errorf("ca: create %s: %w", dir, err)
 	}
 	return checkPrivateDir(dir)
@@ -105,8 +106,10 @@ func checkPrivateDir(dir string) error {
 	if !fi.IsDir() {
 		return fmt.Errorf("ca: %s is not a directory", dir)
 	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("ca: %s is accessible to group or others (mode %04o); run `chmod 700 %s`", dir, fi.Mode().Perm(), dir)
+	if loose, detail, err := fsperm.Loose(dir, fi); err != nil {
+		return fmt.Errorf("ca: %w", err)
+	} else if loose {
+		return fmt.Errorf("ca: %s is accessible to group or others (%s); %s", dir, detail, fsperm.FixHint(dir, true))
 	}
 	return checkOwner(dir, fi)
 }
@@ -263,9 +266,11 @@ func readPrivateFile(path string) (secret.Value, error) {
 	if !fi.Mode().IsRegular() {
 		return secret.Value{}, fmt.Errorf("ca: %s is not a regular file", path)
 	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return secret.Value{}, fmt.Errorf("ca: %s is readable by group or others (mode %04o); refusing to use it, run `chmod 600 %s`",
-			path, fi.Mode().Perm(), path)
+	if loose, detail, err := fsperm.Loose(path, fi); err != nil {
+		return secret.Value{}, fmt.Errorf("ca: %w", err)
+	} else if loose {
+		return secret.Value{}, fmt.Errorf("ca: %s is readable by group or others (%s); refusing to use it, %s",
+			path, detail, fsperm.FixHint(path, false))
 	}
 	if err := checkOwner(path, fi); err != nil {
 		return secret.Value{}, err

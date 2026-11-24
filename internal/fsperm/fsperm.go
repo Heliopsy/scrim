@@ -11,7 +11,6 @@
 package fsperm
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 )
@@ -22,19 +21,6 @@ import (
 // Windows.
 func Loose(path string, fi fs.FileInfo) (loose bool, detail string, err error) {
 	return loose0(path, fi)
-}
-
-// Check returns an error naming path when it is loose, or when its access
-// cannot be read. what prefixes the message ("ca", "placeholder").
-func Check(what, path string, fi fs.FileInfo) error {
-	loose, detail, err := Loose(path, fi)
-	if err != nil {
-		return fmt.Errorf("%s: reading the access of %s: %w", what, path, err)
-	}
-	if loose {
-		return fmt.Errorf("%s: %s is accessible to group or others (%s); %s", what, path, detail, FixHint(path, fi.IsDir()))
-	}
-	return nil
 }
 
 // MkdirPrivate creates dir and any missing parents. The directory itself is

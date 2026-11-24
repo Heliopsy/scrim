@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -371,6 +372,12 @@ func (b *builder) proxy() {
 // agent would otherwise sign with directly.
 func (b *builder) sshAgent() {
 	if !b.in.SSHAgent || !b.identified() {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		// Windows' OpenSSH reaches an agent through a named pipe, not a
+		// Unix socket; pointing it at one would break ssh in the session.
+		b.warn("scrim's ssh-agent is not available on Windows: SSH_AUTH_SOCK is left as it is (docs/limitations.md, Platforms)")
 		return
 	}
 	sock := b.file(FileSSHAgent)

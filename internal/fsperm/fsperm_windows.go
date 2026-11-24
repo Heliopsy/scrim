@@ -181,5 +181,6 @@ func FixHint(path string, dir bool) string {
 	if dir {
 		flags = "(OI)(CI)"
 	}
-	return fmt.Sprintf("run `icacls \"%s\" /inheritance:r /grant:r \"%%USERNAME%%:%sF\" SYSTEM:%sF Administrators:%sF`", path, flags, flags, flags)
+	return fmt.Sprintf("run `icacls \"%s\" /inheritance:r /grant:r \"%%USERNAME%%:%sF\" SYSTEM:%sF Administrators:%sF` "+
+		"and remove any other account `icacls \"%s\"` still lists with /remove", path, flags, flags, flags, path)
 }

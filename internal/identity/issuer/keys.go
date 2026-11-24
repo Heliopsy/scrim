@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/fsperm"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -202,7 +203,7 @@ type keyDir struct {
 }
 
 func ensureDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := fsperm.MkdirPrivate(dir); err != nil {
 		return fmt.Errorf("issuer: create %s: %w", dir, err)
 	}
 	fi, err := os.Stat(dir)
@@ -212,8 +213,10 @@ func ensureDir(dir string) error {
 	if !fi.IsDir() {
 		return fmt.Errorf("issuer: %s is not a directory", dir)
 	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("issuer: %s is accessible to group or others (mode %04o); run `chmod 700 %s`", dir, fi.Mode().Perm(), dir)
+	if loose, detail, err := fsperm.Loose(dir, fi); err != nil {
+		return fmt.Errorf("issuer: %w", err)
+	} else if loose {
+		return fmt.Errorf("issuer: %s is accessible to group or others (%s); %s", dir, detail, fsperm.FixHint(dir, true))
 	}
 	return nil
 }
@@ -317,8 +320,10 @@ func checkPrivateFile(path string) error {
 	if !fi.Mode().IsRegular() {
 		return fmt.Errorf("issuer: %s is not a regular file", path)
 	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("issuer: %s is accessible to group or others (mode %04o)", path, fi.Mode().Perm())
+	if loose, detail, err := fsperm.Loose(path, fi); err != nil {
+		return fmt.Errorf("issuer: %w", err)
+	} else if loose {
+		return fmt.Errorf("issuer: %s is accessible to group or others (%s)", path, detail)
 	}
 	return nil
 }
