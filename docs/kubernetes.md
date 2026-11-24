@@ -127,7 +127,7 @@ way with `auth.method: kubernetes-auth`.
 values never go into values: settings that hold a credential take a `file:` reference to a Secret
 mounted with `secretMounts` (or `env:` with `central.extraEnv` and `secretKeyRef`), and the chart refuses a
 literal in the credential fields of `config.stores` and in `config.identity.store-credentials`.
-Every value is listed in the [chart README](../deploy/helm/scrim/README.md#values).
+Every value is listed in [helm-values.md](helm-values.md).
 
 Every store needs `redact` targets that match at least one secret when scrim first loads it. A target
 that matches nothing (a misspelt path or pattern) stops scrim at start-up with an error naming it, so

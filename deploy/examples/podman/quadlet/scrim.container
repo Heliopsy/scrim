@@ -9,8 +9,8 @@
 #   systemctl --user daemon-reload
 #   systemctl --user start scrim
 #
-# With the 0.1 tag and AutoUpdate=registry, `podman auto-update` (or its
-# timer) pulls new 0.1.x patch releases and restarts the service, and rolls
+# With the 1.0 tag and AutoUpdate=registry, `podman auto-update` (or its
+# timer) pulls new 1.0.x patch releases and restarts the service, and rolls
 # back when the new container fails to start.
 
 [Unit]
@@ -21,7 +21,7 @@ After=network-online.target
 
 [Container]
 ContainerName=scrim
-Image=ghcr.io/heliopsy/scrim:0.1
+Image=ghcr.io/heliopsy/scrim:1.0
 AutoUpdate=registry
 Exec=proxy
 ReadOnly=true

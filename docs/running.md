@@ -48,10 +48,16 @@ restarts it with backoff and traffic is refused until it is back.
 | LLM proxy on a Unix socket | `proxy.socket` | off | Same routes, for clients that can use a socket. |
 | Forward proxy | `proxy.forward-listen` | `127.0.0.1:9791` | `HTTPS_PROXY=http://<addr>` (`scrim run` sets it with the CA for the child): provider hosts, including `chatgpt.com` and `ab.chatgpt.com` for Codex, go to the LLM proxy; other hosts to the tool proxy with credential injection. |
 | Tool proxy | `tool-proxy.listen` | off | HTTPS tool proxy alone. |
+| Transparent listener | `proxy.transparent-listen` | off | Linux. Connections redirected by nftables or eBPF, routed by TLS server name or Host header; `scrim install --transparent` sets `127.0.0.1:9793` and `[::1]:9793` ([interception.md](interception.md#3-transparent-machine-wide)). |
+| SNI listener | `proxy.sni-listen` | off | DNS override mode; `scrim install --dns` sets `127.0.83.1:443` ([interception.md](interception.md#4-dns-override)). |
+| Database proxies | `databases.<name>.listen` | a Unix socket per database | PostgreSQL and MySQL clients log in without a password ([databases.md](databases.md)). |
+| Edge listener | `edge.listen` | off | TLS, for the edge forwarders in agent pods ([edge-forwarder.md](edge-forwarder.md)). |
+| Identity issuer | `identity.issuer.listen` | off | Discovery document and JWKS only, when scrim issues identity tokens ([identity.md](identity.md)). |
 | Agent API | `api.socket` | `$XDG_RUNTIME_DIR/scrim/api.sock` | Mode `api.permissions` (0600), group `api.group` (the system service: 0660, `scrim-agents`). Callers are identified by peer credentials and session tokens ([identity.md](identity.md)). |
 | Entry page | `entry.listen` | `127.0.0.1:0` | Where a human types a value for `secret_ask_human`. |
 | Admin API | `admin.url` | `unix:$XDG_RUNTIME_DIR/scrim/admin.sock` | Operator commands ([approvals.md](approvals.md)). |
 | Decision links | `approvals.listen` | off | Only the decision endpoint, for `approvals.public-url` to point at through a TLS proxy. |
+| Per-session ssh-agent | `run.ssh-agent` | on under `scrim run` | `<session-dir>/ssh-agent.sock` as `SSH_AUTH_SOCK` ([ssh-agent.md](ssh-agent.md)). |
 | Metrics and health | `metrics.listen` (`127.0.0.1:9792`) | off; on with `metrics.enabled` or `--metrics` | `metrics.path`, `/healthz`, `/livez`, `/readyz`; health only when `metrics.listen` is set without the flag. See [monitoring.md](monitoring.md). |
 
 Listener addresses need a restart; a reload that changes one keeps the running listener and lists the

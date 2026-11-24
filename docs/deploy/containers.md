@@ -30,11 +30,11 @@ The compose file follows the Compose Specification, so `docker compose` reads it
 Verify the image and pin its digest:
 
 ```sh
-cosign verify ghcr.io/heliopsy/scrim:0.1.0 \
+cosign verify ghcr.io/heliopsy/scrim:1.0.0 \
   --certificate-identity-regexp '^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(heads/main|tags/v.+)$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   | jq -r '.[0].critical.image."docker-manifest-digest"'
-# sha256:490a9ca52efeba6f9ed4c886f0dba55e33325603988c6570dd29477827cf683e for 0.1.0
+# sha256:<digest>, the digest to pin
 ```
 
 The examples use the tag so they read easily; for a deployment use
@@ -79,7 +79,7 @@ podman run -d --name scrim \
   -p 127.0.0.1:9790:9790 -p 127.0.0.1:9791:9791 -p 127.0.0.1:9792:9792 \
   --health-cmd '["/usr/local/bin/scrim", "doctor", "--timeout", "5s"]' \
   --health-interval 30s --health-start-period 20s \
-  ghcr.io/heliopsy/scrim:0.1.0 proxy
+  ghcr.io/heliopsy/scrim:1.0.0 proxy
 ```
 
 ## Quadlet
@@ -101,10 +101,10 @@ loginctl enable-linger "$USER"                      # start at boot without a lo
 ```
 
 The Quadlet unit has no `[Install]` enablement step: the generator links it into
-`default.target` from `WantedBy=`. The image is `ghcr.io/heliopsy/scrim:0.1` with
+`default.target` from `WantedBy=`. The image is `ghcr.io/heliopsy/scrim:1.0` with
 `AutoUpdate=registry`, so `podman auto-update` (or `systemctl --user enable --now
-podman-auto-update.timer`) pulls 0.1.x patch releases, restarts the unit and rolls back when the
-new container fails to start. Pin `0.1.0` or a digest to update only by editing the file.
+podman-auto-update.timer`) pulls 1.0.x patch releases, restarts the unit and rolls back when the
+new container fails to start. Pin `1.0.0` or a digest to update only by editing the file.
 
 `scrim install --quadlet` (0.2.0 and later) writes and records an equivalent unit
 ([service.md](../service.md)).
@@ -201,8 +201,8 @@ Give agents in other containers that `scrim-ca.pem` (mounted, plus `NODE_EXTRA_C
 Change the tag (or digest) and recreate the container; the volume keeps the state.
 
 ```sh
-podman pull ghcr.io/heliopsy/scrim:0.1.1
-podman rm -f scrim && IMAGE=ghcr.io/heliopsy/scrim:0.1.1 ./run.sh   # podman run
+podman pull ghcr.io/heliopsy/scrim:1.0.1
+podman rm -f scrim && IMAGE=ghcr.io/heliopsy/scrim:1.0.1 ./run.sh   # podman run
 podman auto-update                                                    # Quadlet on the 0.1 tag
 podman kube play --replace scrim.yaml                                 # after editing the image
 podman compose up -d                                                  # after editing the image
@@ -221,5 +221,5 @@ systemctl --user stop scrim && rm ~/.config/containers/systemd/scrim.container \
 podman kube down --force scrim.yaml                             # kube play, volumes too
 podman compose down -v                                          # compose, volume too
 podman secret rm scrim-github-token scrim-agent-secrets 2>/dev/null
-podman rmi ghcr.io/heliopsy/scrim:0.1.0
+podman rmi ghcr.io/heliopsy/scrim:1.0.0
 ```

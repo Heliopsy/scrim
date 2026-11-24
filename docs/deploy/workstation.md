@@ -26,15 +26,15 @@ check fails.
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/Heliopsy/scrim/main/deploy/examples/workstation/install.sh
 less install.sh                      # read it before you run it
-VERSION=0.1.0 bash install.sh
+VERSION=1.0.0 bash install.sh
 ```
 
 The last lines it prints:
 
 ```text
 Verified OK
-scrim_0.1.0_linux_amd64.tar.gz: OK
-scrim 0.1.0 (commit: b54957de7ba0ac0f31657488442099bd2511c443, built: 2026-11-20T15:21:19Z, linux/amd64)
+scrim_1.0.0_linux_amd64.tar.gz: OK
+scrim 1.0.0 (commit: <commit>, built: <date>, linux/amd64)
 ```
 
 `PREFIX=/usr/local` installs into `/usr/local/bin` instead (run it with `sudo`). The steps are the
@@ -156,7 +156,7 @@ you are done.
 ## Upgrade and roll back
 
 ```sh
-VERSION=0.1.1 bash install.sh        # keeps the old binary as ~/.local/bin/scrim.prev
+VERSION=1.0.1 bash install.sh        # keeps the old binary as ~/.local/bin/scrim.prev
 mv ~/.local/bin/scrim.prev ~/.local/bin/scrim   # roll back
 ```
 

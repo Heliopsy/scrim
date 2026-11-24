@@ -42,7 +42,7 @@ Verify, upgrade and uninstall:
 ```sh
 scrim status                                         # includes the installed service
 journalctl -u scrim -f                               # --user for a user unit
-sudo ./scrim-0.1.1/scrim install --system            # upgrade: install again with the new binary
+sudo ./scrim-1.0.1/scrim install --system            # upgrade: install again with the new binary
 sudo scrim uninstall --system                        # revert everything install recorded
 sudo scrim uninstall --system --purge                # and remove the state
 ```
@@ -61,7 +61,7 @@ systemd allows for a network service. The config
 `/etc/scrim/secrets/agents/` as a secret and binds `agents/github-token` to `api.github.com`.
 
 ```sh
-sudo env VERSION=0.1.0 PREFIX=/usr/local bash deploy/examples/workstation/install.sh   # cosign on root's PATH
+sudo env VERSION=1.0.0 PREFIX=/usr/local bash deploy/examples/workstation/install.sh   # cosign on root's PATH
 
 cd deploy/examples/systemd/system
 sudo install -m 0644 scrim.sysusers.conf /etc/sysusers.d/scrim.conf
@@ -146,7 +146,7 @@ and look in `/var/lib/scrim/capture`; remove the drop-in afterwards.
 ### Upgrade and roll back
 
 ```sh
-sudo env VERSION=0.1.1 PREFIX=/usr/local bash deploy/examples/workstation/install.sh
+sudo env VERSION=1.0.1 PREFIX=/usr/local bash deploy/examples/workstation/install.sh
 sudo systemctl restart scrim
 sudo mv /usr/local/bin/scrim.prev /usr/local/bin/scrim && sudo systemctl restart scrim   # roll back
 ```
@@ -199,7 +199,7 @@ systemctl is-active scrim         # active, once the provisioning started it
 curl -s http://127.0.0.1:9792/readyz
 ```
 
-Upgrade by changing `VERSION=0.1.0` in `runcmd` for new instances; for running ones, use the plain
+Upgrade by changing `VERSION=1.0.0` in `runcmd` for new instances; for running ones, use the plain
 unit steps above. Uninstall as for the plain units.
 
 ## Ansible
@@ -227,8 +227,8 @@ ansible-playbook playbook.yml --ask-vault-pass
 `scrim_version` picks the release:
 
 ```sh
-ansible-playbook playbook.yml -e scrim_version=0.1.1   # upgrade
-ansible-playbook playbook.yml -e scrim_version=0.1.0   # roll back
+ansible-playbook playbook.yml -e scrim_version=1.0.1   # upgrade
+ansible-playbook playbook.yml -e scrim_version=1.0.0   # roll back
 ansible-playbook playbook.yml -e scrim_state=absent    # uninstall, keep config and state
 ansible-playbook playbook.yml -e scrim_state=absent -e scrim_purge=true
 ```

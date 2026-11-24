@@ -20,8 +20,8 @@ Images, both multi-arch (linux/amd64, linux/arm64), distroless, non-root (UID 65
 - `ghcr.io/heliopsy/scrim`
 - `ghcr.io/heliopsy/scrim-dataplane`
 
-Image tags are the version without the `v` (`0.1.0`), the minor series (`0.1`) and `latest`.
-Pre-releases (`0.2.0-rc.1`) are tagged with their exact version only and never move `latest` or
+Image tags are the version without the `v` (`1.0.0`), the minor series (`1.0`) and `latest`.
+Pre-releases (`1.1.0-rc.1`) are tagged with their exact version only and never move `latest` or
 the minor series.
 
 ## What every release carries
@@ -30,10 +30,11 @@ the minor series.
 | --- | --- |
 | `*.tar.gz` | the binary, `LICENSE` and `README.md` |
 | `*.tar.gz.spdx.json` | SPDX SBOM of that archive, Go and Rust dependencies both |
-| `checksums.txt` | SHA-256 of every archive and SBOM |
+| `scrim_<version>_results*` | the release's leak and performance results ([below](#check-the-published-results)) |
+| `checksums.txt` | SHA-256 of every archive, SBOM and result file |
 | `checksums.txt.sigstore.json` | Sigstore bundle: keyless cosign signature over `checksums.txt` |
 
-Every archive and SBOM also has a SLSA build provenance attestation, stored with the repository on
+Every archive, SBOM and result file also has a SLSA build provenance attestation, stored with the repository on
 GitHub. Each image is signed with cosign, has an SBOM attestation per architecture, and a build
 provenance attestation in the registry.
 
@@ -50,7 +51,7 @@ and optionally the [GitHub CLI](https://cli.github.com/) for the provenance chec
 <!-- docs-test: skip: downloads a published release from GitHub -->
 
 ```sh
-VERSION=0.1.0
+VERSION=1.0.0
 OS=linux        # linux or darwin
 ARCH=amd64      # amd64 or arm64
 BASE=https://github.com/Heliopsy/scrim/releases/download/v$VERSION
@@ -132,6 +133,41 @@ The SBOM for an archive is `scrim_${VERSION}_${OS}_${ARCH}.tar.gz.spdx.json`, co
 signed checksums. It lists the Go modules of the control plane and the Rust crates of the embedded
 data plane.
 
+## Check the published results
+
+Each release attaches the leak and performance results measured on the commit it was built from,
+with the linux-amd64 binaries it ships: the leak suite report, the end-to-end matrix, fuzzing time,
+the latency gate and the redaction benchmarks.
+[leak-assurance.md](leak-assurance.md#published-results) says what each file holds and which
+failures stop a release; `scrim_<version>_results.md` is the summary to read first.
+
+They are covered by the same signed `checksums.txt` and have the same provenance as the archives, so
+they are checked the same way. With `VERSION`, `BASE` and the verified `checksums.txt` from above:
+
+<!-- docs-test: skip: downloads the results of a published release from GitHub -->
+
+```sh
+for f in $(grep -o "scrim_${VERSION}_results[^ ]*" checksums.txt); do
+  curl -fsSLO "$BASE/$f"
+done
+sha256sum --check --ignore-missing checksums.txt
+gh attestation verify "scrim_${VERSION}_results.md" \
+  --repo Heliopsy/scrim \
+  --signer-workflow Heliopsy/scrim/.github/workflows/release.yaml
+```
+
+Then check the outcome yourself rather than trusting the summary:
+
+<!-- docs-test: skip: needs the downloaded result files -->
+
+```sh
+jq '{pass, summary}' "scrim_${VERSION}_results_leak-report.json"
+jq -r '.[] | "\(.cell) \(.pass) gated_leaks=\(.gated_leaks)"' "scrim_${VERSION}_results_e2e-matrix.json"
+```
+
+To produce the same files on your own machine, run `scripts/release/results.sh` from a checkout of
+the tag (its header lists the commands); the latency numbers will be those of your machine.
+
 ## Container images
 
 Verify before running. The signature, the SBOM attestation and the provenance are all checked
@@ -140,7 +176,7 @@ against the registry:
 <!-- docs-test: skip: verifies the published image online -->
 
 ```sh
-IMAGE=ghcr.io/heliopsy/scrim:0.1.0
+IMAGE=ghcr.io/heliopsy/scrim:1.0.0
 ID='^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(heads/main|tags/v.+)$'
 ISSUER=https://token.actions.githubusercontent.com
 
@@ -183,7 +219,7 @@ podman run --rm \
   -v scrim-state:/var/lib/scrim \
   -v ./config.yaml:/etc/scrim/config.yaml:ro,Z \
   -p 127.0.0.1:9790:9790 \
-  ghcr.io/heliopsy/scrim:0.1.0 version
+  ghcr.io/heliopsy/scrim:1.0.0 version
 ```
 
 Use a named volume rather than a host directory: rootless podman maps the container's UID 65532 to
@@ -203,7 +239,7 @@ The data plane image runs stateless and needs no volume:
 <!-- docs-test: skip: runs the published image -->
 
 ```sh
-podman run --rm --read-only --cap-drop=all ghcr.io/heliopsy/scrim-dataplane:0.1.0 --version
+podman run --rm --read-only --cap-drop=all ghcr.io/heliopsy/scrim-dataplane:1.0.0 --version
 ```
 
 ## Build from source
@@ -217,7 +253,7 @@ target musl; on Debian and Ubuntu install `musl-tools`.
 ```sh
 git clone https://github.com/Heliopsy/scrim
 cd scrim
-git checkout v0.1.0
+git checkout v1.0.0
 just release-build linux-amd64       # dist/bin/linux-amd64/{scrim,scrim-dataplane}
 ```
 
@@ -233,7 +269,7 @@ To compare a local build with a release:
 
 ```sh
 just release-build linux-amd64
-tar -xzf "scrim_0.1.0_linux_amd64.tar.gz" -O ./scrim | sha256sum
+tar -xzf "scrim_1.0.0_linux_amd64.tar.gz" -O ./scrim | sha256sum
 sha256sum dist/bin/linux-amd64/scrim
 ```
 

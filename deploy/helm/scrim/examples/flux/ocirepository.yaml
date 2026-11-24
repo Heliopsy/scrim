@@ -13,11 +13,12 @@ spec:
   interval: 1h
   url: oci://ghcr.io/heliopsy/charts/scrim
   ref:
-    # Any 0.x release. For a pinned install use the exact tag and the digest
-    # from the GitHub release instead; the digest wins:
-    #   tag: "0.2.0"
+    # Any 1.x release; raise the bound deliberately for a new major. For a
+    # pinned install use the exact tag and the digest from the GitHub release
+    # instead; the digest wins:
+    #   tag: "1.0.0"
     #   digest: sha256:<digest>
-    semver: ">=0.1.0 <1.0.0"
+    semver: ">=1.0.0 <2.0.0"
   # Only the chart layer, as the tarball helm-controller expects.
   layerSelector:
     mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip

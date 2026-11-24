@@ -24,7 +24,7 @@ keyless by the release workflow. Check the signature before installing
 ([kubernetes.md](../kubernetes.md#install)):
 
 ```sh
-VERSION=0.2.0
+VERSION=1.0.0
 cosign verify "ghcr.io/heliopsy/charts/scrim:$VERSION" \
   --certificate-identity-regexp '^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
@@ -146,7 +146,7 @@ directly gets no connection.
 ## Upgrade and roll back
 
 ```sh
-helm --kube-context "$CONTEXT" upgrade scrim oci://ghcr.io/heliopsy/charts/scrim --version 0.2.1 \
+helm --kube-context "$CONTEXT" upgrade scrim oci://ghcr.io/heliopsy/charts/scrim --version 1.0.1 \
   -n scrim --reuse-values
 helm --kube-context "$CONTEXT" -n scrim history scrim
 helm --kube-context "$CONTEXT" -n scrim rollback scrim <revision>

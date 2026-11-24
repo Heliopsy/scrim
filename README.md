@@ -24,11 +24,8 @@ scrim is a local proxy that replaces every known secret value in an agent's requ
 placeholder before they reach the model provider, and puts the real credential back only on
 connections to the hosts it belongs to.
 
-> **Status: pre-release.** v0.1.0 is not tagged yet, and this README describes v0.1.0.
-> Configuration, state, audit, the store adapters, the catalog, the tool proxy and the agent tools
-> are on `main`. The LLM proxy, policy and approvals and the leak suite are in review. The
-> redaction core and `scrim run` are being built. [`tasks.md`](openspec/changes/scrim-v1/tasks.md)
-> has the exact list.
+This README describes scrim 1.0. What it does not protect against is in
+[docs/limitations.md](docs/limitations.md).
 
 ## The problem
 
@@ -57,8 +54,8 @@ flowchart LR
     cp["Control plane (Go)<br>policy, grants, audit,<br>MCP server and CLI"]
   end
 
-  stores[("Secret stores<br>OpenBao, Infisical,<br>Vaultwarden, env, file")]
-  approvers["Approvers<br>ntfy, webhook, terminal"]
+  stores[("Secret stores<br>OpenBao, Vault, cloud,<br>password managers, files")]
+  approvers["Approvers<br>ntfy, webhook,<br>terminal, plugins"]
   provider["LLM provider APIs"]
   toolapis["Tool APIs<br>api.github.com, ..."]
 
@@ -133,7 +130,7 @@ request is refused and audited. GitHub's answer comes back with any known value 
 again. The agent's own transcript still holds the real line from `cat .env`, because the file was
 read on your machine (see [What scrim does not protect](#what-scrim-does-not-protect)).
 
-## Features in v0.1.0
+## Features
 
 ### Redaction
 
@@ -150,11 +147,14 @@ read on your machine (see [What scrim does not protect](#what-scrim-does-not-pro
 - Streaming restore that holds back at most one placeholder length per content block.
 - Per-tool restore policy with escaping for shell, interpreter strings, SQL, JSON and YAML, and no
   restore where the output would itself become code.
-- Anthropic Messages, OpenAI Chat Completions and OpenAI Responses, streamed and not.
+- Anthropic Messages, OpenAI Chat Completions, OpenAI Responses and the Gemini API, streamed and
+  not, as built-in routes. Amazon Bedrock (InvokeModel, Converse and Bedrock API keys), Claude
+  Platform on AWS, Microsoft Foundry and Google Vertex AI as cloud routes that scrim signs or
+  authenticates after redaction ([docs/providers](docs/providers/README.md)).
 - Capture mode, which writes each request exactly as it left for the provider.
 - Chaining through a context-compression proxy, with redaction first.
-- A policy for images and binary parts: `pass` (the default, audited and shown in `scrim status`)
-  or `block`.
+- Images, PDFs and other binary parts pass unscanned
+  ([docs/limitations.md](docs/limitations.md#redaction)).
 
 ### Credential injection
 
@@ -179,14 +179,24 @@ directly, so write-only access, approvals and grants behave the same on every st
 | OpenBao, and Vault-compatible KV v2 | `openbao` | yes | yes | yes | yes |
 | HashiCorp Vault, KV v1 and v2 (plus dynamic secrets per grant) | `vault` | yes | yes | yes | yes |
 | Infisical | `infisical` | yes | yes | yes | yes |
-| Google Secret Manager | `gcpsm` | yes | yes | yes | yes |
-| Azure Key Vault | `azkv` | yes | yes | yes | yes |
+| Doppler | `doppler` | yes | yes | yes | yes |
+| 1Password, through Connect | `onepassword` | yes | yes | yes | yes |
+| Bitwarden Secrets Manager | `bws` | yes | yes | yes | yes |
 | Vaultwarden, and Bitwarden-compatible servers | `vaultwarden` | yes | yes | yes | yes |
 | AWS Secrets Manager | `awssm` | yes | yes | yes | yes |
 | AWS SSM Parameter Store | `ssm` | yes | yes | yes | yes |
+| Google Secret Manager | `gcpsm` | yes | yes | yes | yes, unless read-only |
+| Azure Key Vault | `azkv` | yes | yes | yes | yes, unless read-only |
+| Kubernetes Secrets | `kubernetes` | yes | yes | yes | opt-in |
+| SOPS-encrypted files | `sops` | yes | yes | yes | no |
+| OS keyring (Secret Service, Keychain) | `keyring` | yes | yes | no | no |
 | Environment variables | `env` | yes | yes | no | no |
 | Files (raw, dotenv, JSON) | `file` | yes | yes | yes | no |
 | Memory (tests, throwaway runs) | `memory` | yes | yes | yes | yes |
+| Anything else, as an out-of-process plugin | `plugin` | (1) | (1) | (1) | (1) |
+
+(1) What the plugin declares. Store and notifier plugins speak a versioned protocol; the public Go
+SDK is [`pkg/plugin`](pkg/plugin) and [docs/plugins.md](docs/plugins.md) has the contract.
 
 scrim generates secrets itself and then writes them, so `secret_gen` works on any writable store.
 When a store becomes unreachable, scrim keeps redacting with the last known values and refuses
@@ -200,22 +210,35 @@ and bulk prefix mapping.
 - An MCP server (`scrim mcp`) and matching CLI commands (`scrim secret ...`), under the same policy
   and audit.
 - `secrets_list`, `secret_request`, `secret_gen`, `secret_capture`, `secret_ask_human`,
-  `approval_status` and `grants_list`. No tool takes a value as an argument and no result contains
-  one.
+  `secret_exec`, `database_list`, `database_query`, `approval_status` and `grants_list`. No tool
+  takes a value as an argument and no result contains one.
 - `secret_ask_human` opens a local entry page where a person types the value. The agent only
   learns whether it was stored.
 - `scrim secret put <ref> --stdin` stores a value from a pipe without echoing it.
 - Both talk to the local agent API (`scrim api serve`). Register the MCP server with
   `claude mcp add scrim -- scrim mcp`; [docs/agent-tools.md](docs/agent-tools.md) covers Codex.
-- The caller's identity comes from Unix socket peer credentials and the session token `scrim run`
-  mints, never from a tool argument.
+- The caller's identity comes from Unix socket peer credentials, the session token `scrim run`
+  mints or a Kubernetes service account token, never from a tool argument. scrim can also issue
+  its own identity tokens and log in to a store as each agent by token exchange, so a store's own
+  access rules apply per agent ([docs/identity.md](docs/identity.md)).
+
+### Other ways agents use secrets
+
+- An ssh-agent with keys from stores: every signature is a policy decision with an audit entry,
+  and the agent never holds the key ([docs/ssh-agent.md](docs/ssh-agent.md)).
+- PostgreSQL and MySQL auth proxies and a read-only database tool: the agent connects without a
+  password and scrim logs in with the one from the store ([docs/databases.md](docs/databases.md)).
+- An exec broker that runs allow-listed commands as another user with a secret in their
+  environment and redacts their output ([docs/exec-broker.md](docs/exec-broker.md)).
+- An edge forwarder for agent pods that talk to a central scrim: ssh-agent, database ports and the
+  agent API over TLS with the pod's token ([docs/edge-forwarder.md](docs/edge-forwarder.md)).
 
 ### Policy and approvals
 
 - Rules in [CEL](https://cel.dev) over operation, agent, secret, provider, destination and tool,
   deciding `allow`, `deny` or `ask`. The default is `deny`.
-- `ask` notifies through ntfy (with Approve and Deny buttons), a signed webhook or the terminal
-  (`scrim approve`). Decision links are signed and single-use, and no answer within the timeout
+- `ask` notifies through ntfy (with Approve and Deny buttons), a signed webhook, the terminal
+  (`scrim approve`) or a notifier plugin. Decision links are signed and single-use, and no answer within the timeout
   counts as a denial.
 - Just-in-time grants with a ttl, a maximum ttl, a scope and a use count, listed and revoked from
   the CLI.
@@ -229,8 +252,12 @@ and bulk prefix mapping.
   separate child process. Linux and macOS, amd64 and arm64.
 - Distroless, non-root, multi-arch images: `ghcr.io/heliopsy/scrim` and
   `ghcr.io/heliopsy/scrim-dataplane`.
-- Wrapper, base URL and forward proxy interception (see [Interception modes](#interception-modes)).
-- State in memory, SQLite or PostgreSQL. Prometheus metrics, OTLP traces and health endpoints, all
+- Every interception mode in the table below, from `scrim run` for one process to transparent
+  nftables or eBPF redirection and Kubernetes injection.
+- `scrim install` for a user unit, a hardened system unit or Quadlet; a Helm chart at
+  `oci://ghcr.io/heliopsy/charts/scrim` with central and sidecar modes and Kyverno injection.
+- State in memory, SQLite or PostgreSQL, with Valkey or NATS events across replicas. Audit to the
+  database and to OTLP, Loki or Kafka. Prometheus metrics, OTLP traces and health endpoints, all
   free of secret values.
 - `scrim status` reports active protections, stores and every weakened setting. `scrim doctor`
   checks the setup and suggests a fix for each problem.
@@ -241,7 +268,11 @@ and bulk prefix mapping.
   and the guard, a bypass matrix of transforms (case changes, reversal, rot13, hex dumps, spacing,
   truncation and more) and a corpus of realistic agent sessions. You can run it against your own
   setup.
-- The leak suite, fuzzing and the latency budget are release gates in CI.
+- An end-to-end matrix runs the same gate through every interception mode, store and provider
+  route with the real proxy and data plane.
+- The leak suite, the end-to-end matrix, fuzzing and the latency budget are release gates. Each
+  release publishes their results as signed release files
+  ([docs/leak-assurance.md](docs/leak-assurance.md#published-results)).
 - Releases are signed with keyless cosign and carry SPDX SBOMs and SLSA build provenance. Linux
   binaries are static and can be rebuilt byte for byte from the tag.
 
@@ -297,7 +328,7 @@ scrim config validate
 scrim doctor
 ```
 
-For real use, point a store at OpenBao, Infisical or Vaultwarden instead of the environment. See
+For real use, point a store at the secret manager you already run instead of the environment. See
 [docs/stores](docs/stores/README.md).
 
 ### 3. Run an agent through scrim
@@ -327,17 +358,17 @@ suite against your setup, see [docs/leak-assurance.md](docs/leak-assurance.md).
 
 ## Interception modes
 
-| Mode | How the agent reaches scrim | Status |
-| --- | --- | --- |
-| Wrapper | `scrim run -- <agent>` sets everything for one process | v0.1.0 |
-| Base URL | the agent's provider base URL points at scrim | v0.1.0 |
-| Forward proxy | `HTTPS_PROXY` with TLS interception, provider and tool traffic on one listener | v0.1.0 |
-| Transparent (nftables) | redirect per UID or cgroup, direct egress denied (`scrim install --transparent`) | on `main` |
-| Managed agent settings | the agent's managed settings pin the endpoint to scrim | planned, M2 |
-| Kubernetes injection | injection by label, with a NetworkPolicy | planned, M2 |
-| Transparent (eBPF) | cgroup connect hooks, privileged loader (`scrim ebpf attach`) | on `main` |
-| DNS override | provider hostnames resolve to scrim (`scrim install --dns`) | on `main` |
-| Agent hooks | the agent's hooks call scrim; reported as partial protection | planned, M3 |
+| Mode | How the agent reaches scrim |
+| --- | --- |
+| Wrapper | `scrim run -- <agent>` sets everything for one process |
+| Base URL | the agent's provider base URL points at scrim |
+| Forward proxy | `HTTPS_PROXY` with TLS interception, provider and tool traffic on one listener |
+| Transparent (nftables) | redirect per UID or cgroup, direct egress denied (`scrim install --transparent`) |
+| Managed agent settings | the agent's managed settings pin the endpoint to scrim (`scrim install --managed-settings`) |
+| Kubernetes injection | injection by label, with a NetworkPolicy (Helm chart and Kyverno) |
+| Transparent (eBPF) | cgroup connect hooks, privileged loader (`scrim ebpf attach`) |
+| DNS override | provider hostnames resolve to scrim (`scrim install --dns`) |
+| Agent hooks | the agent's hooks call scrim; reported as partial protection (`scrim install --hooks`) |
 
 The wrapper, base URL and forward proxy modes rely on the agent using the settings it is given. The
 transparent, managed and Kubernetes modes enforce them.
@@ -393,8 +424,7 @@ The model, the agent, the agent's tools and anything they fetch from the network
 
 - The agent's local transcript, memory and history files. scrim protects the wire, not the agent's
   disk.
-- Images, PDFs and other binary parts under the default `pass` policy. Set it to `block` if that
-  matters to you.
+- Images, PDFs and other binary parts, which pass unscanned.
 - Transforms outside the bypass matrix, such as look-alike Unicode, spelled-out values, compressed
   or base85 content, and values the agent splits across fields or requests.
 - Secrets that no configured store holds and the fallback detectors miss.
@@ -402,36 +432,30 @@ The model, the agent, the agent's tools and anything they fetch from the network
   whole.
 - Clients that pin certificates. Under TLS interception they fail to connect rather than leak.
 
-[docs/leak-assurance.md](docs/leak-assurance.md) lists every known limitation with its matrix rows.
+[docs/limitations.md](docs/limitations.md) lists every known limitation, including the ones in
+scrim's own implementation and test coverage, and
+[docs/leak-assurance.md](docs/leak-assurance.md#known-limitations) maps them to matrix rows.
 Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## Performance
 
-The data plane language was picked by [`bench/redact-bench`](bench/redact-bench/), which ran the
-same redactor and stream restorer in Go and Rust, on one pinned core and behind a proxy. The Rust
-prototype measured:
-
-| Measurement | 10 secrets | 1,000 secrets | 10,000 secrets |
-| --- | --- | --- | --- |
-| Redact throughput, one core | 3,300 to 4,450 MB/s | 250 to 415 MB/s | 87 to 102 MB/s |
-| Added p99 latency, streamed responses, 10 connections | | 11 ms | 12 ms |
-| Stream restore per chunk | | 5.4 to 5.7 µs | |
-| Proxy resident memory | | 39 MB | 335 MB |
-
-Caveats:
-
-- These are numbers for the benchmark prototype, a plain Aho-Corasick matcher. The shipping matcher
-  hashes each 8-byte window so throughput stays near constant as the set grows (design D13). Its
-  target is at least 500 MB/s on one core at 10,000 secrets, and it has not been measured yet.
-- The benchmark machine carried unrelated load.
-- At 10,000 secrets the prototype takes about 10 ms to redact a 1 MB body, missing the first 1 ms
-  target.
-
-The release gate is the budget in the
-[performance spec](openspec/changes/scrim-v1/specs/performance/spec.md): p99 added latency under
+The shipping matcher hashes each 8-byte window, so throughput stays near constant as the secret set
+grows (design D13). The budget in the
+[performance spec](openspec/changes/scrim-v1/specs/performance/spec.md) is p99 added latency under
 5 ms for a 1 MB body with 1,000 secrets and under 10 ms with 10,000, and under 50 µs per streamed
-chunk. CI fails when a build exceeds it. Full tables are in
-[results/summary.md](bench/redact-bench/results/summary.md).
+chunk; the latency gate (`crates/scrim-llm/benches/budget.json`) fails CI and the release when a
+build exceeds it.
+
+Each release attaches the numbers measured for it: `scrim_<version>_results_latency-gate.md` (proxy
+overhead and per-chunk p99 against the budget, with the machine they ran on) and
+`scrim_<version>_results_redact-bench.txt` (redaction throughput and latency for 10, 1,000 and
+10,000 secrets at 100 KB, 1 MB and 4 MB). The multi-replica load test at 1,000 concurrent streams
+is described in [docs/state-and-observability.md](docs/state-and-observability.md#load-test).
+
+The data plane language was picked by [`bench/redact-bench`](bench/redact-bench/), which ran the
+same prototype redactor and stream restorer in Go and Rust; its tables are in
+[results/summary.md](bench/redact-bench/results/summary.md). Those are numbers for the prototype, a
+plain Aho-Corasick matcher, not for the shipping engine.
 
 ## How it compares
 
@@ -440,7 +464,7 @@ documentation does not describe the feature, which is not proof that it is missi
 
 | Project | Redacts requests to the model | Injects credentials at a proxy | Where secrets come from |
 | --- | --- | --- | --- |
-| scrim | yes, with an independent guard | yes, toward bound hosts | your stores (OpenBao, Infisical, Vaultwarden, env, file), brokered |
+| scrim | yes, with an independent guard | yes, toward bound hosts | your stores (Vault and OpenBao, cloud secret managers, password managers, files), brokered |
 | [OneCLI](https://github.com/onecli/onecli) | not documented | yes, HTTPS proxy | its own encrypted vault |
 | [Infisical Agent Vault](https://infisical.com/docs/documentation/platform/agent-vault/overview) | not documented | yes, forward proxy with time-limited sessions | Infisical |
 | [fnox](https://github.com/jdx/fnox) | no | yes, into approved requests | encrypted config and many secret managers; MCP server for allowed secrets |
@@ -452,47 +476,27 @@ scrim does both halves, redaction toward the model and injection at the network 
 policy and audit path across stores and agents. Its restore policy for display values follows
 veil's per-tool policy.
 
-## Roadmap
-
-[`tasks.md`](openspec/changes/scrim-v1/tasks.md) has the full plan.
-
-- M2: more stores (HashiCorp Vault, AWS Secrets Manager and SSM, Google Secret Manager, Azure
-  Key Vault, 1Password, Bitwarden Secrets Manager, Doppler, Kubernetes Secrets, SOPS files, the OS
-  keyring); Gemini, Bedrock, Vertex and Foundry codecs; tool profiles for `gh`, `git`, `kubectl`,
-  `helm`, `npm`, `docker` and `aws` with SigV4 re-signing; the exec broker; Kubernetes identity,
-  per-agent store identity, the Helm chart and Kyverno injection; systemd and Quadlet units with
-  `scrim install`; transparent nftables interception and managed agent settings.
-- M3: Valkey and NATS event backends; OTLP, Loki and Kafka audit sinks; a load test at 1,000
-  concurrent streams; eBPF, DNS and hooks interception; an ssh-agent with keys from stores;
-  database auth proxies; store and notifier plugins.
-- v1.0.0: the end-to-end matrix across interception modes, stores and providers, with published
-  performance and leak results.
-
 ## Documentation
+
+[docs/README.md](docs/README.md) is the index of every page. The ones to start with:
 
 | Page | Covers |
 | --- | --- |
-| [docs/install.md](docs/install.md) | Release archives, signature and provenance checks, images, reproducible builds |
+| [docs/install.md](docs/install.md) | Release archives, signature and provenance checks, published results, images, reproducible builds |
 | [docs/deploy/README.md](docs/deploy/README.md) | Deployment examples for every target: workstation, systemd, cloud-init, Ansible, podman, Kubernetes, Helm, Flux, Argo CD |
+| [docs/run.md](docs/run.md) | `scrim run` for Claude Code, Codex and other agents |
+| [docs/interception.md](docs/interception.md) | Every way agent traffic reaches scrim, and how to choose |
 | [docs/configuration.md](docs/configuration.md) | Config files, environment, flags, precedence, reload and every setting |
 | [docs/stores/README.md](docs/stores/README.md) | Store adapters, capabilities, freshness and outages |
-| [docs/stores/openbao.md](docs/stores/openbao.md) | OpenBao and Vault-compatible KV v2 |
-| [docs/stores/vault.md](docs/stores/vault.md) | HashiCorp Vault: KV v1 and v2, namespaces, dynamic secrets leased per grant |
-| [docs/stores/infisical.md](docs/stores/infisical.md) | Infisical |
-| [docs/stores/gcp.md](docs/stores/gcp.md) | Google Secret Manager |
-| [docs/stores/azure.md](docs/stores/azure.md) | Azure Key Vault |
-| [docs/stores/vaultwarden.md](docs/stores/vaultwarden.md) | Vaultwarden and Bitwarden-compatible servers |
-| [docs/stores/aws.md](docs/stores/aws.md) | AWS Secrets Manager and SSM Parameter Store |
-| [docs/stores/local.md](docs/stores/local.md) | Environment and file sources |
+| [docs/providers/README.md](docs/providers/README.md) | Cloud provider routes: Bedrock, Claude Platform on AWS, Foundry and Vertex |
 | [docs/catalog.md](docs/catalog.md) | Logical names, host bindings, placeholders and profiles |
-| [docs/cli-tools.md](docs/cli-tools.md) | Tool profiles for gh, git, kubectl, aws, terraform and other CLIs |
 | [docs/agent-tools.md](docs/agent-tools.md) | The MCP server and `scrim secret` commands |
-| [docs/databases.md](docs/databases.md) | PostgreSQL and MySQL auth proxies and the read-only database tool |
-| [docs/identity.md](docs/identity.md) | How scrim knows which agent is calling |
+| [docs/identity.md](docs/identity.md) | Agent identity, scrim as identity provider, per-agent store identity, redaction identity |
 | [docs/policy.md](docs/policy.md) | CEL rules and what they can see |
 | [docs/approvals.md](docs/approvals.md) | Approvals, notifiers, grants and break-glass |
-| [docs/state-and-observability.md](docs/state-and-observability.md) | State backends, audit log, metrics, traces and health |
-| [docs/leak-assurance.md](docs/leak-assurance.md) | The leak suite, the bypass matrix and known limitations |
+| [docs/kubernetes.md](docs/kubernetes.md) | The Helm chart, injection, identity and scaling |
+| [docs/leak-assurance.md](docs/leak-assurance.md) | The leak suite, the bypass matrix, the end-to-end matrix and published results |
+| [docs/limitations.md](docs/limitations.md) | What scrim does not protect against |
 
 The behaviour contract is the OpenSpec change in
 [`openspec/changes/scrim-v1`](openspec/changes/scrim-v1/): the

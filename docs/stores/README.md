@@ -13,6 +13,7 @@ value back.
 | 1Password (through Connect) | `onepassword` | [onepassword.md](onepassword.md) |
 | AWS Secrets Manager, AWS SSM Parameter Store | `awssm`, `ssm` | [aws.md](aws.md) |
 | Bitwarden Secrets Manager | `bws` | [bws.md](bws.md) |
+| Vaultwarden and Bitwarden-compatible servers | `vaultwarden` | [vaultwarden.md](vaultwarden.md) |
 | Google Secret Manager | `gcpsm` | [gcp.md](gcp.md) |
 | Azure Key Vault | `azkv` | [azure.md](azure.md) |
 | Kubernetes Secrets | `kubernetes` | [kubernetes.md](kubernetes.md) |
@@ -37,8 +38,9 @@ support is refused before anything is attempted.
 | `awssm`       | yes  | yes  | yes   | yes    | no       | no      |
 | `ssm`         | yes  | yes  | yes   | yes    | no       | no      |
 | `bws`         | yes  | yes  | yes   | yes    | no       | no      |
-| `gcpsm`       | yes  | yes  | yes   | yes    | no       | no      |
-| `azkv`        | yes  | yes  | yes   | yes    | no       | no      |
+| `vaultwarden` | yes  | yes  | yes   | yes    | no       | no      |
+| `gcpsm`       | yes  | yes  | yes   | yes(2) | no       | no      |
+| `azkv`        | yes  | yes  | yes   | yes(2) | no       | no      |
 | `kubernetes`  | yes  | yes  | yes   | opt-in | no       | no      |
 | `env`         | yes  | yes  | no    | no     | no       | no      |
 | `file`        | yes  | yes  | yes   | no     | no       | no      |
@@ -49,11 +51,14 @@ support is refused before anything is attempted.
 
 (1) What the plugin declares, narrowed by the instance's `capabilities` field.
 
+(2) Unless the instance is configured read-only.
+
 Watch on OpenBao, Vault (KV v2), Infisical, 1Password, Bitwarden Secrets Manager, the AWS stores,
 Google Secret Manager and Azure Key Vault polls version metadata. It never fetches values, so it
 stays cheap even with a short interval. Watch on Vault KV v1 compares digests of the fields, so it
 reads every secret under the prefix on each poll. Watch on Doppler polls the config download with
 its ETag: an unchanged config is answered without values, a changed one is fingerprinted and wiped.
+Watch on Vaultwarden polls the account revision date and syncs only when it changed.
 Kubernetes watches Secrets through the API server, and writes there are off unless the instance
 enables them. The keyring source lists on Linux only (Secret Service); on macOS and Windows it reads
 single secrets. Generated secrets are produced by scrim and then written, so generate needs write
