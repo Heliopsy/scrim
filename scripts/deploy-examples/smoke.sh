@@ -70,8 +70,15 @@ check() {
   local c=$1 code
   wait_ready "$c"
   podman exec "$c" scrim status >"$work/status.txt"
-  grep -q 'redaction  *active' "$work/status.txt"
-  grep -Eq 'snapshot [0-9]+, 1 values' "$work/status.txt"
+  # At least the example's secret; scrim's own credentials (placeholder and
+  # signing keys) count too since #140, so the number depends on the example.
+  # The canary request and capture below prove the secret itself is redacted.
+  if ! grep -q 'redaction  *active' "$work/status.txt" ||
+    ! grep -Eq 'snapshot [0-9]+, [1-9][0-9]* values' "$work/status.txt"; then
+    echo "$c: redaction not active with values" >&2
+    cat "$work/status.txt" >&2
+    return 1
+  fi
   podman exec "$c" scrim doctor
   code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9790/anthropic/v1/messages \
     -H 'x-api-key: not-a-real-key' -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json' \

@@ -9,7 +9,8 @@
 # Environment from the suite: SCRIM_LEAK_SEEDS (seed file), SCRIM_LEAK_UPSTREAM
 # (fake provider URL), SCRIM_LEAK_LISTEN (the proxy URL to listen on).
 # SCRIM_DATAPLANE_PATH names the data plane binary; without it the debug data
-# plane is built.
+# plane is built. SCRIM_LEAK_SCRIM names the scrim binary; without it scrim is
+# built from this tree (the release runs the binaries it ships).
 set -euo pipefail
 
 : "${SCRIM_LEAK_SEEDS:?}" "${SCRIM_LEAK_UPSTREAM:?}" "${SCRIM_LEAK_LISTEN:?}"
@@ -68,9 +69,13 @@ tool-proxy: {ca: {dir: $dir/ca}}
 notify: {terminal: {enabled: false}}
 YAML
 
-go build -o "$dir/scrim" "$root"
+scrim="${SCRIM_LEAK_SCRIM:-}"
+if [ -z "$scrim" ]; then
+  go build -o "$dir/scrim" "$root"
+  scrim="$dir/scrim"
+fi
 env -i PATH="$PATH" HOME="$dir" XDG_STATE_HOME="$dir" XDG_CONFIG_HOME="$dir" XDG_RUNTIME_DIR="$dir" \
   SCRIM_DATAPLANE_PATH="$SCRIM_DATAPLANE_PATH" \
-  "$dir/scrim" --config "$dir/config.yaml" proxy &
+  "$scrim" --config "$dir/config.yaml" proxy &
 pid=$!
 wait "$pid"

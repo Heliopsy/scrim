@@ -15,6 +15,9 @@
 #   <archive>.spdx.json                            SBOM per archive (syft)
 #   checksums.txt                                  sha256 of every file above
 #
+# scripts/release/results.sh assemble later adds the release's leak and
+# performance results and rewrites checksums.txt to include them.
+#
 # Archives are byte-reproducible: fixed order, owner, modes and mtime
 # (SOURCE_DATE_EPOCH), and gzip without a name or timestamp. SBOMs carry a
 # generation time and are not part of the reproducibility guarantee; their
@@ -83,12 +86,6 @@ for platform in $SCRIM_PLATFORMS; do
 done
 [ "$found" = 1 ] || die "no platform directories under $bin_dir"
 
-(
-  cd "$out"
-  rm -f checksums.txt
-  find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.spdx.json' \) -printf '%f\n' \
-    | LC_ALL=C sort | xargs sha256sum >checksums.txt.tmp
-  mv checksums.txt.tmp checksums.txt
-)
+write_checksums "$out"
 log "$out/checksums.txt"
 cat "$out/checksums.txt" >&2

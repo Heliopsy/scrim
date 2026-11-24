@@ -68,6 +68,19 @@ log() {
   echo "==> $*" >&2
 }
 
+# write_checksums DIR writes DIR/checksums.txt: the sha256 of every release file
+# in DIR (archives, SBOMs and the scrim_<version>_results* files), sorted by
+# name. The signature bundle and checksums.txt itself are not release files.
+write_checksums() {
+  (
+    cd "$1"
+    rm -f checksums.txt
+    find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.spdx.json' -o -name 'scrim_*_results*' \) -printf '%f\n' \
+      | LC_ALL=C sort | xargs sha256sum >checksums.txt.tmp
+    mv checksums.txt.tmp checksums.txt
+  )
+}
+
 sha256() {
   if command -v sha256sum >/dev/null; then
     sha256sum "$1" | cut -d' ' -f1
