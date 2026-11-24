@@ -141,9 +141,18 @@ func TestNaiveRedactorPattern(t *testing.T) {
 			"gemini/tool-result/raw",
 			"gemini/tool-result-streaming/raw",
 			"gemini/system-prompt/raw",
+			"openai-realtime/tool-result/raw",
+			"openai-realtime/system-prompt/raw",
+			"openai-realtime/tool-definition/raw",
+			"openai-realtime/ws-binary-frame/raw",
+			"openai-responses-ws/tool-result/raw",
+			"openai-responses-ws/ws-binary-frame/raw",
 		} {
 			if r := get(row, k); r.Outcome != matrix.OutcomeRedacted || !r.Pass {
 				t.Errorf("naive stub should redact: %s", r.Describe())
+			}
+			if r := get(row, k); strings.HasPrefix(row, "openai-re") && strings.Contains(row, "-ws/") != (r.API == fp.OpenAIResponsesWS) {
+				t.Errorf("row %s ran on %s", row, r.API)
 			}
 		}
 		for _, row := range []string{
@@ -154,6 +163,11 @@ func TestNaiveRedactorPattern(t *testing.T) {
 			"anthropic-messages/tool-result/json-escape-all",
 			"gemini/tool-result/reversed",
 			"gemini/query/raw",
+			"openai-realtime/tool-result/base64-std@1",
+			"openai-realtime/header/raw",
+			"openai-realtime/query/raw",
+			"openai-responses-ws/tool-result/reversed",
+			"openai-responses-ws/header/raw",
 		} {
 			if r := get(row, k); r.Outcome != matrix.OutcomeLeaked || r.Pass {
 				t.Errorf("naive stub should leak: %s", r.Describe())

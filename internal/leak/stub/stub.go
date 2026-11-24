@@ -5,19 +5,28 @@
 // report leaks against it) and a naive redactor that replaces only verbatim
 // and JSON-escaped values (the suite must report exactly the leaks a
 // verbatim-only redactor has). Neither is a redactor anyone should use.
+//
+// Both relay WebSocket upgrades too: they open the upstream socket with the
+// client's handshake headers, relay every message in both directions (the
+// naive one rewriting client messages and restoring server ones, text and
+// binary alike) and pass a close code from either side to the other.
 package stub
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/coder/websocket"
 
 	"github.com/heliopsy/scrim/internal/leak"
 )
@@ -37,6 +46,10 @@ type forwarder struct {
 }
 
 func (f *forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		f.relayWS(w, r)
+		return
+	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "read request", http.StatusBadGateway)
@@ -99,6 +112,85 @@ func (f *forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// hopHeaders are the handshake headers the WebSocket library writes itself.
+var hopHeaders = map[string]bool{
+	"Connection": true, "Upgrade": true, "Host": true, "Content-Length": true,
+	"Sec-Websocket-Key": true, "Sec-Websocket-Version": true, "Sec-Websocket-Extensions": true, "Sec-Websocket-Accept": true,
+}
+
+// relayWS opens the upstream socket first, so a refused upstream handshake
+// is answered with its own status, then accepts the client and relays.
+func (f *forwarder) relayWS(w http.ResponseWriter, r *http.Request) {
+	u := *f.upstream
+	u.Path = strings.TrimRight(u.Path, "/") + r.URL.Path
+	u.RawQuery = r.URL.RawQuery
+	h := http.Header{}
+	for k, vs := range r.Header {
+		if !hopHeaders[http.CanonicalHeaderKey(k)] {
+			h[k] = vs
+		}
+	}
+	up, resp, err := websocket.Dial(r.Context(), u.String(), &websocket.DialOptions{HTTPHeader: h, HTTPClient: f.client})
+	if err != nil {
+		status := http.StatusBadGateway
+		var body []byte
+		if resp != nil && resp.StatusCode != http.StatusSwitchingProtocols {
+			status = resp.StatusCode
+			if resp.Body != nil {
+				body, _ = io.ReadAll(resp.Body)
+			}
+			if ct := resp.Header.Get("Content-Type"); ct != "" {
+				w.Header().Set("Content-Type", ct)
+			}
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write(body)
+		return
+	}
+	defer func() { _ = up.CloseNow() }()
+	down, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		return
+	}
+	defer func() { _ = down.CloseNow() }()
+	up.SetReadLimit(256 << 20)
+	down.SetReadLimit(256 << 20)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{}, 2)
+	pump := func(from, to *websocket.Conn, change func([]byte) []byte) {
+		defer func() { done <- struct{}{} }()
+		for {
+			typ, b, err := from.Read(ctx)
+			if err != nil {
+				code, reason := websocket.CloseStatus(err), ""
+				var ce websocket.CloseError
+				if errors.As(err, &ce) {
+					reason = ce.Reason
+				}
+				switch code {
+				case -1, websocket.StatusNoStatusRcvd, websocket.StatusAbnormalClosure, websocket.StatusTLSHandshake:
+					// Not codes a close frame may carry.
+					code = websocket.StatusGoingAway
+				}
+				_ = to.Close(code, reason)
+				return
+			}
+			if change != nil {
+				b = change(b)
+			}
+			if to.Write(ctx, typ, b) != nil {
+				return
+			}
+		}
+	}
+	go pump(down, up, f.rewrite)
+	go pump(up, down, f.restore)
+	<-done
+	cancel()
+	<-done
 }
 
 // transport gives each stand-in its own connection pool, so it never shares
