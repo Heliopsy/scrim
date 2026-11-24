@@ -28,7 +28,10 @@ Rules for anyone, human or agent, changing scrim. Terse by design. Read before w
 - Behaviour changes update `openspec/` first. Requirements use SHALL; every requirement has a
   scenario.
 - New behaviour ships with its tests in the same change.
-- Tests start containers only through `internal/testing/testpodman` (user's own podman store, labelled `io.heliopsy.scrim-test`, killed after 2 h), and after any test run `podman ps -a --filter label=io.heliopsy.scrim-test` and every `/tmp/scrim-test-home-*` store must be empty: stop leaked containers before deleting a test home, never instead.
+- Tests start containers only through `internal/testing/testpodman` (user's own podman store,
+  labelled `io.heliopsy.scrim-test`, killed after 2 h); after any test run
+  `podman ps -a --filter label=io.heliopsy.scrim-test` and every `/tmp/scrim-test-home-*` store
+  must be empty: stop leaked containers before deleting a test home, never instead.
 - The leak suite (fixtures, bypass matrix, recorded provider streams) and the latency budget are
   release gates, not reports.
 - A test you have not watched fail is not evidence. Break the behaviour, watch the guard fail,
