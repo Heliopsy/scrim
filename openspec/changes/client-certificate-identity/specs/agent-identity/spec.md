@@ -4,14 +4,9 @@
 
 The system SHALL accept client certificates, including SPIFFE identities, as an agent identity source
 when configured (`identity.client-certificates`), on TLS listeners of the LLM proxy, the forward
-proxy, the tool proxy and the edge listener. It SHALL refuse a certificate that does not chain to a
-configured trust anchor, is outside its validity period, is not for client authentication or is
-revoked, SHALL audit every refusal with its reason, and SHALL never hold the client's private key.
-The data plane SHALL verify the certificate in the TLS handshake, and the control plane SHALL verify
-the chain again against its own trust anchors and revocation lists before it maps it. A request on
-such a connection SHALL have the certificate as its only identity, with kind `mtls` and principal
-`mtls:<agent>`, and that identity SHALL apply to policy, grants, approvals, store identity and audit
-as other identities do.
+proxy, the tool proxy and the edge listener, and SHALL never hold the client's private key. A request
+on such a connection SHALL have the certificate as its only identity, with kind `mtls` and principal
+`mtls:<agent>`.
 
 #### Scenario: SPIFFE identity
 
@@ -27,20 +22,6 @@ as other identities do.
 - **THEN** the request from `builder` is redacted and forwarded, the one from `reviewer` is refused,
   and each decision's audit entry names the caller as `certificate` with its agent
 
-#### Scenario: Untrusted, expired or revoked certificate
-
-- **WHEN** a client presents a certificate from another CA, an expired certificate or one a
-  configured CRL revokes
-- **THEN** the TLS handshake fails, nothing is forwarded, and an audit entry records the refusal
-  with its reason
-
-#### Scenario: Unusable trust is refused before the data plane
-
-- **WHEN** the trust anchors do not parse, a CRL does not parse, no listener names are configured,
-  or a listener kind that does not serve HTTP to agents has TLS set
-- **THEN** the control plane refuses to build the snapshot with an error naming the setting, and
-  the data plane keeps the snapshot in force
-
 #### Scenario: Token on a certificate connection
 
 - **WHEN** a request on a TLS listener also carries `x-scrim-session` with another agent's token
@@ -49,11 +30,16 @@ as other identities do.
 ### Requirement: Data-plane identity from the transport
 
 The data plane SHALL take a request's caller only from its transport: Unix socket peer credentials,
-`Proxy-Authorization: Basic` on the forward proxy, the `x-scrim-session` header on a base-URL
-listener, each carrying a session or a service account token, neither of which SHALL be forwarded,
-or the client certificate verified in the handshake of a TLS listener. A request with none of these
-SHALL be an unknown caller. A rule on the agent of a request that carries one SHALL be decided by
-the control plane, with what the transport said in the ask.
+`Proxy-Authorization: Basic` on the forward proxy, `x-scrim-session` on a base-URL listener (neither
+header forwarded), or a client certificate verified on a TLS listener. A request with none SHALL be
+an unknown caller. A rule on the agent of a request that carries one SHALL be decided by the control
+plane, with what the transport said in the ask.
+
+#### Scenario: Session header carries a token
+
+- **WHEN** a request carries a session token or a service account token in `x-scrim-session` or
+  `Proxy-Authorization`
+- **THEN** the caller is taken from that token and the header is not forwarded
 
 #### Scenario: Request without a session
 
@@ -72,6 +58,28 @@ the control plane, with what the transport said in the ask.
   maps it to the agent
 
 ## ADDED Requirements
+
+### Requirement: Client certificate verification
+
+The system SHALL refuse a client certificate that does not chain to a configured trust anchor, is
+outside its validity period, is not for client authentication or is revoked, and SHALL audit every
+refusal with its reason. The data plane SHALL verify the certificate in the TLS handshake, and the
+control plane SHALL verify the chain again against its own trust anchors and revocation lists before
+it maps it.
+
+#### Scenario: Untrusted, expired or revoked certificate
+
+- **WHEN** a client presents a certificate from another CA, an expired certificate or one a
+  configured CRL revokes
+- **THEN** the TLS handshake fails, nothing is forwarded, and an audit entry records the refusal
+  with its reason
+
+#### Scenario: Unusable trust is refused before the data plane
+
+- **WHEN** the trust anchors do not parse, a CRL does not parse, no listener names are configured,
+  or a listener kind that does not serve HTTP to agents has TLS set
+- **THEN** the control plane refuses to build the snapshot with an error naming the setting, and
+  the data plane keeps the snapshot in force
 
 ### Requirement: Client certificates map to agents
 
