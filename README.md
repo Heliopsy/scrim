@@ -249,7 +249,8 @@ and bulk prefix mapping.
 ### Deployment
 
 - One file per platform: the Go control plane with the Rust data plane embedded and run as a
-  separate child process. Linux and macOS, amd64 and arm64.
+  separate child process. Linux, macOS and Windows, amd64 and arm64 (Windows runs a subset,
+  see [docs/install.md](docs/install.md#windows)).
 - Distroless, non-root, multi-arch images: `ghcr.io/heliopsy/scrim` and
   `ghcr.io/heliopsy/scrim-dataplane`.
 - Every interception mode in the table below, from `scrim run` for one process to transparent
