@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -220,6 +221,9 @@ func unavailable(context.Context, string) fsview.Availability {
 // HOME points at a mirror without the real credential files, and the real
 // files stay readable by absolute path, a gap status reports.
 func TestFSViewHomeMirror(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no session filesystem view")
+	}
 	home := plantHome(t, t.TempDir())
 	for _, mode := range []string{fsview.ModeHome, fsview.ModeAuto} {
 		t.Run(mode, func(t *testing.T) {
@@ -266,6 +270,9 @@ func TestFSViewHomeMirror(t *testing.T) {
 // TestFSViewOff is the control: without the view the agent reads the
 // decoy, so the tests above would catch a view that does nothing.
 func TestFSViewOff(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no session filesystem view")
+	}
 	home := plantHome(t, t.TempDir())
 	r, stderr, err := runView(t, home, FSViewOptions{Mode: fsview.ModeOff, PasswdHome: home.dir})
 	if err != nil {
@@ -279,6 +286,9 @@ func TestFSViewOff(t *testing.T) {
 // TestFSViewNamespaceRequiredRefuses: run.fs-view namespace on a host
 // without namespaces does not start the agent.
 func TestFSViewNamespaceRequiredRefuses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no session filesystem view")
+	}
 	home := plantHome(t, t.TempDir())
 	_, stderr, err := runView(t, home, FSViewOptions{Mode: fsview.ModeNamespace, Probe: unavailable, PasswdHome: home.dir})
 	if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "test host without namespaces") {
@@ -288,6 +298,9 @@ func TestFSViewNamespaceRequiredRefuses(t *testing.T) {
 
 // TestFSViewPrintEnv shows the view without writing anything.
 func TestFSViewPrintEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no session filesystem view")
+	}
 	home := plantHome(t, t.TempDir())
 	h := newHarness(t, true)
 	env := setEnv(baseEnv(t), "HOME", home.dir)

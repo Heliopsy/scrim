@@ -18,6 +18,7 @@ cd "$(dirname "$0")/.."
 
 # package (relative to the module) and why it does not run on Windows.
 excluded=(
+  "internal/install: scrim install writes systemd and Quadlet units and runs Unix tools (nft, systemctl, keytool paths); there is no scrim install on Windows"
 )
 
 declare -A skip=()

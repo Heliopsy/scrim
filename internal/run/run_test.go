@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -214,6 +215,9 @@ func TestRunAllowUnredactedStart(t *testing.T) {
 }
 
 func TestRunForwardsSignalsAndPropagatesStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SIGTERM forwarding is Unix only")
+	}
 	h := newHarness(t, false)
 	sigs := make(chan os.Signal, 1)
 	done := make(chan error, 1)
@@ -280,7 +284,7 @@ func TestPrintEnvMintsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Preset != "claude" || plan.Args[1] != "--mcp-config=<session-dir>/mcp.json" {
+	if plan.Preset != "claude" || filepath.ToSlash(plan.Args[1]) != "--mcp-config=<session-dir>/mcp.json" {
 		t.Errorf("plan %+v", plan)
 	}
 	if h.hasLiveSession(t) {

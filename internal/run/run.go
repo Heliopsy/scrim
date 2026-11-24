@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -496,19 +497,40 @@ func (p *Prepared) Start(ctx context.Context) error {
 	return supervise(cmd, o.Signals, o.stderr(), started)
 }
 
-// lookPath resolves name against the agent's own PATH.
+// lookPath resolves name against the agent's own PATH. On Windows a name
+// without an extension is also tried with each of the agent's PATHEXT
+// extensions, and any regular file counts as executable (there are no mode
+// bits), as cmd.exe does.
 func lookPath(name string, env []string) (string, error) {
-	if strings.Contains(name, "/") {
+	if strings.ContainsRune(name, '/') || (runtime.GOOS == "windows" && (strings.ContainsRune(name, '\\') || filepath.VolumeName(name) != "")) {
 		return name, nil
 	}
-	path := envMap(env)["PATH"]
-	for _, dir := range filepath.SplitList(path) {
+	vars := envMap(env)
+	get := func(k string) string { return envGet(vars, k) }
+	exts := []string{""}
+	if runtime.GOOS == "windows" {
+		pathext := get("PATHEXT")
+		if pathext == "" {
+			pathext = ".COM;.EXE;.BAT;.CMD"
+		}
+		if filepath.Ext(name) == "" {
+			exts = nil
+		}
+		for e := range strings.SplitSeq(pathext, ";") {
+			if e != "" {
+				exts = append(exts, strings.ToLower(e))
+			}
+		}
+	}
+	for _, dir := range filepath.SplitList(get("PATH")) {
 		if dir == "" {
 			dir = "."
 		}
-		f := filepath.Join(dir, name)
-		if st, err := os.Stat(f); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
-			return f, nil
+		for _, ext := range exts {
+			f := filepath.Join(dir, name+ext)
+			if st, err := os.Stat(f); err == nil && st.Mode().IsRegular() && (runtime.GOOS == "windows" || st.Mode()&0o111 != 0) {
+				return f, nil
+			}
 		}
 	}
 	return "", fmt.Errorf("%s: not found in PATH", name)

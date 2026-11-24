@@ -19,6 +19,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -26,6 +27,8 @@ import (
 	"time"
 
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/fsperm"
+	"github.com/heliopsy/scrim/internal/fsperm/fspermtest"
 	"github.com/heliopsy/scrim/internal/identity"
 	"github.com/heliopsy/scrim/internal/secret"
 )
@@ -304,7 +307,9 @@ func TestRotation(t *testing.T) {
 	ents, _ := os.ReadDir(dir)
 	for _, e := range ents {
 		fi, _ := e.Info()
-		if fi.Mode().Perm() != 0o600 {
+		if runtime.GOOS == "windows" {
+			fspermtest.Private(t, filepath.Join(dir, e.Name()))
+		} else if fi.Mode().Perm() != 0o600 {
 			t.Errorf("%s has mode %04o", e.Name(), fi.Mode().Perm())
 		}
 	}
@@ -338,10 +343,15 @@ func TestKeyDirChecks(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	fspermtest.Open(t, dir)
 	if _, err := New(Options{URL: testURL, KeyDir: dir, Now: c.now, Generate: gen(t)}); err == nil || !strings.Contains(err.Error(), "group or others") {
 		t.Fatalf("open key directory accepted: %v", err)
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if runtime.GOOS == "windows" {
+		if err := fsperm.Restrict(dir); err != nil {
+			t.Fatal(err)
+		}
+	} else if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := New(Options{URL: testURL, KeyDir: dir, Now: c.now, Generate: gen(t)}); err != nil {
@@ -557,7 +567,7 @@ func TestFromConfig(t *testing.T) {
 	if err := os.WriteFile(keyFile, pemKeys(t, keyPool(t)[5]), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	i, err = build(t, "identity: {issuer: {url: https://scrim.example.test, listen: 127.0.0.1:0, signing-keys: \"file:"+keyFile+"\"}}\n")
+	i, err = build(t, "identity: {issuer: {url: https://scrim.example.test, listen: 127.0.0.1:0, signing-keys: 'file:"+keyFile+"'}}\n")
 	if err != nil {
 		t.Fatal(err)
 	}

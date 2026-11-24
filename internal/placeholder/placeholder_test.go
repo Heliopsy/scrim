@@ -10,10 +10,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/fsperm/fspermtest"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -98,7 +100,9 @@ func TestLoadGeneratesOnceAndPersists(t *testing.T) {
 		t.Fatal("second load did not return the persisted key")
 	}
 	fi, err := os.Stat(filepath.Join(dir, "placeholder-01.key"))
-	if err != nil || fi.Mode().Perm() != 0o600 {
+	if runtime.GOOS == "windows" {
+		fspermtest.Private(t, filepath.Join(dir, "placeholder-01.key"))
+	} else if err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("key file: %v %v", fi, err)
 	}
 	_ = r1.Current().Key.Expose(func(b []byte) error {
@@ -120,6 +124,7 @@ func TestLoadRefusesOpenPermissions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "placeholder-01.key"), []byte(strings.Repeat("ab", 32)), 0o644); err != nil { //nolint:gosec // the test needs a readable file
 		t.Fatal(err)
 	}
+	fspermtest.Open(t, filepath.Join(dir, "placeholder-01.key"))
 	cfg := build(t, header+"redaction:\n  placeholder-key-dir: "+dir+"\n")
 	if _, err := Load(context.Background(), cfg, nil); err == nil || !strings.Contains(err.Error(), "group or others") {
 		t.Fatalf("Load = %v", err)

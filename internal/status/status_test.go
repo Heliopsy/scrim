@@ -9,12 +9,15 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/fsperm"
+	"github.com/heliopsy/scrim/internal/fsperm/fspermtest"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -331,13 +334,24 @@ func TestStateLocationCheck(t *testing.T) {
 	if err := os.WriteFile(db, nil, 0o644); err != nil { // #nosec G306 -- testing the check
 		t.Fatal(err)
 	}
+	fspermtest.Open(t, dir)
+	fspermtest.Open(t, db)
+	dirFix, fileFix := "chmod 0700", "chmod 0600"
+	if runtime.GOOS == "windows" {
+		dirFix, fileFix = "icacls", "icacls"
+	}
 	fs := StateLocationCheck(db).Run(context.Background())
-	if len(fs) != 2 || fs[0].Outcome != Fail || !strings.Contains(fs[0].Fix, "chmod 0700") ||
-		!strings.Contains(fs[1].Fix, "chmod 0600") {
+	if len(fs) != 2 || fs[0].Outcome != Fail || !strings.Contains(fs[0].Fix, dirFix) ||
+		!strings.Contains(fs[1].Fix, fileFix) {
 		t.Fatalf("open perms: %+v", fs)
 	}
-	_ = os.Chmod(dir, 0o700)
-	_ = os.Chmod(db, 0o600)
+	if runtime.GOOS == "windows" {
+		_ = fsperm.Restrict(dir)
+		_ = fsperm.Restrict(db)
+	} else {
+		_ = os.Chmod(dir, 0o700)
+		_ = os.Chmod(db, 0o600)
+	}
 	if fs := StateLocationCheck(db).Run(context.Background()); len(fs) != 0 {
 		t.Fatalf("private perms: %+v", fs)
 	}

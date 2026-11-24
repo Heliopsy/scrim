@@ -5,6 +5,7 @@ package run
 import (
 	"encoding/json"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -50,6 +51,9 @@ func mustBuild(t *testing.T, in Input) *Plan {
 }
 
 func TestBuildCommonEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the expected values are Unix paths; the run tests that start an agent cover Windows")
+	}
 	p := mustBuild(t, input("/opt/bin/myagent", "--flag"))
 	if p.Preset != "generic" || !slices.Equal(p.Args, []string{"/opt/bin/myagent", "--flag"}) {
 		t.Fatalf("preset %s args %v", p.Preset, p.Args)
@@ -195,6 +199,9 @@ func TestBuildRefusesUnsafeEndpoints(t *testing.T) {
 }
 
 func TestClaudePreset(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the expected values are Unix paths; the run tests that start an agent cover Windows")
+	}
 	p := mustBuild(t, input("/home/u/.local/bin/claude", "-p", "fix it"))
 	if p.Preset != "claude" {
 		t.Fatalf("preset %s", p.Preset)
@@ -408,6 +415,9 @@ func writeFile(p, body string) error { return os.WriteFile(p, []byte(body), 0o60
 // TestCredentialHelperLinks: a profile's credential helper binaries are
 // linked to scrim in the session's bin directory, which goes first on PATH.
 func TestCredentialHelperLinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the expected values are Unix paths; the run tests that start an agent cover Windows")
+	}
 	in := input("claude")
 	in.Profiles = &profiles.Rendered{Profiles: []string{"docker"}, Bin: []string{"docker-credential-scrim"}}
 	p := mustBuild(t, in)

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -737,6 +738,9 @@ func TestPathConfinement(t *testing.T) {
 }
 
 func TestParseOptions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the cases are Unix paths, which are not absolute on Windows")
+	}
 	cfg, err := ParseOptions("s", map[string]any{"root": "/srv/secrets", "age-identity": "file:/run/age.txt", "watch": map[string]any{"interval": "5s"}})
 	if err != nil || cfg.Format != FormatAuto || cfg.AgeIdentity != "file:/run/age.txt" || cfg.WatchInterval != 5*time.Second || cfg.MaxSize != DefaultMaxSize {
 		t.Fatalf("ParseOptions = %+v, %v", cfg, err)
