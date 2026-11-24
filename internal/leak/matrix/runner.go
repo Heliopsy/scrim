@@ -142,6 +142,9 @@ func (t Target) sendWS(ctx context.Context, r Request) (int, []byte, error) {
 	defer cancel()
 	opts := &websocket.DialOptions{HTTPHeader: t.header(r), HTTPClient: wsClient}
 	c, resp, err := websocket.Dial(ctx, t.url(r), opts)
+	if resp != nil && resp.Body != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	if err != nil {
 		if resp != nil && resp.StatusCode != http.StatusSwitchingProtocols {
 			var body []byte

@@ -133,6 +133,9 @@ func (f *forwarder) relayWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	up, resp, err := websocket.Dial(r.Context(), u.String(), &websocket.DialOptions{HTTPHeader: h, HTTPClient: f.client})
+	if resp != nil && resp.Body != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	if err != nil {
 		status := http.StatusBadGateway
 		var body []byte
