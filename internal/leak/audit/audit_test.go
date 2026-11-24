@@ -10,11 +10,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/heliopsy/scrim/internal/fsperm/fspermtest"
 	"github.com/heliopsy/scrim/internal/leak"
 	fp "github.com/heliopsy/scrim/internal/testing/fakeprovider"
 )
@@ -33,7 +35,9 @@ func TestPassThroughFailsAndReportHoldsNoValue(t *testing.T) {
 	if rep.Summary.GatedLeaks == 0 || rep.Summary.ScenarioFailures == 0 {
 		t.Fatalf("summary %+v", rep.Summary)
 	}
-	if fi, err := os.Stat(seedsPath); err != nil || fi.Mode().Perm() != 0o600 {
+	if runtime.GOOS == "windows" {
+		fspermtest.Private(t, seedsPath)
+	} else if fi, err := os.Stat(seedsPath); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("seed file: %v %v", fi, err)
 	}
 	seeds, err := leak.ReadSeedFile(seedsPath)

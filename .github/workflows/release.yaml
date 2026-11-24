@@ -1,7 +1,8 @@
 name: Release
 
 # Builds, signs and publishes one release: the scrim and scrim-dataplane
-# binaries for linux and darwin on amd64 and arm64, their SBOMs, a signed
+# binaries for linux, darwin and windows on amd64 and arm64 (the darwin ones
+# signed and notarised by Apple when the signing secrets are set), their SBOMs, a signed
 # checksums file, SLSA build provenance for every file, and the two multi-arch
 # images on ghcr.io, signed and attested, and the release's leak and performance
 # results (leak suite, end-to-end matrix, fuzzing, latency gate, redaction
@@ -35,6 +36,13 @@ name: Release
 # - darwin data planes: GitHub's macos-15, both targets with Apple's
 #   toolchain, for pull requests and releases. No Mac runner is registered for
 #   the org (the self-hosted Mac belongs to other repositories).
+# - windows data planes: GitHub's windows-2025 (amd64) and windows-11-arm
+#   (arm64), each with the MSVC toolchain of its own architecture. There is no
+#   self-hosted Windows runner.
+# - sign-dataplane-macos and notarize-macos: GitHub's macos-15. They hold the
+#   Apple signing secrets, so they build nothing: they sign, and notarise,
+#   binaries the build jobs made. Without the secrets they pass the binaries
+#   through unsigned with a notice, and the release notes say so.
 # - reproduce: another GitHub ubuntu-24.04 runner and a different checkout
 #   path from the build it is compared with.
 # - image-check and image: GitHub-hosted, they need podman.
@@ -49,7 +57,8 @@ name: Release
 #   and provenance record a GitHub-hosted signer.
 #
 # Jobs that run third-party build code (cargo build scripts, go build, the
-# test and benchmark jobs) hold a read-only token and no OIDC token. Signing, attesting and publishing happen in
+# test and benchmark jobs) hold a read-only token, no OIDC token and no
+# secret. Signing, attesting and publishing happen in
 # separate jobs that only handle the built files. Nothing is restored from a
 # cache: a release is built from the lockfiles and pinned tools alone.
 on:
@@ -174,11 +183,20 @@ jobs:
           - {platform: linux-arm64, runner: '"ubuntu-24.04-arm"'}
           - {platform: darwin-amd64, runner: mac}
           - {platform: darwin-arm64, runner: mac}
+          # MSVC with the C runtime linked statically, each on a runner of
+          # its own architecture.
+          - {platform: windows-amd64, runner: '"windows-2025"'}
+          - {platform: windows-arm64, runner: '"windows-11-arm"'}
+    defaults:
+      run:
+        shell: bash
     env:
       SCRIM_VERSION: ${{ needs.plan.outputs.version }}
       SCRIM_COMMIT: ${{ needs.plan.outputs.commit }}
       SOURCE_DATE_EPOCH: ${{ needs.plan.outputs.epoch }}
     steps:
+      # Byte for byte as committed: no CRLF conversion on Windows.
+      - run: git config --global core.autocrlf false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.commit }}
@@ -206,7 +224,10 @@ jobs:
       - name: Build
         env:
           PLATFORM: ${{ matrix.platform }}
-        run: scripts/release/dataplane.sh "$PLATFORM" "out/$PLATFORM/scrim-dataplane"
+        run: |
+          x=""
+          case "$PLATFORM" in windows-*) x=.exe ;; esac
+          scripts/release/dataplane.sh "$PLATFORM" "out/$PLATFORM/scrim-dataplane$x"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: dataplane-${{ matrix.platform }}
@@ -217,9 +238,63 @@ jobs:
         if: always()
         run: rm -rf "$RUNNER_TEMP/cargo-home" "$RUNNER_TEMP/target" "$RUNNER_TEMP/tools" out
 
-  build:
-    name: Control plane and archives
+  # Signs both darwin data planes before the control plane embeds them, so
+  # the copy inside scrim is byte for byte the scrim-dataplane that ships
+  # beside it. Builds nothing; on pull requests, and without the secrets, it
+  # passes the binaries through unsigned.
+  sign-dataplane-macos:
+    name: Sign the darwin data planes
     needs: [plan, dataplane]
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+          sparse-checkout: scripts/release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: dataplane-darwin-*
+          path: out
+          merge-multiple: true
+      - name: Sign
+        id: sign
+        env:
+          PUBLISH: ${{ needs.plan.outputs.publish }}
+          APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          configured=$(scripts/release/macos-sign.sh configured)
+          if [ "$PUBLISH" != true ] || [ "$configured" != true ]; then
+            [ "$PUBLISH" = true ] && echo "::notice::Apple signing secrets are not set: the darwin binaries are not signed or notarised (docs/install.md, maintainers)"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          identity=$(scripts/release/macos-sign.sh keychain)
+          scripts/release/macos-sign.sh sign "$identity" out/darwin-amd64/scrim-dataplane out/darwin-arm64/scrim-dataplane
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      - name: Remove the keychain
+        if: always()
+        run: scripts/release/macos-sign.sh cleanup
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: dataplane-macos
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    name: Control plane
+    needs: [plan, dataplane, sign-dataplane-macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -237,30 +312,129 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      # Linux and Windows data planes from their build jobs; the darwin ones
+      # from the signing job (signed, or passed through unsigned).
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          pattern: dataplane-*
+          pattern: dataplane-linux-*
           path: dist/bin
           merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: dataplane-windows-*
+          path: dist/bin
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: dataplane-macos
+          path: dist/bin
       - name: Build scrim with the data plane embedded
         run: |
           set -euo pipefail
-          for p in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
-            scripts/release/controlplane.sh "$p" "dist/bin/$p/scrim-dataplane" "dist/bin/$p/scrim"
+          for p in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
+            x=""
+            case "$p" in windows-*) x=.exe ;; esac
+            scripts/release/controlplane.sh "$p" "dist/bin/$p/scrim-dataplane$x" "dist/bin/$p/scrim$x"
           done
           dist/bin/linux-amd64/scrim "$(sed -n 's/^SCRIM_VERSION_CMD=//p' scripts/release/release.env)"
-      - name: Install syft
-        run: |
-          scripts/release/tools.sh "$RUNNER_TEMP/tools" syft
-          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
-      - name: Archives, SBOMs and checksums
-        run: scripts/release/package.sh dist/bin dist/release
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: bin
           path: dist/bin/
           if-no-files-found: error
           retention-days: 1
+
+  # Signs the darwin scrim binaries and has Apple notarise them together with
+  # the data planes signed above. Builds nothing; without the secrets it
+  # passes the binaries through unsigned.
+  notarize-macos:
+    name: Sign and notarise the darwin binaries
+    needs: [plan, build, sign-dataplane-macos]
+    runs-on: macos-15
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      notarized: ${{ steps.notarize.outputs.notarized }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+          sparse-checkout: scripts/release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: bin
+          path: bin
+      - name: Sign and notarise
+        id: notarize
+        env:
+          SIGNED: ${{ needs.sign-dataplane-macos.outputs.signed }}
+          APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp -R bin/darwin-amd64 bin/darwin-arm64 out/
+          if [ "$SIGNED" != true ]; then
+            echo "::notice::the darwin binaries of this run are not signed or notarised"
+            echo "notarized=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          identity=$(scripts/release/macos-sign.sh keychain)
+          scripts/release/macos-sign.sh sign "$identity" out/darwin-amd64/scrim out/darwin-arm64/scrim
+          # Signing scrim appends its signature; the embedded data plane, in
+          # the data section, is untouched and still the shipped one.
+          for p in darwin-amd64 darwin-arm64; do
+            python3 -I -c 'import sys; a=open(sys.argv[1],"rb").read(); b=open(sys.argv[2],"rb").read(); sys.exit(0 if b and a.find(b)>=0 else 1)' \
+              "out/$p/scrim" "out/$p/scrim-dataplane" || { echo "::error::$p scrim lost its embedded data plane"; exit 1; }
+          done
+          scripts/release/macos-sign.sh notarize out/darwin-*/scrim out/darwin-*/scrim-dataplane
+          echo "notarized=true" >> "$GITHUB_OUTPUT"
+      - name: Remove the keychain
+        if: always()
+        run: scripts/release/macos-sign.sh cleanup
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: bin-darwin
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
+
+  package:
+    name: Archives, SBOMs and checksums
+    needs: [plan, build, notarize-macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      SCRIM_VERSION: ${{ needs.plan.outputs.version }}
+      SCRIM_COMMIT: ${{ needs.plan.outputs.commit }}
+      SOURCE_DATE_EPOCH: ${{ needs.plan.outputs.epoch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: bin
+          path: dist/bin
+      # The darwin pairs as the notarisation job left them (signed, or the
+      # same bytes when it had no secrets).
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: bin-darwin
+          path: dist/bin
+      - name: Install syft
+        run: |
+          scripts/release/tools.sh "$RUNNER_TEMP/tools" syft
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - name: Archives, SBOMs and checksums
+        run: scripts/release/package.sh dist/bin dist/release
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: release
@@ -581,7 +755,7 @@ jobs:
 
   results:
     name: Results
-    needs: [plan, build, results-leak, results-matrix, results-bench, results-regression, results-fuzz]
+    needs: [plan, package, results-leak, results-matrix, results-bench, results-regression, results-fuzz]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -634,7 +808,7 @@ jobs:
 
   sign:
     name: Sign and attest files
-    needs: [plan, build, reproduce, results]
+    needs: [plan, package, reproduce, results]
     if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -686,7 +860,7 @@ jobs:
 
   publish:
     name: GitHub release
-    needs: [plan, sign]
+    needs: [plan, sign, notarize-macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -705,6 +879,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.plan.outputs.tag }}
           PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+          NOTARIZED: ${{ needs.notarize-macos.outputs.notarized }}
         run: |
           set -euo pipefail
           if ! gh release view "$TAG" >/dev/null 2>&1; then
@@ -715,6 +890,16 @@ jobs:
           was_draft=$(gh release view "$TAG" --json isDraft --jq .isDraft)
           [ "$was_draft" = true ] || gh release edit "$TAG" --draft=true
           gh release upload "$TAG" --clobber dist/release/*
+          # Said in the notes whenever the darwin binaries were not notarised
+          # (no signing secrets), once, also on a rerun.
+          if [ "$NOTARIZED" != true ]; then
+            note="**macOS:** the darwin binaries of this release are not signed or notarised by Apple. Check them with the signed checksums and provenance (docs/install.md); Gatekeeper blocks a downloaded binary until you clear its quarantine attribute."
+            body=$(gh release view "$TAG" --json body --jq .body)
+            if ! grep -qF "not signed or notarised by Apple" <<<"$body"; then
+              printf '%s\n\n%s\n' "$body" "$note" > "$RUNNER_TEMP/notes.md"
+              gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+            fi
+          fi
           edit=(--draft=false)
           if [ "$PRERELEASE" = true ]; then
             edit+=(--prerelease --latest=false)

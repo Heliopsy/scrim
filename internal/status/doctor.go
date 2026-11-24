@@ -8,11 +8,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/heliopsy/scrim/internal/fsperm"
 )
 
 // Outcome is a doctor check's result.
@@ -295,15 +298,21 @@ func StateLocationCheck(path string) Check {
 		if !st.IsDir() {
 			return []Finding{{Outcome: Fail, Message: dir + " is not a directory"}}
 		}
-		if st.Mode().Perm()&0o077 != 0 {
-			fs = append(fs, Finding{Outcome: Fail,
-				Message: fmt.Sprintf("%s is mode %04o, readable by other users", dir, st.Mode().Perm()),
-				Fix:     "chmod 0700 " + dir})
+		fixDir, fixFile := "chmod 0700 "+dir, "chmod 0600 "+path
+		if runtime.GOOS == "windows" {
+			fixDir, fixFile = fsperm.FixHint(dir, true), fsperm.FixHint(path, false)
 		}
-		if fst, err := os.Stat(path); err == nil && fst.Mode().Perm()&0o077 != 0 {
+		if loose, detail, _ := fsperm.Loose(dir, st); loose {
 			fs = append(fs, Finding{Outcome: Fail,
-				Message: fmt.Sprintf("%s is mode %04o, readable by other users", path, fst.Mode().Perm()),
-				Fix:     "chmod 0600 " + path})
+				Message: fmt.Sprintf("%s is %s, readable by other users", dir, detail),
+				Fix:     fixDir})
+		}
+		if fst, err := os.Stat(path); err == nil {
+			if loose, detail, _ := fsperm.Loose(path, fst); loose {
+				fs = append(fs, Finding{Outcome: Fail,
+					Message: fmt.Sprintf("%s is %s, readable by other users", path, detail),
+					Fix:     fixFile})
+			}
 		}
 		return fs
 	}}

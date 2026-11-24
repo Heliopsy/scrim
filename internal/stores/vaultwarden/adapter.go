@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/fsperm"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/vaultwarden/bwcrypto"
@@ -161,8 +162,10 @@ func (a *Adapter) classify(op stores.Op, ref stores.Ref, what string, err error)
 // reference is also checked to be readable by its owner only.
 func (a *Adapter) resolveRef(ctx context.Context, ref config.SecretRef) (secret.Value, error) {
 	if p, ok := strings.CutPrefix(string(ref), "file:"); ok {
-		if fi, err := os.Stat(p); err == nil && fi.Mode().Perm()&0o077 != 0 {
-			return secret.Value{}, fmt.Errorf("%s is readable by group or others (mode %04o); restrict it to scrim", p, fi.Mode().Perm())
+		if fi, err := os.Stat(p); err == nil {
+			if loose, detail, _ := fsperm.Loose(p, fi); loose {
+				return secret.Value{}, fmt.Errorf("%s is readable by group or others (%s); restrict it to scrim", p, detail)
+			}
 		}
 	}
 	v, err := a.resolve(ctx, ref)

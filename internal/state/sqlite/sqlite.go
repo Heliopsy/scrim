@@ -33,6 +33,7 @@ import (
 	sqlite3lib "modernc.org/sqlite/lib"
 
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/fsperm"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/state/migrate"
 	"github.com/heliopsy/scrim/internal/state/sqlstate"
@@ -176,7 +177,7 @@ func Open(ctx context.Context, path string, o Options) (*Store, error) {
 		return nil, fmt.Errorf("state: resolving %q: %w", path, err)
 	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := fsperm.MkdirPrivate(dir); err != nil {
 		return nil, fmt.Errorf("state: creating %s: %w", dir, err)
 	}
 	detect := o.detectFS

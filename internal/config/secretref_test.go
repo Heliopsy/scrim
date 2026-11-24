@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -72,6 +73,9 @@ func TestUnresolvableReference(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
+			if name == "missing file" && runtime.GOOS == "windows" {
+				t.Skip("/run/secrets/bao-token is not an absolute path on Windows")
+			}
 			w := newWorld(t)
 			p := w.file("c.yaml", header+"stores.openbao.token: "+tc.ref+"\n")
 			err := w.buildErr(p)

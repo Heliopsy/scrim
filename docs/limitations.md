@@ -205,7 +205,36 @@ These pages list their own limits in more detail:
 
 ## Platforms
 
-- Release binaries are for Linux and macOS only. The keyring source supports Windows' Credential
-  Manager in code, but there is no Windows release.
-- The macOS binaries are covered by the signed checksums and provenance like the others, but they
-  are not notarised by Apple.
+- **The macOS binaries are notarised only once the maintainers have added Apple's signing
+  credentials** ([install.md](install.md#for-maintainers-macos-signing-and-notarisation)). Until
+  then the release notes say the darwin binaries are not notarised, and a browser download has to
+  have its quarantine attribute cleared after you verify it. Signed or not, the checksums are signed
+  and every archive has provenance.
+- **Windows runs a subset of scrim** ([install.md](install.md#windows)). scrim refuses to start on
+  Windows, naming the setting, when any of these is configured: `proxy.socket` (Unix socket LLM
+  listeners), `proxy.transparent-listen` and `interception.ebpf.*` (transparent and eBPF
+  interception), `exec.commands` (brokered commands, `secret_exec`), `databases` (the database
+  proxies), `api.permissions` and `api.group`, `identity.peers` selectors by `uid:`, `gid:` or
+  `group:`, and `dataplane.memory-lock: require`.
+- **On Windows, other accounts are not told apart.** A caller on scrim's sockets is either the
+  account scrim runs as or unknown; `identity.peers` can name only that account. Separate agents
+  with `scrim run` session tokens. A peer is identified by the process ID Windows records when it
+  connects; if that process exits and the ID is reused before scrim looks it up, the new process's
+  account is the one checked.
+- **Not on Windows:** plugins, the ssh-agent in `scrim run` (`SSH_AUTH_SOCK` is left as it is, so
+  the session can use your own agent's keys), the session filesystem view (credential files in your
+  profile stay readable from the session), the docker credential helper when neither a symbolic nor a
+  hard link to `scrim.exe` can be made, `scrim install`, the Windows certificate store (`scrim ca install`
+  writes the bundle files only; import the CA with `certutil -user -addstore Root`), configuration reload on
+  `SIGHUP` (use `config.watch` or the admin API) and the CA directory lock between two processes.
+- **The Windows data plane does not lock its memory or suppress crash dumps.** Values can be paged
+  to disk and end up in a Windows Error Reporting dump. Keep the page file and dumps on an encrypted
+  disk (BitLocker).
+- **Windows binaries are not Authenticode-signed**, so SmartScreen may warn about a browser
+  download. Verify them with the signed checksums and provenance.
+- **The capture directory is not checked by the data plane on Windows.** The control plane refuses
+  a `proxy.capture.dir` that other accounts can reach, but the data plane creates the files without
+  checking again. Keep it under your profile.
+- **Windows has no race detector run in CI.** The Go tests run there without `-race` (it needs cgo);
+  Linux CI runs every package with it. Packages and tests that cannot run on Windows are listed with
+  their reason in `scripts/test-windows.sh` and in `//go:build unix` constraints.

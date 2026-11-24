@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//go:build unix
+
+// scrim run serves no ssh-agent on Windows (docs/limitations.md, Platforms).
+
 package run
 
 import (

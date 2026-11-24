@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/fsperm"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -154,7 +155,7 @@ var keyFile = regexp.MustCompile(`^placeholder-([0-9a-f]{2})\.key$`)
 // loadOrGenerate reads every placeholder-<vv>.key in dir, generating
 // placeholder-01.key when there is none. Files hold the key in hex.
 func loadOrGenerate(dir string, log *slog.Logger) (*Ring, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := fsperm.MkdirPrivate(dir); err != nil {
 		return nil, fmt.Errorf("placeholder: creating %s: %w", dir, err)
 	}
 	if err := private(dir, true); err != nil {
@@ -248,8 +249,10 @@ func private(path string, dir bool) error {
 	if fi.IsDir() != dir {
 		return fmt.Errorf("placeholder: %s has the wrong type", path)
 	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("placeholder: %s is accessible to group or others (mode %04o); use %s", path, fi.Mode().Perm(), map[bool]string{true: "0700", false: "0600"}[dir])
+	if loose, detail, err := fsperm.Loose(path, fi); err != nil {
+		return fmt.Errorf("placeholder: %w", err)
+	} else if loose {
+		return fmt.Errorf("placeholder: %s is accessible to group or others (%s); %s", path, detail, fsperm.FixHint(path, dir))
 	}
 	return nil
 }

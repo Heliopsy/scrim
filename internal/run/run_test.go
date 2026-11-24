@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -138,8 +139,10 @@ func TestRunEnvironmentSeenByTheAgent(t *testing.T) {
 		"SCRIM_ACME_KEY":         "SCRIM_ACME_KEY",
 	}
 	for k, v := range want {
-		if env[k] != v {
-			t.Errorf("%s = %q, want %q", k, env[k], v)
+		// Windows keeps one of HTTPS_PROXY and https_proxy (names are
+		// case-insensitive there); either carries the value.
+		if got := envGet(env, k); got != v {
+			t.Errorf("%s = %q, want %q", k, got, v)
 		}
 	}
 	if _, ok := env["ALL_PROXY"]; ok {
@@ -214,6 +217,9 @@ func TestRunAllowUnredactedStart(t *testing.T) {
 }
 
 func TestRunForwardsSignalsAndPropagatesStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SIGTERM forwarding is Unix only")
+	}
 	h := newHarness(t, false)
 	sigs := make(chan os.Signal, 1)
 	done := make(chan error, 1)
@@ -280,7 +286,7 @@ func TestPrintEnvMintsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Preset != "claude" || plan.Args[1] != "--mcp-config=<session-dir>/mcp.json" {
+	if plan.Preset != "claude" || filepath.ToSlash(plan.Args[1]) != "--mcp-config=<session-dir>/mcp.json" {
 		t.Errorf("plan %+v", plan)
 	}
 	if h.hasLiveSession(t) {
@@ -295,6 +301,9 @@ func TestPrintEnvMintsNothing(t *testing.T) {
 func TestLookPathUsesAgentPath(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "myagent")
+	if runtime.GOOS == "windows" {
+		bin += ".exe" // found through PATHEXT, as cmd.exe finds it
+	}
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}

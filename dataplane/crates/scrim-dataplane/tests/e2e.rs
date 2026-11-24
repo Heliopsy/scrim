@@ -31,6 +31,9 @@
     missing_docs,
     unreachable_pub
 )]
+// The binary is started with an inherited socketpair end (`--fd`) and serves a Unix socket
+// listener; tests/stdio.rs covers the stdio transport on every platform.
+#![cfg(unix)]
 
 use std::convert::Infallible;
 use std::os::fd::AsRawFd;

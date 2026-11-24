@@ -15,8 +15,9 @@ var ErrNoPeerCredentials = errors.New("identity: peer credentials are not availa
 
 // PeerOf returns the operating system's credentials for the process at the
 // other end of a Unix socket connection: SO_PEERCRED on Linux,
-// LOCAL_PEERCRED and LOCAL_PEERPID on macOS. The values are those the kernel
-// recorded when the peer connected; the peer cannot forge them.
+// LOCAL_PEERCRED and LOCAL_PEERPID on macOS, SIO_AF_UNIX_GETPEERPID and the
+// peer process's token on Windows. The values are those the kernel recorded
+// when the peer connected; the peer cannot forge them.
 func PeerOf(c net.Conn) (Peer, error) {
 	uc, ok := c.(*net.UnixConn)
 	if !ok {
@@ -34,7 +35,7 @@ func peerOfRaw(raw syscall.RawConn) (Peer, error) {
 		p    Peer
 		perr error
 	)
-	if err := raw.Control(func(fd uintptr) { p, perr = peerOfFD(int(fd)) }); err != nil { // #nosec G115 -- a file descriptor fits in an int
+	if err := raw.Control(func(fd uintptr) { p, perr = peerOfFD(fd) }); err != nil {
 		return Peer{}, fmt.Errorf("%w: %w", ErrNoPeerCredentials, err)
 	}
 	if perr != nil {

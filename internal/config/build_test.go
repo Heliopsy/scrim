@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -167,8 +168,9 @@ func TestListEncodingRoundTrips(t *testing.T) {
 func TestDiscovery(t *testing.T) {
 	t.Run("explicit path missing", func(t *testing.T) {
 		w := newWorld(t)
-		w.setenv("SCRIM_CONFIG=/nonexistent.yaml")
-		mustContain(t, w.buildErr().Error(), "/nonexistent.yaml", "no such file")
+		missing := filepath.Join(t.TempDir(), "nonexistent.yaml")
+		w.setenv("SCRIM_CONFIG=" + missing)
+		mustContain(t, w.buildErr().Error(), missing, noSuchFile)
 	})
 	t.Run("flag path beats SCRIM_CONFIG", func(t *testing.T) {
 		w := newWorld(t)
@@ -386,7 +388,7 @@ func TestIncludes(t *testing.T) {
 	t.Run("missing required include", func(t *testing.T) {
 		w := newWorld(t)
 		base := w.file("c.yaml", header+"include: [gone.yaml]\n")
-		mustContain(t, w.buildErr(base).Error(), "gone.yaml", "no such file")
+		mustContain(t, w.buildErr(base).Error(), "gone.yaml", noSuchFile)
 	})
 	t.Run("cycle", func(t *testing.T) {
 		w := newWorld(t)
@@ -450,3 +452,6 @@ func TestRegistryAdditions(t *testing.T) {
 		}
 	}
 }
+
+// noSuchFile is how the OS words a missing file in an error.
+var noSuchFile = map[bool]string{true: "cannot find the file", false: "no such file"}[runtime.GOOS == "windows"]

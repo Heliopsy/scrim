@@ -21,6 +21,8 @@
     clippy::pedantic,
     clippy::print_stderr
 )]
+// Executes generated commands in POSIX sh, sandboxed with unshare.
+#![cfg(unix)]
 
 use std::collections::HashMap;
 use std::path::Path;

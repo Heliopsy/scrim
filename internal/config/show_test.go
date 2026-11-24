@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -72,6 +73,9 @@ include: conf.d
 }
 
 func TestShowEffectiveGolden(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the golden files hold Unix paths; TestShowEffectiveContract runs on Windows")
+	}
 	for _, format := range []string{"text", "json"} {
 		t.Run(format, func(t *testing.T) {
 			w, c := showWorld(t)
@@ -98,6 +102,9 @@ func TestShowEffectiveContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := padding.ReplaceAllString(out.String(), "  ")
+	if runtime.GOOS == "windows" {
+		s = strings.ReplaceAll(s, `\`, "/")
+	}
 	mustContain(t, s,
 		"stores.infisical.client-secret  [scrim:redacted] (env:INF_SECRET)",
 		"interception.ca-key  [scrim:redacted] (<literal>)",

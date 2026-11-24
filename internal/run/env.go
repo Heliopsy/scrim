@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -426,6 +427,12 @@ func (b *builder) sshAgent() {
 	if !b.in.SSHAgent || !b.identified() {
 		return
 	}
+	if runtime.GOOS == "windows" {
+		// Windows' OpenSSH reaches an agent through a named pipe, not a
+		// Unix socket; pointing it at one would break ssh in the session.
+		b.warn("scrim's ssh-agent is not available on Windows: SSH_AUTH_SOCK is left as it is (docs/limitations.md, Platforms)")
+		return
+	}
 	sock := b.file(FileSSHAgent)
 	if old := b.env["SSH_AUTH_SOCK"]; old != "" && old != sock {
 		b.warn("SSH_AUTH_SOCK from your environment is replaced: ssh in the session signs with scrim's ssh-agent, whose keys come from scrim's stores (docs/ssh-agent.md)")
@@ -483,7 +490,7 @@ func (b *builder) profiles() {
 			b.plan.Links[BinDir+"/"+name] = b.in.ScrimPath
 		}
 		path := b.file(BinDir)
-		if old := b.env["PATH"]; old != "" {
+		if old := envGet(b.env, "PATH"); old != "" {
 			path += string(filepath.ListSeparator) + old
 		}
 		b.setVar("PATH", path, "credential helpers of the tool profiles ("+strings.Join(r.Bin, ", ")+") first")
@@ -502,6 +509,20 @@ func appendPEM(dst, src []byte) []byte {
 		dst = append(dst, '\n')
 	}
 	return append(dst, src...)
+}
+
+// envGet reads k from an environment map; on Windows, where variable names
+// are case-insensitive (the system sets Path), in any case.
+func envGet(m map[string]string, k string) string {
+	if v, ok := m[k]; ok || runtime.GOOS != "windows" {
+		return v
+	}
+	for n, v := range m {
+		if strings.EqualFold(n, k) {
+			return v
+		}
+	}
+	return ""
 }
 
 func envMap(environ []string) map[string]string {

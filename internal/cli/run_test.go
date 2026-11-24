@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -66,7 +67,7 @@ func TestRunPrintEnv(t *testing.T) {
 		"SCRIM_API_SOCKET=" + ts.Socket,
 		"ca-bundle.pem",
 	} {
-		if !strings.Contains(r.stdout, want) {
+		if !strings.Contains(filepath.ToSlash(r.stdout), filepath.ToSlash(want)) { // Windows paths use backslashes
 			t.Errorf("print-env lacks %q:\n%s", want, r.stdout)
 		}
 	}

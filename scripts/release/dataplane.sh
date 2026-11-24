@@ -4,12 +4,14 @@
 # scripts/release/dataplane.sh PLATFORM OUT
 #
 # Builds the Rust data plane for one release platform (linux-amd64,
-# linux-arm64, darwin-amd64, darwin-arm64) and writes the binary to OUT.
+# linux-arm64, darwin-amd64, darwin-arm64, windows-amd64, windows-arm64) and
+# writes the binary to OUT.
 #
-# Linux targets are musl and fully static. Each platform is built on a native
-# runner of its own OS (both darwin targets on one macOS runner), so no cross
-# linker is involved and the toolchain that links is the toolchain that the
-# crate's own CI tests with.
+# Linux targets are musl and fully static; Windows targets are MSVC with the
+# C runtime linked statically. Each platform is built on a native runner of
+# its own OS (both darwin targets on one macOS runner), so no cross linker is
+# involved and the toolchain that links is the toolchain that the crate's own
+# CI tests with.
 #
 # Reproducible: --locked, paths remapped out of the binary, symbols stripped,
 # one codegen unit, SOURCE_DATE_EPOCH exported for any build script that reads
@@ -44,9 +46,9 @@ cargo_home=${CARGO_HOME:-$HOME/.cargo}
 target_dir=${CARGO_TARGET_DIR:-$ROOT/target/release-build}
 # Overrides any rustflags in .cargo/config.toml for this build; the release
 # flags are complete on their own.
-RUSTFLAGS="--remap-path-prefix=$ROOT=/scrim --remap-path-prefix=$cargo_home=/cargo -C strip=symbols"
+RUSTFLAGS="--remap-path-prefix=$(native_path "$ROOT")=/scrim --remap-path-prefix=$(native_path "$cargo_home")=/cargo -C strip=symbols"
 case "$target" in
-  *-linux-musl) RUSTFLAGS+=" -C target-feature=+crt-static" ;;
+  *-linux-musl | *-windows-msvc) RUSTFLAGS+=" -C target-feature=+crt-static" ;;
 esac
 export RUSTFLAGS
 export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
@@ -82,6 +84,6 @@ cargo "${build[@]}" --release --locked \
   --target-dir "$target_dir"
 
 mkdir -p "$(dirname "$out")"
-install -m 0755 "$target_dir/$target/release/$SCRIM_DATAPLANE_BIN" "$out"
+install -m 0755 "$target_dir/$target/release/$SCRIM_DATAPLANE_BIN$(exe "$platform")" "$out"
 check_binary "$out" "$platform"
 log "$out $(sha256 "$out")"

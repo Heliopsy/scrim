@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -38,9 +39,11 @@ var (
 		Key:         "exec.path",
 		Default:     "/usr/local/bin:/usr/bin:/bin",
 		Description: "PATH of brokered commands, and the directories a command that is not in exec.commands is looked up in. The agent's PATH is never used.",
+		// A Unix PATH: brokered commands are refused on Windows, but the
+		// default still has to pass there, so absolute means a leading slash.
 		Validate: func(s string) error {
 			for d := range strings.SplitSeq(s, ":") {
-				if !filepath.IsAbs(d) {
+				if !path.IsAbs(d) {
 					return fmt.Errorf("every directory must be absolute, not %q", d)
 				}
 			}

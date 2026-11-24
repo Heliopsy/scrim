@@ -29,6 +29,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -105,7 +106,7 @@ func CleanCgroup(c string) (string, error) {
 	if c == "" || slices.Contains(strings.Split(c, "/"), "..") || strings.ContainsAny(c, "\"\\ \t\n") {
 		return "", fmt.Errorf("control group %q must be a cgroup v2 path below %s, such as agents.slice", c, CgroupRoot)
 	}
-	return filepath.Clean(c), nil
+	return path.Clean(c), nil // a cgroup path, slash-separated on every platform
 }
 
 // Attachment is one control group the loader attached the programs to.

@@ -3,6 +3,7 @@
 package sqlite
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -22,6 +23,9 @@ func TestClassifyFSType(t *testing.T) {
 }
 
 func TestMountFor(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mount tables and their Unix paths are Linux and macOS only")
+	}
 	mounts, err := parseMounts(strings.NewReader(`/dev/sda1 / ext4 rw 0 0
 server:/export /mnt/nfs nfs4 rw 0 0
 /dev/sdb1 /mnt/nfs/local ext4 rw 0 0

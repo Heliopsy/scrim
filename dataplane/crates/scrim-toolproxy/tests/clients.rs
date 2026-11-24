@@ -11,6 +11,9 @@
     missing_docs,
     unreachable_pub
 )]
+// The clients run with a cleared environment and a Unix HOME; on Windows they need SystemRoot
+// and use the OS trust store.
+#![cfg(unix)]
 
 mod common;
 

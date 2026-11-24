@@ -15,13 +15,15 @@ if [ $# -eq 0 ]; then
     Linux-aarch64) set -- linux-arm64 ;;
     Darwin-x86_64) set -- darwin-amd64 ;;
     Darwin-arm64) set -- darwin-arm64 ;;
+    MINGW*-x86_64 | MSYS*-x86_64) set -- windows-amd64 ;;
+    MINGW*-aarch64 | MSYS*-aarch64) set -- windows-arm64 ;;
     *) die "no release platform for $(uname -s) $(uname -m)" ;;
   esac
 fi
 
 for platform in "$@"; do
   rust_target "$platform" >/dev/null
-  out="$ROOT/dist/bin/$platform"
-  "$ROOT/scripts/release/dataplane.sh" "$platform" "$out/$SCRIM_DATAPLANE_BIN"
-  "$ROOT/scripts/release/controlplane.sh" "$platform" "$out/$SCRIM_DATAPLANE_BIN" "$out/scrim"
+  out="$ROOT/dist/bin/$platform" x=$(exe "$platform")
+  "$ROOT/scripts/release/dataplane.sh" "$platform" "$out/$SCRIM_DATAPLANE_BIN$x"
+  "$ROOT/scripts/release/controlplane.sh" "$platform" "$out/$SCRIM_DATAPLANE_BIN$x" "$out/scrim$x"
 done

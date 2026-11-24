@@ -5,7 +5,7 @@
 //! | Kind | Address | Served by |
 //! | --- | --- | --- |
 //! | `BASE_URL` | `host:port` | the LLM proxy: agents set their provider base URL to it |
-//! | `UNIX` | socket path (mode 0600) | the LLM proxy, as above |
+//! | `UNIX` | socket path (mode 0600) | the LLM proxy, as above (not on Windows: reported unbound) |
 //! | `FORWARD_PROXY`, `TOOL_PROXY` | `host:port` | the HTTPS tool proxy (`CONNECT` with TLS interception); provider hosts of the LLM routes are handed to the LLM proxy |
 //! | `TRANSPARENT` | `host:port` | connections redirected to it by nftables (Linux): the original destination's port and the TLS server name (or `Host`) pick the route, see [`scrim_toolproxy::ToolProxy::serve_transparent`] |
 //! | `SNI` | `host:port` | TLS for provider names resolved to scrim (DNS override), routed by server name like `TRANSPARENT` |
@@ -22,7 +22,9 @@
 //! are bound, removed or changed ones are stopped (in-flight requests finish).
 
 use std::collections::BTreeMap;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -40,6 +42,7 @@ struct Running {
     status: v1::ListenerStatus,
     stop: Option<oneshot::Sender<()>>,
     /// The Unix socket this listener created, removed when it stops.
+    #[cfg(unix)]
     socket: Option<Socket>,
 }
 
@@ -50,6 +53,7 @@ impl Drop for Running {
         }
         // Removed now rather than when the server task ends: the process may exit first, and a
         // listener for the same path started next must find the path free.
+        #[cfg(unix)]
         if let Some(s) = self.socket.take() {
             s.remove_if_ours();
         }
@@ -57,12 +61,14 @@ impl Drop for Running {
 }
 
 /// A socket file and the identity it had when bound.
+#[cfg(unix)]
 #[derive(Debug)]
 struct Socket {
     path: PathBuf,
     id: (u64, u64),
 }
 
+#[cfg(unix)]
 impl Socket {
     fn new(path: PathBuf) -> Option<Self> {
         socket_id(&path).map(|id| Self { path, id })
@@ -133,6 +139,7 @@ fn is_proxy(kind: i32) -> bool {
     kind == v1::ListenerKind::ToolProxy as i32 || kind == v1::ListenerKind::ForwardProxy as i32
 }
 
+#[allow(clippy::too_many_lines)] // one arm per listener kind and platform
 fn start(l: &v1::Listener, shared: &Shared) -> Running {
     let mut status = v1::ListenerStatus {
         name: l.name.clone(),
@@ -146,6 +153,7 @@ fn start(l: &v1::Listener, shared: &Shared) -> Running {
         let _ = stop_rx.await;
     };
     let name = l.name.clone();
+    #[cfg(unix)]
     let mut socket = None;
     let result = match l.kind() {
         v1::ListenerKind::ToolProxy | v1::ListenerKind::ForwardProxy | v1::ListenerKind::BaseUrl
@@ -188,6 +196,7 @@ fn start(l: &v1::Listener, shared: &Shared) -> Running {
             tokio::spawn(scrim_llm::server::serve_tcp(listener, llm, shutdown));
             "LLM proxy"
         }),
+        #[cfg(unix)]
         v1::ListenerKind::Unix => {
             let path = PathBuf::from(&l.address);
             scrim_llm::server::bind_unix(&path).map(|listener| {
@@ -200,12 +209,20 @@ fn start(l: &v1::Listener, shared: &Shared) -> Running {
         v1::ListenerKind::Transparent | v1::ListenerKind::Sni => {
             start_transparent(l, shared, shutdown, &mut status)
         }
+        #[cfg(not(unix))]
+        v1::ListenerKind::Unix => {
+            return unsupported(
+                l,
+                status,
+                "Unix socket listeners are not supported on Windows".to_owned(),
+            );
+        }
         other @ v1::ListenerKind::Unspecified => {
-            status.error = format!(
+            let reason = format!(
                 "listener kind {} is not implemented yet",
                 other.as_str_name()
             );
-            return unbound(l, status);
+            return unsupported(l, status, reason);
         }
     };
     let stop = match result {
@@ -231,8 +248,16 @@ fn start(l: &v1::Listener, shared: &Shared) -> Running {
         tls: l.tls,
         status,
         stop,
+        #[cfg(unix)]
         socket,
     }
+}
+
+/// A listener this build cannot serve: unbound, with the reason, which keeps the data plane not
+/// ready.
+fn unsupported(l: &v1::Listener, mut status: v1::ListenerStatus, reason: String) -> Running {
+    status.error = reason;
+    unbound(l, status)
 }
 
 /// A listener that could not start, with the reason in `status`.
@@ -243,6 +268,7 @@ fn unbound(l: &v1::Listener, status: v1::ListenerStatus) -> Running {
         tls: l.tls,
         status,
         stop: None,
+        #[cfg(unix)]
         socket: None,
     }
 }
@@ -510,6 +536,7 @@ fn local(listener: &tokio::net::TcpListener, asked: &str) -> String {
         .map_or_else(|_| asked.to_owned(), |a| a.to_string())
 }
 
+#[cfg(unix)]
 fn socket_id(path: &Path) -> Option<(u64, u64)> {
     std::fs::symlink_metadata(path)
         .ok()

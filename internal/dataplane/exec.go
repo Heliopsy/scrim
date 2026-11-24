@@ -31,14 +31,14 @@ func (e *executable) Close() {
 // fileName is the cached file's name: content-addressed, so a different
 // build never reuses another's file.
 func fileName(sum [32]byte) string {
-	return "scrim-dataplane-" + hex.EncodeToString(sum[:8])
+	return "scrim-dataplane-" + hex.EncodeToString(sum[:8]) + exeSuffix
 }
 
 // writeVerified makes sure dir/fileName(sum) holds exactly the image and
 // returns it opened read-only, its content checked against sum through the
 // returned descriptor. dir is created 0700 and must be owned by us.
 func writeVerified(dir string, b Binary) (*os.File, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := mkdirPrivate(dir); err != nil {
 		return nil, err
 	}
 	if err := checkPrivateDir(dir); err != nil {
@@ -88,15 +88,10 @@ func openVerified(path string, sum [32]byte) (*os.File, error) {
 	return f, nil
 }
 
-// checkPrivateDir refuses a directory other users can write to or that we
-// do not own, since anyone who can replace the file controls the data plane.
-func checkPrivateDir(dir string) error {
-	fi, err := os.Stat(dir)
-	if err != nil {
-		return err
-	}
-	if fi.Mode().Perm()&0o022 != 0 {
-		return fmt.Errorf("%s is writable by other users", dir)
-	}
-	return checkOwner(fi, dir)
+// looseDirError is a data plane directory other accounts can write to:
+// anyone who can replace the file controls the data plane.
+type looseDirError struct{ dir, detail string }
+
+func (e *looseDirError) Error() string {
+	return fmt.Sprintf("%s is writable by other users (%s)", e.dir, e.detail)
 }

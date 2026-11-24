@@ -14,18 +14,49 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-// Vars are the variables pointed at a temporary directory.
-var Vars = []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "XDG_CACHE_HOME"}
+// Vars are the variables pointed at a temporary directory. On Windows they
+// include USERPROFILE (what os.UserHomeDir reads there) and LOCALAPPDATA
+// (where scrim unpacks its data plane).
+var Vars = vars()
+
+func vars() []string {
+	v := []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "XDG_CACHE_HOME"}
+	if runtime.GOOS == "windows" {
+		v = append(v, "USERPROFILE", "LOCALAPPDATA", "APPDATA")
+	}
+	return v
+}
+
+// keepGo pins the Go caches to where they are now, before the variables
+// they default from (LOCALAPPDATA, USERPROFILE on Windows) move, so tests
+// that run the go command reuse them.
+func keepGo() {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	if os.Getenv("GOCACHE") == "" {
+		if d, err := os.UserCacheDir(); err == nil {
+			_ = os.Setenv("GOCACHE", filepath.Join(d, "go-build"))
+		}
+	}
+	if os.Getenv("GOPATH") == "" {
+		if h, err := os.UserHomeDir(); err == nil {
+			_ = os.Setenv("GOPATH", filepath.Join(h, "go"))
+		}
+	}
+}
 
 // Run points every variable in Vars at a fresh temporary directory, checks
 // none of them still reaches the real home, runs the tests and removes the
 // directory. It returns the exit code for os.Exit.
 func Run(m *testing.M) int {
 	real, _ := os.UserHomeDir()
+	keepGo()
 	dir, err := os.MkdirTemp("", "scrim-test-home-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "testhome:", err)
@@ -59,7 +90,16 @@ func Check(realHome string) error {
 	return nil
 }
 
+// within reports whether p is inside dir. The temporary directory never
+// counts: on Windows it is itself inside the profile.
 func within(p, dir string) bool {
+	if tmp := os.TempDir(); tmp != "" && tmp != dir && inside(p, tmp) && !inside(tmp, p) {
+		return false
+	}
+	return inside(p, dir)
+}
+
+func inside(p, dir string) bool {
 	rel, err := filepath.Rel(dir, p)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

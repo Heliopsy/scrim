@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -19,6 +20,9 @@ import (
 )
 
 func TestBuiltinsLoad(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the expected values are Unix paths")
+	}
 	s := Builtin()
 	want := []string{"aws", "az", "cargo", "docker", "doctl", "gcloud", "gh", "git", "glab", "hcloud", "helm", "kubectl", "npm", "pip", "podman", "terraform", "twine"}
 	if got := s.Names(); !slices.Equal(got, want) {
@@ -51,6 +55,9 @@ func TestBuiltinsLoad(t *testing.T) {
 }
 
 func TestKubeconfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the expected values are Unix paths")
+	}
 	p, _ := Builtin().Get("kubectl")
 	b := bindings{
 		{Name: "prod", Placeholder: "SCRIM_PROD_K8S", Hosts: []string{"k8s.example.com:6443"}, Tools: []string{"kubectl"}},
@@ -274,6 +281,9 @@ func (b bindings) Entries() []catalog.Resolved {
 // and kubectl profiles (tasks 10a.9): each points its tool at scrim's
 // helper with placeholders only.
 func TestCredentialHelpers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the expected values are Unix paths")
+	}
 	withHelper := func(name string) *Profile {
 		p, _ := Builtin().Get(name)
 		p = p.clone()

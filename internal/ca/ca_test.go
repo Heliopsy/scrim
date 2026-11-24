@@ -16,12 +16,15 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/fsperm"
+	"github.com/heliopsy/scrim/internal/fsperm/fspermtest"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/secret"
 )
@@ -257,18 +260,24 @@ func TestPersistenceAndPermissions(t *testing.T) {
 	first := m.TrustBundlePEM()
 	id := m.Certificates()[0].ID
 	m.Close()
-	for p, want := range map[string]os.FileMode{
-		dir:                           0o700,
-		filepath.Join(dir, stateFile): 0o600,
-		genPath(dir, id, keyFile):     0o600,
-		genPath(dir, id, certFile):    0o644,
-	} {
-		fi, err := os.Stat(p)
-		if err != nil {
-			t.Fatal(err)
+	if runtime.GOOS == "windows" {
+		for _, p := range []string{dir, filepath.Join(dir, stateFile), genPath(dir, id, keyFile)} {
+			fspermtest.Private(t, p)
 		}
-		if fi.Mode().Perm() != want {
-			t.Errorf("%s mode %04o, want %04o", p, fi.Mode().Perm(), want)
+	} else {
+		for p, want := range map[string]os.FileMode{
+			dir:                           0o700,
+			filepath.Join(dir, stateFile): 0o600,
+			genPath(dir, id, keyFile):     0o600,
+			genPath(dir, id, certFile):    0o644,
+		} {
+			fi, err := os.Stat(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fi.Mode().Perm() != want {
+				t.Errorf("%s mode %04o, want %04o", p, fi.Mode().Perm(), want)
+			}
 		}
 	}
 	m2, err := OpenWith(context.Background(), cfg, nil, Options{Dir: dir, Now: c.Now})
@@ -280,22 +289,32 @@ func TestPersistenceAndPermissions(t *testing.T) {
 	}
 	m2.Close()
 
-	if err := os.Chmod(genPath(dir, id, keyFile), 0o640); err != nil {
-		t.Fatal(err)
+	loosen := func(p string, mode os.FileMode) {
+		if runtime.GOOS == "windows" {
+			fspermtest.Open(t, p)
+		} else if err := os.Chmod(p, mode); err != nil {
+			t.Fatal(err)
+		}
 	}
+	restore := func(p string, mode os.FileMode) {
+		if runtime.GOOS == "windows" {
+			_ = fsperm.Restrict(p)
+		} else {
+			_ = os.Chmod(p, mode)
+		}
+	}
+	loosen(genPath(dir, id, keyFile), 0o640)
 	if _, err := OpenWith(context.Background(), cfg, nil, Options{Dir: dir, Now: c.Now}); err == nil ||
 		!strings.Contains(err.Error(), "readable by group or others") {
 		t.Fatalf("group-readable key: %v", err)
 	}
-	_ = os.Chmod(genPath(dir, id, keyFile), 0o600)
-	if err := os.Chmod(dir, 0o750); err != nil {
-		t.Fatal(err)
-	}
+	restore(genPath(dir, id, keyFile), 0o600)
+	loosen(dir, 0o750)
 	if _, err := OpenWith(context.Background(), cfg, nil, Options{Dir: dir, Now: c.Now}); err == nil ||
 		!strings.Contains(err.Error(), "accessible to group or others") {
 		t.Fatalf("group-accessible dir: %v", err)
 	}
-	_ = os.Chmod(dir, 0o700)
+	restore(dir, 0o700)
 
 	// A key that does not belong to the certificate is refused.
 	other, _ := newGeneration(c.Now(), 48*time.Hour)
@@ -308,6 +327,9 @@ func TestPersistenceAndPermissions(t *testing.T) {
 }
 
 func TestDefaultDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the cases are Unix paths, which are not absolute on Windows")
+	}
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 	if d, _ := DefaultDir(env(map[string]string{"XDG_STATE_HOME": "/x/state", "HOME": "/h"})); d != "/x/state/scrim/ca" {
 		t.Error(d)

@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//go:build unix
+
+// The views mirror a Unix home or use user and mount namespaces; Windows has
+// neither, and fsview_windows_test.go covers what it does there.
+
 package fsview
 
 import (

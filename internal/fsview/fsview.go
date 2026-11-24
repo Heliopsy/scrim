@@ -219,6 +219,9 @@ func Resolve(requested string, avail Availability) (mode, fallback string, err e
 	case "", ModeOff:
 		return ModeOff, "", nil
 	case ModeHome:
+		if runtime.GOOS == "windows" {
+			return "", "", errors.New("run.fs-view is home, but Windows tools find the home directory through USERPROFILE and the profile, not HOME; set run.fs-view: off")
+		}
 		return ModeHome, "", nil
 	case ModeNamespace:
 		if !avail.Namespace {
@@ -228,6 +231,11 @@ func Resolve(requested string, avail Availability) (mode, fallback string, err e
 	case ModeAuto:
 		if avail.Namespace {
 			return ModeNamespace, "", nil
+		}
+		if runtime.GOOS == "windows" {
+			// The home mirror only redirects HOME, which Windows tools do
+			// not read: a view there would claim cover it does not give.
+			return ModeOff, "Windows has no filesystem view: " + avail.Reason, nil
 		}
 		return ModeHome, avail.Reason, nil
 	}
@@ -244,6 +252,15 @@ func Build(in Input) (*Plan, error) {
 	}
 	if in.Mode == "" || in.Mode == ModeOff {
 		p.Gaps = Gaps(ModeOff)
+		return p, nil
+	}
+	if runtime.GOOS == "windows" {
+		// Decided before HOME is looked at: Windows usually has none.
+		mode, fallback, err := Resolve(in.Mode, Availability{Reason: "no user or mount namespaces"})
+		if err != nil {
+			return nil, err
+		}
+		p.Mode, p.Fallback, p.Gaps = mode, fallback, Gaps(mode)
 		return p, nil
 	}
 	if in.Home == "" || !filepath.IsAbs(in.Home) {

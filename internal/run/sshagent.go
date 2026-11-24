@@ -59,7 +59,7 @@ func sameUser(c net.Conn) error {
 	if err != nil {
 		return err
 	}
-	if int64(peer.UID) != int64(os.Getuid()) {
+	if peer.UID != uint32(os.Getuid()) { //nolint:gosec // uid_t is 32 bits; -1 on Windows is identity.SelfUID there
 		return fmt.Errorf("peer uid %d is not this user", peer.UID)
 	}
 	return nil

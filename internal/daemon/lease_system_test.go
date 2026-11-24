@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +128,9 @@ func TestLeaseRefusesASystemServiceThatIsNotReady(t *testing.T) {
 }
 
 func TestLeaseNamesTheGroupWhenRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("socket groups are Unix only")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root connects regardless of the socket mode")
 	}

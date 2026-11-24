@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,9 @@ import (
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/localapi/localapitest"
 )
+
+// tmpPath matches a path under the test directory once it is written $TMP.
+var tmpPath = regexp.MustCompile(`\$TMP\S*`)
 
 var update = flag.Bool("update", false, "rewrite golden files")
 
@@ -97,7 +101,9 @@ func TestSecretGolden(t *testing.T) {
 			stdin = strings.NewReader(c.stdin)
 		}
 		r := runCLI(ts, stdin, c.args...)
-		line := strings.ReplaceAll(strings.Join(c.args, " "), dir, "$TMP")
+		// Only paths under the test directory get forward slashes: other
+		// arguments, like the capture pattern token=(\S+), are shown as given.
+		line := tmpPath.ReplaceAllStringFunc(strings.ReplaceAll(strings.Join(c.args, " "), dir, "$TMP"), filepath.ToSlash)
 		fmt.Fprintf(&got, "$ scrim %s\n--- stdout\n%s--- stderr\n%s--- exit %d\n\n", line, r.stdout, r.stderr, r.code)
 	}
 	agenttoolstest.AssertNoValues(t, "CLI output", got.Bytes(), cliSeeded, cliPiped, cliCaptured)

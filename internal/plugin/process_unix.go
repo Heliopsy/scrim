@@ -5,13 +5,17 @@
 package plugin
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
+	"slices"
 	"sync"
 	"syscall"
 
@@ -114,4 +118,45 @@ func killGroup(pid int) {
 	if pid > 0 {
 		_ = syscall.Kill(-pid, syscall.SIGKILL)
 	}
+}
+
+// relay logs each stderr line, capped, at info level. The logger scrubs
+// every value scrim holds.
+func relay(r io.Reader, log *slog.Logger) {
+	br := bufio.NewReaderSize(r, 4096)
+	for {
+		line, err := br.ReadSlice('\n')
+		if len(line) > 0 {
+			log.Info("plugin stderr", "line", clip(string(trimEOL(line)), 2048))
+			// A line longer than the buffer arrives in pieces; drop the
+			// rest so one runaway line cannot flood the log.
+			for errors.Is(err, bufio.ErrBufferFull) {
+				_, err = br.ReadSlice('\n')
+			}
+		}
+		if err != nil && !errors.Is(err, bufio.ErrBufferFull) {
+			return
+		}
+	}
+}
+
+func trimEOL(b []byte) []byte {
+	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == '\r') {
+		b = b[:len(b)-1]
+	}
+	return b
+}
+
+// environ is the plugin's whole environment.
+func (c Config) environ() []string {
+	env := map[string]string{"PATH": DefaultPath}
+	maps.Copy(env, c.Env)
+	env["SCRIM_PLUGIN_FD"] = "3"
+	env["SCRIM_PLUGIN_PROTOCOL"] = fmt.Sprint(Protocol)
+	env["SCRIM_PLUGIN_INSTANCE"] = c.Instance
+	out := make([]string, 0, len(env))
+	for _, k := range slices.Sorted(maps.Keys(env)) {
+		out = append(out, k+"="+env[k])
+	}
+	return out
 }

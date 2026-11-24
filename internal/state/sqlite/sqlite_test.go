@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/audit"
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/fsperm"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/state"
@@ -79,11 +81,21 @@ func TestWALAndPrivateFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Mode().Perm() != 0o600 {
-		t.Errorf("state file mode %04o, want 0600", st.Mode().Perm())
-	}
-	if dst, _ := os.Stat(filepath.Dir(path)); dst.Mode().Perm() != 0o700 {
-		t.Errorf("state dir mode %04o, want 0700", dst.Mode().Perm())
+	if runtime.GOOS == "windows" {
+		// No mode bits: the directory's DACL must reach no other account.
+		for _, p := range []string{path, filepath.Dir(path)} {
+			fi, _ := os.Stat(p)
+			if loose, detail, err := fsperm.Loose(p, fi); err != nil || loose {
+				t.Errorf("%s reachable by others: %s %v", p, detail, err)
+			}
+		}
+	} else {
+		if st.Mode().Perm() != 0o600 {
+			t.Errorf("state file mode %04o, want 0600", st.Mode().Perm())
+		}
+		if dst, _ := os.Stat(filepath.Dir(path)); dst.Mode().Perm() != 0o700 {
+			t.Errorf("state dir mode %04o, want 0700", dst.Mode().Perm())
+		}
 	}
 	if v, err := s.SchemaVersion(t.Context()); err != nil || v != 3 {
 		t.Errorf("SchemaVersion = %d, %v", v, err)

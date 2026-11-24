@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -169,7 +170,7 @@ func TestReplace(t *testing.T) {
 		t.Fatalf("file is\n%s\nwant\n%s", b, want)
 	}
 	st, _ := os.Stat(filepath.Join(dir, ".env"))
-	if st.Mode().Perm() != 0o640 {
+	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o640 { // Windows keeps no mode bits
 		t.Errorf("mode %v, want 0640", st.Mode().Perm())
 	}
 	// A second replace finds the value gone and refuses.

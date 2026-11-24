@@ -34,8 +34,10 @@ func Start(t testing.TB) *Server {
 // StartWith is [Start] with setup adjusting the server before it serves.
 func StartWith(t testing.TB, setup func(*localapi.Server)) *Server {
 	t.Helper()
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		t.Skip("peer credentials are implemented on Linux and macOS")
+	switch runtime.GOOS {
+	case "linux", "darwin", "windows":
+	default:
+		t.Skip("peer credentials are implemented on Linux, macOS and Windows")
 	}
 	e := agenttoolstest.NewEnv(t)
 	peers, err := identity.NewPeerMap([]identity.PeerRule{{Agent: "dev", UIDs: []uint32{uint32(os.Getuid())}}}, nil) // #nosec G115 -- uid_t is 32 bits

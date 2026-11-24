@@ -448,6 +448,13 @@ func TestSocketPathFromEnvironment(t *testing.T) {
 		t.Fatal(SocketPath())
 	}
 	t.Setenv(EnvSocket, "")
+	if runtime.GOOS == "windows" {
+		// Per user under %TEMP% (docs/install.md, Windows).
+		if !strings.HasSuffix(DefaultSocketPath(), filepath.Join("scrim", "api.sock")) {
+			t.Fatal(DefaultSocketPath())
+		}
+		return
+	}
 	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
 	if DefaultSocketPath() != "/run/user/1000/scrim/api.sock" {
 		t.Fatal(DefaultSocketPath())

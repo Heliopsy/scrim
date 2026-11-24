@@ -9,8 +9,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
+
+	"github.com/heliopsy/scrim/internal/fsperm"
 )
 
 // Environment variables the clients read. They follow the configuration
@@ -23,12 +24,12 @@ const (
 
 // DefaultSocketPath is where the API listens and clients look when nothing
 // else is configured: $XDG_RUNTIME_DIR/scrim/api.sock, or a per-user
-// directory under the temporary directory.
+// directory under the temporary directory ([UserTempDir]).
 func DefaultSocketPath() string {
 	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
 		return filepath.Join(dir, "scrim", "api.sock")
 	}
-	return filepath.Join(os.TempDir(), "scrim-"+strconv.Itoa(os.Getuid()), "api.sock")
+	return filepath.Join(UserTempDir(), "api.sock")
 }
 
 // SystemRuntimeDir holds the sockets of the system service that
@@ -92,7 +93,7 @@ func Listen(path string, o ListenOptions) (net.Listener, error) {
 	if mode == 0 {
 		mode = 0o600
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := fsperm.MkdirPrivate(filepath.Dir(path)); err != nil {
 		return nil, fmt.Errorf("localapi: creating the socket directory: %w", err)
 	}
 	if fi, err := os.Lstat(path); err == nil {
@@ -119,7 +120,7 @@ func Listen(path string, o ListenOptions) (net.Listener, error) {
 			return nil, fmt.Errorf("localapi: setting the socket group: %w", err)
 		}
 	}
-	if err := os.Chmod(path, mode); err != nil {
+	if err := setMode(path, mode); err != nil {
 		_ = ln.Close()
 		return nil, fmt.Errorf("localapi: setting the socket mode: %w", err)
 	}

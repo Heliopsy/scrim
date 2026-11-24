@@ -24,7 +24,6 @@ use common::*;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use scrim_llm::testing::{FakeUpstream, Scripted};
-use scrim_llm::{Proxy, ProxyConfig, SnapshotCell};
 
 const H: &[(&str, &str)] = &[
     ("content-type", "application/json"),
@@ -45,8 +44,11 @@ async fn h2c_prior_knowledge_inbound() {
     assert!(fx.leaks(&h.upstream.received()[0].body).is_empty());
 }
 
+// Unix socket listeners and file modes exist on Unix only.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn unix_socket_listener() {
+    use scrim_llm::{Proxy, ProxyConfig, SnapshotCell};
     use std::os::unix::fs::PermissionsExt;
     let fx = fixture();
     let up = FakeUpstream::start(Scripted::json(200, "{}")).await;

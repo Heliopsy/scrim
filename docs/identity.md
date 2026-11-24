@@ -17,7 +17,12 @@ When a process connects to the API socket, the kernel records who it is. scrim r
 | --- | --- | --- |
 | Linux | `SO_PEERCRED` | user, group, process |
 | macOS | `LOCAL_PEERCRED`, `LOCAL_PEERPID` | user, primary group, process |
+| Windows | `SIO_AF_UNIX_GETPEERPID`, the process token's user | process, and whether it runs as scrim's account |
 | others | none | the caller is unknown and refused |
+
+Windows has no user IDs: a caller running as the account scrim runs as is that account's agent,
+any other account is unknown, and `identity.peers` can name only scrim's own account
+([limitations.md](limitations.md#platforms)).
 
 The caller cannot forge these values. scrim maps them to an agent with `identity.peers`:
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -80,7 +81,7 @@ func TestRecordRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	st, err := os.Stat(path)
-	if err != nil || st.Mode().Perm() != 0o644 {
+	if err != nil || (runtime.GOOS != "windows" && st.Mode().Perm() != 0o644) { // Windows keeps no mode bits
 		t.Fatalf("record mode %v %v", st.Mode(), err)
 	}
 	got, err := ReadRecord(path)
