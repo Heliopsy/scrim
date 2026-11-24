@@ -87,7 +87,10 @@ async fn recorded_request_redacted_byte_exact_with_auth_untouched() {
                     SecretRef::new("s2")
                 ]
             );
-            assert_eq!(unscanned, &vec!["image/png".to_string()]);
+            assert!(
+                unscanned.is_empty(),
+                "the scan policy scanned the image: {unscanned:?}"
+            );
             assert!(guard_repaired.is_empty());
             assert!(!chain_skipped);
         }

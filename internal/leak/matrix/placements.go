@@ -3,10 +3,7 @@
 package matrix
 
 import (
-	"bytes"
 	"encoding/base64"
-	"encoding/binary"
-	"hash/crc32"
 	"net/http"
 	"net/url"
 
@@ -278,27 +275,6 @@ func standard(api fp.API, c Content, mode Escape, stream bool) Request {
 
 func one(r Request) []Request { return []Request{r} }
 
-// pngWithText returns a 1x1 PNG whose tEXt chunk carries text, the way an
-// image's metadata can carry a secret into a screenshot.
-func pngWithText(key, text string) []byte {
-	var b bytes.Buffer
-	b.Write([]byte("\x89PNG\r\n\x1a\n"))
-	chunk := func(typ string, data []byte) {
-		_ = binary.Write(&b, binary.BigEndian, uint32(len(data)))
-		b.WriteString(typ)
-		b.Write(data)
-		crc := crc32.NewIEEE()
-		crc.Write([]byte(typ))
-		crc.Write(data)
-		_ = binary.Write(&b, binary.BigEndian, crc.Sum32())
-	}
-	chunk("IHDR", []byte{0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0})
-	chunk("tEXt", append([]byte(key+"\x00"), text...))
-	chunk("IDAT", []byte{0x78, 0x9c, 0x63, 0x60, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01})
-	chunk("IEND", nil)
-	return b.Bytes()
-}
-
 // Placements is the catalogue of places a secret can sit in a request.
 var Placements = []Placement{
 	{ID: "tool-result", Desc: "tool result content as a string (primary placement)", Expect: Redacted,
@@ -468,10 +444,12 @@ var Placements = []Placement{
 				data := "data:text/plain;base64," + base64.StdEncoding.EncodeToString([]byte(c.Text()))
 				file := obj("type", "input_file", "filename", ".env", "file_data", data)
 				return one(req(api, responsesParts{input: []any{obj("type", "message", "role", "user", "content", []any{file, obj("type", "input_text", "text", userAsk)})}}.body(), mode, false))
+			case fp.Gemini:
+				// A document is an inlineData part; the scan binary policy
+				// redacts a text one and encodes it again.
+				doc := obj("inlineData", obj("mimeType", "text/plain", "data", base64.StdEncoding.EncodeToString([]byte(c.Text()))))
+				return one(req(api, geminiParts{contents: []any{obj("role", "user", "parts", []any{doc, obj("text", userAsk)})}}.body(), mode, false))
 			}
-			// Gemini takes a document as an inlineData part, which scrim
-			// treats as binary whatever its mimeType (see image-metadata),
-			// and a text part, which is user-blocks.
 			return nil
 		}},
 	{ID: "header", Desc: "a custom HTTP request header", Expect: Guard,
@@ -486,25 +464,35 @@ var Placements = []Placement{
 			r.Query = url.Values{"trace": {c.Text()}}
 			return one(r)
 		}},
-	{ID: "image-metadata", Desc: "text in an image's PNG tEXt metadata", Expect: Limitation,
-		Note: "limitation: images and other binary parts pass unscanned under the default binary policy",
+	{ID: "image-metadata", Desc: "text in an image's PNG tEXt metadata", Expect: Withheld,
+		Note: "the scan binary policy reads PNG text chunks and refuses the request: an image cannot be redacted in place",
 		Build: func(api fp.API, c Content, mode Escape) []Request {
-			png := base64.StdEncoding.EncodeToString(pngWithText("Comment", c.Text()))
-			switch api {
-			case fp.Anthropic:
-				img := obj("type", "image", "source", obj("type", "base64", "media_type", "image/png", "data", png))
-				return one(req(api, anthropicParts{messages: []any{obj("role", "user", "content", []any{img, obj("type", "text", "text", "What does this screenshot show?")})}}.body(), mode, false))
-			case fp.OpenAIChat:
-				img := obj("type", "image_url", "image_url", obj("url", "data:image/png;base64,"+png))
-				return one(req(api, chatParts{messages: []any{obj("role", "user", "content", []any{img, obj("type", "text", "text", "What does this screenshot show?")})}}.body(), mode, false))
-			case fp.OpenAIResponses:
-				img := obj("type", "input_image", "image_url", "data:image/png;base64,"+png)
-				return one(req(api, responsesParts{input: []any{obj("type", "message", "role", "user", "content", []any{img, obj("type", "input_text", "text", "What does this screenshot show?")})}}.body(), mode, false))
-			case fp.Gemini:
-				img := obj("inlineData", obj("mimeType", "image/png", "data", png))
-				return one(req(api, geminiParts{contents: []any{obj("role", "user", "parts", []any{img, obj("text", "What does this screenshot show?")})}}.body(), mode, false))
-			}
-			return nil
+			return attachment(api, "image/png", pngWithText("Comment", c.Text()), mode)
+		}},
+	{ID: "image-metadata-compressed", Desc: "text in an image's compressed PNG zTXt metadata", Expect: Withheld,
+		Note: "the scan binary policy inflates compressed PNG text chunks",
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			return attachment(api, "image/png", pngWithZText("Comment", c.Text()), mode)
+		}},
+	{ID: "jpeg-comment", Desc: "text in a JPEG COM segment", Expect: Withheld,
+		Note: "the scan binary policy reads JPEG comment and APP segments",
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			return attachment(api, "image/jpeg", jpegWithComment(c.Text()), mode)
+		}},
+	{ID: "svg-text", Desc: "text drawn by an SVG image", Expect: Withheld,
+		Note: "the scan binary policy reads SVG as text, entities decoded",
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			return attachment(api, "image/svg+xml", svgWithText(c.Text()), mode)
+		}},
+	{ID: "pdf-text", Desc: "text in a PDF page's Flate-compressed content stream", Expect: Withheld,
+		Note: "the scan binary policy inflates PDF streams and reads their strings",
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			return attachment(api, "application/pdf", pdfWithText(c.Text()), mode)
+		}},
+	{ID: "image-pixels", Desc: "the value as an image's pixel data (rendered text in a screenshot)", Expect: Limitation,
+		Note: "limitation: pixel data is not decoded and text in an image is not recognised (no OCR)",
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			return attachment(api, "image/png", pngWithPixels(c.Text()), mode)
 		}},
 	{ID: "split-blocks", Desc: "the value split across two content blocks of one message", Expect: Limitation,
 		Note: "limitation: a value split by the agent across separate fields is matched only by the guard's fragment rules, if at all",

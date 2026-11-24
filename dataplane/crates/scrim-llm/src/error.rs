@@ -10,7 +10,8 @@
 //! | `redactor_failed`      | 422    | the redactor returned an error                         |
 //! | `guard_failed`         | 422    | the guard returned an error                            |
 //! | `guard_refused`        | 422    | the guard found a value it could not repair            |
-//! | `unscannable_content`  | 422    | image/document/audio part under the `block` policy     |
+//! | `unscannable_content`  | 422    | binary part under `block`, or undecodable under `scan` |
+//! | `secret_in_binary`     | 422    | `scan` found a secret value inside a binary part       |
 //! | `unsupported_encoding` | 415    | compressed request body                                |
 //! | `body_too_large`       | 413    | body over `proxy.limits.max-request-body`              |
 //! | `capture_failed`       | 500    | capture mode could not record the outgoing request     |
@@ -66,7 +67,8 @@ impl Refusal {
             | RefusalReason::RedactorFailed
             | RefusalReason::GuardFailed
             | RefusalReason::GuardRefused
-            | RefusalReason::UnscannableContent => StatusCode::UNPROCESSABLE_ENTITY,
+            | RefusalReason::UnscannableContent
+            | RefusalReason::SecretInBinary => StatusCode::UNPROCESSABLE_ENTITY,
             RefusalReason::UnsupportedEncoding => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             RefusalReason::BodyTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             RefusalReason::CaptureFailed => StatusCode::INTERNAL_SERVER_ERROR,
@@ -108,6 +110,11 @@ impl Refusal {
             }
             RefusalReason::UnscannableContent => {
                 "scrim: request refused, it contains content that cannot be scanned"
+            }
+            RefusalReason::SecretInBinary => {
+                "scrim: request refused, an image, document or other attachment contains a secret \
+                 value, and an attachment cannot be redacted without corrupting it; remove the \
+                 secret from the attachment"
             }
             RefusalReason::UnsupportedEncoding => {
                 "scrim: compressed request bodies cannot be redacted"

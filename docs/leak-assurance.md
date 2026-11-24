@@ -12,7 +12,7 @@ The leak suite has four parts:
 - a **leak checker**, written independently of scrim's redactor and guard, that looks for every
   seeded value in what the fake provider received, under far more encodings than the redactor
   matches, including fragments;
-- the **bypass matrix**: 571 rows, each a way a secret can sit in a request other than verbatim,
+- the **bypass matrix**: 676 rows, each a way a secret can sit in a request other than verbatim,
   with the outcome scrim must produce;
 - a **scenario corpus** of realistic agent sessions (reading `.env`, printing configs, a diff with
   keys, a log with tokens, an MCP tool result, a Kubernetes Secret, `curl -v`, `env`), played by a
@@ -227,10 +227,15 @@ transform's and its placement's expectation.
 | `metadata` | request metadata (user id, metadata map) ([anthropic-messages openai-chat openai-responses]) | redacted | |
 | `unknown-field` | an undocumented top-level field (like Claude Code's safeguards field) ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
 | `unknown-block-field` | an undocumented field inside a content block ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
-| `document-text` | a plain-text document or file input ([anthropic-messages openai-chat openai-responses]) | redacted | |
+| `document-text` | a plain-text document or file input ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
 | `header` | a custom HTTP request header ([anthropic-messages gemini openai-chat openai-responses]) | guard | |
 | `query` | the request URL query string ([anthropic-messages gemini openai-chat openai-responses]) | guard | |
-| `image-metadata` | text in an image's PNG tEXt metadata ([anthropic-messages gemini openai-chat openai-responses]) | limitation | limitation: images and other binary parts pass unscanned under the default binary policy |
+| `image-metadata` | text in an image's PNG tEXt metadata ([anthropic-messages gemini openai-chat openai-responses]) | withheld | the scan binary policy reads PNG text chunks and refuses the request: an image cannot be redacted in place |
+| `image-metadata-compressed` | text in an image's compressed PNG zTXt metadata ([anthropic-messages gemini openai-chat openai-responses]) | withheld | the scan binary policy inflates compressed PNG text chunks |
+| `jpeg-comment` | text in a JPEG COM segment ([anthropic-messages gemini openai-chat openai-responses]) | withheld | the scan binary policy reads JPEG comment and APP segments |
+| `svg-text` | text drawn by an SVG image ([anthropic-messages gemini openai-chat openai-responses]) | withheld | the scan binary policy reads SVG as text, entities decoded |
+| `pdf-text` | text in a PDF page's Flate-compressed content stream ([anthropic-messages gemini openai-chat openai-responses]) | withheld | the scan binary policy inflates PDF streams and reads their strings |
+| `image-pixels` | the value as an image's pixel data (rendered text in a screenshot) ([anthropic-messages gemini openai-chat openai-responses]) | limitation | limitation: pixel data is not decoded and text in an image is not recognised (no OCR) |
 | `split-blocks` | the value split across two content blocks of one message ([anthropic-messages gemini openai-chat openai-responses]) | limitation | limitation: a value split by the agent across separate fields is matched only by the guard's fragment rules, if at all |
 | `split-tool-results` | the value split across two tool results ([anthropic-messages gemini openai-chat openai-responses]) | limitation | limitation: a value split by the agent across separate tool results is not reassembled |
 | `split-requests` | the value split across two requests chained by previous_response_id ([openai-responses]) | limitation | limitation: server-side conversation state lets halves arrive in separate requests |
@@ -364,7 +369,7 @@ identity and of test coverage.
 | Limitation | Matrix rows | Mitigation |
 | --- | --- | --- |
 | The agent's local transcripts, memory and history files hold real values: scrim protects the wire, not the agent's disk. | none | Keep agent state on an encrypted disk; restored values only reach tools the tool policy names. |
-| Images, PDFs and other binary parts pass unscanned, including text in image metadata. In the Gemini API that is every `inlineData` part, a `text/plain` document included, so the matrix has no Gemini `document-text` row. scrim 1.0 has no setting to block them. | `image-metadata` | Keep secrets out of images and documents the agent attaches. |
+| Text rendered into image pixels is not recognised (no OCR); pixel data is not decoded. Binary parts under the weakening `redaction.binary: pass` are not scanned at all. | `image-pixels` | Keep secrets off screen when the agent takes screenshots; keep the default `scan` policy. |
 | Look-alike Unicode substitution (Cyrillic or fullwidth letters) is not matched: confusable tables are unbounded and no shell tool produces it. | `homoglyphs`, `fullwidth` | none yet |
 | Values spelled out in words (NATO alphabet) are not matched: any language or alphabet would do. | `nato-spelling` | none yet |
 | Compressed content (`gzip`, `zlib`) is not decompressed: decompression is unbounded work per byte. | `gzip-base64` | none yet |

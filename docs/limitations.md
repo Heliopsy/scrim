@@ -34,10 +34,23 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   guard's fragment rules catch long halves of a split value; short ones pass.
 - **Short values.** Values shorter than the minimum length (8 bytes by default) are matched only
   whole and in their encoded forms, never as fragments. `scrim status` lists them.
-- **Images, PDFs and other binary parts pass unscanned**, including text in image metadata. In the
-  Gemini API that is every `inlineData` part, a `text/plain` document included. The spec describes
-  a `block` policy for binary parts; scrim 1.0 has no setting for it, and the data plane always
-  passes them. Keep secrets out of images and documents the agent attaches.
+- **Text in image pixels is not read.** Under the default `redaction.binary: scan`, scrim decodes
+  images, PDFs and other attachments and scans their bytes, metadata and document text, and refuses
+  a request whose attachment holds a secret. It does not recognise text rendered into pixels (no
+  OCR), audio or video content, or PDF text drawn with fonts whose encoding needs a ToUnicode map to
+  read. A screenshot of a terminal showing a secret reaches the provider. Keep secrets off screen
+  when the agent takes screenshots.
+- **Attachments referenced by URL are not fetched.** An `image_url` with an `https:` URL, an
+  uploaded file ID or a Gemini `fileData` URI is passed on as text; the provider fetches the content
+  and scrim never sees it.
+- **Attachments scrim cannot decode are refused.** Encrypted PDFs, archives other than gzip and
+  ZIP with deflate, and parts past the scan bounds (64 MiB decoded or inflated, 100,000 objects,
+  nesting depth 4, 2 seconds plus 250 ms per MiB) are refused under `scan` with
+  `unscannable_content`. Set `redaction.binary: pass` to forward them unscanned; that is weakening
+  and reported by `scrim status` and `scrim doctor`.
+- **Large attachments add latency under `scan`.** Each part is decoded and every view of it goes
+  through the redactor and the guard: about 55 ms per MiB for an image and 250 ms per MiB for a
+  text-heavy PDF on the reference machine (design.md of the `binary-parts-policy` change).
 - **Clients that pin certificates** fail to connect under TLS interception. That fails closed, but
   such a client cannot be used through the forward proxy, transparent or DNS modes.
 

@@ -71,8 +71,20 @@ pub(crate) enum PlanError {
 pub(crate) struct Plan {
     /// Sorted, non-overlapping byte spans forwarded without redaction.
     pub verbatim: Vec<(usize, usize)>,
-    /// Media types of unscannable parts (also listed in `verbatim`).
+    /// Media types of binary parts (also listed in `verbatim`).
     pub binary: Vec<String>,
+    /// The binary parts themselves, in the order of `binary`.
+    pub parts: Vec<BinaryPart>,
+}
+
+/// One binary content part of a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BinaryPart {
+    /// Byte span of the part's data value: the content of a JSON string, or the whole value
+    /// when it is not a string.
+    pub span: (usize, usize),
+    /// Whether the value is a JSON string.
+    pub string: bool,
 }
 
 impl Plan {
@@ -91,6 +103,15 @@ impl Plan {
     pub(crate) fn binary(&mut self, data: Value<'_, '_>, media_type: &str) {
         self.keep(data);
         self.binary.push(sanitize_media_type(media_type));
+        let string = data.kind() == Kind::String;
+        self.parts.push(BinaryPart {
+            span: if string {
+                data.str_content_span().unwrap_or(data.span())
+            } else {
+                data.span()
+            },
+            string,
+        });
     }
 
     fn finish(mut self) -> Self {
@@ -465,6 +486,7 @@ mod tests {
         let p = Plan {
             verbatim: vec![(10, 20), (0, 5), (15, 30), (30, 31)],
             binary: vec![],
+            parts: vec![],
         }
         .finish();
         assert_eq!(p.verbatim, vec![(0, 5), (10, 31)]);

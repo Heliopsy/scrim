@@ -23,8 +23,12 @@ pub enum RefusalReason {
     GuardFailed,
     /// The guard found a known value it could not repair.
     GuardRefused,
-    /// Unscannable content under the `block` binary policy.
+    /// A binary part under the `block` policy, or one the `scan` policy could not decode within
+    /// its bounds.
     UnscannableContent,
+    /// The `scan` binary policy found a secret value inside a binary part, which cannot be
+    /// redacted in place without corrupting it.
+    SecretInBinary,
     /// Capture mode could not record the outgoing request.
     CaptureFailed,
     /// A configured chained upstream could not be reached and `on_unavailable` is `fail`.
@@ -54,6 +58,7 @@ impl RefusalReason {
             Self::GuardFailed => "guard_failed",
             Self::GuardRefused => "guard_refused",
             Self::UnscannableContent => "unscannable_content",
+            Self::SecretInBinary => "secret_in_binary",
             Self::CaptureFailed => "capture_failed",
             Self::ChainUnavailable => "chain_unavailable",
             Self::UpstreamUnavailable => "upstream_unavailable",

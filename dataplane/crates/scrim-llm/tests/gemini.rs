@@ -154,7 +154,10 @@ async fn request_redacted_byte_exact_with_key_and_signatures_kept() {
             replacements,
             ..
         } => {
-            assert_eq!(unscanned, &vec!["image/png".to_string()]);
+            assert!(
+                unscanned.is_empty(),
+                "the scan policy scanned the image: {unscanned:?}"
+            );
             assert_eq!(*replacements, tpl.matches("{{S").count());
         }
         e => panic!("{e:?}"),

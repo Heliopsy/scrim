@@ -386,6 +386,7 @@ is out of date.
 | [`ratelimit.backend`](#ratelimitbackend) | string | `local` | restart required |
 | [`ratelimit.valkey.prefix`](#ratelimitvalkeyprefix) | string | `scrim:rl:` | restart required |
 | [`redaction.allow-empty-targets`](#redactionallow-empty-targets) | bool | `false` | restart required |
+| [`redaction.binary`](#redactionbinary) | string | `scan` | hot |
 | [`redaction.limit-to-agent-identity`](#redactionlimit-to-agent-identity) | bool | `false` | restart required |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
@@ -2471,6 +2472,20 @@ Start even when a store's redact target matches no secret on the first load. Off
 | Flag | none |
 | Reload | restart required |
 | Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `redaction.binary`
+
+Images, PDFs and other binary parts of provider requests. scan decodes each part and scans it and the text it carries (image metadata, PDF text, SVG) with the redactor and the guard, and refuses the request when it finds a secret value or cannot decode the part within its bounds; block refuses every request with a binary part; pass forwards them unscanned and audits it. Parts referenced by URL are not fetched or scanned.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `scan` |
+| Environment | `SCRIM_REDACTION_BINARY` |
+| Flag | `--redaction-binary` |
+| Reload | hot |
+| Weakening | **yes** when set to `pass`: logged at start-up and on reload while active, listed in `scrim status` |
+| Values | `scan`, `block`, `pass` |
 
 #### `redaction.limit-to-agent-identity`
 

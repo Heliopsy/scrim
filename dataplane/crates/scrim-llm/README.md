@@ -36,6 +36,12 @@ Spec: `openspec/specs/llm-proxy`, plus the base-URL and forward-proxy parts of
   thinking text and signatures, redacted thinking, `encrypted_content`, reasoning items, and base64
   or `data:` binary parts. The redactor runs over every other byte, so unknown fields are redacted
   by default. The guard then scans the complete outgoing bytes, spans included.
+- **Binary parts.** Under the snapshot's `BinaryPolicy::Scan` (the default) each binary part is
+  decoded and the redactor and the guard run over its bytes and the text it carries (the `binary`
+  module: image metadata, PDF streams and strings, SVG, gzip and ZIP entries). A match refuses the
+  request with `secret_in_binary`; a part that cannot be decoded within the bounds refuses it with
+  `unscannable_content`. Text documents (`text/plain` file parts and the like) are redacted and
+  encoded again. `Block` refuses any binary part, `Pass` forwards them unscanned.
 - **Response side.** SSE events are framed without copying, and each content block keeps at most
   `max_len - 1` held bytes for a placeholder split across events. Text resolves under the display
   policy, tool arguments under the per-tool policy (`ToolMode::Buffered` hands the policy complete
@@ -88,7 +94,7 @@ OpenAI). 422 is the redaction-failed status.
 
 | Code | Status |
 | --- | --- |
-| `malformed_body`, `redactor_failed`, `guard_failed`, `guard_refused`, `unscannable_content` | 422 |
+| `malformed_body`, `redactor_failed`, `guard_failed`, `guard_refused`, `unscannable_content`, `secret_in_binary` | 422 |
 | `not_ready` (with `Retry-After: 1`) | 503 |
 | `no_route` | 404 |
 | `body_too_large` | 413 |

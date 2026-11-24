@@ -164,6 +164,19 @@ var (
 			return nil
 		},
 	})
+	// BinaryPolicy is what the LLM proxy does with binary content parts.
+	BinaryPolicy = config.Register(config.Spec[string]{
+		Key:     "redaction.binary",
+		Default: "scan",
+		Enum:    []string{"scan", "block", "pass"},
+		Description: "Images, PDFs and other binary parts of provider requests. scan decodes each part and scans it and the text it carries " +
+			"(image metadata, PDF text, SVG) with the redactor and the guard, and refuses the request when it finds a secret value " +
+			"or cannot decode the part within its bounds; block refuses every request with a binary part; " +
+			"pass forwards them unscanned and audits it. Parts referenced by URL are not fetched or scanned.",
+		Flag:            true,
+		Weakening:       true,
+		WeakeningValues: []string{"pass"},
+	})
 	// PushDebounce batches snapshot pushes.
 	PushDebounce = config.Register(config.Spec[time.Duration]{
 		Key:         "dataplane.push-debounce",

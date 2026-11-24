@@ -592,6 +592,8 @@ pub struct RedactionSettings {
     /// values are matched only in exact and encoded forms.
     #[prost(uint32, tag = "1")]
     pub min_value_length: u32,
+    #[prost(enumeration = "BinaryPolicy", tag = "2")]
+    pub binary: i32,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ApplySnapshotResponse {
@@ -1291,6 +1293,45 @@ impl ListenerKind {
             "LISTENER_KIND_TRANSPARENT" => Some(Self::Transparent),
             "LISTENER_KIND_TOOL_PROXY" => Some(Self::ToolProxy),
             "LISTENER_KIND_SNI" => Some(Self::Sni),
+            _ => None,
+        }
+    }
+}
+/// BinaryPolicy is what the LLM proxy does with binary content parts
+/// (images, documents, audio): `redaction.binary`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum BinaryPolicy {
+    /// treated as SCAN
+    Unspecified = 0,
+    /// SCAN decodes each part and scans it and the text it carries; a secret
+    /// found there, or a part that cannot be decoded, refuses the request.
+    Scan = 1,
+    /// BLOCK refuses every request with a binary part.
+    Block = 2,
+    /// PASS forwards binary parts unscanned (weakening).
+    Pass = 3,
+}
+impl BinaryPolicy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "BINARY_POLICY_UNSPECIFIED",
+            Self::Scan => "BINARY_POLICY_SCAN",
+            Self::Block => "BINARY_POLICY_BLOCK",
+            Self::Pass => "BINARY_POLICY_PASS",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "BINARY_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
+            "BINARY_POLICY_SCAN" => Some(Self::Scan),
+            "BINARY_POLICY_BLOCK" => Some(Self::Block),
+            "BINARY_POLICY_PASS" => Some(Self::Pass),
             _ => None,
         }
     }

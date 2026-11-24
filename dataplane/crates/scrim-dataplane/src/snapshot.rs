@@ -242,7 +242,7 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
     let mut llm = engine.snapshot(
         snap.version,
         Arc::new(decisions.restore_policy(scrim_policy::Caller::default())),
-        BinaryPolicy::Pass,
+        binary_policy(snap.redaction.as_ref()),
     );
     llm.routes = Some(Arc::new(routes));
     llm.gate = Some(decisions.llm_gate_scoped(Arc::clone(&scopes)));
@@ -450,6 +450,15 @@ fn core_entries(
             .with_shape(v.placeholder_format == "shape")
         })
         .collect()
+}
+
+/// The LLM proxy's binary policy (`redaction.binary`). Unset is `scan`, the safe default.
+fn binary_policy(r: Option<&v1::RedactionSettings>) -> BinaryPolicy {
+    match r.map_or(v1::BinaryPolicy::Unspecified, v1::RedactionSettings::binary) {
+        v1::BinaryPolicy::Scan | v1::BinaryPolicy::Unspecified => BinaryPolicy::Scan,
+        v1::BinaryPolicy::Block => BinaryPolicy::Block,
+        v1::BinaryPolicy::Pass => BinaryPolicy::Pass,
+    }
 }
 
 fn core_class(c: v1::ValueClass) -> rc::ValueClass {
@@ -664,6 +673,23 @@ mod tests {
         match build(s, 0, &Hooks::default()) {
             Ok(b) => b,
             Err(e) => panic!("rejected: {e}"),
+        }
+    }
+
+    #[test]
+    fn binary_policy_from_snapshot() {
+        assert_eq!(ok(snap(1)).llm.binary, BinaryPolicy::Scan, "unset is scan");
+        for (p, want) in [
+            (v1::BinaryPolicy::Unspecified, BinaryPolicy::Scan),
+            (v1::BinaryPolicy::Scan, BinaryPolicy::Scan),
+            (v1::BinaryPolicy::Block, BinaryPolicy::Block),
+            (v1::BinaryPolicy::Pass, BinaryPolicy::Pass),
+        ] {
+            let mut s = snap(1);
+            let mut r = v1::RedactionSettings::default();
+            r.set_binary(p);
+            s.redaction = Some(r);
+            assert_eq!(ok(s).llm.binary, want, "{p:?}");
         }
     }
 

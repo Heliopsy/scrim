@@ -1953,6 +1953,23 @@
           "x-scrim-restart-required": true,
           "x-scrim-weakening": true
         },
+        "binary": {
+          "default": "scan",
+          "description": "Images, PDFs and other binary parts of provider requests. scan decodes each part and scans it and the text it carries (image metadata, PDF text, SVG) with the redactor and the guard, and refuses the request when it finds a secret value or cannot decode the part within its bounds; block refuses every request with a binary part; pass forwards them unscanned and audits it. Parts referenced by URL are not fetched or scanned.",
+          "enum": [
+            "scan",
+            "block",
+            "pass"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_REDACTION_BINARY",
+          "x-scrim-flag": "--redaction-binary",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true,
+          "x-scrim-weakening-values": [
+            "pass"
+          ]
+        },
         "limit-to-agent-identity": {
           "default": false,
           "description": "Leave out of the redaction of an agent's provider requests the values that agent's own store identity cannot read. Off (the default), the redaction set is loaded with each store's own credentials and covers every value, whatever each agent may use, so a value an agent reads by accident is still redacted. On, scrim checks each value of a store with per-agent identity (identity.store-credentials) as each such agent, and the provider requests of that agent's `scrim run` sessions are no longer redacted for the values its store refused it. Kubernetes callers, peers, the tool proxy and every value not yet checked keep the whole redaction set.",

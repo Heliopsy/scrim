@@ -85,6 +85,13 @@ func settingSchema(s *Setting) obj {
 	if s.Flag {
 		o["x-scrim-flag"] = "--" + s.FlagName()
 	}
+	if len(s.WeakeningValues) > 0 {
+		vals := make([]any, len(s.WeakeningValues))
+		for i, v := range s.WeakeningValues {
+			vals[i] = displayValue(v)
+		}
+		o["x-scrim-weakening-values"] = vals
+	}
 	switch s.Kind {
 	case KindString:
 		o["type"] = "string"

@@ -486,7 +486,7 @@ impl Fixture {
             guard_fault: Fault::None,
             guard_mode: GuardMode::Repair,
             redactor_misses: Vec::new(),
-            binary: BinaryPolicy::Pass,
+            binary: BinaryPolicy::default(),
             detector: None,
             fast_guard: false,
             version: 1,

@@ -36,6 +36,7 @@
 
 pub mod audit;
 pub mod auth;
+mod binary;
 mod body;
 pub mod capture;
 pub mod codec;

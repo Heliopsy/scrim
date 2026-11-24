@@ -80,6 +80,11 @@ type Spec[T Type] struct {
 	// named for what it weakens, logged at start-up while active and listed
 	// in `scrim status`.
 	Weakening bool
+	// WeakeningValues, for a setting that is safe at more than one value,
+	// lists the values that weaken an invariant; the setting is weakened
+	// only while it holds one of them. It requires Weakening and must not
+	// contain the default. Empty means every value but the default weakens.
+	WeakeningValues []T
 	// RestartRequired marks a setting a hot reload cannot change.
 	RestartRequired bool
 	// Validate, if set, checks a parsed value beyond its type.
@@ -95,13 +100,16 @@ type Spec[T Type] struct {
 // Setting is the type-erased view of a registered setting, used by the
 // loader, schema generator and documentation.
 type Setting struct {
-	Key             string
-	Kind            Kind
-	Default         any
-	Description     string
-	Flag            bool
-	Enum            []string
-	Weakening       bool
+	Key         string
+	Kind        Kind
+	Default     any
+	Description string
+	Flag        bool
+	Enum        []string
+	Weakening   bool
+	// WeakeningValues are the values that weaken; empty means every value
+	// but the default (see [Spec.WeakeningValues]).
+	WeakeningValues []any
 	SecretRef       bool
 	RestartRequired bool
 	// RequireReference rejects a literal for a secret-ref setting.
@@ -110,6 +118,22 @@ type Setting struct {
 	Profiles map[string]any
 
 	validate func(any) error
+}
+
+// Weakens reports whether value v of the setting weakens an invariant.
+func (s *Setting) Weakens(v any) bool {
+	if !s.Weakening {
+		return false
+	}
+	if len(s.WeakeningValues) == 0 {
+		return !equalValues(v, s.Default)
+	}
+	for _, w := range s.WeakeningValues {
+		if equalValues(v, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // EnvVar is the environment variable for the setting.
@@ -197,6 +221,9 @@ func RegisterIn[T Type](r *Registry, spec Spec[T]) (Key[T], error) {
 	}
 	s.SecretRef = s.Kind == KindSecretRef
 	s.RequireReference = spec.RequireReference
+	for _, v := range spec.WeakeningValues {
+		s.WeakeningValues = append(s.WeakeningValues, clone(any(v)))
+	}
 	if len(spec.Profiles) > 0 {
 		s.Profiles = make(map[string]any, len(spec.Profiles))
 		for name, v := range spec.Profiles {
@@ -225,6 +252,17 @@ func (r *Registry) add(s *Setting) error {
 	if s.Weakening && s.Kind == KindBool && s.Default.(bool) {
 		return fmt.Errorf("config: weakening setting %s must default to false", s.Key)
 	}
+	if len(s.WeakeningValues) > 0 && !s.Weakening {
+		return fmt.Errorf("config: setting %s lists weakening values but is not weakening", s.Key)
+	}
+	for _, v := range s.WeakeningValues {
+		if equalValues(v, s.Default) {
+			return fmt.Errorf("config: weakening setting %s: the default cannot be a weakening value", s.Key)
+		}
+		if err := s.check(v); err != nil {
+			return fmt.Errorf("config: weakening value of %s: %w", s.Key, err)
+		}
+	}
 	if err := s.check(s.Default); err != nil {
 		return fmt.Errorf("config: default of %s: %w", s.Key, err)
 	}
@@ -241,8 +279,8 @@ func (r *Registry) add(s *Setting) error {
 		if err := s.check(s.Profiles[name]); err != nil {
 			return fmt.Errorf("config: profile %s value of %s: %w", name, s.Key, err)
 		}
-		if s.Weakening && !equalValues(s.Profiles[name], s.Default) {
-			return fmt.Errorf("config: weakening setting %s cannot be changed by profile %s", s.Key, name)
+		if s.Weakens(s.Profiles[name]) {
+			return fmt.Errorf("config: weakening setting %s cannot be weakened by profile %s", s.Key, name)
 		}
 	}
 
