@@ -16,7 +16,7 @@ import (
 func TestTypesHoldNoValues(t *testing.T) {
 	for _, typ := range []reflect.Type{
 		reflect.TypeFor[state.Approval](), reflect.TypeFor[state.Grant](), reflect.TypeFor[state.Session](),
-		reflect.TypeFor[state.Event](), reflect.TypeFor[state.Change](),
+		reflect.TypeFor[state.Event](), reflect.TypeFor[state.Change](), reflect.TypeFor[state.RedactionToken](),
 	} {
 		walk(t, typ, typ.Name())
 	}

@@ -21,23 +21,34 @@ import (
 	"github.com/heliopsy/scrim/internal/state/postgres"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/testing/pgtest"
+	"github.com/heliopsy/scrim/internal/testing/podtest"
 )
+
+// replicaKey is the placeholder key every replica of a test shares
+// (deployment.replicas above 1 refuses to start without one).
+var replicaKey = podtest.RandHex(16)
+
+// replicaKeyEnv sets redaction.placeholder-keys to replicaKey.
+func replicaKeyEnv() []string {
+	return []string{`SCRIM_REDACTION_PLACEHOLDER_KEYS={"k1":{"version":1,"key":"env:SCRIMTEST_REPLICA_KEY"}}`,
+		"SCRIMTEST_REPLICA_KEY=" + replicaKey}
+}
 
 // replicaEnv runs a harness as one of several replicas sharing dsn, with
 // every polling fallback far longer than the test, so only the events
 // backend can carry a change from one replica to the other in time.
 func replicaEnv(dsn string) []string {
-	return []string{
+	return append(replicaKeyEnv(),
 		"SCRIM_DEPLOYMENT_REPLICAS=2",
 		"SCRIM_STATE_BACKEND=postgres",
 		"SCRIM_STATE_POSTGRES_DSN=env:SCRIMTEST_PG_DSN",
-		"SCRIMTEST_PG_DSN=" + dsn,
+		"SCRIMTEST_PG_DSN="+dsn,
 		"SCRIM_EVENTS_BACKEND=postgres",
 		"SCRIM_EVENTS_POLL_INTERVAL=50s",
 		"SCRIM_APPROVALS_POLL_INTERVAL=50s",
 		"SCRIM_POLICY_DENY_ALL_REFRESH=50s",
 		"SCRIM_APPROVALS_TIMEOUT=2m",
-	}
+	)
 }
 
 func startReplica(t *testing.T, ctx context.Context, token, dsn string) (*Daemon, *harness) {

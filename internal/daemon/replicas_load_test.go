@@ -71,7 +71,7 @@ func replicasLoad(t *testing.T, backend string) {
 			"SCRIM_EVENTS_NATS_SUBJECT=scrim.load." + podtest.RandHex(4)}
 	}
 	dsn := pgtest.FreshDSN(t)
-	env = append(env,
+	env = append(append(env, replicaKeyEnv()...),
 		"SCRIM_DEPLOYMENT_REPLICAS=3",
 		"SCRIM_STATE_BACKEND=postgres",
 		"SCRIM_STATE_POSTGRES_DSN=env:SCRIMTEST_PG_DSN",

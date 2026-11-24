@@ -85,7 +85,7 @@ func TestWALAndPrivateFile(t *testing.T) {
 	if dst, _ := os.Stat(filepath.Dir(path)); dst.Mode().Perm() != 0o700 {
 		t.Errorf("state dir mode %04o, want 0700", dst.Mode().Perm())
 	}
-	if v, err := s.SchemaVersion(t.Context()); err != nil || v != 2 {
+	if v, err := s.SchemaVersion(t.Context()); err != nil || v != 3 {
 		t.Errorf("SchemaVersion = %d, %v", v, err)
 	}
 	raw, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
@@ -189,7 +189,7 @@ func TestRefusesNewerSchema(t *testing.T) {
 	}
 	defer func() { _ = s2.Close() }()
 	err = s2.Migrate(t.Context())
-	if !errors.Is(err, state.ErrSchemaTooNew) || !strings.Contains(err.Error(), "version 7") || !strings.Contains(err.Error(), "version 2") {
+	if !errors.Is(err, state.ErrSchemaTooNew) || !strings.Contains(err.Error(), "version 7") || !strings.Contains(err.Error(), "version 3") {
 		t.Fatalf("Migrate on a newer schema = %v", err)
 	}
 }

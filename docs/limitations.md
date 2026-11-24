@@ -119,15 +119,12 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
 
 ## Several replicas
 
-- **Session tokens are redacted only by the replica that minted them.** Each scrim keeps the
-  session tokens it minted in its own redaction set; the shared state holds only their hashes. A
-  token minted through one replica is accepted by the others, but if the agent prints it and the
-  request goes through another replica, that replica does not redact it. Where agents use `scrim
-  run` sessions against several replicas, keep each agent's connections on one replica (session
-  affinity on the load balancer).
-- **Narrowed redaction follows the same rule.** `redaction.limit-to-agent-identity` narrows only on
-  the replica whose data plane holds the session's token; elsewhere the session gets the whole
-  redaction set, which is safe but inconsistent.
+- **The state database and the placeholder key together reveal every live scrim token.** Replicas
+  share session, service account and identity tokens through PostgreSQL, sealed under a key derived
+  from the placeholder key, so every replica redacts them. Whoever holds both the database (or a
+  backup of it) and the placeholder key can open them until they expire. Someone who can write the
+  database can delete the rows, and a token is then redacted only by the replica that minted or
+  verified it.
 - **Decision links need a shared key.** Without `approvals.signing-key`, each process signs with a
   random key, and links stop working on restart and on other replicas
   ([approvals.md](approvals.md)).
