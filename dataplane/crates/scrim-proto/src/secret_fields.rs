@@ -89,6 +89,11 @@ impl fmt::Debug for AskCaller {
             .field("peer_pid", &self.peer_pid)
             .field("session_proof", &self.session_proof)
             .field("kubernetes_token", &Redacted(self.kubernetes_token.len()))
+            // Public, but long: the count is what a log needs.
+            .field(
+                "client_certificate_chain",
+                &format_args!("[{} certificates]", self.client_certificate_chain.len()),
+            )
             .finish()
     }
 }

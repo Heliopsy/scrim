@@ -26,6 +26,7 @@ import (
 	"github.com/heliopsy/scrim/internal/events"
 	"github.com/heliopsy/scrim/internal/notify"
 	"github.com/heliopsy/scrim/internal/obs"
+	"github.com/heliopsy/scrim/internal/placeholder"
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/ratelimit"
 	"github.com/heliopsy/scrim/internal/state"
@@ -206,6 +207,13 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 
 	if err := events.CheckReplicas(cfg); err != nil {
 		return nil, err
+	}
+	if n := events.Replicas.Get(cfg); n > 1 && len(placeholder.Keys.Get(cfg)) == 0 {
+		// Each replica would generate its own key: placeholders would not
+		// match across replicas, and no replica could open the tokens
+		// another shares (specs/state-and-scaling "Replica count is
+		// declared").
+		return nil, fmt.Errorf("redaction.placeholder-keys is empty but deployment.replicas is %d: every replica needs the same placeholder keys", n)
 	}
 	if a.State, err = state.Open(ctx, cfg); err != nil {
 		return nil, err

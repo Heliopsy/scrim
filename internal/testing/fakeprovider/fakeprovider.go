@@ -5,7 +5,9 @@
 // Completions and Responses APIs and the Google Gemini API (generateContent,
 // streamGenerateContent as SSE or as a streamed JSON array, countTokens),
 // streaming and non-streaming, with tool use round trips, and records every
-// byte it receives.
+// byte it receives. Over WebSocket it speaks the OpenAI Realtime API
+// (/v1/realtime) and the Responses API WebSocket mode (GET /v1/responses
+// upgraded); see ws.go.
 //
 // It is faithful where the proxy under test can tell the difference: paths,
 // event names and order, JSON shapes, SSE and JSON array framing, small
@@ -44,10 +46,31 @@ const (
 	OpenAIChat      API = "openai-chat"
 	OpenAIResponses API = "openai-responses"
 	Gemini          API = "gemini"
+	// OpenAIRealtime is the OpenAI Realtime API over WebSocket
+	// (/v1/realtime?model=...), GA event names.
+	OpenAIRealtime API = "openai-realtime"
+	// OpenAIResponsesWS is the Responses API WebSocket mode: GET
+	// /v1/responses upgraded, one response.create event per response.
+	OpenAIResponsesWS API = "openai-responses-ws"
 )
 
-// APIs lists every API the fake speaks.
+// APIs lists every HTTP API the fake speaks: one request, one reply. Callers
+// that send plain HTTP requests (the scenario agent, the HTTP round-trip
+// tests) range over this list.
 var APIs = []API{Anthropic, OpenAIChat, OpenAIResponses, Gemini}
+
+// WSAPIs lists the WebSocket APIs: a conversation of client events on one
+// connection, answered by server events.
+var WSAPIs = []API{OpenAIRealtime, OpenAIResponsesWS}
+
+// AllAPIs is APIs followed by WSAPIs, the list the bypass matrix runs.
+var AllAPIs = append(append([]API{}, APIs...), WSAPIs...)
+
+// WebSocket reports whether the API is spoken over a WebSocket.
+func (a API) WebSocket() bool { return a == OpenAIRealtime || a == OpenAIResponsesWS }
+
+// RealtimeModel is the model the canonical Realtime URL names.
+const RealtimeModel = "gpt-realtime"
 
 // GeminiModel is the model the canonical Gemini paths name.
 const GeminiModel = "gemini-2.5-pro"
@@ -60,12 +83,23 @@ func (a API) Path() string {
 		return "/v1/messages"
 	case OpenAIChat:
 		return "/v1/chat/completions"
-	case OpenAIResponses:
+	case OpenAIResponses, OpenAIResponsesWS:
 		return "/v1/responses"
 	case Gemini:
 		return "/v1beta/models/" + GeminiModel + ":generateContent"
+	case OpenAIRealtime:
+		return "/v1/realtime"
 	}
 	return ""
+}
+
+// Query returns the query of an API's canonical URL: the model for the
+// Realtime API, nothing elsewhere.
+func (a API) Query() url.Values {
+	if a == OpenAIRealtime {
+		return url.Values{"model": {RealtimeModel}}
+	}
+	return nil
 }
 
 // StreamPath returns the path and query of a streaming request. Gemini
@@ -102,6 +136,15 @@ func geminiPath(path string) (model, method string, ok bool) {
 }
 
 // Exchange is one recorded request and the reply the fake sent.
+//
+// Over WebSocket a connection records one exchange for its handshake (WS
+// "handshake", empty Body, Status 101 or the refusal status) and then one per
+// client message (WS "text" or "binary"), in the order received. Every
+// exchange of a connection carries the handshake's Method (GET), Path,
+// RawQuery and Header, so a value in the handshake is seen wherever the
+// connection's traffic is checked; Body is the message exactly as received,
+// and Response the server events sent in reply to it, one JSON event per
+// line. Conn numbers the connections from 1.
 type Exchange struct {
 	leak.Capture
 	Time   time.Time
@@ -109,6 +152,10 @@ type Exchange struct {
 	Stream bool
 	Model  string
 	Status int
+	// WS is "handshake", "text" or "binary" for WebSocket traffic, empty
+	// for an HTTP request.
+	WS   string
+	Conn int
 	// PromptBytes is the size of the prompt prefix blocks (tools, system,
 	// messages or input items) and CachedBytes the part of it that matched
 	// an earlier request block for block, the way provider prompt caching
@@ -195,6 +242,7 @@ type Server struct {
 	mu        sync.Mutex
 	exchanges []Exchange
 	prefixes  [][]string
+	conns     int
 }
 
 // New returns a fake provider.
@@ -246,6 +294,7 @@ func (s *Server) Reset() {
 	defer s.mu.Unlock()
 	s.exchanges = nil
 	s.prefixes = nil
+	s.conns = 0
 }
 
 func (s *Server) record(e Exchange) {
@@ -259,6 +308,10 @@ func (s *Server) record(e Exchange) {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/_fake/") {
 		s.control(w, r)
+		return
+	}
+	if api, ok := wsAPI(r); ok {
+		s.serveWS(w, r, api)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 256<<20))
@@ -307,6 +360,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ex.API = OpenAIChat
 	case strings.HasSuffix(path, "/responses"):
 		ex.API = OpenAIResponses
+	case strings.HasSuffix(path, "/realtime"):
+		ex.API = OpenAIRealtime
+		s.apiError(rw, ex.API, http.StatusUpgradeRequired, "invalid_request_error", "the Realtime API is served over WebSocket only")
+		return
 	default:
 		s.apiError(rw, "", http.StatusNotFound, "not_found_error", "unknown path "+path)
 		return
@@ -417,7 +474,7 @@ func (s *Server) apiError(w http.ResponseWriter, api API, status int, typ, msg s
 		w.Header().Set("Retry-After", "1")
 	}
 	switch api {
-	case OpenAIChat, OpenAIResponses:
+	case OpenAIChat, OpenAIResponses, OpenAIRealtime, OpenAIResponsesWS:
 		writeJSON(w, status, map[string]any{"error": map[string]any{"message": msg, "type": typ, "param": nil, "code": nil}})
 	case Gemini:
 		writeJSON(w, status, map[string]any{"error": map[string]any{"code": status, "message": msg, "status": geminiStatus(status)}})
@@ -460,8 +517,10 @@ func (e Exchange) MarshalJSON() ([]byte, error) {
 		CachedBytes  int         `json:"cached_bytes"`
 		Placeholders []string    `json:"placeholders,omitempty"`
 		Response     []byte      `json:"response"`
+		WS           string      `json:"ws,omitempty"`
+		Conn         int         `json:"conn,omitempty"`
 	}
-	return json.Marshal(wire{e.Seq, e.Time, e.API, e.Method, e.Path, e.RawQuery, e.Header, e.Body, e.Stream, e.Model, e.Status, e.PromptBytes, e.CachedBytes, e.Placeholders, e.Response})
+	return json.Marshal(wire{e.Seq, e.Time, e.API, e.Method, e.Path, e.RawQuery, e.Header, e.Body, e.Stream, e.Model, e.Status, e.PromptBytes, e.CachedBytes, e.Placeholders, e.Response, e.WS, e.Conn})
 }
 
 // UnmarshalJSON reads the form written by MarshalJSON.
@@ -482,6 +541,8 @@ func (e *Exchange) UnmarshalJSON(b []byte) error {
 		CachedBytes  int         `json:"cached_bytes"`
 		Placeholders []string    `json:"placeholders"`
 		Response     []byte      `json:"response"`
+		WS           string      `json:"ws"`
+		Conn         int         `json:"conn"`
 	}
 	if err := json.Unmarshal(b, &w); err != nil {
 		return err
@@ -490,6 +551,7 @@ func (e *Exchange) UnmarshalJSON(b []byte) error {
 		Capture: leak.Capture{Seq: w.Seq, Method: w.Method, Path: w.Path, RawQuery: w.RawQuery, Header: w.Header, Body: w.Body},
 		Time:    w.Time, API: w.API, Stream: w.Stream, Model: w.Model, Status: w.Status,
 		PromptBytes: w.PromptBytes, CachedBytes: w.CachedBytes, Placeholders: w.Placeholders, Response: w.Response,
+		WS: w.WS, Conn: w.Conn,
 	}
 	return nil
 }

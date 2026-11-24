@@ -1,0 +1,15 @@
+# The edge forwarder with an operator-supplied edge CA (for example cert-manager with name
+# constraints) and the upgrade window for forwarders that still trust the interception CA.
+edge:
+  enabled: true
+  ca:
+    existingSecret: scrim-edge-ca-tls
+    certificate: |
+      -----BEGIN CERTIFICATE-----
+      MIIBedgeEDGEedgeEDGE
+      -----END CERTIFICATE-----
+    legacyInterceptionCertificate: true
+agents:
+  namespaces: [agents]
+kyverno:
+  enabled: true

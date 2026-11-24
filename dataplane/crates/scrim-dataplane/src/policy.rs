@@ -544,6 +544,7 @@ mod tests {
             peer: None,
             verifier: None,
             kubernetes_token: None,
+            client_certificate: None,
         };
         sess.apply(&mut r);
         assert!(d.decide(&r, &sess, "t").await.asked);

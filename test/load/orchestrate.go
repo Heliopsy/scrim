@@ -145,6 +145,9 @@ type world struct {
 	repl  []string // replica container names
 	drv   string
 	pgDSN string
+	// phKey is the placeholder key every replica shares: more than one
+	// replica refuses to start without redaction.placeholder-keys.
+	phKey string
 	ports map[string]int
 	noCPU bool
 }
@@ -349,6 +352,7 @@ rules:
 	if err := os.WriteFile(filepath.Join(w.rdir, "rules.yaml"), []byte(rules), 0o600); err != nil {
 		return err
 	}
+	w.phKey = randHex(24)
 	w.plan = Plan{
 		Profile: w.o.profile, Run: p, SeedsDir: seeds,
 		ProviderAddr: fmt.Sprintf("127.0.0.1:%d", w.port("provider")),
@@ -438,7 +442,9 @@ proxy:
 api: {socket: %s}
 admin: {url: "%s", token: "env:SCRIM_LOAD_ADMIN_TOKEN"}
 metrics: {enabled: true, listen: %s}
-redaction: {placeholder-key-dir: %s}
+redaction:
+  placeholder-key-dir: %s
+  placeholder-keys: {load: {version: 1, key: "env:SCRIM_LOAD_PLACEHOLDER_KEY"}}
 tool-proxy: {ca: {dir: %s}}
 dataplane: {upstream-ca-file: %s}
 notify: {terminal: {enabled: false}}
@@ -589,6 +595,7 @@ func (w *world) startReplicas(ctx context.Context) error {
 			"-e", "HOME="+filepath.Join(w.rdir, e.Name, "home"),
 			"-e", "SCRIM_DATAPLANE_PATH="+filepath.Join(bin, "scrim-dataplane"),
 			"-e", "SCRIM_LOAD_PG_DSN="+w.pgDSN, "-e", "SCRIM_LOAD_ADMIN_TOKEN="+w.plan.AdminToken,
+			"-e", "SCRIM_LOAD_PLACEHOLDER_KEY="+w.phKey,
 			BaseImage, filepath.Join(bin, "scrim"), "--config", filepath.Join(w.rdir, e.Name, "config.yaml"), "proxy")
 		if err != nil {
 			return err

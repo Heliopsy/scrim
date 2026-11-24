@@ -319,3 +319,60 @@ async fn upstream_down_is_a_documented_error() {
     assert_eq!(r.headers[scrim_llm::ERROR_HEADER], "upstream_unavailable");
     assert!(fx.leaks(&r.body).is_empty(), "error bodies carry no values");
 }
+
+/// A 1x1 greyscale PNG with a tEXt chunk holding `text`.
+fn png_with_text(text: &[u8]) -> Vec<u8> {
+    fn chunk(out: &mut Vec<u8>, typ: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(typ);
+        out.extend_from_slice(data);
+        let mut h = crc32fast::Hasher::new();
+        h.update(typ);
+        h.update(data);
+        out.extend_from_slice(&h.finalize().to_be_bytes());
+    }
+    let mut p = b"\x89PNG\r\n\x1a\n".to_vec();
+    chunk(&mut p, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0]);
+    let mut t = b"Comment\0".to_vec();
+    t.extend_from_slice(text);
+    chunk(&mut p, b"tEXt", &t);
+    chunk(
+        &mut p,
+        b"IDAT",
+        &[0x78, 0x9c, 0x63, 0x60, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01],
+    );
+    chunk(&mut p, b"IEND", &[]);
+    p
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn binary_scan_refuses_secret_in_image_metadata() {
+    use base64::Engine as _;
+    let fx = fixture();
+    assert_eq!(fx.binary, BinaryPolicy::Scan, "scan is the default");
+    let png = png_with_text(format!("password: {}", fx.value("s0")).as_bytes());
+    let b = format!(
+        r#"{{"model":"m","messages":[{{"role":"user","content":[{{"type":"image","source":{{"type":"base64","media_type":"image/png","data":"{}"}}}},{{"type":"text","text":"what is this?"}}]}}]}}"#,
+        base64::engine::general_purpose::STANDARD.encode(png)
+    );
+    let (r, ev) = expect_refused(
+        Some(&fx),
+        "/anthropic/v1/messages",
+        H,
+        b,
+        422,
+        "secret_in_binary",
+        |_| {},
+    )
+    .await;
+    let msg = r.json()["error"]["message"].as_str().unwrap().to_string();
+    assert!(msg.contains("binary part 1 (image/png)"), "{msg}");
+    assert!(msg.contains("references: s0"), "{msg}");
+    match &ev[0] {
+        AuditEvent::Refused { reason, refs, .. } => {
+            assert_eq!(*reason, RefusalReason::SecretInBinary);
+            assert_eq!(refs, &vec![SecretRef::new("s0")]);
+        }
+        e => panic!("unexpected {e:?}"),
+    }
+}

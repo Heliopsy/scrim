@@ -14,6 +14,10 @@
 // data plane serves leaves with a cross certificate during that time, and
 // the trust bundle carries both certificates. The private keys leave this
 // package only through [Manager.Generations], for the data plane snapshot.
+//
+// [OpenEdge] opens the edge CA with the same machinery: a separate,
+// name-constrained CA (edge.ca.*) that issues only the edge listener's
+// certificate.
 package ca
 
 import (
@@ -83,6 +87,7 @@ type Options struct {
 
 // Manager holds the CA generations in use.
 type Manager struct {
+	prof     *profile
 	log      *slog.Logger
 	now      func() time.Time
 	pol      policy
@@ -110,6 +115,10 @@ func Open(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Manager, 
 
 // OpenWith is [Open] with options.
 func OpenWith(_ context.Context, cfg *config.Config, log *slog.Logger, o Options) (*Manager, error) {
+	return open(cfg, log, o, &interceptionProfile)
+}
+
+func open(cfg *config.Config, log *slog.Logger, o Options, prof *profile) (*Manager, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
@@ -117,14 +126,14 @@ func OpenWith(_ context.Context, cfg *config.Config, log *slog.Logger, o Options
 	if err != nil {
 		return nil, fmt.Errorf("ca: %w", err)
 	}
-	m := &Manager{log: log, now: o.Now, pol: pol, poll: o.PollInterval, changed: make(chan struct{}, 1)}
+	m := &Manager{prof: prof, log: log, now: o.Now, pol: pol, poll: o.PollInterval, changed: make(chan struct{}, 1)}
 	if m.now == nil {
 		m.now = time.Now
 	}
 	if m.poll <= 0 {
 		m.poll = time.Minute
 	}
-	certFile, keyRef := CertFileSetting.Get(cfg), KeySetting.Get(cfg)
+	certFile, keyRef := prof.certFile.Get(cfg), prof.key.Get(cfg)
 	if certFile != "" || keyRef != "" {
 		if err := m.openOperator(cfg, certFile, keyRef, o.PublicOnly); err != nil {
 			return nil, err
@@ -133,15 +142,15 @@ func OpenWith(_ context.Context, cfg *config.Config, log *slog.Logger, o Options
 	}
 	m.dir = o.Dir
 	if m.dir == "" {
-		m.dir = DirSetting.Get(cfg)
+		m.dir = prof.dir.Get(cfg)
 	}
 	if m.dir == "" {
-		if m.dir, err = DefaultDir(o.Getenv); err != nil {
+		if m.dir, err = defaultDir(o.Getenv, prof.dirName); err != nil {
 			return nil, err
 		}
 	}
 	if !filepath.IsAbs(m.dir) {
-		return nil, fmt.Errorf("ca: %s %q must be an absolute path", DirSetting.Name(), m.dir)
+		return nil, fmt.Errorf("ca: %s %q must be an absolute path", prof.dir.Name(), m.dir)
 	}
 	if err := ensureDir(m.dir); err != nil {
 		return nil, err
@@ -155,35 +164,41 @@ func OpenWith(_ context.Context, cfg *config.Config, log *slog.Logger, o Options
 
 func (m *Manager) openOperator(cfg *config.Config, certFile string, keyRef config.SecretRef, publicOnly bool) error {
 	if certFile == "" || keyRef == "" {
-		return fmt.Errorf("ca: %s and %s must be set together", CertFileSetting.Name(), KeySetting.Name())
+		return fmt.Errorf("ca: %s and %s must be set together", m.prof.certFile.Name(), m.prof.key.Name())
 	}
 	if !filepath.IsAbs(certFile) {
-		return fmt.Errorf("ca: %s %q must be an absolute path", CertFileSetting.Name(), certFile)
+		return fmt.Errorf("ca: %s %q must be an absolute path", m.prof.certFile.Name(), certFile)
 	}
 	m.operator, m.certFile = true, certFile
 	b, err := readFile(certFile)
 	if err != nil {
-		return fmt.Errorf("ca: %s: %w", CertFileSetting.Name(), err)
+		return fmt.Errorf("ca: %s: %w", m.prof.certFile.Name(), err)
 	}
 	cert, err := parseCert(b)
 	if err != nil {
-		return fmt.Errorf("ca: %s %s: %w", CertFileSetting.Name(), certFile, err)
+		return fmt.Errorf("ca: %s %s: %w", m.prof.certFile.Name(), certFile, err)
 	}
 	g := &generation{id: OperatorID, certPEM: string(b), cert: cert}
 	if !publicOnly {
-		v, ok := cfg.Secret(KeySetting)
+		v, ok := cfg.Secret(m.prof.key)
 		if !ok {
-			return fmt.Errorf("ca: %s (%s) is set but could not be resolved", KeySetting.Name(), keyRef.Display())
+			return fmt.Errorf("ca: %s (%s) is set but could not be resolved", m.prof.key.Name(), keyRef.Display())
 		}
 		g.key = cloneValue(v)
 		if err := checkKey(cert, g.key); err != nil {
 			g.wipe()
-			return fmt.Errorf("ca: %s (%s): %w", KeySetting.Name(), keyRef.Display(), err)
+			return fmt.Errorf("ca: %s (%s): %w", m.prof.key.Name(), keyRef.Display(), err)
 		}
 		if !m.now().Before(cert.NotAfter) {
 			g.wipe()
-			return fmt.Errorf("ca: the CA in %s expired at %s; replace %s and %s",
-				certFile, cert.NotAfter.UTC().Format(time.RFC3339), CertFileSetting.Name(), KeySetting.Name())
+			return fmt.Errorf("ca: the %s in %s expired at %s; replace %s and %s",
+				m.prof.what, certFile, cert.NotAfter.UTC().Format(time.RFC3339), m.prof.certFile.Name(), m.prof.key.Name())
+		}
+	}
+	if !publicOnly && m.prof.names != nil {
+		if err := m.checkOperatorNames(g); err != nil {
+			g.wipe()
+			return err
 		}
 	}
 	m.cur = g
@@ -251,8 +266,8 @@ func (m *Manager) inOverlap() bool {
 // still in its overlap is dropped. An operator-supplied CA is not rotated.
 func (m *Manager) Rotate(_ context.Context) error {
 	if m.operator {
-		return fmt.Errorf("ca: the CA is supplied by %s and %s; scrim does not rotate it, replace those instead",
-			CertFileSetting.Name(), KeySetting.Name())
+		return fmt.Errorf("ca: the %s is supplied by %s and %s; scrim does not rotate it, replace those instead",
+			m.prof.what, m.prof.certFile.Name(), m.prof.key.Name())
 	}
 	_, err := m.update(true)
 	return err
@@ -386,12 +401,12 @@ func (m *Manager) warnExpiry() {
 	}
 	m.warnedAt = now
 	if !now.Before(notAfter) {
-		m.log.Error("the operator-supplied CA has expired; clients will refuse the tool proxy until it is replaced",
+		m.log.Error("the operator-supplied "+m.prof.what+" has expired; "+m.prof.expired,
 			"cert_file", m.certFile, "not_after", notAfter.UTC())
 		return
 	}
-	m.log.Warn("the operator-supplied CA expires soon; scrim does not rotate it, replace "+
-		CertFileSetting.Name()+" and "+KeySetting.Name(), "cert_file", m.certFile, "not_after", notAfter.UTC())
+	m.log.Warn("the operator-supplied "+m.prof.what+" expires soon; scrim does not rotate it, replace "+
+		m.prof.certFile.Name()+" and "+m.prof.key.Name(), "cert_file", m.certFile, "not_after", notAfter.UTC())
 }
 
 // update brings the directory up to date under the exclusive lock: creates
@@ -417,13 +432,17 @@ func (m *Manager) update(force bool) (bool, error) {
 		}
 		st = diskState{Current: g.id}
 		dirty = true
-		m.log.Info("created the interception CA", "dir", m.dir, "generation", g.id, "not_after", g.cert.NotAfter.UTC())
+		m.log.Info("created the "+m.prof.what, "dir", m.dir, "generation", g.id, "not_after", g.cert.NotAfter.UTC())
 	default:
 		_, cur, err := loadCert(m.dir, st.Current)
 		if err != nil {
 			return false, err
 		}
-		if force || !now.Before(cur.NotAfter.Add(-m.pol.rotateBefore)) {
+		renamed := m.prof.names != nil && !constrainedTo(cur, m.prof.names)
+		if renamed {
+			m.log.Info("the "+m.prof.what+" is not constrained to exactly the configured names, rotating it", "names", m.prof.names)
+		}
+		if force || renamed || !now.Before(cur.NotAfter.Add(-m.pol.rotateBefore)) {
 			g, err := m.create(now)
 			if err != nil {
 				return false, err
@@ -434,8 +453,7 @@ func (m *Manager) update(force bool) (bool, error) {
 			st.Previous, st.Current = st.Current, g.id
 			st.OverlapUntil = earliest(now.Add(m.pol.overlap), cur.NotAfter).UTC()
 			dirty = true
-			m.log.Warn("rotated the interception CA; clients must trust the new CA before the overlap ends "+
-				"(run `scrim ca install --user` again, or export the bundle with `scrim ca export`)",
+			m.log.Warn("rotated the "+m.prof.what+"; "+m.prof.rotated,
 				"dir", m.dir, "generation", g.id, "previous", st.Previous, "overlap_until", st.OverlapUntil)
 		}
 	}
@@ -456,14 +474,14 @@ func (m *Manager) update(force bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if dirty {
+	if dirty && m.prof.trustFiles {
 		m.refreshTrustFiles()
 	}
 	return changed, nil
 }
 
 func (m *Manager) create(now time.Time) (*generation, error) {
-	g, err := newGeneration(now, m.pol.validity)
+	g, err := generate(now, m.pol.validity, m.prof)
 	if err != nil {
 		return nil, err
 	}
@@ -483,7 +501,7 @@ func (m *Manager) reload() error {
 	_, _, ok, err := readState(m.dir)
 	if err == nil && !ok {
 		unlock()
-		m.log.Warn("the CA state disappeared from the CA directory; creating a new CA", "dir", m.dir)
+		m.log.Warn("the CA state disappeared from the CA directory; creating a new "+m.prof.what, "dir", m.dir)
 		_, err = m.update(false)
 		return err
 	}

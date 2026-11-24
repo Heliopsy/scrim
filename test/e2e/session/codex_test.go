@@ -122,17 +122,19 @@ func TestCodexSession(t *testing.T) {
 		t.Errorf("the task did not complete: %s", r.Output())
 	}
 
-	var last *fp.Exchange
-	ex := s.checkLeaks(t)
-	for i := range ex {
-		if ex[i].API == fp.OpenAIResponses && ex[i].Status == 200 {
-			last = &ex[i]
+	// Codex talks the Responses API over WebSocket through scrim, chaining
+	// turns with previous_response_id: each message carries only the new
+	// input, so the tool results are collected across the socket's messages.
+	// A fallback to HTTPS would mean the WebSocket path broke.
+	var results []string
+	for _, e := range s.checkLeaks(t) {
+		if e.API == fp.OpenAIResponses && e.Status == 200 {
+			t.Errorf("Codex fell back to HTTPS Responses requests instead of WebSocket")
+		}
+		if e.API == fp.OpenAIResponsesWS && e.WS == "text" && e.Status == 200 {
+			results = append(results, responsesOutputs(t, e.Body)...)
 		}
 	}
-	if last == nil {
-		t.Fatal("no Responses request reached the fake model")
-	}
-	results := responsesOutputs(t, last.Body)
 	if len(results) < len(steps)+1 {
 		t.Fatalf("%d tool results reached the model, want %d", len(results), len(steps)+1)
 	}
@@ -154,7 +156,7 @@ func TestCodexSession(t *testing.T) {
 }
 
 // responsesOutputs returns the output of every function_call_output item in
-// a Responses request, in order.
+// a Responses request or response.create message, in order.
 func responsesOutputs(t *testing.T, body []byte) []string {
 	t.Helper()
 	var req struct {

@@ -164,12 +164,33 @@ message Snapshot {
   // plane that does not know the field redacts with the whole dictionary,
   // which is the safe side.
   repeated RedactionScope redaction_scopes = 14;
+  // client_certificates is the trust for client certificates on listeners
+  // with `tls` set (agent-identity spec, "Mutual TLS identity"). Absent, such
+  // a listener refuses every connection.
+  ClientCertificateTrust client_certificates = 15;
   // upstream_proxy is the HTTP proxy every outbound connection of the data
   // plane goes through (provider routes, chained upstreams, tool hosts,
   // transparent pass-through), as an HTTP CONNECT tunnel. Absent, the data
   // plane connects directly, as a data plane that does not know the field
   // does.
-  UpstreamProxy upstream_proxy = 15;
+  UpstreamProxy upstream_proxy = 16;
+}
+
+// ClientCertificateTrust says which client certificates a TLS listener
+// accepts. Everything in it is public.
+message ClientCertificateTrust {
+  // trust_anchors_pem are the CA certificates a client certificate must chain
+  // to, PEM. No system roots are used.
+  string trust_anchors_pem = 1;
+  // crls_der are certificate revocation lists, DER. Empty means revocation is
+  // not checked (short-lived certificates). When any is present, the end
+  // entity's issuer must have one that is current: a certificate whose issuer
+  // has none, or whose CRL is past its next update, is refused.
+  repeated bytes crls_der = 2;
+  // server_names are the names the listener's own certificate carries,
+  // signed by the current tool-proxy CA. A client that sends no server name,
+  // or one not in the list, gets the first.
+  repeated string server_names = 3;
 }
 
 // UpstreamProxy is the outbound HTTP proxy (interception spec, "Outbound
@@ -624,12 +645,34 @@ message Listener {
   // hosts that are neither a provider host nor a host a credential or capture
   // rule is bound to, instead of passing them through untouched.
   bool block_unrouted = 4;
+  // tls, for BASE_URL, FORWARD_PROXY and TOOL_PROXY listeners: accept TLS
+  // only, with a certificate for Snapshot.client_certificates.server_names,
+  // and require a client certificate that chains to its trust anchors, is
+  // within its validity period and is not revoked. A connection whose
+  // certificate fails is closed in the handshake and reported as
+  // EVENT_KIND_CLIENT_CERTIFICATE_REFUSED. Every request on the connection
+  // carries the chain in AskCaller.client_certificate_chain.
+  bool tls = 5;
+}
+
+// BinaryPolicy is what the LLM proxy does with binary content parts
+// (images, documents, audio): `redaction.binary`.
+enum BinaryPolicy {
+  BINARY_POLICY_UNSPECIFIED = 0;  // treated as SCAN
+  // SCAN decodes each part and scans it and the text it carries; a secret
+  // found there, or a part that cannot be decoded, refuses the request.
+  BINARY_POLICY_SCAN = 1;
+  // BLOCK refuses every request with a binary part.
+  BINARY_POLICY_BLOCK = 2;
+  // PASS forwards binary parts unscanned (weakening).
+  BINARY_POLICY_PASS = 3;
 }
 
 message RedactionSettings {
   // min_value_length is the shortest value matched in free text; shorter
   // values are matched only in exact and encoded forms.
   uint32 min_value_length = 1;
+  BinaryPolicy binary = 2;
 }
 
 message ApplySnapshotResponse {
@@ -664,6 +707,7 @@ enum EventKind {
   EVENT_KIND_ERROR = 8;          // a request failed closed
   EVENT_KIND_CAPTURE = 9;        // a capture rule stored a response value
   EVENT_KIND_INTERCEPTION_REFUSED = 10;  // a client refused scrim's certificate
+  EVENT_KIND_CLIENT_CERTIFICATE_REFUSED = 11;  // a TLS listener refused a client's certificate
 }
 
 // Event is metadata only: it names references and placeholders, never a
@@ -768,6 +812,14 @@ message AskCaller {
   // wiped by the control plane after verification, never logged and never
   // forwarded. Empty when the request carried no such token.
   bytes kubernetes_token = 7;
+  // client_certificate_chain is the certificate chain the client presented
+  // on a listener with `tls` set, leaf first, DER. The data plane verified it
+  // in the handshake, which also proved the client holds the leaf's private
+  // key; the control plane verifies the chain again against its own trust
+  // anchors and revocation lists and maps the leaf to an agent. Public. When
+  // it is present, session_id, session_proof and kubernetes_token are empty:
+  // the certificate is the request's only identity.
+  repeated bytes client_certificate_chain = 8;
 }
 
 message AskAnswer {

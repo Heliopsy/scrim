@@ -339,14 +339,20 @@ is out of date.
 | [`dataplane.upstream-ca-file`](#dataplaneupstream-ca-file) | string | `""` | restart required |
 | [`deployment.replicas`](#deploymentreplicas) | int | `1` | restart required |
 | [`edge-forwarder.api-socket`](#edge-forwarderapi-socket) | string | `""` | restart required |
-| [`edge-forwarder.ca-file`](#edge-forwarderca-file) | string | `/etc/scrim/trust/scrim-ca.pem` | restart required |
+| [`edge-forwarder.ca-file`](#edge-forwarderca-file) | string | `/etc/scrim/edge-trust/scrim-edge-ca.pem` | restart required |
 | [`edge-forwarder.central`](#edge-forwardercentral) | string | `""` | restart required |
+| [`edge-forwarder.client-cert-file`](#edge-forwarderclient-cert-file) | string | `""` | restart required |
+| [`edge-forwarder.client-key-file`](#edge-forwarderclient-key-file) | string | `""` | restart required |
 | [`edge-forwarder.connect-timeout`](#edge-forwarderconnect-timeout) | duration | `10s` | restart required |
 | [`edge-forwarder.databases`](#edge-forwarderdatabases) | map | `{}` | restart required |
 | [`edge-forwarder.server-name`](#edge-forwarderserver-name) | string | `""` | restart required |
 | [`edge-forwarder.socket-permissions`](#edge-forwardersocket-permissions) | string | `0666` | restart required |
 | [`edge-forwarder.ssh-agent-socket`](#edge-forwarderssh-agent-socket) | string | `""` | restart required |
 | [`edge-forwarder.token-file`](#edge-forwardertoken-file) | string | `/var/run/secrets/scrim/token` | restart required |
+| [`edge.ca.cert-file`](#edgecacert-file) | string | `""` | restart required |
+| [`edge.ca.dir`](#edgecadir) | string | `""` | restart required |
+| [`edge.ca.key`](#edgecakey) | secret-ref | empty | restart required |
+| [`edge.legacy-interception-certificate`](#edgelegacy-interception-certificate) | bool | `false` | restart required |
 | [`edge.listen`](#edgelisten) | string | `""` | restart required |
 | [`edge.server-names`](#edgeserver-names) | list | `[]` | restart required |
 | [`entry.listen`](#entrylisten) | string | `127.0.0.1:0` | restart required |
@@ -361,6 +367,13 @@ is out of date.
 | [`exec.user`](#execuser) | string | `""` | hot |
 | [`grants.default-ttl`](#grantsdefault-ttl) | duration | `30m0s` | hot |
 | [`grants.max-ttl`](#grantsmax-ttl) | duration | `8h0m0s` | hot |
+| [`identity.client-certificates.agents`](#identityclient-certificatesagents) | map | `{}` | restart required |
+| [`identity.client-certificates.ca`](#identityclient-certificatesca) | string | `""` | restart required |
+| [`identity.client-certificates.crl-files`](#identityclient-certificatescrl-files) | list | `[]` | restart required |
+| [`identity.client-certificates.enabled`](#identityclient-certificatesenabled) | bool | `false` | restart required |
+| [`identity.client-certificates.refresh`](#identityclient-certificatesrefresh) | duration | `1m0s` | restart required |
+| [`identity.client-certificates.server-names`](#identityclient-certificatesserver-names) | list | `["localhost","127.0.0.1","::1"]` | restart required |
+| [`identity.client-certificates.unmapped`](#identityclient-certificatesunmapped) | string | `unknown` | restart required |
 | [`identity.issuer.insecure-http`](#identityissuerinsecure-http) | bool | `false` | restart required |
 | [`identity.issuer.key-dir`](#identityissuerkey-dir) | string | `""` | restart required |
 | [`identity.issuer.listen`](#identityissuerlisten) | string | `""` | restart required |
@@ -419,9 +432,11 @@ is out of date.
 | [`proxy.chain.on-unavailable`](#proxychainon-unavailable) | string | `fail` | hot |
 | [`proxy.chain.url`](#proxychainurl) | string | `""` | hot |
 | [`proxy.forward-listen`](#proxyforward-listen) | string | `127.0.0.1:9791` | restart required |
+| [`proxy.forward-tls-listen`](#proxyforward-tls-listen) | string | `""` | restart required |
 | [`proxy.listen`](#proxylisten) | string | `127.0.0.1:9790` | restart required |
 | [`proxy.sni-listen`](#proxysni-listen) | string | `""` | restart required |
 | [`proxy.socket`](#proxysocket) | string | `""` | restart required |
+| [`proxy.tls-listen`](#proxytls-listen) | string | `""` | restart required |
 | [`proxy.transparent-listen`](#proxytransparent-listen) | list | `[]` | restart required |
 | [`proxy.transparent-unrouted`](#proxytransparent-unrouted) | string | `pass` | restart required |
 | [`proxy.upstream.anthropic`](#proxyupstreamanthropic) | string | `https://api.anthropic.com` | hot |
@@ -441,6 +456,7 @@ is out of date.
 | [`ratelimit.backend`](#ratelimitbackend) | string | `local` | restart required |
 | [`ratelimit.valkey.prefix`](#ratelimitvalkeyprefix) | string | `scrim:rl:` | restart required |
 | [`redaction.allow-empty-targets`](#redactionallow-empty-targets) | bool | `false` | restart required |
+| [`redaction.binary`](#redactionbinary) | string | `scan` | hot |
 | [`redaction.limit-to-agent-identity`](#redactionlimit-to-agent-identity) | bool | `false` | restart required |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
@@ -473,6 +489,7 @@ is out of date.
 | [`tool-proxy.ca.rotate-before`](#tool-proxycarotate-before) | duration | `720h0m0s` | restart required |
 | [`tool-proxy.ca.validity`](#tool-proxycavalidity) | duration | `17520h0m0s` | restart required |
 | [`tool-proxy.listen`](#tool-proxylisten) | string | `""` | restart required |
+| [`tool-proxy.tls-listen`](#tool-proxytls-listen) | string | `""` | restart required |
 | [`tools.approval-timeout`](#toolsapproval-timeout) | duration | `15m0s` | restart required |
 | [`tools.grant-default-ttl`](#toolsgrant-default-ttl) | duration | `15m0s` | restart required |
 | [`tools.grant-max-ttl`](#toolsgrant-max-ttl) | duration | `8h0m0s` | restart required |
@@ -1279,7 +1296,7 @@ PEM bundle of extra root certificates the data plane trusts for upstream TLS, in
 
 #### `deployment.replicas`
 
-How many control plane replicas share this configuration and state. More than 1 needs a shared state backend (state.backend postgres) and a shared events backend (events.backend postgres, valkey or nats); start-up fails otherwise.
+How many control plane replicas share this configuration and state. More than 1 needs a shared state backend (state.backend postgres), a shared events backend (events.backend postgres, valkey or nats) and redaction.placeholder-keys; start-up fails otherwise.
 
 | | |
 |---|---|
@@ -1305,12 +1322,12 @@ Unix socket the forwarder serves the agent API on, the exec broker included (poi
 
 #### `edge-forwarder.ca-file`
 
-PEM file of the CA the central scrim's certificate must chain to: scrim's CA. No system roots are used.
+PEM file of the edge CA the central scrim's certificate must chain to (never the interception CA). No system roots are used.
 
 | | |
 |---|---|
 | Type | string |
-| Default | `/etc/scrim/trust/scrim-ca.pem` |
+| Default | `/etc/scrim/edge-trust/scrim-edge-ca.pem` |
 | Environment | `SCRIM_EDGE_FORWARDER_CA_FILE` |
 | Flag | `--edge-forwarder-ca-file` |
 | Reload | restart required |
@@ -1325,6 +1342,30 @@ host:port of the central scrim's edge listener (edge.listen).
 | Default | `""` |
 | Environment | `SCRIM_EDGE_FORWARDER_CENTRAL` |
 | Flag | `--edge-forwarder-central` |
+| Reload | restart required |
+
+#### `edge-forwarder.client-cert-file`
+
+PEM client certificate (chain) the forwarder presents to the central scrim instead of a service account token, for a central scrim with identity.client-certificates. Read again for every connection, so a rotated certificate is used at once. Needs edge-forwarder.client-key-file.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_EDGE_FORWARDER_CLIENT_CERT_FILE` |
+| Flag | `--edge-forwarder-client-cert-file` |
+| Reload | restart required |
+
+#### `edge-forwarder.client-key-file`
+
+PEM private key of edge-forwarder.client-cert-file. It stays in the pod: the TLS handshake proves the forwarder holds it.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_EDGE_FORWARDER_CLIENT_KEY_FILE` |
+| Flag | `--edge-forwarder-client-key-file` |
 | Reload | restart required |
 
 #### `edge-forwarder.connect-timeout`
@@ -1401,6 +1442,55 @@ Projected service account token for scrim's audience, read again for every conne
 
 ### edge
 
+#### `edge.ca.cert-file`
+
+PEM certificate of an operator-supplied edge CA, used together with edge.ca.key. It must have its own key, not the interception CA's, and its name constraints, if any, must allow edge.server-names. Never rotated by scrim.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_EDGE_CA_CERT_FILE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `edge.ca.dir`
+
+Directory of the generated edge CA, which issues only the edge listener's certificate. Empty means $XDG_STATE_HOME/scrim/edge-ca (~/.local/state/scrim/edge-ca). Created with mode 0700. Never the interception CA's directory.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_EDGE_CA_DIR` |
+| Flag | none |
+| Reload | restart required |
+
+#### `edge.ca.key`
+
+Reference to the PKCS#8 PEM private key of the operator-supplied edge CA in edge.ca.cert-file (env:, file:, cred: or a store reference). Empty means scrim generates and rotates its own edge CA.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; literals rejected) |
+| Default | empty |
+| Environment | `SCRIM_EDGE_CA_KEY` |
+| Flag | none |
+| Reload | restart required |
+
+#### `edge.legacy-interception-certificate`
+
+For an upgrade window: a forwarder that does not announce the edge CA (one from scrim 1.0, which trusts the interception CA) gets a listener certificate issued by the interception CA instead of the edge CA, so agent pods started before the upgrade keep working until they are restarted. Forwarders that announce the edge CA always get the edge CA's certificate. Turn it off once every agent pod runs the new forwarder.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_EDGE_LEGACY_INTERCEPTION_CERTIFICATE` |
+| Flag | none |
+| Reload | restart required |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
 #### `edge.listen`
 
 Address of the edge listener the forwarders in agent pods connect to (TLS; callers present a Kubernetes service account token). Empty turns it off. Needs identity.kubernetes.enabled and edge.server-names.
@@ -1415,7 +1505,7 @@ Address of the edge listener the forwarders in agent pods connect to (TLS; calle
 
 #### `edge.server-names`
 
-Host names and IP addresses the edge listener's certificate carries, signed by scrim's CA, which forwarders already trust. Required with edge.listen.
+Host names and IP addresses the edge listener's certificate carries, signed by the edge CA (edge.ca.*), which the forwarders trust and nothing else does. A generated edge CA is name-constrained to these. Required with edge.listen.
 
 | | |
 |---|---|
@@ -1580,6 +1670,91 @@ Longest grant any rule or approver can create. A rule's grant.max_ttl can only l
 | Reload | hot |
 
 ### identity
+
+#### `identity.client-certificates.agents`
+
+Agents by client certificate: agent name to space-separated selectors spiffe:ID, cn:NAME, dns:NAME, uri:URI, email:ADDRESS (globs allowed, * does not cross /), scope:SCOPE, label:K=V. A certificate no rule maps follows identity.client-certificates.unmapped.
+
+| | |
+|---|---|
+| Type | map of strings (env: JSON object or `k=v,k2=v2`; one entry: variable plus `_ENTRY`) |
+| Default | `{}` |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_AGENTS` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.client-certificates.ca`
+
+Trust anchors client certificates must chain to: a PEM bundle of CA certificates, as a reference (file:/path, env:NAME, cred:NAME or a store reference such as bao://kv/pki#ca). No system roots are used.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_CA` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.client-certificates.crl-files`
+
+Certificate revocation lists (PEM or DER files) checked for every client certificate. With any set, a certificate whose issuer has no current CRL among them is refused, and so is every certificate of an issuer whose CRL is past its next update. Empty checks no revocation: use short-lived certificates.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_CRL_FILES` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.client-certificates.enabled`
+
+Identify callers by the client certificate they present on scrim's TLS listeners (proxy.tls-listen, proxy.forward-tls-listen, tool-proxy.tls-listen and edge.listen). Needs identity.client-certificates.ca.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_ENABLED` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.client-certificates.refresh`
+
+How often the trust anchors and CRL files are read again. A new CRL applies to new connections within this bound.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `1m0s` |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_REFRESH` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.client-certificates.server-names`
+
+Host names and IP addresses the certificate of scrim's TLS proxy listeners carries, signed by scrim's CA. A client that sends no server name, or one not in the list, gets the address it connected to when that is listed, else the first name.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `["localhost","127.0.0.1","::1"]` |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_SERVER_NAMES` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.client-certificates.unmapped`
+
+What a verified client certificate no identity.client-certificates.agents rule maps becomes: unknown treats it as an unknown caller, derive names the agent after its SPIFFE ID without the spiffe:// prefix (a certificate without one stays unknown).
+
+| | |
+|---|---|
+| Type | string |
+| Default | `unknown` |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_UNMAPPED` |
+| Flag | none |
+| Reload | restart required |
+| Values | `unknown`, `derive` |
 
 #### `identity.issuer.insecure-http`
 
@@ -2306,6 +2481,18 @@ TCP address of the forward proxy for agents with HTTPS_PROXY set (scrim run sets
 | Flag | `--proxy-forward-listen` |
 | Reload | restart required |
 
+#### `proxy.forward-tls-listen`
+
+TCP address of the forward proxy over TLS (HTTPS_PROXY=https://<address>). Callers must present a client certificate to the proxy (identity.client-certificates). Empty disables it.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_PROXY_FORWARD_TLS_LISTEN` |
+| Flag | `--proxy-forward-tls-listen` |
+| Reload | restart required |
+
 #### `proxy.listen`
 
 TCP address of the LLM proxy base URL (agents use http://<address>/anthropic and http://<address>/openai/v1). Empty disables it; keep it on loopback.
@@ -2340,6 +2527,18 @@ Unix socket path for the LLM proxy base URL, for agents that can connect to one.
 | Default | `""` |
 | Environment | `SCRIM_PROXY_SOCKET` |
 | Flag | `--proxy-socket` |
+| Reload | restart required |
+
+#### `proxy.tls-listen`
+
+TCP address of the LLM proxy base URL over TLS (https://<address>/anthropic and so on). Callers must present a client certificate (identity.client-certificates). Empty disables it.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_PROXY_TLS_LISTEN` |
+| Flag | `--proxy-tls-listen` |
 | Reload | restart required |
 
 #### `proxy.transparent-listen`
@@ -2576,6 +2775,20 @@ Start even when a store's redact target matches no secret on the first load. Off
 | Flag | none |
 | Reload | restart required |
 | Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `redaction.binary`
+
+Images, PDFs and other binary parts of provider requests. scan decodes each part and scans it and the text it carries (image metadata, PDF text, SVG) with the redactor and the guard, and refuses the request when it finds a secret value or cannot decode the part within its bounds; block refuses every request with a binary part; pass forwards them unscanned and audits it. Parts referenced by URL are not fetched or scanned.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `scan` |
+| Environment | `SCRIM_REDACTION_BINARY` |
+| Flag | `--redaction-binary` |
+| Reload | hot |
+| Weakening | **yes** when set to `pass`: logged at start-up and on reload while active, listed in `scrim status` |
+| Values | `scan`, `block`, `pass` |
 
 #### `redaction.limit-to-agent-identity`
 
@@ -2980,6 +3193,18 @@ TCP address of the HTTPS tool proxy (credential injection and response redaction
 | Default | `""` |
 | Environment | `SCRIM_TOOL_PROXY_LISTEN` |
 | Flag | `--tool-proxy-listen` |
+| Reload | restart required |
+
+#### `tool-proxy.tls-listen`
+
+TCP address of the HTTPS tool proxy over TLS. Callers must present a client certificate to the proxy (identity.client-certificates). Empty disables it.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_TOOL_PROXY_TLS_LISTEN` |
+| Flag | `--tool-proxy-tls-listen` |
 | Reload | restart required |
 
 ### tools

@@ -10,6 +10,10 @@
 //! | `TRANSPARENT` | `host:port` | connections redirected to it by nftables (Linux): the original destination's port and the TLS server name (or `Host`) pick the route, see [`scrim_toolproxy::ToolProxy::serve_transparent`] |
 //! | `SNI` | `host:port` | TLS for provider names resolved to scrim (DNS override), routed by server name like `TRANSPARENT` |
 //!
+//! A `BASE_URL`, `FORWARD_PROXY` or `TOOL_PROXY` listener with `tls` set serves the same thing
+//! over TLS only and requires a client certificate ([`crate::mtls`]): the forward and tool proxy
+//! become an HTTPS proxy (`HTTPS_PROXY=https://...`), the base URL an `https://` one.
+//!
 //! A listener that cannot be bound, or whose kind is not implemented, reports itself unbound
 //! with the reason, which keeps the data plane not ready: nothing is served that cannot be
 //! redacted.
@@ -32,6 +36,7 @@ use crate::metrics::{DataPlaneMetrics, ProxyListener};
 struct Running {
     kind: i32,
     address: String,
+    tls: bool,
     status: v1::ListenerStatus,
     stop: Option<oneshot::Sender<()>>,
     /// The Unix socket this listener created, removed when it stops.
@@ -84,8 +89,9 @@ impl Listeners {
             return;
         };
         running.retain(|name, r| {
-            want.iter()
-                .any(|l| &l.name == name && l.kind == r.kind && l.address == r.address)
+            want.iter().any(|l| {
+                &l.name == name && l.kind == r.kind && l.address == r.address && l.tls == r.tls
+            })
         });
         for l in want {
             if running.contains_key(&l.name) {
@@ -142,6 +148,20 @@ fn start(l: &v1::Listener, shared: &Shared) -> Running {
     let name = l.name.clone();
     let mut socket = None;
     let result = match l.kind() {
+        v1::ListenerKind::ToolProxy | v1::ListenerKind::ForwardProxy | v1::ListenerKind::BaseUrl
+            if l.tls =>
+        {
+            start_tls(l, shared, shutdown, &mut status)
+        }
+        other @ (v1::ListenerKind::Unix
+        | v1::ListenerKind::Transparent
+        | v1::ListenerKind::Sni
+        | v1::ListenerKind::Unspecified)
+            if l.tls =>
+        {
+            status.error = format!("listener kind {} cannot serve tls", other.as_str_name());
+            return unbound(l, status);
+        }
         v1::ListenerKind::ToolProxy | v1::ListenerKind::ForwardProxy => {
             bind_tcp(&l.address).map(|listener| {
                 status.address = local(&listener, &l.address);
@@ -155,11 +175,7 @@ fn start(l: &v1::Listener, shared: &Shared) -> Running {
                         });
                     }
                     Some(m) => {
-                        let kind = if l.kind() == v1::ListenerKind::ForwardProxy {
-                            ProxyListener::ForwardProxy
-                        } else {
-                            ProxyListener::ToolProxy
-                        };
+                        let kind = proxy_kind(l);
                         tokio::spawn(serve_counted(proxy, listener, shutdown, m, kind));
                     }
                 }
@@ -189,13 +205,7 @@ fn start(l: &v1::Listener, shared: &Shared) -> Running {
                 "listener kind {} is not implemented yet",
                 other.as_str_name()
             );
-            return Running {
-                kind: l.kind,
-                address: l.address.clone(),
-                status,
-                stop: None,
-                socket: None,
-            };
+            return unbound(l, status);
         }
     };
     let stop = match result {
@@ -218,9 +228,121 @@ fn start(l: &v1::Listener, shared: &Shared) -> Running {
     Running {
         kind: l.kind,
         address: l.address.clone(),
+        tls: l.tls,
         status,
         stop,
         socket,
+    }
+}
+
+/// A listener that could not start, with the reason in `status`.
+fn unbound(l: &v1::Listener, status: v1::ListenerStatus) -> Running {
+    Running {
+        kind: l.kind,
+        address: l.address.clone(),
+        tls: l.tls,
+        status,
+        stop: None,
+        socket: None,
+    }
+}
+
+/// Binds a `BASE_URL`, `FORWARD_PROXY` or `TOOL_PROXY` listener with `tls` set and starts its
+/// accept loop.
+fn start_tls(
+    l: &v1::Listener,
+    shared: &Shared,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+    status: &mut v1::ListenerStatus,
+) -> std::io::Result<&'static str> {
+    let listener = bind_tcp(&l.address)?;
+    status.address = local(&listener, &l.address);
+    if l.kind() == v1::ListenerKind::BaseUrl {
+        let acceptor = acceptor(l, shared, vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
+        tokio::spawn(scrim_llm::server::serve_tcp_with(
+            listener,
+            shared.llm.clone(),
+            shutdown,
+            move |stream, peer| {
+                let acceptor = acceptor.clone();
+                async move {
+                    let (tls, cert) = acceptor.accept(stream, peer).await?;
+                    Some((
+                        tls,
+                        scrim_toolproxy::ClientInfo {
+                            peer: Some(peer),
+                            client_certificate: Some(cert),
+                            ..scrim_toolproxy::ClientInfo::default()
+                        },
+                    ))
+                }
+            },
+        ));
+        return Ok("TLS LLM proxy");
+    }
+    let acceptor = acceptor(l, shared, vec![b"http/1.1".to_vec()]);
+    tokio::spawn(serve_proxy_tls(
+        shared.tool_proxy.clone(),
+        listener,
+        shutdown,
+        acceptor,
+        shared.metrics.clone().map(|m| (m, proxy_kind(l))),
+    ));
+    Ok("TLS tool proxy")
+}
+
+fn proxy_kind(l: &v1::Listener) -> ProxyListener {
+    if l.kind() == v1::ListenerKind::ForwardProxy {
+        ProxyListener::ForwardProxy
+    } else {
+        ProxyListener::ToolProxy
+    }
+}
+
+fn acceptor(l: &v1::Listener, shared: &Shared, alpn: Vec<Vec<u8>>) -> crate::mtls::Acceptor {
+    crate::mtls::Acceptor {
+        listener: l.name.clone(),
+        snapshot: std::sync::Arc::clone(&shared.snapshot),
+        events: std::sync::Arc::clone(&shared.events),
+        proxy: shared.tool_proxy.clone(),
+        alpn,
+    }
+}
+
+/// The accept loop of a tool or forward proxy listener with `tls` set: each connection completes
+/// the TLS handshake with a verified client certificate on its own task, then is served with the
+/// certificate as the identity of every request on it.
+async fn serve_proxy_tls(
+    proxy: scrim_toolproxy::ToolProxy,
+    listener: tokio::net::TcpListener,
+    shutdown: impl std::future::Future<Output = ()>,
+    acceptor: crate::mtls::Acceptor,
+    metrics: Option<(std::sync::Arc<DataPlaneMetrics>, ProxyListener)>,
+) {
+    tokio::pin!(shutdown);
+    loop {
+        tokio::select! {
+            () = &mut shutdown => return,
+            accepted = listener.accept() => {
+                let (stream, peer) = match accepted {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "accept failed");
+                        continue;
+                    }
+                };
+                let _ = stream.set_nodelay(true);
+                let proxy = proxy.clone();
+                let acceptor = acceptor.clone();
+                let open = metrics.as_ref().map(|(m, kind)| m.connection(*kind));
+                tokio::spawn(async move {
+                    if let Some((tls, cert)) = acceptor.accept(stream, peer).await {
+                        proxy.serve_connection_with_certificate(tls, Some(peer), Some(cert)).await;
+                    }
+                    drop(open);
+                });
+            }
+        }
     }
 }
 

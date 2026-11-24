@@ -486,7 +486,7 @@ impl Fixture {
             guard_fault: Fault::None,
             guard_mode: GuardMode::Repair,
             redactor_misses: Vec::new(),
-            binary: BinaryPolicy::Pass,
+            binary: BinaryPolicy::default(),
             detector: None,
             fast_guard: false,
             version: 1,
@@ -830,6 +830,166 @@ async fn handle(
         });
     b.body(BodyExt::boxed(StreamBody::new(stream)))
         .expect("response")
+}
+
+/// What the fake WebSocket provider received on its connections, in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WsReceived {
+    /// A text message.
+    Text(String),
+    /// A binary message.
+    Binary(Bytes),
+    /// A ping (scrim never forwards one).
+    Ping(Bytes),
+    /// A close frame: code and reason.
+    Close(Option<(u16, String)>),
+}
+
+/// The fake WebSocket provider's answer to one text message: the text messages it sends back.
+pub type WsResponder = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
+
+/// A fake WebSocket provider: records every handshake and message, sends `greeting` when a
+/// connection opens, answers each text message with what the responder returns, and with
+/// `refuse` answers every handshake with that status instead of upgrading.
+pub struct FakeWsUpstream {
+    /// Listening address.
+    pub addr: SocketAddr,
+    handshakes: Arc<Mutex<Vec<Recorded>>>,
+    received: Arc<Mutex<Vec<WsReceived>>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl FakeWsUpstream {
+    /// Starts on 127.0.0.1.
+    pub async fn start(
+        greeting: Vec<String>,
+        responder: impl Fn(&str) -> Vec<String> + Send + Sync + 'static,
+    ) -> Self {
+        Self::serve(greeting, Arc::new(responder), None).await
+    }
+
+    /// Starts a provider that answers every handshake with `status` and a JSON error body.
+    pub async fn refusing(status: u16) -> Self {
+        Self::serve(Vec::new(), Arc::new(|_| Vec::new()), Some(status)).await
+    }
+
+    async fn serve(greeting: Vec<String>, f: WsResponder, refuse: Option<u16>) -> Self {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+        use tokio_tungstenite::tungstenite::handshake::server::{
+            ErrorResponse, Request as WsReq, Response as WsResp,
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let handshakes = Arc::new(Mutex::new(Vec::new()));
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let (hs, rec) = (handshakes.clone(), received.clone());
+        let task = tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let (hs, rec, f, greeting) = (hs.clone(), rec.clone(), f.clone(), greeting.clone());
+                tokio::spawn(async move {
+                    // The callback's signature is tungstenite's.
+                    #[allow(clippy::result_large_err)]
+                    let cb = |req: &WsReq, resp: WsResp| -> Result<WsResp, ErrorResponse> {
+                        hs.lock().unwrap().push(Recorded {
+                            method: req.method().clone(),
+                            uri: req
+                                .uri()
+                                .path_and_query()
+                                .map_or_default(std::string::ToString::to_string),
+                            version: req.version(),
+                            headers: req.headers().clone(),
+                            body: Bytes::new(),
+                        });
+                        match refuse {
+                            Some(status) => {
+                                let mut e = ErrorResponse::new(Some(
+                                    r#"{"error":{"message":"refused by the fake provider"}}"#
+                                        .to_string(),
+                                ));
+                                *e.status_mut() =
+                                    http::StatusCode::from_u16(status).expect("status");
+                                Err(e)
+                            }
+                            None => Ok(resp),
+                        }
+                    };
+                    let Ok(mut ws) = tokio_tungstenite::accept_hdr_async(stream, cb).await else {
+                        return;
+                    };
+                    for g in greeting {
+                        let _ = ws.send(Message::text(g)).await;
+                    }
+                    while let Some(Ok(m)) = ws.next().await {
+                        match m {
+                            Message::Text(t) => {
+                                let replies = f(&t);
+                                rec.lock().unwrap().push(WsReceived::Text(t.to_string()));
+                                for r in replies {
+                                    if ws.send(Message::text(r)).await.is_err() {
+                                        return;
+                                    }
+                                }
+                            }
+                            Message::Binary(b) => {
+                                rec.lock().unwrap().push(WsReceived::Binary(b));
+                            }
+                            Message::Ping(p) => rec.lock().unwrap().push(WsReceived::Ping(p)),
+                            Message::Close(c) => {
+                                rec.lock().unwrap().push(WsReceived::Close(
+                                    c.map(|c| (u16::from(c.code), c.reason.to_string())),
+                                ));
+                            }
+                            Message::Pong(_) | Message::Frame(_) => {}
+                        }
+                    }
+                });
+            }
+        });
+        Self {
+            addr,
+            handshakes,
+            received,
+            task,
+        }
+    }
+
+    /// Base URL, `http://127.0.0.1:<port>`.
+    pub fn url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+
+    /// Handshakes received so far (method, path and query, headers).
+    pub fn handshakes(&self) -> Vec<Recorded> {
+        self.handshakes.lock().unwrap().clone()
+    }
+
+    /// Messages received so far, across connections.
+    pub fn received(&self) -> Vec<WsReceived> {
+        self.received.lock().unwrap().clone()
+    }
+
+    /// The text messages received so far.
+    pub fn texts(&self) -> Vec<String> {
+        self.received()
+            .into_iter()
+            .filter_map(|m| match m {
+                WsReceived::Text(t) => Some(t),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+impl Drop for FakeWsUpstream {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 #[cfg(test)]

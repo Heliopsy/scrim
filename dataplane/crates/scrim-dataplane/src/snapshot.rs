@@ -86,6 +86,8 @@ pub struct Applied {
     pub redaction: Arc<rc::Snapshot>,
     /// Narrower redaction for the sessions of `redaction_scopes`.
     pub redaction_scopes: Arc<Scopes>,
+    /// The client certificates TLS listeners accept, when the snapshot has any.
+    pub client_trust: Option<Arc<crate::mtls::ClientTrust>>,
 }
 
 impl fmt::Debug for Applied {
@@ -194,6 +196,7 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
     let mut policy = snap.policy.take().unwrap_or_default();
     policy::normalise(&mut policy);
     check_entries(&snap)?;
+    let client_trust = client_trust(&snap)?;
     let routes = route_table(&snap)?;
     let keyring = Arc::new(keyring(&snap.placeholder_keys, !snap.values.is_empty())?);
     let min_value_length = match snap.redaction.as_ref().map(|r| r.min_value_length) {
@@ -242,7 +245,7 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
     let mut llm = engine.snapshot(
         snap.version,
         Arc::new(decisions.restore_policy(scrim_policy::Caller::default())),
-        BinaryPolicy::Pass,
+        binary_policy(snap.redaction.as_ref()),
     );
     llm.routes = Some(Arc::new(routes));
     llm.gate = Some(decisions.llm_gate_scoped(Arc::clone(&scopes)));
@@ -275,6 +278,7 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
         min_value_length,
         redaction: core,
         redaction_scopes: scopes,
+        client_trust,
     };
     Ok(Built {
         applied,
@@ -294,6 +298,33 @@ fn route_table(snap: &v1::Snapshot) -> Result<RouteTable, Rejected> {
             .map(|v| scrim_llm::SecretValue::new(v.value.clone()))
     })
     .map_err(|e| invalid(format!("routes: {e}")))
+}
+
+/// The client certificate trust. A listener with `tls` set needs one, and only kinds that serve
+/// HTTP to agents can have it: anything else would serve without the identity it asked for.
+fn client_trust(snap: &v1::Snapshot) -> Result<Option<Arc<crate::mtls::ClientTrust>>, Rejected> {
+    for l in snap.listeners.iter().filter(|l| l.tls) {
+        if !matches!(
+            l.kind(),
+            v1::ListenerKind::BaseUrl
+                | v1::ListenerKind::ForwardProxy
+                | v1::ListenerKind::ToolProxy
+        ) {
+            return Err(invalid(format!(
+                "listener {:?}: tls is only for BASE_URL, FORWARD_PROXY and TOOL_PROXY listeners",
+                l.name
+            )));
+        }
+    }
+    match &snap.client_certificates {
+        Some(t) => crate::mtls::ClientTrust::from_proto(t)
+            .map(|t| Some(Arc::new(t)))
+            .map_err(invalid),
+        None if snap.listeners.iter().any(|l| l.tls) => Err(invalid(
+            "a listener has tls set but the snapshot has no client_certificates",
+        )),
+        None => Ok(None),
+    }
 }
 
 /// Every listener has a kind and an address, every value bytes.
@@ -450,6 +481,15 @@ fn core_entries(
             .with_shape(v.placeholder_format == "shape")
         })
         .collect()
+}
+
+/// The LLM proxy's binary policy (`redaction.binary`). Unset is `scan`, the safe default.
+fn binary_policy(r: Option<&v1::RedactionSettings>) -> BinaryPolicy {
+    match r.map_or(v1::BinaryPolicy::Unspecified, v1::RedactionSettings::binary) {
+        v1::BinaryPolicy::Scan | v1::BinaryPolicy::Unspecified => BinaryPolicy::Scan,
+        v1::BinaryPolicy::Block => BinaryPolicy::Block,
+        v1::BinaryPolicy::Pass => BinaryPolicy::Pass,
+    }
 }
 
 fn core_class(c: v1::ValueClass) -> rc::ValueClass {
@@ -664,6 +704,23 @@ mod tests {
         match build(s, 0, &Hooks::default()) {
             Ok(b) => b,
             Err(e) => panic!("rejected: {e}"),
+        }
+    }
+
+    #[test]
+    fn binary_policy_from_snapshot() {
+        assert_eq!(ok(snap(1)).llm.binary, BinaryPolicy::Scan, "unset is scan");
+        for (p, want) in [
+            (v1::BinaryPolicy::Unspecified, BinaryPolicy::Scan),
+            (v1::BinaryPolicy::Scan, BinaryPolicy::Scan),
+            (v1::BinaryPolicy::Block, BinaryPolicy::Block),
+            (v1::BinaryPolicy::Pass, BinaryPolicy::Pass),
+        ] {
+            let mut s = snap(1);
+            let mut r = v1::RedactionSettings::default();
+            r.set_binary(p);
+            s.redaction = Some(r);
+            assert_eq!(ok(s).llm.binary, want, "{p:?}");
         }
     }
 

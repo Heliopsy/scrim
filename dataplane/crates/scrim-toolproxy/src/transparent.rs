@@ -230,6 +230,7 @@ impl ToolProxy {
         });
         if let Err(e) = hyper::server::conn::http1::Builder::new()
             .serve_connection(TokioIo::new(io), svc)
+            .with_upgrades()
             .await
         {
             tracing::debug!(error = %e, "transparent HTTP connection ended with an error");

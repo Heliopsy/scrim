@@ -49,16 +49,43 @@ pub(crate) const ALLOWLIST: &[&str] = &[
 
 pub(crate) fn plan(doc: &Doc<'_>) -> Result<Plan, PlanError> {
     let mut plan = Plan::default();
+    plan_body(&mut plan, doc.root())?;
+    Ok(plan)
+}
+
+/// Members of a WebSocket-mode client event that are protocol, not content: the event type and
+/// the `generate: false` warm-up flag.
+const WS_ALLOWLIST: &[&str] = &["type", "generate"];
+
+/// Plans one client event of the Responses API WebSocket mode (`GET /v1/responses` upgraded):
+/// `{"type":"response.create", ...}` with the create body's members at the top level, as Codex
+/// and the `OpenAI` SDKs send it, or nested under `response`. Either way it is planned as a
+/// create body; every other event is redacted whole.
+pub(crate) fn plan_ws(doc: &Doc<'_>) -> Result<Plan, PlanError> {
+    let mut plan = Plan::default();
     let root = doc.root();
-    keep_allowlisted(&mut plan, root, ALLOWLIST)?;
+    keep_allowlisted(&mut plan, root, WS_ALLOWLIST)?;
+    if root.get_str("type")?.as_deref() == Some("response.create") {
+        plan_body(&mut plan, root)?;
+        if let Some(r) = root.get("response")?
+            && r.kind() == Kind::Object
+        {
+            plan_body(&mut plan, r)?;
+        }
+    }
+    Ok(plan)
+}
+
+fn plan_body(plan: &mut Plan, root: Value<'_, '_>) -> Result<(), PlanError> {
+    keep_allowlisted(plan, root, ALLOWLIST)?;
     if let Some(input) = root.get("input")?
         && input.kind() == Kind::Array
     {
         for item in input.children() {
-            plan_item(&mut plan, item)?;
+            plan_item(plan, item)?;
         }
     }
-    Ok(plan)
+    Ok(())
 }
 
 fn plan_item(plan: &mut Plan, item: Value<'_, '_>) -> Result<(), PlanError> {
@@ -367,6 +394,15 @@ impl StreamCodec for Stream {
         let c = num(root.get("content_index").ok().flatten()).unwrap_or(0);
         let data = &ev.data;
         match (ty.as_deref(), o) {
+            // A new response. Over HTTP it opens the stream; on a WebSocket in Responses mode
+            // it follows the previous response, which may have ended with an `error` event and
+            // no `response.completed`: whatever that one still holds is released before it, and
+            // its output indexes are forgotten.
+            (Some("response.created"), _) => {
+                self.flush_where(ctx, out, |_| true);
+                self.items.clear();
+                out.extend_from_slice(raw);
+            }
             (Some("response.output_item.added"), Some(o)) => {
                 if let Ok(Some(item)) = root.get("item") {
                     let name = || {

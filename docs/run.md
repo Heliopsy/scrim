@@ -124,9 +124,10 @@ env_http_headers = { "x-scrim-session" = "SCRIM_SESSION_TOKEN" }
 ```
 
 Codex options given at the top level apply to every subcommand, so `scrim run -- codex exec ...`
-works. Codex first tries the Responses API over WebSocket; scrim serves HTTP only, so Codex retries
-and falls back to HTTPS after a few seconds. Both attempts go to scrim's loopback listener, never to
-the provider. Tested with Codex CLI 0.171.
+works. Codex first tries the Responses API over WebSocket. scrim serves the WebSocket and redacts
+every message like a request body; if the provider refuses the handshake, Codex falls back to HTTPS.
+Both go to scrim's loopback listener, never to the provider. Tested with Codex CLI 0.171 over
+WebSocket, against a fake model.
 
 ### Other agents (`generic`)
 
@@ -457,9 +458,9 @@ backend only one of them can hold the state file, so a second concurrent `scrim 
   API on `chatgpt.com` through the forward proxy, which routes it to the LLM proxy
   (`proxy.upstream.chatgpt`); other ChatGPT backend paths, and everything on `ab.chatgpt.com`
   (`proxy.upstream.chatgpt-ab`), are forwarded with the whole body redacted as generic JSON.
-- Codex tries the Responses API over WebSocket first. scrim cannot redact WebSocket frames, so the
-  LLM proxy refuses the handshake at once with `501 upgrade_unsupported` and Codex falls back to
-  HTTPS requests without waiting.
+- Codex tries the Responses API over WebSocket first. The LLM proxy serves it and redacts every
+  message ([limitations](limitations.md#how-traffic-reaches-scrim)); when the provider refuses the
+  handshake, its answer reaches Codex, which falls back to HTTPS requests.
 - Bulk catalog entries (`prefix` with `template`) need a store listing and are not exported as
   placeholders by `scrim run` yet; entries from configuration and catalog files are.
 - The session token is added to the redaction set when it is minted, so an agent that prints its

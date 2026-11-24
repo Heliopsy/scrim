@@ -86,6 +86,7 @@ proxy:
   chain: {url: "http://127.0.0.1:9000", on-unavailable: direct}
 redaction:
   min-value-length: 12
+  binary: block
 restore:
   display-mode: placeholders
   builtin-tools: false
@@ -138,7 +139,8 @@ restore:
 	if k := s.GetPlaceholderKeys(); len(k) != 2 || k[0].GetVersion() != 2 || !k[0].GetCurrent() || k[1].GetCurrent() {
 		t.Fatalf("keys = %v", k)
 	}
-	if s.GetRedaction().GetMinValueLength() != 12 || s.GetPolicy().GetVersion() != 3 {
+	if s.GetRedaction().GetMinValueLength() != 12 || s.GetRedaction().GetBinary() != pb.BinaryPolicy_BINARY_POLICY_BLOCK ||
+		s.GetPolicy().GetVersion() != 3 {
 		t.Fatalf("redaction %v policy %v", s.GetRedaction(), s.GetPolicy())
 	}
 	rs := s.GetRestore()
@@ -593,6 +595,27 @@ func TestBypassListsLoopbackGeminiUpstream(t *testing.T) {
 	for _, r := range routes(cfg) {
 		if r.GetName() == "gemini" && (r.GetUpstream() != "http://127.0.0.1:18089" || r.GetPathPrefix() != "/gemini" || r.GetProvider() != "gemini") {
 			t.Fatalf("gemini route = %v", r)
+		}
+	}
+}
+
+func TestBinaryPolicySetting(t *testing.T) {
+	for v, want := range map[string]pb.BinaryPolicy{
+		"":      pb.BinaryPolicy_BINARY_POLICY_SCAN,
+		"scan":  pb.BinaryPolicy_BINARY_POLICY_SCAN,
+		"block": pb.BinaryPolicy_BINARY_POLICY_BLOCK,
+		"pass":  pb.BinaryPolicy_BINARY_POLICY_PASS,
+	} {
+		yaml := ""
+		if v != "" {
+			yaml = "redaction:\n  binary: " + v + "\n"
+		}
+		cfg := buildConfig(t, yaml)
+		if got := binaryPolicy(BinaryPolicy.Get(cfg)); got != want {
+			t.Errorf("%q: %v, want %v", v, got, want)
+		}
+		if weakened := len(cfg.Weakened()) > 0; weakened != (v == "pass") {
+			t.Errorf("%q: weakened = %v", v, cfg.Weakened())
 		}
 	}
 }

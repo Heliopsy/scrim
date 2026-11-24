@@ -124,6 +124,32 @@ type Session struct {
 	Labels    map[string]string
 }
 
+// Kinds of [RedactionToken].
+const (
+	TokenSession    = "session"
+	TokenKubernetes = "kubernetes"
+	TokenIssuer     = "issuer"
+)
+
+// RedactionToken is one of scrim's own tokens shared between replicas so
+// that every replica redacts it (specs/state-and-scaling "Every replica
+// redacts scrim's own tokens"). Sealed is the token encrypted under a key
+// derived from the placeholder keys (package tokenseal); the plaintext is
+// never stored, and nothing here can open it.
+type RedactionToken struct {
+	// ID is the session ID for a session token, else a keyed hash of the
+	// token.
+	ID string
+	// Kind is TokenSession, TokenKubernetes or TokenIssuer.
+	Kind string
+	// KeyVersion is the placeholder key version Sealed was sealed under.
+	KeyVersion int
+	// Sealed is nonce and ciphertext.
+	Sealed    []byte
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
 // SessionFilter selects sessions. Zero fields match anything.
 type SessionFilter struct {
 	AgentID string
@@ -210,6 +236,17 @@ type Tx interface {
 	// EndAgentSessions ends every open session of an agent and returns
 	// their IDs, oldest first.
 	EndAgentSessions(ctx context.Context, agentID string, at time.Time, reason string) ([]string, error)
+
+	// PutRedactionToken stores t, or for an existing ID replaces its sealed
+	// bytes and key version and keeps the later of the two expiries.
+	PutRedactionToken(ctx context.Context, t *RedactionToken) error
+	GetRedactionToken(ctx context.Context, id string) (*RedactionToken, error)
+	// ListRedactionTokens returns the tokens that expire after liveAt, by
+	// ID.
+	ListRedactionTokens(ctx context.Context, liveAt time.Time) ([]RedactionToken, error)
+	// DeleteRedactionTokens deletes the tokens that expire at or before
+	// expiredAt and returns how many went.
+	DeleteRedactionTokens(ctx context.Context, expiredAt time.Time) (int, error)
 
 	// AppendAudit assigns e.ID.
 	AppendAudit(ctx context.Context, e *audit.Entry) error
