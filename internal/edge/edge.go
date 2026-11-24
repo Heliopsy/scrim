@@ -16,8 +16,10 @@
 //
 // The forwarder holds nothing secret. It authenticates each connection with
 // the pod's projected service account token for scrim's audience, read from
-// its file every time, and verifies the central certificate against scrim's
-// CA only. The server verifies the token with TokenReview through the same
+// its file every time, and verifies the central certificate against the
+// edge CA only: a CA of its own, not the interception CA, so the key that
+// signs certificates for intercepted hosts cannot impersonate scrim to the
+// forwarders. The server verifies the token with TokenReview through the same
 // resolver every other Kubernetes caller goes through, so policy, approvals,
 // grants and audit see the agent exactly as they see it on the proxy. Keys,
 // database passwords and exec secrets stay in the central scrim; the pod
@@ -42,6 +44,13 @@ import (
 
 // Protocol is the Upgrade token of a tunnel.
 const Protocol = "scrim-edge.v1"
+
+// EdgeCAProto is the ALPN protocol a forwarder offers, besides http/1.1,
+// to say it verifies the listener against the edge CA. The listener never
+// selects it; with edge.legacy-interception-certificate it serves a
+// forwarder that does not offer it (scrim 1.0's) the interception CA's
+// certificate.
+const EdgeCAProto = "scrim-edge-ca"
 
 // Tunnel paths on the edge listener.
 const (

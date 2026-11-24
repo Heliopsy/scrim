@@ -41,6 +41,7 @@ type Store struct {
 	approvals map[string]*state.Approval
 	grants    map[string]*state.Grant
 	sessions  map[string]*state.Session
+	tokens    map[string]*state.RedactionToken
 	auditLog  []audit.Entry
 	events    []state.Event
 	closed    bool
@@ -56,6 +57,7 @@ func New() *Store {
 		approvals: map[string]*state.Approval{},
 		grants:    map[string]*state.Grant{},
 		sessions:  map[string]*state.Session{},
+		tokens:    map[string]*state.RedactionToken{},
 	}
 }
 
@@ -86,6 +88,7 @@ func (s *Store) Close() error {
 	clear(s.approvals)
 	clear(s.grants)
 	clear(s.sessions)
+	clear(s.tokens)
 	s.auditLog, s.events = nil, nil
 	return nil
 }
@@ -436,6 +439,62 @@ func (t *tx) EndAgentSessions(ctx context.Context, agentID string, at time.Time,
 	return ids, nil
 }
 
+func (t *tx) PutRedactionToken(_ context.Context, r *state.RedactionToken) error {
+	if err := t.write(); err != nil {
+		return err
+	}
+	if r.ID == "" || r.ExpiresAt.IsZero() || len(r.Sealed) == 0 {
+		return fmt.Errorf("put redaction token: id, expiry and sealed bytes are required")
+	}
+	c := cloneToken(*r)
+	// Same as the SQL upsert: an existing row keeps its kind, creation time
+	// and the later expiry.
+	if old, ok := t.s.tokens[r.ID]; ok {
+		c.Kind, c.CreatedAt = old.Kind, old.CreatedAt
+		if old.ExpiresAt.After(c.ExpiresAt) {
+			c.ExpiresAt = old.ExpiresAt
+		}
+	}
+	put(t, t.s.tokens, r.ID, &c)
+	return nil
+}
+
+func (t *tx) GetRedactionToken(_ context.Context, id string) (*state.RedactionToken, error) {
+	r, ok := t.s.tokens[id]
+	if !ok {
+		return nil, state.ErrNotFound
+	}
+	c := cloneToken(*r)
+	return &c, nil
+}
+
+func (t *tx) ListRedactionTokens(_ context.Context, liveAt time.Time) ([]state.RedactionToken, error) {
+	var out []state.RedactionToken
+	for _, r := range t.s.tokens {
+		if r.ExpiresAt.After(liveAt) {
+			out = append(out, cloneToken(*r))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func (t *tx) DeleteRedactionTokens(_ context.Context, expiredAt time.Time) (int, error) {
+	if err := t.write(); err != nil {
+		return 0, err
+	}
+	n := 0
+	for id, r := range t.s.tokens {
+		if !r.ExpiresAt.After(expiredAt) {
+			old := r
+			delete(t.s.tokens, id)
+			t.undo = append(t.undo, func() { t.s.tokens[id] = old })
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (t *tx) AppendAudit(_ context.Context, e *audit.Entry) error {
 	if err := t.write(); err != nil {
 		return err
@@ -536,6 +595,11 @@ func cloneSession(s state.Session) state.Session {
 	s.Scopes = slices.Clone(s.Scopes)
 	s.Labels = maps.Clone(s.Labels)
 	return s
+}
+
+func cloneToken(r state.RedactionToken) state.RedactionToken {
+	r.Sealed = slices.Clone(r.Sealed)
+	return r
 }
 
 func cloneEntry(e audit.Entry) audit.Entry {

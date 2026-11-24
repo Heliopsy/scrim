@@ -2,12 +2,12 @@
 
 Every call to scrim's local agent API is attributed to an agent before policy runs, and the
 decision and audit entry name that agent. Identity comes only from the transport: the Unix socket's
-peer credentials, plus a session token when the caller has one. Nothing in a request body, header
-or tool argument can change it.
+peer credentials, plus a session token when the caller has one, a Kubernetes service account token,
+or a client certificate on a TLS listener. Nothing in a request body, header or tool argument can
+change it.
 
-This page covers local identity, Kubernetes service accounts and scrim as an identity provider for
-stores. scrim 1.0 does not accept client certificates as an agent identity, although the
-agent-identity spec describes them.
+This page covers local identity, Kubernetes service accounts, client certificates and scrim as an
+identity provider for stores.
 
 ## Peer credentials
 
@@ -98,6 +98,8 @@ Grants, approvals and asks belong to a principal:
 | --- | --- |
 | peer credentials only | `<agent>` |
 | session | `<agent>/<session id>` |
+| Kubernetes service account | `k8s:<agent>` |
+| client certificate | `mtls:<agent>` |
 
 Two `scrim run` sessions of the same agent, and the agent's plain peer identity, are three
 principals. None can see or use another's grants, approvals or asks: another principal's approval
@@ -155,6 +157,7 @@ rest to the control plane:
 | Unix socket base URL | the kernel's peer credentials (user, group, process) |
 | forward proxy | `Proxy-Authorization: Basic <session id>:<token>`, which clients send for `HTTPS_PROXY=http://<session id>:<token>@127.0.0.1:<port>` |
 | TCP base URL | the `x-scrim-session: <token>` header (Claude Code sends it through `ANTHROPIC_CUSTOM_HEADERS`) |
+| TLS base URL, forward proxy and tool proxy | the client certificate verified in the TLS handshake ([Client certificates](#client-certificates)) |
 
 Neither the proxy credentials nor the header are forwarded: `Proxy-Authorization` ends at the
 proxy, and the base-URL listener strips `x-scrim-session`. The token is in the redaction set as
@@ -185,7 +188,7 @@ The proof is good for one ask only and reveals neither the token nor the hash.
 
 A refused session is never retried as the peer's mapping, and agent fields in the request itself
 are ignored. Each decision's audit entry records how the caller was identified in the `caller`
-attribute (`session`, `peer`, `unmapped`, `refused`, `none`).
+attribute (`session`, `peer`, `kubernetes`, `certificate`, `unmapped`, `refused`, `none`).
 
 A session id alone is public (it appears in audit entries and status), so it proves nothing. Over
 TCP the control plane checks possession of the token but cannot see the client's process, so a
@@ -338,6 +341,140 @@ and references, never values), `scrim status` lists the setting under weakened p
 Kubernetes auth, two scrim replicas on one PostgreSQL logging in to OpenBao with their own service
 account, and two agent pods whose service accounts get different outcomes from scrim's rules and
 from their OpenBao roles. It removes the cluster and its images when it ends.
+
+## Client certificates
+
+Agents that hold an X.509 identity (a SPIFFE SVID, a certificate from an internal CA for CI runners
+or agents on other machines) can identify themselves with it instead of a bearer token. A client
+certificate proves that the caller holds the private key in the TLS handshake; scrim sees only the
+certificate, never the key, so a process that copies the certificate alone cannot use it.
+
+```yaml
+identity:
+  client-certificates:
+    enabled: true
+    ca: file:/etc/scrim/agents-ca.pem          # or env:NAME, cred:NAME, bao://kv/pki#ca
+    crl-files: [/etc/scrim/agents-ca.crl]      # optional, see Revocation
+    agents:
+      builder: "spiffe:spiffe://example.org/agents/builder label:team=platform"
+      ci: "cn:ci-runner-* scope:secrets:list"
+    unmapped: unknown                          # the default
+    server-names: [scrim.internal, 10.0.0.5]   # names in the listeners' certificate
+proxy:
+  tls-listen: 0.0.0.0:9794                     # LLM proxy base URL over TLS
+  forward-tls-listen: 0.0.0.0:9795             # forward proxy over TLS (HTTPS proxy)
+tool-proxy:
+  tls-listen: 0.0.0.0:9796                     # tool proxy over TLS
+```
+
+### Listeners
+
+The TLS listeners are separate from the plain ones and require a client certificate: a client that
+presents none, or one that fails the checks below, does not get a connection.
+
+| Listener | Setting | How the agent uses it |
+| --- | --- | --- |
+| LLM proxy base URL | `proxy.tls-listen` | `ANTHROPIC_BASE_URL=https://scrim.internal:9794/anthropic` with the certificate configured in the client |
+| forward proxy | `proxy.forward-tls-listen` | `HTTPS_PROXY=https://scrim.internal:9795`; the client authenticates to the proxy (`curl --proxy-cert`, Go's `TLSClientConfig`), then CONNECTs as usual |
+| tool proxy | `tool-proxy.tls-listen` | tools pointed at the tool proxy directly |
+| edge listener | `edge.listen` | the forwarder presents `edge-forwarder.client-cert-file` and `edge-forwarder.client-key-file` instead of the pod's token |
+
+Their certificate is issued by scrim's CA (the one agents already trust for TLS interception, see
+[ca.md](ca.md)) for the name the client asked for when it is in `server-names`, else for the address
+the client connected to when that is listed, else for the first name. Starting scrim with a TLS
+listener but without `identity.client-certificates.enabled` is an error.
+
+On a TLS listener the certificate is the request's only identity. An `x-scrim-session` header or
+proxy credentials on such a connection are ignored (and still stripped before forwarding).
+
+The edge listener requests a client certificate but does not require one, so forwarders that send
+the pod's token keep working; when a forwarder presents a certificate, it wins over a token. The
+forwarder reads its certificate and key files for every connection, so a certificate a SPIFFE
+helper rotates in the pod is used at once. The key stays in the pod.
+
+### Checks
+
+Each certificate is checked twice. The data plane checks it in the handshake; the control plane
+checks the chain again with its own copy of the trust anchors and CRLs before it maps it, so a data
+plane fault cannot let a certificate through.
+
+| Refusal reason | Meaning |
+| --- | --- |
+| `untrusted` | does not chain to `identity.client-certificates.ca` (no system roots are used) |
+| `expired`, `not yet valid` | outside its validity period |
+| `not a client certificate` | its extended key usage does not allow client authentication |
+| `revoked` | the issuer's CRL lists it |
+| `revocation status unknown` | CRLs are configured but none is from the certificate's issuer |
+| `crl expired` | the issuer's CRL is past its next update |
+| `no certificate` | the client presented none (TLS listeners only) |
+| `invalid` | refused in the handshake for any other reason, such as a malformed certificate (TLS listeners) |
+| `malformed certificate` | the chain carried to the control plane does not parse (edge listener, asks) |
+
+A certificate refused in the handshake is audited as `dataplane.client_certificate_refused` with
+the reason, the listener, the client's address and, when the certificate could be parsed, its
+SHA-256 fingerprint, subject CN and SPIFFE ID. A certificate refused by the control plane is
+evaluated as an unknown caller and its decision is audited with `caller=refused`, the reason in
+`caller_reason` and the fingerprint in `cert_sha256`. On the edge listener a refusal is a 401 and an
+audit entry for the tool `edge`.
+
+### Mapping
+
+`identity.client-certificates.agents` maps certificates to agents. Each value lists selectors
+separated by spaces:
+
+| Selector | Matches |
+| --- | --- |
+| `spiffe:ID` | the SPIFFE ID (the certificate's one URI SAN with the `spiffe` scheme) |
+| `cn:NAME` | the subject common name |
+| `dns:NAME`, `uri:URI`, `email:ADDRESS` | a DNS, URI or email SAN |
+| `scope:S` | limits the agent to scope S (repeatable; default all agent scopes) |
+| `label:K=V` | an attribute policy rules can match |
+
+Patterns are globs in which `*` does not cross a `/`: `spiffe:spiffe://example.org/agents/*`
+matches `.../agents/builder` but not `.../agents/team/builder`. Rules are tried in agent name order
+and the first match wins.
+
+A certificate that chains to the trust anchor but matches no rule is an unknown caller
+(`caller=unmapped`): it gets no injection, tools or grants, and its provider requests follow your
+rules for unknown callers. A trust anchor usually covers more than your agents (a whole SPIFFE trust
+domain, a company CA), which is why this is the default, unlike `identity.kubernetes.unmapped`. With
+`unmapped: derive`, an unmapped certificate with a SPIFFE ID becomes the agent named after it
+without the scheme (`spiffe://example.org/agents/x` is `example.org/agents/x`); one without a SPIFFE
+ID stays unknown.
+
+What the rules see:
+
+| Field | Value |
+| --- | --- |
+| `agent.id` | the rule's agent name, or the derived name |
+| `agent.kind` | `mtls` |
+| `agent.labels.spiffe_id` | the SPIFFE ID, when the certificate has one |
+| `agent.labels.cert_cn`, `agent.labels.cert_issuer_cn` | subject and issuer common names |
+| `agent.labels.cert_sha256` | the certificate's SHA-256 fingerprint |
+| other `agent.labels` | `label:` selectors of the matching rule |
+
+The certificate labels come from the certificate and cannot be set with `label:`. Grants and
+approvals belong to the agent (principal `mtls:<agent>`), so every certificate a rule maps to one
+agent shares them. Tokens scrim's identity provider mints for such an agent have the subject
+`mtls:<agent>` and expire no later than the certificate. Static per-agent store credentials and
+token exchange work for these agents; Kubernetes passthrough does not.
+
+### Revocation
+
+- **CRL files.** List them in `identity.client-certificates.crl-files` (PEM or DER). scrim reads
+  them, and the trust anchors, again every `identity.client-certificates.refresh` (one minute) and
+  applies a change to new connections without a restart; connections already open keep the
+  identity they were accepted with. Once any CRL is configured, a certificate whose issuer has no
+  CRL among them is refused, and a CRL past its next update refuses every certificate of its
+  issuer until a current one is in place, so a broken CRL distribution fails closed. Only the end
+  entity certificate is checked against CRLs. A file that cannot be read on a refresh keeps the
+  lists in force and logs a warning.
+- **Short-lived certificates.** With no CRL, revocation is not checked. Use certificates that live
+  for hours, not years (SPIFFE SVIDs default to one hour): a stolen certificate and key are useless
+  once they expire.
+- **No OCSP.** Asking a responder during the handshake would add a network round trip and a
+  dependency on the responder to every new connection and tell it which agent connected, and a
+  check that passes when the responder is down checks nothing.
 
 ## scrim as an identity provider
 
@@ -498,3 +635,7 @@ off.
 - A Kubernetes service account token for scrim's audience is a bearer credential toward scrim.
   Any process in the pod that can read the projected token file is that agent. Keep one agent per
   service account, and do not mount the token into pods that are not agents.
+- A client certificate is only as private as its key. Any process that can read the key file is
+  that agent, and a certificate keeps working until it expires unless a CRL revokes it. Keep keys
+  readable by the agent only and certificates short-lived, and map certificates explicitly rather
+  than with `unmapped: derive` when the CA issues to more than your agents.

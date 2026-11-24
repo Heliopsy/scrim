@@ -7,18 +7,19 @@ the claim stops.
 The leak suite has four parts:
 
 - a **fake provider** that speaks the Anthropic Messages API, the OpenAI Chat Completions and
-  Responses APIs and the Google Gemini API, streaming and not, with tool calls, and records every
-  byte it receives;
+  Responses APIs and the Google Gemini API, streaming and not, with tool calls, and over WebSocket
+  the OpenAI Realtime API and the Responses API's WebSocket mode, and records every byte it
+  receives;
 - a **leak checker**, written independently of scrim's redactor and guard, that looks for every
   seeded value in what the fake provider received, under far more encodings than the redactor
   matches, including fragments;
-- the **bypass matrix**: 571 rows, each a way a secret can sit in a request other than verbatim,
-  with the outcome scrim must produce;
+- the **bypass matrix**: 859 rows, each a way a secret can sit in a request other than verbatim,
+  with the outcome scrim must produce, over HTTP and over WebSocket;
 - a **scenario corpus** of realistic agent sessions (reading `.env`, printing configs, a diff with
   keys, a log with tokens, an MCP tool result, a Kubernetes Secret, `curl -v`, `env`), played by a
-  built-in agent on every API, streaming and not, twice each, to measure prompt caching. The agent
-  keeps what it received (after the proxy restored placeholders) in its history, so each restored
-  value must be redacted again, byte for byte the same, on the way back out.
+  built-in agent on every HTTP API, streaming and not, twice each, to measure prompt caching. The
+  agent keeps what it received (after the proxy restored placeholders) in its history, so each
+  restored value must be redacted again, byte for byte the same, on the way back out.
 
 All secrets are fake values generated at run time. Reports identify a seed by name, kind, length and
 the first 12 hex digits of its SHA-256, never by value.
@@ -59,9 +60,9 @@ Useful flags:
 | Flag | Meaning |
 | --- | --- |
 | `--suite matrix,scenarios` | which parts to run (default both) |
-| `--api anthropic,openai-chat,openai-responses,gemini` | which provider APIs (default all) |
+| `--api anthropic,openai-chat,openai-responses,gemini,openai-realtime,openai-responses-ws` | which provider APIs (default all); the scenarios run on the HTTP ones |
 | `--rows <prefix>` | only matrix rows whose ID starts with the prefix, for example `openai-chat/header/` |
-| `--route api=/prefix` | the proxy serves an API under a path prefix |
+| `--route api=/prefix` | the proxy serves an API under a path prefix; `openai-realtime` and `openai-responses-ws` default to the `openai-responses` prefix |
 | `--header 'Name: value'` | sent with every request, typically the agent's own provider key (never a seed) |
 | `--seeds <file>` | use seeds you already loaded instead of generating new ones |
 | `--placeholder <regexp>` | how the proxy's placeholders look, if not `⟦scrim:...⟧` |
@@ -88,6 +89,26 @@ Google), reports prompt-cache usage the way providers do (a block
 counts as cached only when it and everything before it is byte-identical to an earlier request),
 and returns provider-shaped errors. `/_fake/exchanges` lists what it received, `/_fake/reset`
 forgets it, `-capture-dir` writes each exchange to a file and `-script` takes scripted replies.
+
+Over WebSocket it serves the OpenAI Realtime API on `/v1/realtime` (with `?model=`) and the
+Responses API's WebSocket mode on `/v1/responses` upgraded from a `GET`, under any prefix; a
+`POST /v1/responses` stays HTTP. Authentication is checked on the handshake, which is refused with
+401 before the upgrade when it is missing and `RequireAuth` is set. Realtime uses the GA event
+names: `session.created` on connect; `session.update`, `conversation.item.create` and
+`response.create` answered as the real API answers them; `input_audio_buffer.append` recorded and
+not answered; a response streamed as `response.created`, output items, `response.output_text.delta`
+and `response.function_call_arguments.delta` events split into small deltas, done events and
+`response.done` with the whole output, every event with an `event_id`. The Responses WebSocket mode
+takes one `{"type":"response.create", ...}` event per response, with the fields of a Responses
+create body at its top level, and answers with the events the SSE stream carries
+(`response.created` to `response.completed`), one per message. A failed reply, an unknown client
+event or a message that is not JSON is answered with an `error` event and the socket stays open.
+
+A connection records one exchange for its handshake (`"ws": "handshake"`, method `GET`, empty
+body, status 101 or the refusal status) and then one per client message (`"ws": "text"` or
+`"binary"`) whose body is the message exactly as received and whose response is the server events
+sent in reply, one JSON event per line. Every exchange of a connection carries the handshake's
+path, query and headers, and `"conn"` numbers the connections.
 
 ## What each outcome means
 
@@ -215,26 +236,51 @@ transform's and its placement's expectation.
 
 | Placement | Where | Expected | Note |
 | --- | --- | --- | --- |
-| `tool-result` | tool result content as a string (primary placement) ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
+| `tool-result` | tool result content as a string (primary placement) ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | redacted | |
 | `tool-result-streaming` | tool result in a streaming request ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
-| `tool-result-blocks` | tool result content as text blocks ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
-| `user-text` | user message text ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
-| `user-blocks` | user message content parts ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
-| `system-prompt` | system prompt, instructions or system/developer message ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
-| `tool-call-input` | a prior tool call's input in the history (a restored value sent back) ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
-| `assistant-text` | a prior assistant message in the history ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
-| `tool-definition` | a tool description (an MCP server describing itself) ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
-| `metadata` | request metadata (user id, metadata map) ([anthropic-messages openai-chat openai-responses]) | redacted | |
-| `unknown-field` | an undocumented top-level field (like Claude Code's safeguards field) ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
-| `unknown-block-field` | an undocumented field inside a content block ([anthropic-messages gemini openai-chat openai-responses]) | redacted | |
-| `document-text` | a plain-text document or file input ([anthropic-messages openai-chat openai-responses]) | redacted | |
-| `header` | a custom HTTP request header ([anthropic-messages gemini openai-chat openai-responses]) | guard | |
-| `query` | the request URL query string ([anthropic-messages gemini openai-chat openai-responses]) | guard | |
-| `image-metadata` | text in an image's PNG tEXt metadata ([anthropic-messages gemini openai-chat openai-responses]) | limitation | limitation: images and other binary parts pass unscanned under the default binary policy |
-| `split-blocks` | the value split across two content blocks of one message ([anthropic-messages gemini openai-chat openai-responses]) | limitation | limitation: a value split by the agent across separate fields is matched only by the guard's fragment rules, if at all |
-| `split-tool-results` | the value split across two tool results ([anthropic-messages gemini openai-chat openai-responses]) | limitation | limitation: a value split by the agent across separate tool results is not reassembled |
-| `split-requests` | the value split across two requests chained by previous_response_id ([openai-responses]) | limitation | limitation: server-side conversation state lets halves arrive in separate requests |
+| `tool-result-blocks` | tool result content as text blocks ([anthropic-messages gemini openai-chat openai-responses openai-responses-ws]) | redacted | |
+| `user-text` | user message text ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | redacted | |
+| `user-blocks` | user message content parts ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | redacted | |
+| `system-prompt` | system prompt, instructions or system/developer message ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | redacted | |
+| `tool-call-input` | a prior tool call's input in the history (a restored value sent back) ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | redacted | |
+| `assistant-text` | a prior assistant message in the history ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | redacted | |
+| `tool-definition` | a tool description (an MCP server describing itself) ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | redacted | |
+| `metadata` | request metadata (user id, metadata map) ([anthropic-messages openai-chat openai-realtime openai-responses openai-responses-ws]) | redacted | |
+| `unknown-field` | an undocumented top-level field (like Claude Code's safeguards field) ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | redacted | |
+| `unknown-block-field` | an undocumented field inside a content block ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | redacted | |
+| `document-text` | a plain-text document or file input ([anthropic-messages openai-chat openai-responses openai-responses-ws]) | redacted | |
+| `header` | a custom HTTP request header (on a WebSocket API, in the handshake) ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | guard | |
+| `query` | the request URL query string (on a WebSocket API, the handshake URL's) ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | guard | |
+| `image-metadata` | text in an image's PNG tEXt metadata ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: images and other binary parts pass unscanned under the default binary policy |
+| `split-blocks` | the value split across two content blocks of one message ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: a value split by the agent across separate fields is matched only by the guard's fragment rules, if at all |
+| `split-tool-results` | the value split across two tool results ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: a value split by the agent across separate tool results is not reassembled |
+| `split-requests` | the value split across two requests chained by previous_response_id (two events on one socket in the WebSocket mode) ([openai-responses openai-responses-ws]) | limitation | limitation: server-side conversation state lets halves arrive in separate requests |
+| `ws-binary-frame` | the tool result event sent as a binary WebSocket frame ([openai-realtime openai-responses-ws]) | redacted | |
+| `audio-buffer` | text in base64 audio appended to the Realtime input buffer ([openai-realtime]) | limitation | limitation: base64 audio is a binary part passed unscanned under the default binary policy |
 <!-- matrix:end -->
+
+### WebSocket rows
+
+A WebSocket row is one conversation on one socket: the handshake, with the row's header or query
+when it has one, then the client events, the secret-bearing event first and `response.create`
+last, so a proxy that refuses that event has forwarded nothing. In a real Realtime session a
+`function_call` item comes from the model and stays on the server, so a tool result is sent as its
+`function_call_output` alone. The suite reads server events until every `response.create` has its
+`response.done` or `response.completed`. A conversation that completes counts as answered (status
+200); a refused handshake has its HTTP status; a socket the proxy closes with 1008 (policy
+violation) or 1009 (message too big) counts as a refusal (422 and 413), so a refused first event
+with nothing forwarded is `withheld`. The handshake is checked for seeds like any request but is
+not a forwarded message: a proxy that opened the upstream socket and refused the first event has
+still withheld the conversation, while a seed in the handshake it forwarded is a leak. Rows that
+exist only over WebSocket are `ws-binary-frame` (the event as a binary frame, which scrim redacts
+as text when it is UTF-8) and `audio-buffer` (text in base64 audio, a binary part like an image).
+A placement with no WebSocket form (a streaming flag, a tool result made of blocks in Realtime, a
+file input in Realtime) has no row there.
+
+The scenario corpus does not run on the WebSocket APIs. Its sessions replay a conversation and
+compare each request's prompt with the previous one's, which assumes the client resends the whole
+history; a WebSocket session keeps its history on the server and sends only what is new. The
+WebSocket APIs are gated by the matrix rows above.
 
 ### What the guard decodes
 
@@ -364,7 +410,7 @@ identity and of test coverage.
 | Limitation | Matrix rows | Mitigation |
 | --- | --- | --- |
 | The agent's local transcripts, memory and history files hold real values: scrim protects the wire, not the agent's disk. | none | Keep agent state on an encrypted disk; restored values only reach tools the tool policy names. |
-| Images, PDFs and other binary parts pass unscanned, including text in image metadata. In the Gemini API that is every `inlineData` part, a `text/plain` document included, so the matrix has no Gemini `document-text` row. scrim 1.0 has no setting to block them. | `image-metadata` | Keep secrets out of images and documents the agent attaches. |
+| Images, PDFs, audio and other binary parts pass unscanned, including text in image metadata and base64 audio sent to the Realtime API. In the Gemini API that is every `inlineData` part, a `text/plain` document included, so the matrix has no Gemini `document-text` row. scrim 1.0 has no setting to block them. | `image-metadata`, `audio-buffer` | Keep secrets out of images and documents the agent attaches. |
 | Look-alike Unicode substitution (Cyrillic or fullwidth letters) is not matched: confusable tables are unbounded and no shell tool produces it. | `homoglyphs`, `fullwidth` | none yet |
 | Values spelled out in words (NATO alphabet) are not matched: any language or alphabet would do. | `nato-spelling` | none yet |
 | Compressed content (`gzip`, `zlib`) is not decompressed: decompression is unbounded work per byte. | `gzip-base64` | none yet |

@@ -27,6 +27,10 @@ http://<fullname>.<namespace>.svc); the ServiceAccount is "<fullname>-proxy".
   {{- $mounts = append $mounts (dict "name" "user-config" "mountPath" "/etc/scrim/user" "readOnly" true) -}}
   {{- $vols = append $vols (dict "name" "user-config" "configMap" (dict "name" .Values.existingConfigMap "items" (list (dict "key" "config.yaml" "path" "config.yaml")))) -}}
 {{- end -}}
+{{- if .Values.edge.enabled -}}
+  {{- $mounts = append $mounts (dict "name" "edge-ca" "mountPath" "/etc/scrim/edge-ca" "readOnly" true) -}}
+  {{- $vols = append $vols (dict "name" "edge-ca" "secret" (dict "secretName" (include "scrim.edgeCASecretName" .) "defaultMode" 0440 "items" (list (dict "key" "tls.crt" "path" "tls.crt") (dict "key" "tls.key" "path" "tls.key")))) -}}
+{{- end -}}
 {{- if .Values.upstreamCA.configMap -}}
   {{- $mounts = append $mounts (dict "name" "upstream-ca" "mountPath" "/etc/scrim/upstream-ca" "readOnly" true) -}}
   {{- $vols = append $vols (dict "name" "upstream-ca" "configMap" (dict "name" .Values.upstreamCA.configMap)) -}}

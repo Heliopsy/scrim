@@ -244,7 +244,29 @@ func (g *gen) responsesUsage(out int) map[string]any {
 	}
 }
 
+// event is one stream event: its SSE event name (empty for none) and data.
+type event struct {
+	name string
+	data map[string]any
+}
+
 func (g *gen) responses(w http.ResponseWriter, r Reply, stream bool) {
+	final, events := g.responsesEvents(r)
+	if !stream {
+		writeJSON(w, http.StatusOK, final)
+		return
+	}
+	s := newSSE(w)
+	for _, e := range events {
+		s.event(e.name, e.data)
+	}
+}
+
+// responsesEvents builds a Responses reply: the whole response object, as
+// a non-streaming request gets it, and the stream events from
+// response.created to response.completed, as the SSE stream and the
+// WebSocket mode carry them.
+func (g *gen) responsesEvents(r Reply) (map[string]any, []event) {
 	id := g.id("resp_")
 	created := time.Now().Unix()
 	type item struct {
@@ -288,17 +310,13 @@ func (g *gen) responses(w http.ResponseWriter, r Reply, stream bool) {
 		}
 		return resp
 	}
-	if !stream {
-		writeJSON(w, http.StatusOK, full("completed", true))
-		return
-	}
-	s := newSSE(w)
+	var events []event
 	seq := 0
 	ev := func(name string, v map[string]any) {
 		v["type"] = name
 		v["sequence_number"] = seq
 		seq++
-		s.event(name, v)
+		events = append(events, event{name, v})
 	}
 	ev("response.created", map[string]any{"response": full("in_progress", false)})
 	ev("response.in_progress", map[string]any{"response": full("in_progress", false)})
@@ -326,7 +344,9 @@ func (g *gen) responses(w http.ResponseWriter, r Reply, stream bool) {
 		}
 		ev("response.output_item.done", map[string]any{"output_index": oi, "item": it.m})
 	}
-	ev("response.completed", map[string]any{"response": full("completed", true)})
+	final := full("completed", true)
+	ev("response.completed", map[string]any{"response": final})
+	return final, events
 }
 
 // Google Gemini.

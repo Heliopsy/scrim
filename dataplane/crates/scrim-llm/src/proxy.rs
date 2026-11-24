@@ -27,7 +27,7 @@ use crate::outgoing::{self, Outgoing};
 use crate::restore::{Ctx, RestoreStats};
 use crate::route::{Route, RouteError, RouteTable};
 use crate::stream::{ChunkRestore, SseRestorer};
-use crate::upstream::{TlsError, UpstreamClient, build_client};
+use crate::upstream::{TlsError, UpstreamClient, build_client, build_ws_client};
 
 /// Proxy construction failed.
 #[derive(Debug, thiserror::Error)]
@@ -45,14 +45,16 @@ pub enum BuildError {
 
 /// The LLM proxy. Cheap to share behind an [`Arc`]; one instance serves every listener.
 pub struct Proxy {
-    cfg: ProxyConfig,
+    pub(crate) cfg: ProxyConfig,
     routes: Arc<RouteTable>,
-    snapshots: Arc<SnapshotCell>,
-    client: UpstreamClient,
-    audit: Arc<dyn AuditSink>,
-    capture: Option<Arc<Capture>>,
-    metrics: Option<Arc<LlmMetrics>>,
-    tokens: Arc<crate::token::TokenCache>,
+    pub(crate) snapshots: Arc<SnapshotCell>,
+    pub(crate) client: UpstreamClient,
+    /// HTTP/1.1-only client for WebSocket handshakes.
+    pub(crate) ws_client: UpstreamClient,
+    pub(crate) audit: Arc<dyn AuditSink>,
+    pub(crate) capture: Option<Arc<Capture>>,
+    pub(crate) metrics: Option<Arc<LlmMetrics>>,
+    pub(crate) tokens: Arc<crate::token::TokenCache>,
 }
 
 impl std::fmt::Debug for Proxy {
@@ -118,7 +120,7 @@ enum Forward {
 /// Request headers never forwarded: hop-by-hop headers (RFC 9110 section 7.6.1), `host` (set
 /// from the upstream URI), `content-length` (recomputed after redaction), `accept-encoding`
 /// (replaced by `identity` so responses can be restored) and scrim's own session header.
-const STRIP_REQUEST: &[&str] = &[
+pub(crate) const STRIP_REQUEST: &[&str] = &[
     SESSION_HEADER,
     "connection",
     "keep-alive",
@@ -140,7 +142,7 @@ const STRIP_REQUEST: &[&str] = &[
 pub const SESSION_HEADER: &str = "x-scrim-session";
 
 /// Response headers never forwarded.
-const STRIP_RESPONSE: &[&str] = &[
+pub(crate) const STRIP_RESPONSE: &[&str] = &[
     "connection",
     "keep-alive",
     "proxy-connection",
@@ -152,7 +154,7 @@ const STRIP_RESPONSE: &[&str] = &[
     "content-length",
 ];
 
-fn strip(headers: &mut HeaderMap, names: &[&str]) {
+pub(crate) fn strip(headers: &mut HeaderMap, names: &[&str]) {
     // Headers named in Connection are hop-by-hop too.
     let listed: Vec<HeaderName> = headers
         .get_all(header::CONNECTION)
@@ -172,7 +174,7 @@ fn strip(headers: &mut HeaderMap, names: &[&str]) {
 /// Runs the snapshot's request gate, if any. Returns the snapshot the request uses from here
 /// on: the same one with the restore policy bound to this request's caller, and the caller's
 /// narrower redactor and guard when the gate returned them.
-async fn admit(
+pub(crate) async fn admit(
     snap: Arc<Snapshot>,
     route: &Route,
     parts: &http::request::Parts,
@@ -215,7 +217,7 @@ fn is_upgrade(h: &HeaderMap) -> bool {
 
 /// `uri` with the values of the credential query parameters `creds` replaced by `masked`, for
 /// capture files.
-fn mask_query(uri: &http::Uri, creds: &[&str]) -> http::Uri {
+pub(crate) fn mask_query(uri: &http::Uri, creds: &[&str]) -> http::Uri {
     let Some(q) = uri.query() else {
         return uri.clone();
     };
@@ -263,6 +265,7 @@ impl Proxy {
     ) -> Result<Self, BuildError> {
         let routes = RouteTable::new(&cfg.routes)?;
         let client = build_client(&cfg)?;
+        let ws_client = build_ws_client(&cfg)?;
         let capture = cfg.capture.as_ref().map(Capture::open).transpose()?;
         if let Some(c) = &capture {
             tracing::warn!(dir = %c.dir().display(), "capture mode is on: outgoing requests and responses are written to disk");
@@ -272,6 +275,7 @@ impl Proxy {
             routes: Arc::new(routes),
             snapshots,
             client,
+            ws_client,
             audit,
             capture,
             metrics: None,
@@ -302,7 +306,12 @@ impl Proxy {
         self.capture.as_ref()
     }
 
-    fn refuse(&self, route: Option<&Route>, api: Api, r: &Refusal) -> Response<ProxyBody> {
+    pub(crate) fn refuse(
+        &self,
+        route: Option<&Route>,
+        api: Api,
+        r: &Refusal,
+    ) -> Response<ProxyBody> {
         tracing::info!(
             route = route.map(|r| r.name.as_str()),
             reason = r.reason.code(),
@@ -386,10 +395,13 @@ impl Proxy {
         B::Error: Into<BoxError>,
     {
         let api = route.provider.api_for(req.method(), rest);
-        // A WebSocket (or any other) upgrade would carry frames scrim cannot redact. Refuse it
-        // first, before the snapshot, the gate or the body, so a client with an HTTPS fallback
-        // (Codex tries the Responses API over WebSocket first) falls back at once.
         if is_upgrade(req.headers()) {
+            // A WebSocket handshake is served message by message (crate::websocket). Any other
+            // upgrade, or a handshake on a listener that cannot upgrade, would carry bytes scrim
+            // cannot redact: it is refused first, before the snapshot, the gate or the body.
+            if crate::websocket::is_handshake(&req) {
+                return self.websocket(snap, route, rest, req).await;
+            }
             let r = Refusal::new(RefusalReason::UpgradeUnsupported, "");
             return self.refuse(Some(route), api, &r);
         }
@@ -662,7 +674,7 @@ impl Proxy {
         }
     }
 
-    fn audit_forwarded(
+    pub(crate) fn audit_forwarded(
         &self,
         route: &Route,
         snap: &Snapshot,

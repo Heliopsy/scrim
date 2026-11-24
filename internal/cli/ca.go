@@ -16,6 +16,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/ca"
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/edge"
 	"github.com/heliopsy/scrim/internal/obs"
 )
 
@@ -41,6 +42,9 @@ func (Commands) CA(e *Env) *cobra.Command {
 		Short: "Export, rotate and install the tool proxy's interception CA",
 		Long: "The tool proxy signs certificates for the hosts it intercepts with scrim's own CA. Its private key stays in " +
 			"the CA directory (tool-proxy.ca.dir); these commands only ever print or install the public certificates.\n\n" +
+			"With --edge, export and rotate act on the edge CA instead (edge.ca.*): the separate, name-constrained CA that " +
+			"issues only the edge listener's certificate, which the edge forwarders trust. It is never installed into a " +
+			"trust store.\n\n" +
 			"Every command works without a running daemon. The CA is generated on first use, as the daemon would.",
 	}
 	c.AddCommand(caExport(e), caRotate(e), caInstall(e), caUninstall(e))
@@ -48,13 +52,16 @@ func (Commands) CA(e *Env) *cobra.Command {
 }
 
 func caExport(e *Env) *cobra.Command {
-	var out string
+	var (
+		out    string
+		edgeCA bool
+	)
 	c := &cobra.Command{
 		Use:   "export",
 		Short: "Print the PEM certificates clients must trust (current CA, and the previous one during an overlap)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			m, err := openCA(cmd, e, true)
+			m, err := openAnyCA(cmd, e, true, edgeCA)
 			if err != nil {
 				return err
 			}
@@ -72,11 +79,13 @@ func caExport(e *Env) *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&out, "out", "", "write the bundle to this file instead of stdout")
+	c.Flags().BoolVar(&edgeCA, "edge", false, "the edge CA (edge.ca.*), for the edge forwarders' edge-forwarder.ca-file")
 	return c
 }
 
 func caRotate(e *Env) *cobra.Command {
-	return &cobra.Command{
+	var edgeCA bool
+	c := &cobra.Command{
 		Use:   "rotate",
 		Short: "Make a new CA current; the previous one stays trusted for tool-proxy.ca.overlap",
 		Long: "Generates a new CA generation and makes it current. The previous generation stays trusted through a cross " +
@@ -84,7 +93,7 @@ func caRotate(e *Env) *cobra.Command {
 			"An operator-supplied CA (tool-proxy.ca.cert-file) is never rotated by scrim.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			m, err := openCA(cmd, e, false)
+			m, err := openAnyCA(cmd, e, false, edgeCA)
 			if err != nil {
 				return err
 			}
@@ -106,10 +115,16 @@ func caRotate(e *Env) *cobra.Command {
 				}
 				g.Key.Wipe()
 			}
+			if edgeCA {
+				_, err = fmt.Fprintln(w, "Give the edge forwarders the bundle from `scrim ca export --edge` before the overlap ends.")
+				return err
+			}
 			_, err = fmt.Fprintln(w, "Run `scrim ca install --user` again to trust the new CA in the per-user trust stores before the overlap ends.")
 			return err
 		},
 	}
+	c.Flags().BoolVar(&edgeCA, "edge", false, "rotate the edge CA (edge.ca.*) instead; a running daemon picks it up from edge.ca.dir")
+	return c
 }
 
 type caScope struct{ user, system, dryRun bool }
@@ -230,6 +245,29 @@ func openCA(cmd *cobra.Command, e *Env, publicOnly bool) (*ca.Manager, error) {
 	// The directory comes from the configuration (tool-proxy.ca.dir) or
 	// from this process's XDG_STATE_HOME / HOME.
 	return ca.OpenWith(cmd.Context(), cfg, log, ca.Options{Getenv: e.getenv, PublicOnly: publicOnly, Now: caNow})
+}
+
+// openAnyCA opens the interception CA, or the edge CA with edge.
+func openAnyCA(cmd *cobra.Command, e *Env, publicOnly, edgeCA bool) (*ca.Manager, error) {
+	if !edgeCA {
+		return openCA(cmd, e, publicOnly)
+	}
+	cfg, err := e.Config()
+	if !publicOnly && err == nil {
+		cfg, err = e.resolvedConfig(cmd.Context(), ca.EdgeKeySetting.Name())
+	}
+	if err != nil {
+		return nil, err
+	}
+	log, err := caLogger(e, cfg)
+	if err != nil {
+		return nil, err
+	}
+	names := edge.ServerNames.Get(cfg)
+	if len(names) == 0 {
+		return nil, fmt.Errorf("the edge CA is constrained to %s; set it as the central scrim has it", edge.ServerNames.Name())
+	}
+	return ca.OpenEdge(cmd.Context(), cfg, log, names, ca.Options{Getenv: e.getenv, PublicOnly: publicOnly, Now: caNow})
 }
 
 func caLogger(e *Env, cfg *config.Config) (*slog.Logger, error) {

@@ -102,6 +102,50 @@ needs it in one render sees the same CA.
 {{- end -}}
 {{- end -}}
 
+{{- define "scrim.edgeCASecretName" -}}
+{{- default (printf "%s-edge-ca" (include "scrim.fullname" .)) .Values.edge.ca.existingSecret -}}
+{{- end -}}
+
+{{/*
+The generated edge CA, like scrim.generatedCA: created once, read back with lookup on upgrade,
+cached in .Values for the render. Its own key; it signs only the edge listener's certificate.
+*/}}
+{{- define "scrim.generatedEdgeCA" -}}
+{{- if not (hasKey .Values "__scrimEdgeCA") -}}
+{{- $name := printf "%s-edge-ca" (include "scrim.fullname" .) -}}
+{{- $existing := lookup "v1" "Secret" (include "scrim.namespace" .) $name -}}
+{{- if and $existing (index $existing "data") (index $existing.data "tls.key") -}}
+{{- $_ := set .Values "__scrimEdgeCA" (dict "crt" (index $existing.data "tls.crt" | b64dec) "key" (index $existing.data "tls.key" | b64dec)) -}}
+{{- else -}}
+{{- $key := genPrivateKey "ed25519" -}}
+{{- $ca := genCAWithKey (printf "scrim edge CA %s" .Release.Name) (int .Values.edge.ca.validityDays) $key -}}
+{{- $_ := set .Values "__scrimEdgeCA" (dict "crt" $ca.Cert "key" $ca.Key) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Public PEM of the edge CA, whatever its source. */}}
+{{- define "scrim.edgeCACert" -}}
+{{- $e := .Values.edge.ca -}}
+{{- if $e.existingSecret -}}
+{{- if $e.certificate -}}
+{{- $e.certificate -}}
+{{- else -}}
+{{- $s := lookup "v1" "Secret" (include "scrim.namespace" .) $e.existingSecret -}}
+{{- if and $s (index $s "data") (index $s.data "tls.crt") -}}
+{{- index $s.data "tls.crt" | b64dec -}}
+{{- else -}}
+{{- fail (printf "edge.ca.existingSecret %q: its certificate cannot be read here (helm template, or the Secret does not exist yet); set edge.ca.certificate to the public PEM" $e.existingSecret) -}}
+{{- end -}}
+{{- end -}}
+{{- else if $e.create -}}
+{{- include "scrim.generatedEdgeCA" . -}}
+{{- index .Values.__scrimEdgeCA "crt" -}}
+{{- else -}}
+{{- fail "edge.enabled needs an edge CA: edge.ca.create=true or edge.ca.existingSecret (never the interception CA)" -}}
+{{- end -}}
+{{- end -}}
+
 {{/* The generated placeholder key, created once and read back with lookup. */}}
 {{- define "scrim.generatedKey" -}}
 {{- if not (hasKey .Values "__scrimKey") -}}

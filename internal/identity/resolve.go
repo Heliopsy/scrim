@@ -15,6 +15,8 @@ type Resolver struct {
 	Sessions *Manager
 	// Kubernetes verifies service account tokens; nil refuses them.
 	Kubernetes *KubeResolver
+	// Certificates verifies client certificates; nil refuses them.
+	Certificates *CertResolver
 }
 
 // Resolve returns the caller's identity.

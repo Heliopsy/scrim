@@ -78,7 +78,7 @@ alias and never contain a value.
 | `malformed_body` | 400 | body could not be decoded or parsed |
 | `body_too_large` | 413 | body over the buffering limit needs rewriting |
 | `resigning_unsupported` | 422 | signed request scrim cannot re-sign (SigV4 not signed with a scrim access key id placeholder, HTTP signatures, OAuth 1) or unknown digest |
-| `upgrade_unsupported` | 501 | WebSocket and other upgrades |
+| `upgrade_unsupported` | 501 | WebSocket and other upgrades toward hosts the LLM proxy does not claim |
 | `misdirected_request` | 421 | Host or SNI differs from the CONNECT target |
 | `upstream_unavailable` | 502 | upstream unreachable or failed TLS verification |
 | `response_withheld` | 502 | response could not be scanned |

@@ -24,8 +24,9 @@ scrim exec ─▶ SCRIM_API_SOCKET ─┘   no secrets     └──▶ agent AP
 - `scrim edge` runs as a native sidecar in the agent pod. It listens on `SSH_AUTH_SOCK`, on one
   loopback port per forwarded database and on `SCRIM_API_SOCKET`, all inside the pod.
 - Each local connection becomes one TLS 1.3 connection to the central scrim's edge listener
-  (`edge.listen`). The forwarder verifies the certificate against scrim's CA only (the `scrim-ca`
-  ConfigMap every agent pod already mounts), never the system roots.
+  (`edge.listen`). The forwarder verifies the certificate against the edge CA only (`scrim-edge-ca.pem`
+  in the `scrim-ca` ConfigMap, mounted into the forwarder alone), never the interception CA and never
+  the system roots ([The edge CA](#the-edge-ca)).
 - The forwarder presents the pod's projected service account token for scrim's audience, read from
   its file for every connection, so the kubelet's rotation is picked up and the agent keeps its
   identity however long it runs.
@@ -44,10 +45,9 @@ scrim exec ─▶ SCRIM_API_SOCKET ─┘   no secrets     └──▶ agent AP
 | database port | the session scrim logged in for it | the database password ([databases.md](databases.md)) |
 | agent API | tool results, redacted command output | exec secrets: the command runs in the central scrim ([exec-broker.md](exec-broker.md)) |
 
-The forwarder holds no secret value. Its container mounts the CA's public certificate and the pod's
-identity token, which every agent container mounts anyway; it gets no store credential, no CA key
-and no placeholder key. Compromising it gives what compromising the agent gives: the pod's identity,
-which policy already governs.
+The forwarder holds no secret value. Its container mounts the edge CA's public certificate and the
+pod's identity token; it gets no store credential, no CA key and no placeholder key. Compromising it
+gives what compromising the agent gives: the pod's identity, which policy already governs.
 
 ## Failing closed
 
@@ -94,13 +94,15 @@ config:
 ```
 
 `edge.enabled` turns on `edge.listen` in the central scrim (port `edge.port`, 9794, on the container
-and the Service), with the Service's names in its certificate, and has the central MutatingPolicy add
-to every pod labelled `scrim.dev/inject: central`:
+and the Service), with the Service's names in its certificate, issued by the edge CA (`edge.ca`,
+generated on first install and kept), and has the central MutatingPolicy add to every pod labelled
+`scrim.dev/inject: central`:
 
 | What | Value |
 | --- | --- |
 | native sidecar `scrim-edge` | `scrim edge` from the scrim image, UID 65532, read-only root, no capabilities |
 | volume `scrim-edge` | an in-memory `emptyDir` at `edge.socketDir` (`/run/scrim-edge`) in every container |
+| volume `scrim-edge-trust` | `scrim-edge-ca.pem` from the `scrim-ca` ConfigMap, at `/etc/scrim/edge-trust` in the forwarder only |
 | `SSH_AUTH_SOCK` | `/run/scrim-edge/ssh-agent.sock` (with `edge.sshAgent`, on by default) |
 | `SCRIM_API_SOCKET` | `/run/scrim-edge/api.sock` (with `edge.api`, on by default) |
 | database ports | `127.0.0.1:<port>` for each `edge.databases` entry |
@@ -165,7 +167,10 @@ The central scrim (`scrim proxy`):
 | Setting | Meaning |
 | --- | --- |
 | `edge.listen` | Address of the edge listener; empty turns it off. Needs `identity.kubernetes.enabled` |
-| `edge.server-names` | Names and addresses in its certificate, which scrim issues from its CA for 24 hours and renews |
+| `edge.server-names` | Names and addresses in its certificate, which scrim issues from the edge CA for 24 hours and renews |
+| `edge.ca.dir` | Directory of the generated edge CA (default `$XDG_STATE_HOME/scrim/edge-ca`) |
+| `edge.ca.cert-file`, `edge.ca.key` | An operator-supplied edge CA instead, by reference; never rotated |
+| `edge.legacy-interception-certificate` | Upgrade window: serve 1.0 forwarders a certificate from the interception CA (weakening, off) |
 
 The forwarder (`scrim edge`, environment `SCRIM_EDGE_FORWARDER_*`):
 
@@ -173,7 +178,7 @@ The forwarder (`scrim edge`, environment `SCRIM_EDGE_FORWARDER_*`):
 | --- | --- |
 | `edge-forwarder.central` | `host:port` of the edge listener |
 | `edge-forwarder.server-name` | Name to verify its certificate for; default the host of `central` |
-| `edge-forwarder.ca-file` | scrim's CA certificate (default `/etc/scrim/trust/scrim-ca.pem`) |
+| `edge-forwarder.ca-file` | The edge CA certificate (default `/etc/scrim/edge-trust/scrim-edge-ca.pem`) |
 | `edge-forwarder.token-file` | The pod's projected token (default `/var/run/secrets/scrim/token`) |
 | `edge-forwarder.ssh-agent-socket` | Where to serve the ssh-agent; empty serves none |
 | `edge-forwarder.api-socket` | Where to serve the agent API; empty serves none |
@@ -183,6 +188,51 @@ The forwarder (`scrim edge`, environment `SCRIM_EDGE_FORWARDER_*`):
 
 `scrim edge check` prints the agent the central scrim verified the pod as, and exits non-zero when
 it cannot.
+
+## The edge CA
+
+The edge listener's certificate comes from a CA of its own, not from the interception CA
+([ca.md](ca.md)). The interception CA signs a certificate for every host the tool proxy intercepts;
+if it also vouched for the edge listener, its key could impersonate central scrim to every
+forwarder. The edge CA's key issues only the listener's certificate, and only the forwarders trust
+its certificate: it is in neither `scrim-ca.pem` nor `ca-bundle.pem`, so no agent runtime does.
+
+- **Generated by scrim** (no `edge.ca.cert-file`): a P-256 CA in `edge.ca.dir`, kept and locked like
+  the interception CA. Its name constraints permit only the names and addresses in
+  `edge.server-names` (and the names below them), it may sign only server certificates and no
+  further CA. It rotates under the interception CA's policy (`tool-proxy.ca.validity`,
+  `rotate-before`, `overlap`), and at once when `edge.server-names` changes. `scrim ca export --edge`
+  prints the bundle the forwarders need (the current CA and, during an overlap, the previous one);
+  `scrim ca rotate --edge` rotates it by hand.
+- **Supplied by the operator** (`edge.ca.cert-file` and `edge.ca.key`): used as given and never
+  rotated. scrim checks at start-up that a certificate for `edge.server-names` issued by it verifies
+  against it, name constraints included.
+- **From the chart**: Helm generates an Ed25519 edge CA on first install (Secret
+  `<release>-edge-ca`, kept on uninstall and reused on upgrade), or takes `edge.ca.existingSecret`
+  (with `edge.ca.certificate` for `helm template`). Helm cannot add name constraints; for a
+  constrained edge CA, issue one with cert-manager (`isCA: true`, `privateKey.encoding: PKCS8`,
+  `nameConstraints` with the Service names) and name its Secret in `edge.ca.existingSecret`.
+
+scrim refuses to start when the edge CA has the interception CA's key, and the chart refuses the
+interception CA's Secret as `edge.ca.existingSecret`.
+
+### Upgrading from 1.0
+
+In 1.0 the forwarder verified the listener against the interception CA (`scrim-ca.pem`). After the
+upgrade, agent pods started before it still run that forwarder: Kyverno changes a pod's spec only
+when the pod is created. Against a central scrim that serves the edge CA's certificate, those
+forwarders fail closed, as with any certificate they do not trust. Either:
+
+- restart the agent pods right after the upgrade (`kubectl rollout restart` on their workloads), or
+- upgrade with `edge.ca.legacyInterceptionCertificate: true`, restart the agent pods when it suits
+  you, then upgrade again with it off.
+
+While the window is open (`edge.legacy-interception-certificate`), the listener tells the two
+forwarders apart by ALPN: the new one also offers `scrim-edge-ca`, which the listener never selects.
+A client that does not offer it gets a certificate from the interception CA, so for those old
+forwarders the 1.0 exposure remains until the window is closed. New forwarders trust only the edge
+CA, so the window gives the interception CA's key nothing over them. scrim logs a warning while it is
+on.
 
 ## The channel
 
@@ -210,18 +260,27 @@ the cluster verifies joins the redaction set, as on the proxy.
 - `internal/edge`: ssh-agent list and sign through the forwarder as the pod's agent, a signature
   the keyring denies, a database tunnel that carries the caller, agent API requests with the
   client's own `Authorization` replaced, refused tokens (unknown, a session token) audited without
-  the token, an unknown database, a central certificate from another CA or for another name,
+  the token, an unknown database, a central certificate from another CA or for another name, a
+  forwarder that refuses the interception CA's certificate and accepts the edge CA's, with and
+  without the upgrade window,
   failing closed with the central scrim down or TokenReview unreachable, and recovery without a
   restart.
-- `internal/ca`: the listener certificate chains to scrim's CA, carries the names, and never
-  outlives the CA.
+- `internal/ca`: the listener certificate chains to its CA, carries the names, and never outlives
+  the CA; a generated edge CA permits only the edge names and addresses, is rotated when they
+  change, never shares the interception CA's directory; an operator edge CA whose constraints do not
+  permit the names is refused.
 - `internal/daemon` (`TestEdgeForwarder`): a daemon with Kubernetes identity against a fake
   TokenReview, its edge listener and an in-process forwarder: ssh login signed for one service
   account and denied for another, `psql`-protocol login through the forwarded port, an exec call,
-  each audited as the pod's agent.
+  each audited as the pod's agent; `TestEdgeListenerHasItsOwnCA` and
+  `TestEdgeLegacyInterceptionCertificate`: the listener's certificate comes from the edge CA, a
+  forwarder trusting the interception CA is refused before it reads its token, and a 1.0 forwarder is
+  served only inside the upgrade window.
 - `just edge-e2e` (`test/k8s/edge-e2e.sh`): kind on rootless podman with the chart, Kyverno and a
-  central scrim. From an agent pod, `git push` over SSH to a throwaway sshd and git server succeeds
-  with a key only the central scrim's store holds, and a push whose signature policy denies fails;
+  central scrim. The listener's certificate verifies against the edge CA and not against the
+  interception CA, and the edge CA is in none of the agent's trust files. From an agent pod, `git
+  push` over SSH to a throwaway sshd and git server succeeds with a key only the central scrim's
+  store holds, and a push whose signature policy denies fails;
   `psql` through the forwarded port reaches PostgreSQL with only a placeholder in the pod; an exec
   call runs centrally with the real value and returns redacted output; the pod cannot reach the
   database or the git server directly; with the central scrim scaled to zero every endpoint refuses,

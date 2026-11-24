@@ -118,6 +118,26 @@ async fn send_via_connect(
     host: &str,
     req: http::Request<Full<Bytes>>,
 ) -> (u16, http::HeaderMap, Bytes, std::time::Duration) {
+    let tls = tunnel(w, host).await;
+    let (mut send, conn) = hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tls))
+        .await
+        .unwrap();
+    tokio::spawn(conn);
+    let t = std::time::Instant::now();
+    let resp = send.send_request(req).await.unwrap();
+    let took = t.elapsed();
+    let status = resp.status().as_u16();
+    let headers = resp.headers().clone();
+    (
+        status,
+        headers,
+        resp.into_body().collect().await.unwrap().to_bytes(),
+        took,
+    )
+}
+
+/// Opens a CONNECT tunnel to `host` and speaks TLS (HTTP/1.1 by ALPN) with the interception CA.
+async fn tunnel(w: &World, host: &str) -> tokio_rustls::client::TlsStream<tokio::net::TcpStream> {
     let mut tcp = tokio::net::TcpStream::connect(w.proxy_addr).await.unwrap();
     tcp.write_all(format!("CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n\r\n").as_bytes())
         .await
@@ -146,28 +166,13 @@ async fn send_via_connect(
     .with_root_certificates(roots)
     .with_no_client_auth();
     cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
-    let tls = tokio_rustls::TlsConnector::from(Arc::new(cfg))
+    tokio_rustls::TlsConnector::from(Arc::new(cfg))
         .connect(
             rustls::pki_types::ServerName::try_from(host.to_string()).unwrap(),
             tcp,
         )
         .await
-        .unwrap();
-    let (mut send, conn) = hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tls))
-        .await
-        .unwrap();
-    tokio::spawn(conn);
-    let t = std::time::Instant::now();
-    let resp = send.send_request(req).await.unwrap();
-    let took = t.elapsed();
-    let status = resp.status().as_u16();
-    let headers = resp.headers().clone();
-    (
-        status,
-        headers,
-        resp.into_body().collect().await.unwrap().to_bytes(),
-        took,
-    )
+        .unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -231,15 +236,52 @@ async fn chatgpt_hosts_through_connect_get_the_llm_pipeline() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn websocket_upgrade_on_a_provider_host_is_refused_at_once() {
+async fn websocket_to_a_provider_host_is_served_and_redacted() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let fx = fixture();
+    let p0 = fx.placeholder("s0");
+    let reply = format!(
+        r#"{{"type":"response.output_text.done","item_id":"i1","content_index":0,"text":"pw {p0}"}}"#
+    );
+    let up = scrim_llm::testing::FakeWsUpstream::start(vec![], move |_| vec![reply.clone()]).await;
+    let w = world_with(&fx, Scripted::json(200, "{}"), |_| routes_to(&up.url())).await;
+    let tls = tunnel(&w, "api.openai.com").await;
+    let mut req = "wss://api.openai.com/v1/realtime?model=gpt-realtime"
+        .into_client_request()
+        .unwrap();
+    req.headers_mut()
+        .insert("authorization", "Bearer agent-own-key".parse().unwrap());
+    let (mut ws, _) = tokio_tungstenite::client_async(req, tls).await.unwrap();
+    let msg = format!(
+        r#"{{"type":"conversation.item.create","item":{{"type":"message","role":"user","content":[{{"type":"input_text","text":"pw {}"}}]}}}}"#,
+        fx.value("s0")
+    );
+    ws.send(Message::text(msg)).await.unwrap();
+    let got = loop {
+        match ws.next().await.unwrap().unwrap() {
+            Message::Text(t) => break t.to_string(),
+            _ => continue,
+        }
+    };
+    assert!(got.contains(&format!("pw {}", fx.value("s0"))), "{got}");
+    let sent = up.texts();
+    assert_eq!(sent.len(), 1);
+    assert!(fx.leaks(sent[0].as_bytes()).is_empty(), "{}", sent[0]);
+    assert!(sent[0].contains(&p0));
+    assert_eq!(up.handshakes()[0].uri, "/v1/realtime?model=gpt-realtime");
+    assert!(w.upstream.received().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn other_upgrades_on_a_provider_host_are_refused_at_once() {
     let fx = fixture();
     let w = world(&fx, Scripted::json(200, "{}")).await;
     let req = http::Request::get("/v1/responses")
         .header("host", "api.openai.com")
         .header("connection", "Upgrade")
-        .header("upgrade", "websocket")
-        .header("sec-websocket-version", "13")
-        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .header("upgrade", "h2c")
         .body(Full::new(Bytes::new()))
         .unwrap();
     let (status, headers, _, took) = send_via_connect(&w, "api.openai.com", req).await;

@@ -280,7 +280,8 @@ mutations:
 The edge forwarder of central mode (edge.enabled): a native sidecar running
 `scrim edge` in agent pods, its socket volume and what agent containers get
 to use it. It holds nothing secret: it reads the pod's projected identity
-token and verifies central scrim against the scrim-ca ConfigMap.
+token and verifies central scrim against the edge CA (scrim-edge-ca.pem in the
+scrim-ca ConfigMap, mounted only into the forwarder), never the interception CA.
 */}}
 {{- define "scrim.edgeAddress" -}}
 {{- printf "%s:%v" (include "scrim.serviceHost" .) .Values.edge.port -}}
@@ -300,7 +301,7 @@ token and verifies central scrim against the scrim-ca ConfigMap.
     - name: SCRIM_EDGE_FORWARDER_CENTRAL
       value: {{ include "scrim.edgeAddress" . | quote }}
     - name: SCRIM_EDGE_FORWARDER_CA_FILE
-      value: {{ printf "%s/scrim-ca.pem" .Values.agents.trustPath | quote }}
+      value: /etc/scrim/edge-trust/scrim-edge-ca.pem
     - name: SCRIM_EDGE_FORWARDER_TOKEN_FILE
       value: {{ .Values.identity.kubernetes.tokenPath | quote }}
     {{- if $e.sshAgent }}
@@ -330,8 +331,8 @@ token and verifies central scrim against the scrim-ca ConfigMap.
   securityContext:
     {{- toYaml $e.securityContext | nindent 4 }}
   volumeMounts:
-    - name: scrim-trust
-      mountPath: {{ .Values.agents.trustPath }}
+    - name: scrim-edge-trust
+      mountPath: /etc/scrim/edge-trust
       readOnly: true
     - name: scrim-identity
       mountPath: {{ dir .Values.identity.kubernetes.tokenPath }}
@@ -346,6 +347,13 @@ token and verifies central scrim against the scrim-ca ConfigMap.
   emptyDir:
     medium: Memory
     sizeLimit: 1Mi
+# The edge CA certificate, mounted only into the forwarder.
+- name: scrim-edge-trust
+  configMap:
+    name: {{ .Values.ca.configMapName }}
+    items:
+      - key: scrim-edge-ca.pem
+        path: scrim-edge-ca.pem
 {{- end -}}
 
 {{- define "scrim.edgeMounts" -}}

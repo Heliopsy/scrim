@@ -435,6 +435,31 @@ edge:
   # -- Databases to forward: the name of a database in `config.databases` to the loopback port
   # agent containers connect to, for example `{app: 5432}`.
   databases: {}
+  # -- The edge CA: its own key pair, used only to issue the edge listener's certificate, so the
+  # interception CA's key cannot impersonate central scrim to the forwarders. Published to agent
+  # namespaces as `scrim-edge-ca.pem` in the `ca.configMapName` ConfigMap and mounted only into
+  # the forwarder.
+  # @default -- See the keys below.
+  ca:
+    # -- Generate the edge CA with Helm on first install and keep it (Secret `<fullname>-edge-ca`
+    # with helm.sh/resource-policy: keep, reused on upgrade through lookup). Ed25519, PKCS#8. Helm
+    # cannot add name constraints; use existingSecret for a CA constrained to the edge names.
+    # Ignored when existingSecret is set.
+    create: true
+    # -- Validity of a generated edge CA in days.
+    validityDays: 730
+    # -- Existing kubernetes.io/tls Secret with the edge CA: `tls.crt` and a PKCS#8 `tls.key`
+    # (cert-manager: privateKey.encoding PKCS8, nameConstraints for the Service names). Never the
+    # interception CA's Secret. scrim never rotates it.
+    existingSecret: ""
+    # -- PEM certificate of existingSecret, published to the forwarders. Empty reads it from the
+    # Secret with lookup at install time (not available to `helm template`).
+    certificate: ""
+    # -- Upgrade window from a release whose forwarders trust the interception CA: central scrim
+    # serves forwarders that do not announce the edge CA a certificate from the interception CA,
+    # so agent pods started before the upgrade keep working until they restart. Weakens the
+    # separation of the two CAs; turn it off once every agent pod has restarted.
+    legacyInterceptionCertificate: false
   # -- Resources of the forwarder container.
   # @default -- See the keys below.
   resources:

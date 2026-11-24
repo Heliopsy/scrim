@@ -52,13 +52,16 @@ import (
 	"github.com/heliopsy/scrim/internal/dataplane"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
 	"github.com/heliopsy/scrim/internal/fsperm"
+	"github.com/heliopsy/scrim/internal/identity"
 	"github.com/heliopsy/scrim/internal/identity/issuer"
+	"github.com/heliopsy/scrim/internal/identity/sessionstate"
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/placeholder"
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/redactscope"
 	"github.com/heliopsy/scrim/internal/secret"
+	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/status"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/refresh"
@@ -99,6 +102,11 @@ type Addrs struct {
 	ForwardProxy string `json:"forward_proxy,omitempty"`
 	// ToolProxy is host:port of the tool proxy.
 	ToolProxy string `json:"tool_proxy,omitempty"`
+	// BaseURLTLS, ForwardProxyTLS and ToolProxyTLS are the same over TLS,
+	// for callers identified by client certificates.
+	BaseURLTLS      string `json:"base_url_tls,omitempty"`
+	ForwardProxyTLS string `json:"forward_proxy_tls,omitempty"`
+	ToolProxyTLS    string `json:"tool_proxy_tls,omitempty"`
 	// Transparent are host:port of the transparent listeners nftables
 	// redirects covered users to.
 	Transparent []string `json:"transparent,omitempty"`
@@ -191,19 +199,27 @@ type Daemon struct {
 	// kubeTokens are the service account tokens scrim verified, redacted
 	// until they expire.
 	kubeTokens *sessionTokens
+	// certTrust is the trust of client certificate identity, nil when it is
+	// off.
+	certTrust *identity.CertTrustSource
 	// scopes checks what each agent's own store identity can read, only
 	// with redaction.limit-to-agent-identity on.
 	scopes *redactscope.Checker
 	// issued are the identity tokens scrim signed for agents, redacted
 	// until they expire; issuer signs them (nil when it is off).
-	issued   *sessionTokens
-	issuer   *issuer.Issuer
+	issued *sessionTokens
+	issuer *issuer.Issuer
+	// shared distributes the three token sets between replicas; nil
+	// without shared state and placeholder keys.
+	shared   *sharedTokens
 	pusher   *pusher
 	log      *slog.Logger
 	started  time.Time
 	capture  string
 	infoPath string
 	trust    func() string
+	// edgeTrust is the edge CA's trust bundle (nil without edge.listen).
+	edgeTrust func() string
 
 	// project are the values scrim run found in each session's project
 	// files, redacted until the session ends.
@@ -299,7 +315,8 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		return nil, err
 	}
 	if len(placeholder.Keys.Get(cfg)) == 0 && a.State.Backend() == "postgres" {
-		d.log.Warn("redaction.placeholder-keys is not set: each replica generates its own key and placeholders do not match across replicas")
+		d.log.Warn("redaction.placeholder-keys is not set: each replica generates its own key, placeholders do not match across replicas, " +
+			"and each replica redacts only the session and service account tokens it minted or verified")
 	}
 
 	d.catalog, err = catalog.NewManager(ctx, a.Config, a.Stores, obs.WithComponent(a.Log, "catalog"))
@@ -330,6 +347,18 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	d.cleanup = append(d.cleanup, d.kubeTokens.close)
 	d.issued = newSessionTokens(issuedTokenStore, func() { d.pusher.Trigger() })
 	d.cleanup = append(d.cleanup, d.issued.close)
+	if a.State.Backend() == "postgres" && len(placeholder.Keys.Get(cfg)) > 0 {
+		d.shared, err = newSharedTokens(a.State, ring, obs.WithComponent(a.Log, "shared-tokens"), d.tokens, d.kubeTokens, d.issued)
+		if err != nil {
+			ring.Wipe()
+			return nil, err
+		}
+		d.cleanup = append(d.cleanup, d.shared.close)
+		a.Events.Subscribe(eventRedactionToken, d.shared.delivered)
+	}
+	// A session revoked on any replica leaves the narrowed redaction scopes;
+	// its token stays redacted until it expires.
+	a.Events.Subscribe(sessionstate.ActionRevoked, func(e state.Event) { d.tokens.end(e.Subject) })
 	d.issuer, err = issuer.FromConfig(cfg, nil, obs.WithComponent(a.Log, "issuer"), d.issued.addValue)
 	if err != nil {
 		return nil, err
@@ -379,12 +408,21 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	if len(governed) > 0 {
 		pp.Gate.StoreAccess = access
 	}
+	certTrust, err := agentapi.CertTrustSource(runCtx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	listeners := ListenersFrom(cfg)
+	if err := checkTLSListeners(listeners, certTrust); err != nil {
+		return nil, err
+	}
+	d.certTrust = certTrust
 	d.builder = &SnapshotBuilder{
 		Config:    a.Config.Current,
 		Values:    values,
 		Catalog:   d.catalog.Current,
 		CA:        o.CA,
-		Listeners: ListenersFrom(cfg),
+		Listeners: listeners,
 		Labels:    a.Stores.Labels,
 		Policy: func() *pb.Policy {
 			ver, _ := pp.Rules.Health()
@@ -397,6 +435,11 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 			p.AskTimeoutMillis = askTimeoutMillis(approval.Timeout.Get(a.Config.Current()), rs.Config())
 			return p
 		},
+	}
+	if certTrust != nil {
+		d.builder.ClientCertificates = func() *pb.ClientCertificateTrust {
+			return clientCertificatesPB(certTrust.Current(), agentapi.CertServerNames.Get(a.Config.Current()))
+		}
 	}
 	d.builder.SetKeys(ring)
 	d.cleanup = append(d.cleanup, func() { d.builder.SetKeys(nil) })
@@ -441,7 +484,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		notices = logw
 	}
 	d.runtime, err = agentapi.New(a, agentapi.Options{Stderr: notices, Placeholders: placeholders{d.builder}, OnMint: d.tokens.add,
-		OnKubeToken: d.kubeTokens.addKube})
+		OnKubeToken: d.kubeTokens.addKube, CertTrust: certTrust})
 	if err != nil {
 		return nil, err
 	}
@@ -476,6 +519,15 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		return nil, err
 	}
 	d.setDataPlaneAddrs(nil)
+	if d.shared != nil {
+		// Before the data plane's first snapshot: a replica serves with the
+		// tokens the others shared or not at all.
+		if err := d.shared.load(ctx); err != nil {
+			d.runtime.Close()
+			return nil, err
+		}
+		d.goRun("shared tokens", func() error { d.shared.run(runCtx); return nil })
+	}
 
 	// Everything is bound: start the loops. The catalog's secrets are part
 	// of each store's first load; warmCatalog logs those that cannot be
@@ -491,6 +543,12 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	d.goRun("dataplane", func() error { return ignoreCanceled(d.sup.Run(runCtx)) })
 	d.goRun("sessions", func() error { d.sweepSessions(runCtx); return nil })
 	d.goRun("credential files", func() error { d.ownCreds.watch(runCtx, d.pusher.Trigger); return nil })
+	if certTrust != nil {
+		d.goRun("client certificates", func() error {
+			d.watchCertTrust(runCtx, agentapi.CertRefresh.Get(cfg))
+			return nil
+		})
+	}
 	if d.scopes != nil {
 		d.goRun("redaction scopes", func() error { d.scopes.Run(runCtx); return nil })
 	}
@@ -593,6 +651,11 @@ func (d *Daemon) reloadKeys(ctx context.Context, old, cur *config.Config) {
 	if err != nil {
 		d.log.Error("placeholder key reload rejected; previous keys stay in force", "err", err)
 		return
+	}
+	if d.shared != nil {
+		if err := d.shared.setKeys(ring); err != nil {
+			d.log.Error("shared token keys not reloaded; previous keys stay in force for sharing", "err", err)
+		}
 	}
 	d.builder.SetKeys(ring)
 	d.log.Info("placeholder keys reloaded", "current_version", ring.Current().Version, "keys", len(ring.Keys))
@@ -813,13 +876,25 @@ func (d *Daemon) setDataPlaneAddrs(st *pb.StatusResponse) {
 		}
 		switch l.GetKind() {
 		case pb.ListenerKind_LISTENER_KIND_BASE_URL:
-			d.addrs.BaseURL = "http://" + addr
+			if l.GetTls() {
+				d.addrs.BaseURLTLS = "https://" + addr
+			} else {
+				d.addrs.BaseURL = "http://" + addr
+			}
 		case pb.ListenerKind_LISTENER_KIND_UNIX:
 			d.addrs.BaseURLSocket = addr
 		case pb.ListenerKind_LISTENER_KIND_FORWARD_PROXY:
-			d.addrs.ForwardProxy = addr
+			if l.GetTls() {
+				d.addrs.ForwardProxyTLS = addr
+			} else {
+				d.addrs.ForwardProxy = addr
+			}
 		case pb.ListenerKind_LISTENER_KIND_TOOL_PROXY:
-			d.addrs.ToolProxy = addr
+			if l.GetTls() {
+				d.addrs.ToolProxyTLS = addr
+			} else {
+				d.addrs.ToolProxy = addr
+			}
 		case pb.ListenerKind_LISTENER_KIND_TRANSPARENT:
 			d.addrs.Transparent = append(d.addrs.Transparent, addr)
 		case pb.ListenerKind_LISTENER_KIND_SNI:
@@ -921,6 +996,9 @@ func (d *Daemon) sweepSessions(ctx context.Context) {
 		}
 		if a, b, c, e := d.tokens.prune(), d.kubeTokens.prune(), d.issued.prune(), d.project.prune(active); a || b || c || e {
 			d.pusher.Trigger()
+		}
+		if d.shared != nil {
+			d.shared.deleteExpired(ctx)
 		}
 		if gone, err := d.runtime.Sessions.Sweep(ctx); err != nil {
 			d.log.Warn("session sweep failed", "err", err)

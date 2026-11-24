@@ -45,20 +45,21 @@ pub struct UnixPeer {
     pub pid: Option<i32>,
 }
 
-fn serve_conn<S>(
+fn serve_conn<S, E>(
     io: S,
     proxy: Arc<Proxy>,
     graceful: &GracefulShutdown,
-    peer: Option<UnixPeer>,
+    ext: Option<E>,
     listener: Listener,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    E: Clone + Send + Sync + 'static,
 {
     let open = proxy.metrics().map(|m| m.connection(listener));
     let svc = service_fn(move |mut req: hyper::Request<Incoming>| {
         let p = proxy.clone();
-        if let Some(peer) = peer {
-            req.extensions_mut().insert(peer);
+        if let Some(ext) = &ext {
+            req.extensions_mut().insert(ext.clone());
         }
         async move { Ok::<_, Infallible>(p.handle(req).await) }
     });
@@ -94,13 +95,58 @@ pub async fn serve_tcp(
             r = listener.accept() => match r {
                 Ok((stream, _)) => {
                     let _ = stream.set_nodelay(true);
-                    serve_conn(stream, proxy.clone(), &graceful, None, Listener::BaseUrl);
+                    serve_conn::<_, UnixPeer>(stream, proxy.clone(), &graceful, None, Listener::BaseUrl);
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "accept failed");
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
             },
+            () = &mut shutdown => break,
+        }
+    }
+    drain(graceful).await;
+}
+
+/// Serves `proxy` on a bound TCP listener whose connections first go through `handshake` (TLS,
+/// for example) until `shutdown` resolves, then drains connections. Each handshake runs on its
+/// own task; a connection it returns is served with `ext` inserted into every request's
+/// extensions (the client's verified identity, for example), one it drops (`None`) is closed.
+pub async fn serve_tcp_with<H, F, S, E>(
+    listener: tokio::net::TcpListener,
+    proxy: Arc<Proxy>,
+    shutdown: impl Future<Output = ()>,
+    handshake: H,
+) where
+    H: Fn(tokio::net::TcpStream, std::net::SocketAddr) -> F,
+    F: Future<Output = Option<(S, E)>> + Send + 'static,
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    E: Clone + Send + Sync + 'static,
+{
+    let graceful = GracefulShutdown::new();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<(S, E)>(64);
+    tokio::pin!(shutdown);
+    loop {
+        tokio::select! {
+            r = listener.accept() => match r {
+                Ok((stream, peer)) => {
+                    let _ = stream.set_nodelay(true);
+                    let done = handshake(stream, peer);
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        if let Some(conn) = done.await {
+                            let _ = tx.send(conn).await;
+                        }
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "accept failed");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            },
+            Some((io, ext)) = rx.recv() => {
+                serve_conn(io, proxy.clone(), &graceful, Some(ext), Listener::BaseUrl);
+            }
             () = &mut shutdown => break,
         }
     }

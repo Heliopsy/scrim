@@ -53,11 +53,21 @@ pub fn prepare_timed(
     body: &[u8],
     timed: bool,
 ) -> Result<Outgoing, Refusal> {
+    prepare_planned(snap, body, timed, |b| codec::plan(api, b))
+}
+
+/// [`prepare_timed`] with the codec plan made by `plan` (WebSocket messages, whose events are
+/// planned per protocol in [`crate::websocket`]).
+pub(crate) fn prepare_planned(
+    snap: &Snapshot,
+    body: &[u8],
+    timed: bool,
+    plan: impl FnOnce(&[u8]) -> Result<codec::Plan, codec::PlanError>,
+) -> Result<Outgoing, Refusal> {
     let clock = || timed.then(Instant::now);
     let since = |t: Option<Instant>| t.map_or(Duration::ZERO, |t| t.elapsed());
     let started = clock();
-    let plan = codec::plan(api, body)
-        .map_err(|e| Refusal::new(RefusalReason::MalformedBody, e.to_string()))?;
+    let plan = plan(body).map_err(|e| Refusal::new(RefusalReason::MalformedBody, e.to_string()))?;
     if !plan.binary.is_empty() && snap.binary == BinaryPolicy::Block {
         let mut types = plan.binary.clone();
         types.sort();
