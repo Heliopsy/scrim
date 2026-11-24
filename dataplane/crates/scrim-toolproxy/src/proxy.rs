@@ -523,8 +523,10 @@ impl ToolProxy {
             }
             async move { Ok::<_, Infallible>(this.route(dest, req, misdirected).await) }
         });
+        // Upgrades are served so that a WebSocket to a host the LLM proxy claims reaches it
+        // (its handler redacts the messages); every other upgrade is refused in `handle`.
         if let Err(e) = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
-            .serve_connection(TokioIo::new(tls), svc)
+            .serve_connection_with_upgrades(TokioIo::new(tls), svc)
             .await
         {
             tracing::debug!(error = %e, "intercepted connection ended with an error");

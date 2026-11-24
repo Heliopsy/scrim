@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -118,5 +119,42 @@ func TestParseRoutesGemini(t *testing.T) {
 	}
 	if _, err := ParseAPI("vertex"); err == nil || !strings.Contains(err.Error(), "gemini") {
 		t.Errorf("unknown api error does not list gemini: %v", err)
+	}
+}
+
+// The WebSocket APIs parse by name and alias, run by default, and take the
+// openai-responses route when they have none of their own.
+func TestWebSocketAPIs(t *testing.T) {
+	for in, want := range map[string]fp.API{"openai-realtime": fp.OpenAIRealtime, "realtime": fp.OpenAIRealtime, "openai-responses-ws": fp.OpenAIResponsesWS, "responses-ws": fp.OpenAIResponsesWS} {
+		if got, err := ParseAPI(in); err != nil || got != want {
+			t.Errorf("ParseAPI(%q) = %q, %v", in, got, err)
+		}
+	}
+	var paths sync.Map
+	rep, err := Run(context.Background(), Options{
+		Proxy: BuiltinNaive, Suites: []string{SuiteMatrix, SuiteScenarios},
+		APIs:   []fp.API{fp.OpenAIRealtime, fp.OpenAIResponsesWS},
+		Rows:   []string{"openai-realtime/tool-result/raw", "openai-responses-ws/tool-result/raw"},
+		Prefix: map[fp.API]string{fp.OpenAIResponses: "/openai"},
+		WrapUpstream: func(s *fp.Server) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				paths.Store(r.URL.Path, true)
+				s.ServeHTTP(w, r)
+			})
+		},
+	})
+	if err != nil || !rep.Pass {
+		t.Fatalf("naive stub on WebSocket raw rows: %v %+v", err, rep.Summary)
+	}
+	if rep.Matrix.Totals.Rows != 2 || rep.Matrix.Totals.ByOutcome["redacted"] != rep.Matrix.Totals.Cases {
+		t.Errorf("matrix %+v", rep.Matrix.Totals)
+	}
+	if len(rep.Scenarios.Results) != 0 {
+		t.Errorf("scenarios ran on a WebSocket API: %d results", len(rep.Scenarios.Results))
+	}
+	for _, p := range []string{"/openai/v1/realtime", "/openai/v1/responses"} {
+		if _, ok := paths.Load(p); !ok {
+			t.Errorf("no request to %s", p)
+		}
 	}
 }

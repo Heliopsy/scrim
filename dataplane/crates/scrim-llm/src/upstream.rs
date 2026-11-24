@@ -75,6 +75,17 @@ fn root_store(cfg: &ProxyConfig) -> Result<rustls::RootCertStore, TlsError> {
 
 /// Builds the pooled upstream client.
 pub fn build_client(cfg: &ProxyConfig) -> Result<UpstreamClient, TlsError> {
+    build(cfg, true, cfg.pool_max_idle_per_host)
+}
+
+/// Builds the client for WebSocket handshakes: HTTP/1.1 only (ALPN `http/1.1`), since the
+/// upgrade is an HTTP/1.1 mechanism, and no idle pool, since an upgraded connection never goes
+/// back to it. Same trust roots, resolver and timeouts as [`build_client`].
+pub fn build_ws_client(cfg: &ProxyConfig) -> Result<UpstreamClient, TlsError> {
+    build(cfg, false, 0)
+}
+
+fn build(cfg: &ProxyConfig, h2: bool, idle: usize) -> Result<UpstreamClient, TlsError> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let tls = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
@@ -88,11 +99,14 @@ pub fn build_client(cfg: &ProxyConfig) -> Result<UpstreamClient, TlsError> {
     let https = hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(tls)
         .https_or_http()
-        .enable_http1()
-        .enable_http2()
-        .wrap_connector(http);
+        .enable_http1();
+    let https = if h2 {
+        https.enable_http2().wrap_connector(http)
+    } else {
+        https.wrap_connector(http)
+    };
     Ok(Client::builder(TokioExecutor::new())
-        .pool_max_idle_per_host(cfg.pool_max_idle_per_host)
+        .pool_max_idle_per_host(idle)
         .build(https))
 }
 

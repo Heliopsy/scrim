@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 )
@@ -31,12 +32,34 @@ type Parsed struct {
 	// Events lists the stream event types in order, empty when not
 	// streamed.
 	Events []string
+	// Errors lists the code (or, without one, the message) of every error
+	// event of a WebSocket conversation, in order.
+	Errors []string
 }
 
 // ParseReply reassembles a reply body of the given API, streamed or not. A
 // streamed Gemini reply may be server-sent events or a JSON array; the body
 // tells which. Gemini function calls carry no ID unless the provider sent one.
+//
+// For a WebSocket API the body is the server events of a conversation, one
+// JSON value after another (the form [Exchange].Response and the bypass
+// matrix's Target use, one per line); stream is ignored.
 func ParseReply(api API, stream bool, body []byte) (Parsed, error) {
+	if api.WebSocket() {
+		var msgs [][]byte
+		dec := json.NewDecoder(bytes.NewReader(body))
+		for {
+			var raw json.RawMessage
+			if err := dec.Decode(&raw); err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				return Parsed{}, fmt.Errorf("server event %d: %w", len(msgs)+1, err)
+			}
+			msgs = append(msgs, raw)
+		}
+		return ParseEvents(api, msgs)
+	}
 	if api == Gemini {
 		return parseGemini(stream, body)
 	}
@@ -364,6 +387,69 @@ func parseGemini(stream bool, body []byte) (Parsed, error) {
 		}
 		p.Events = append(p.Events, "chunk")
 		p.addGemini(r)
+	}
+	return p, nil
+}
+
+// ParseEvents reassembles what a client of a WebSocket API received from its
+// server event messages: the text of response.output_text.delta events and
+// the tool calls of function_call output items with their argument deltas,
+// across every response of the conversation, in the order they began. The
+// Realtime API and the Responses WebSocket mode share these event shapes.
+func ParseEvents(api API, msgs [][]byte) (Parsed, error) {
+	var p Parsed
+	if !api.WebSocket() {
+		return p, fmt.Errorf("api %q is not a WebSocket API", api)
+	}
+	type acc struct {
+		id, name string
+		args     strings.Builder
+	}
+	var order []string
+	calls := map[string]*acc{}
+	for i, msg := range msgs {
+		var ev struct {
+			Type   string `json:"type"`
+			ItemID string `json:"item_id"`
+			Delta  string `json:"delta"`
+			Item   struct {
+				ID     string `json:"id"`
+				Type   string `json:"type"`
+				CallID string `json:"call_id"`
+				Name   string `json:"name"`
+			} `json:"item"`
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(msg, &ev); err != nil {
+			return p, fmt.Errorf("server event %d: %w", i+1, err)
+		}
+		p.Events = append(p.Events, ev.Type)
+		switch ev.Type {
+		case "response.output_text.delta":
+			p.Text += ev.Delta
+		case "response.output_item.added":
+			if ev.Item.Type == "function_call" && calls[ev.Item.ID] == nil {
+				calls[ev.Item.ID] = &acc{id: ev.Item.CallID, name: ev.Item.Name}
+				order = append(order, ev.Item.ID)
+			}
+		case "response.function_call_arguments.delta":
+			if c := calls[ev.ItemID]; c != nil {
+				c.args.WriteString(ev.Delta)
+			}
+		case "error":
+			e := ev.Error.Code
+			if e == "" {
+				e = ev.Error.Message
+			}
+			p.Errors = append(p.Errors, e)
+		}
+	}
+	for _, id := range order {
+		c := calls[id]
+		p.ToolCalls = append(p.ToolCalls, ParsedCall{ID: c.id, Name: c.name, Arguments: c.args.String()})
 	}
 	return p, nil
 }

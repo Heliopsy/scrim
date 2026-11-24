@@ -6,6 +6,7 @@
     "4MB": 16.0
   },
   "chunk_p99_us": 50.0,
+  "websocket_message_p99_ms": 1.0,
   "engine": {
     "comment": "Added latency with the redactor and guard (1 MB body). Enforced once the production engine (scrim-redact) is wired in; until then the fake engine's numbers are reported only.",
     "enforce": false,
