@@ -111,13 +111,19 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   constrained one with `edge.ca.existingSecret` ([edge-forwarder.md](edge-forwarder.md#the-edge-ca)).
   While `edge.legacy-interception-certificate` is on during an upgrade, forwarders from 1.0 still
   trust the interception CA for the edge listener.
-- **The latency gate measures a stand-in engine for added request latency.** Its proxy overhead and
-  per-chunk budgets are enforced, but the redactor and guard in it are a simple Aho-Corasick
-  implementation, and `budget.json` reports their numbers without enforcing them. The production
-  engine's latency is measured by the `scrim-redact` benchmarks, published with each release, but
-  no gate fails on it.
-- **Performance is checked against fixed budgets, not against the previous release.** A
-  regression that stays under budget does not stop a release.
+- **Added request latency is above the performance spec's targets for large bodies.** The spec
+  aims for 5 ms on a 1 MB body with 1,000 secrets and 10 ms with 10,000; the guard takes about
+  25 ms per 1 MB at the median and up to about 40 ms at p99 on the reference runner, and 2 to 4 ms
+  per 100 KB. The latency gate holds the production engine to budgets set from what it does today,
+  and the regression check fails a release that got slower than the previous one, but neither
+  makes it meet the spec's targets ([performance.md](performance.md#budgets)).
+- **The performance gate measures on a shared runner.** The latency gate drops samples during which
+  the measuring thread waited for a CPU, but not those where one of the guard's worker threads did;
+  those measurements rely on the median over rounds. The runner's clock speed varies between runs
+  (up to about two times), so the budgets are wide and the regression check compares measurements
+  relative to a calibration workload, which tracks clock speed better than memory or cache
+  contention. It only compares runs on the same runner class and CPU, so a change of the reference
+  runner's hardware skips a comparison instead of failing it.
 
 ## Identity and per-agent settings
 

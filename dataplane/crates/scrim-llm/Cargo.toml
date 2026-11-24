@@ -71,7 +71,7 @@ scrim-llm = { path = ".", features = ["test-util", "intercept", "redact"] }
 [[bench]]
 name = "latency_gate"
 harness = false
-required-features = ["test-util"]
+required-features = ["test-util", "redact"]
 
 [[bench]]
 name = "binary_scan"

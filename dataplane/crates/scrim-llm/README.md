@@ -149,10 +149,13 @@ fake upstream: recorded Claude Code, Chat Completions and Codex-style Responses 
 through a compression stand-in, h2c, Unix socket, upstream TLS with a private CA and connection
 reuse, and the forward proxy with `curl` and `HTTPS_PROXY`.
 
-`cargo bench -p scrim-llm --bench latency_gate` measures proxy overhead, engine-inclusive request
-latency for 10, 1,000 and 10,000 secrets and per-chunk restore time on a 20,000-event stream, and
-exits non-zero when a p99 exceeds `benches/budget.json`. Engine budgets are reported but enforced
-only once `scrim-redact` is wired in (`engine.enforce`).
+`cargo bench -p scrim-llm --bench latency_gate` measures proxy overhead (with a pass-through engine
+and with the production engine), added request latency with the production engine for 10, 1,000
+and 10,000 secrets, the `scrim-redact` core on its own, and per-chunk restore time on a
+20,000-event stream, and exits non-zero when a gated value misses `benches/budget.json`.
+`SCRIM_PERF_JSON` writes the results as JSON for the regression check against the previous
+release. [docs/performance.md](../../../docs/performance.md) describes the method and how to read
+the report.
 
 ## Limitations
 

@@ -426,11 +426,14 @@ ships, and attaches the results to the GitHub release next to the archives:
 | `scrim_<version>_results_leak-control.json` | The same suite against a pass-through proxy, which must fail: evidence that the checker finds leaks |
 | `scrim_<version>_results_e2e-matrix.json` | One result per [end-to-end matrix](#end-to-end-matrix) cell of the `file`, `openbao`, `vault` and `awssm` stores |
 | `scrim_<version>_results_fuzz.json` | Seconds and runs per cargo-fuzz target, run from an empty corpus for the release |
-| `scrim_<version>_results_latency-gate.md` | The LLM proxy latency gate against `budget.json`, with the machine it ran on |
-| `scrim_<version>_results_redact-bench.txt` | The `scrim-redact` benchmarks: throughput and latency per secret set and body size |
+| `scrim_<version>_results_latency-gate.md` | The latency gate with the production engine against `budget.json`, with the machine it ran on ([performance.md](performance.md)) |
+| `scrim_<version>_results_latency-gate.json` | The same measurements with every round, for machines; the next release's regression check reads it |
+| `scrim_<version>_results_latency-regression.md` | The gate's results against the previous release's |
+| `scrim_<version>_results_redact-bench.txt` | The `scrim-redact` criterion benchmarks: throughput per secret set and body size |
 
 The release fails, and nothing is published, when the leak gate or a matrix cell fails, the
-pass-through control does not leak, a fuzz target finds a crash or a p99 exceeds its budget. The
+pass-through control does not leak, a fuzz target finds a crash, a latency misses its budget or a
+gated latency regressed against the previous release. The
 result files are listed in the signed `checksums.txt` and carry SLSA provenance like the archives,
 so they are checked the same way ([install.md](install.md#check-the-published-results)). The
 reports name seeds by kind, length and a short hash only; the seeds are generated for the run.
