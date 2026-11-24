@@ -137,7 +137,11 @@ impl Start {
                 Some(s)
             }
             Self::Scheme(n) => {
-                let s = Self::Scan(n, is_scheme_byte).of(hay, i, pos)?;
+                let mut s = Self::Scan(n, is_scheme_byte).of(hay, i, pos)?;
+                // `\npostgres://` in a JSON string: the `n` belongs to the escape.
+                if escaped_letter_before(hay, s + 1) {
+                    s += 1;
+                }
                 DB_SCHEMES
                     .iter()
                     .any(|p| hay[s..i].starts_with(p))
@@ -757,6 +761,9 @@ fn is_token_byte(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c == b'-'
 }
 
+/// Most automata the anchors may need; [`Cursor`] keeps one search state per automaton inline.
+const MAX_AUTOMATA: usize = 8;
+
 /// Most anchors in one automaton.
 const ANCHORS_PER_AUTOMATON: usize = 24;
 
@@ -802,9 +809,12 @@ fn automata(rules: &[CompiledRule], pem: bool) -> Result<Vec<Group>, BuildError>
         groups.extend(alone.into_iter().map(|a| vec![a]));
         groups.extend(rest.chunks(ANCHORS_PER_AUTOMATON).map(<[&str]>::to_vec));
     }
+    groups.retain(|g| !g.is_empty());
+    if groups.len() > MAX_AUTOMATA {
+        return Err(BuildError::InvalidConfig("too many detector anchors"));
+    }
     groups
         .iter()
-        .filter(|g| !g.is_empty())
         .map(|g| {
             let ac = AhoCorasick::builder()
                 .match_kind(MatchKind::LeftmostFirst)
@@ -959,9 +969,6 @@ impl Detectors {
             if p >= limit {
                 break;
             }
-            if cur.seeks.len() < self.automata.len() {
-                cur.seeks.resize_with(self.automata.len(), Seek::default);
-            }
             let next = self
                 .automata
                 .iter()
@@ -1089,13 +1096,15 @@ impl Detectors {
 /// Per-scan state: where each automaton matches next, and detections found ahead.
 #[derive(Default)]
 struct Cursor {
-    seeks: Vec<Seek>,
+    /// One per automaton; a fixed array so a scan without detections allocates nothing.
+    seeks: [Seek; MAX_AUTOMATA],
+    /// Only grows when detections are found.
     pending: Vec<Detection>,
 }
 
 /// The last search of one automaton: from `from`, the first match started at `at`. It answers
 /// any later search that starts at or before `at` without searching again.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct Seek {
     searched: bool,
     from: usize,
