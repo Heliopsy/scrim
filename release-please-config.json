@@ -72,7 +72,8 @@
           "type": "generic",
           "path": "test/k8s/e2e.sh"
         }
-      ]
+      ],
+      "release-as": "1.0.0"
     }
   }
 }
