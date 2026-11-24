@@ -29,6 +29,23 @@ Identity issuer {{ .Values.identity.issuer.url }}: publish the Service {{ includ
 Signing keys are generated in an emptyDir: every new pod signs with new keys.
 {{- end }}
 {{- end }}
+{{- if include "scrim.clientCertsOn" . }}
+{{- $cc := .Values.identity.clientCertificates }}
+{{- $svc := include "scrim.mtlsServiceName" . }}
+
+Client certificates (Service {{ $svc }}, TLS passthrough only; trust the {{ .Values.ca.configMapName }} CA):
+  LLM base URL   https://{{ $svc }}.{{ include "scrim.namespace" . }}.svc:{{ $cc.llmPort }}/anthropic and /openai/v1
+{{- if $cc.forwardPort }}
+  Forward proxy  https://{{ $svc }}.{{ include "scrim.namespace" . }}.svc:{{ $cc.forwardPort }}
+{{- end }}
+{{- if not $cc.crls.configMap }}
+No CRLs: revocation is not checked, so issue short-lived certificates.
+{{- end }}
+{{- end }}
+{{- if .Values.upstreamProxy.url }}
+
+Outbound connections go through {{ .Values.upstreamProxy.url }}: the NetworkPolicies must let scrim reach it.
+{{- end }}
 {{- if not .Values.kyverno.enabled }}
 
 kyverno.enabled is off: reference the {{ include "scrim.fullname" . }}-agent-env ConfigMap and mount

@@ -421,6 +421,29 @@
       },
       "additionalProperties": false
     },
+    "upstreamProxy": {
+      "type": "object",
+      "description": "scrim's own outbound connections through an HTTP proxy (network.upstream-proxy.*, docs/configuration.md \"Upstream proxy\"), in central and sidecar mode: providers, chained upstreams, tool hosts, stores, notifiers, audit sinks and identity endpoints, as CONNECT tunnels with TLS to the destination inside them. The Kubernetes API (TokenReview) is always reached directly. A proxy that re-signs TLS needs its CA in upstreamCA. NetworkPolicies must let scrim reach the proxy (networkPolicy.scrimEgress and sidecarEgress).",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "http://host:port or https://host:port. Empty: the chart sets nothing (scrim uses HTTPS_PROXY from its environment, if any); `direct` turns a proxy from the environment off."
+        },
+        "noProxy": {
+          "type": "array",
+          "description": "Destinations reached directly: host names (with their subdomains), `.domain`, IP addresses and CIDR ranges, each with an optional `:port`, or `*`."
+        },
+        "inClusterDirect": {
+          "type": "boolean",
+          "description": "Also reach in-cluster Services directly: adds `.svc` and `.<global.clusterDomain>` to noProxy. Add Service and pod CIDRs to noProxy for destinations given by address."
+        },
+        "username": {
+          "type": "string",
+          "description": "User name for the proxy (Basic Proxy-Authorization), with the password in the Secret slot `upstream-proxy` (key `password`): secrets.existing.upstream-proxy or an ExternalSecret. In sidecar mode the same Secret (name and key) must exist in every agent namespace."
+        }
+      },
+      "additionalProperties": false
+    },
     "ca": {
       "type": "object",
       "description": "Interception CA: the tool proxy signs leaves for bound hosts with it; agents trust its certificate. The key never leaves scrim's pods.",
@@ -958,6 +981,92 @@
                     "NodePort",
                     "LoadBalancer"
                   ]
+                },
+                "annotations": {
+                  "type": "object",
+                  "description": "Service annotations.",
+                  "additionalProperties": true
+                },
+                "labels": {
+                  "type": "object",
+                  "description": "Service labels.",
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "clientCertificates": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Turn client certificate identity on (central scrim). Needs `ca.configMap`."
+            },
+            "ca": {
+              "type": "object",
+              "description": "Trust anchors (identity.client-certificates.ca): a ConfigMap in the release namespace with a PEM bundle of the CA certificates that issue agent certificates. Only these are trusted, never the system roots.",
+              "properties": {
+                "configMap": {
+                  "type": "string",
+                  "description": "ConfigMap with the bundle."
+                },
+                "key": {
+                  "type": "string",
+                  "description": "Key of the bundle in that ConfigMap."
+                }
+              },
+              "additionalProperties": false
+            },
+            "crls": {
+              "type": "object",
+              "description": "Certificate revocation lists (identity.client-certificates.crl-files), PEM or DER, read again every `refresh`. Once any CRL is set, a certificate whose issuer has none here is refused, and a CRL past its next update refuses its issuer's certificates.",
+              "properties": {
+                "configMap": {
+                  "type": "string",
+                  "description": "ConfigMap with the CRLs (DER ones under binaryData). Empty: revocation is not checked; use short-lived certificates."
+                },
+                "keys": {
+                  "type": "array",
+                  "description": "Keys of the CRLs in that ConfigMap, one file each. Required with configMap."
+                }
+              },
+              "additionalProperties": false
+            },
+            "agents": {
+              "type": "object",
+              "description": "Agents by certificate (identity.client-certificates.agents): agent name to selectors `spiffe:ID`, `cn:NAME`, `dns:NAME`, `uri:URI`, `email:ADDRESS` (globs allowed), `scope:`, `label:K=V`.",
+              "additionalProperties": true
+            },
+            "unmapped": {
+              "type": "string",
+              "description": "What a verified certificate no rule maps becomes: unknown, or derive (the agent is named after the certificate's SPIFFE ID)."
+            },
+            "refresh": {
+              "type": "string",
+              "description": "How often the trust anchors and CRLs are read again."
+            },
+            "serverNames": {
+              "type": "array",
+              "description": "Names the TLS listeners' certificate is issued for besides the Service's in-cluster names: the DNS names and addresses agents outside the cluster connect to. The certificate comes from the interception CA, which agents already trust."
+            },
+            "llmPort": {
+              "type": "integer",
+              "description": "Port of the TLS LLM base URL (proxy.tls-listen), on the container and the Service."
+            },
+            "forwardPort": {
+              "type": "integer",
+              "description": "Port of the TLS forward proxy (proxy.forward-tls-listen), on the container and the Service. 0 leaves it off."
+            },
+            "service": {
+              "type": "object",
+              "description": "The Service `<fullname>-mtls`, with the TLS listeners only. Every connection must present a certificate that chains to `ca`, so it may be a LoadBalancer; terminate nothing in front of it (TLS passthrough only), or scrim never sees the certificate.",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Service type."
                 },
                 "annotations": {
                   "type": "object",
@@ -2030,6 +2139,10 @@
           "items": {
             "type": "object"
           }
+        },
+        "clientCertificatesFrom": {
+          "type": "array",
+          "description": "Peers allowed to the TLS listeners with identity.clientCertificates.enabled (NetworkPolicy `from` entries). Empty allows every source: each connection must present a client certificate that chains to identity.clientCertificates.ca."
         },
         "labels": {
           "type": "object",

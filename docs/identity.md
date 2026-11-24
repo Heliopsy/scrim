@@ -476,6 +476,9 @@ token exchange work for these agents; Kubernetes passthrough does not.
   dependency on the responder to every new connection and tell it which agent connected, and a
   check that passes when the responder is down checks nothing.
 
+In Kubernetes the Helm chart sets these settings and the TLS listeners from its
+`identity.clientCertificates` values ([kubernetes.md](kubernetes.md#client-certificates)).
+
 ## scrim as an identity provider
 
 Stores and clouds that federate trust a JWT from an issuer they know through its OpenID Connect

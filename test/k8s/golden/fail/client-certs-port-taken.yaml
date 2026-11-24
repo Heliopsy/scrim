@@ -1,0 +1,3 @@
+# expect: identity.clientCertificates.llmPort 9794 is taken by another scrim listener
+edge: {enabled: true}
+identity: {clientCertificates: {enabled: true, ca: {configMap: c}, llmPort: 9794}}

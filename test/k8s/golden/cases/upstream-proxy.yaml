@@ -1,0 +1,12 @@
+# Central mode behind a corporate proxy with credentials: network.upstream-proxy with the in-cluster
+# Services reached directly, the password from the Secret slot upstream-proxy, and the proxy's
+# TLS-inspection CA as an upstream root.
+upstreamProxy:
+  url: http://proxy.corp.example:3128
+  noProxy: [10.0.0.0/8, bao.internal]
+  username: scrim
+upstreamCA:
+  configMap: corp-roots
+secrets:
+  existing:
+    upstream-proxy: corp-proxy

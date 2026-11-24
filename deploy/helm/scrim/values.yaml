@@ -162,6 +162,28 @@ upstreamCA:
   # -- Key of the bundle in that ConfigMap.
   key: ca.crt
 
+# -- scrim's own outbound connections through an HTTP proxy (network.upstream-proxy.*,
+# docs/configuration.md "Upstream proxy"), in central and sidecar mode: providers, chained
+# upstreams, tool hosts, stores, notifiers, audit sinks and identity endpoints, as CONNECT tunnels
+# with TLS to the destination inside them. The Kubernetes API (TokenReview) is always reached
+# directly. A proxy that re-signs TLS needs its CA in upstreamCA. NetworkPolicies must let scrim
+# reach the proxy (networkPolicy.scrimEgress and sidecarEgress).
+# @default -- See the keys below.
+upstreamProxy:
+  # -- http://host:port or https://host:port. Empty: the chart sets nothing (scrim uses
+  # HTTPS_PROXY from its environment, if any); `direct` turns a proxy from the environment off.
+  url: ""
+  # -- Destinations reached directly: host names (with their subdomains), `.domain`, IP
+  # addresses and CIDR ranges, each with an optional `:port`, or `*`.
+  noProxy: []
+  # -- Also reach in-cluster Services directly: adds `.svc` and `.<global.clusterDomain>` to
+  # noProxy. Add Service and pod CIDRs to noProxy for destinations given by address.
+  inClusterDirect: true
+  # -- User name for the proxy (Basic Proxy-Authorization), with the password in the Secret
+  # slot `upstream-proxy` (key `password`): secrets.existing.upstream-proxy or an ExternalSecret.
+  # In sidecar mode the same Secret (name and key) must exist in every agent namespace.
+  username: ""
+
 # -- Interception CA: the tool proxy signs leaves for bound hosts with it; agents trust its certificate. The key never leaves scrim's pods.
 # @default -- See the keys below.
 ca:
@@ -410,6 +432,63 @@ identity:
     # @default -- See the keys below.
     service:
       # -- Service type. ClusterIP behind an Ingress or Gateway that terminates TLS.
+      type: ClusterIP
+      # -- Service annotations.
+      annotations: {}
+      # -- Service labels.
+      labels: {}
+  # Agents identified by an X.509 client certificate (identity.client-certificates.*,
+  # docs/identity.md "Client certificates"), central scrim only: SPIFFE SVIDs, an internal CA for
+  # CI runners or agents on other machines. scrim serves the LLM base URL and the forward proxy
+  # again on TLS listeners that require a certificate chaining to `ca`, on the Service
+  # `<fullname>-mtls`. With edge.enabled, forwarders may also present a certificate instead of the
+  # pod's token.
+  clientCertificates:
+    # -- Turn client certificate identity on (central scrim). Needs `ca.configMap`.
+    enabled: false
+    # -- Trust anchors (identity.client-certificates.ca): a ConfigMap in the release namespace
+    # with a PEM bundle of the CA certificates that issue agent certificates. Only these are
+    # trusted, never the system roots.
+    # @default -- See the keys below.
+    ca:
+      # -- ConfigMap with the bundle.
+      configMap: ""
+      # -- Key of the bundle in that ConfigMap.
+      key: ca.crt
+    # -- Certificate revocation lists (identity.client-certificates.crl-files), PEM or DER, read
+    # again every `refresh`. Once any CRL is set, a certificate whose issuer has none here is
+    # refused, and a CRL past its next update refuses its issuer's certificates.
+    # @default -- See the keys below.
+    crls:
+      # -- ConfigMap with the CRLs (DER ones under binaryData). Empty: revocation is not checked;
+      # use short-lived certificates.
+      configMap: ""
+      # -- Keys of the CRLs in that ConfigMap, one file each. Required with configMap.
+      keys: []
+    # -- Agents by certificate (identity.client-certificates.agents): agent name to selectors
+    # `spiffe:ID`, `cn:NAME`, `dns:NAME`, `uri:URI`, `email:ADDRESS` (globs allowed), `scope:`,
+    # `label:K=V`.
+    agents: {}
+    # -- What a verified certificate no rule maps becomes: unknown, or derive (the agent is
+    # named after the certificate's SPIFFE ID).
+    unmapped: unknown
+    # -- How often the trust anchors and CRLs are read again.
+    refresh: 1m
+    # -- Names the TLS listeners' certificate is issued for besides the Service's in-cluster
+    # names: the DNS names and addresses agents outside the cluster connect to. The certificate
+    # comes from the interception CA, which agents already trust.
+    serverNames: []
+    # -- Port of the TLS LLM base URL (proxy.tls-listen), on the container and the Service.
+    llmPort: 9796
+    # -- Port of the TLS forward proxy (proxy.forward-tls-listen), on the container and the
+    # Service. 0 leaves it off.
+    forwardPort: 9797
+    # -- The Service `<fullname>-mtls`, with the TLS listeners only. Every connection must present
+    # a certificate that chains to `ca`, so it may be a LoadBalancer; terminate nothing in front of
+    # it (TLS passthrough only), or scrim never sees the certificate.
+    # @default -- See the keys below.
+    service:
+      # -- Service type.
       type: ClusterIP
       # -- Service annotations.
       annotations: {}
@@ -832,6 +911,10 @@ networkPolicy:
   # entries: the Ingress controller, in-cluster stores). Empty allows every source: the port
   # serves public keys only.
   issuerFrom: []
+  # -- Peers allowed to the TLS listeners with identity.clientCertificates.enabled (NetworkPolicy
+  # `from` entries). Empty allows every source: each connection must present a client certificate
+  # that chains to identity.clientCertificates.ca.
+  clientCertificatesFrom: []
   # -- Labels on every NetworkPolicy the chart renders (tpl).
   labels: {}
   # -- Annotations on every NetworkPolicy the chart renders.

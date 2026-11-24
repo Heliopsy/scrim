@@ -46,6 +46,42 @@ monitor with nothing to scrape.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- $cc := .Values.identity.clientCertificates -}}
+{{- if $cc.enabled -}}
+{{- if not .Values.central.enabled -}}
+{{- fail "identity.clientCertificates.enabled serves TLS listeners in central scrim, which central.enabled=false does not deploy" -}}
+{{- end -}}
+{{- if not $cc.ca.configMap -}}
+{{- fail "identity.clientCertificates.enabled needs identity.clientCertificates.ca.configMap: a ConfigMap with the PEM bundle of the CAs that issue agent certificates" -}}
+{{- end -}}
+{{- if and $cc.crls.configMap (not $cc.crls.keys) -}}
+{{- fail "identity.clientCertificates.crls.configMap needs crls.keys: the key of each CRL in the ConfigMap" -}}
+{{- end -}}
+{{- $taken := list 9790 9791 (int .Values.metrics.port) -}}
+{{- if .Values.admin.tcp.enabled }}{{ $taken = append $taken (int .Values.admin.tcp.port) }}{{ end -}}
+{{- if .Values.edge.enabled }}{{ $taken = append $taken (int .Values.edge.port) }}{{ end -}}
+{{- if .Values.identity.issuer.enabled }}{{ $taken = append $taken (int .Values.identity.issuer.port) }}{{ end -}}
+{{- range $name, $port := dict "llmPort" $cc.llmPort "forwardPort" $cc.forwardPort -}}
+{{- if and $port (has (int $port) $taken) -}}
+{{- fail (printf "identity.clientCertificates.%s %v is taken by another scrim listener" $name $port) -}}
+{{- end -}}
+{{- end -}}
+{{- if eq (int $cc.llmPort) (int $cc.forwardPort) -}}
+{{- fail "identity.clientCertificates.llmPort and forwardPort must differ" -}}
+{{- end -}}
+{{- end -}}
+{{- $up := .Values.upstreamProxy -}}
+{{- if include "scrim.slotSupplied" (list . "upstream-proxy") -}}
+{{- if not $up.url -}}
+{{- fail "the Secret slot upstream-proxy holds the proxy password, which needs upstreamProxy.url" -}}
+{{- end -}}
+{{- if and .Values.sidecar.enabled (not (index (default dict .Values.secrets.existing) "upstream-proxy")) -}}
+{{- fail "sidecar mode with an upstream proxy password needs secrets.existing.upstream-proxy: a Secret that exists in every agent namespace (an ExternalSecret lives in the release namespace only)" -}}
+{{- end -}}
+{{- end -}}
+{{- if and $up.url (not (or (eq $up.url "direct") (regexMatch "^https?://[^/@]+(:[0-9]+)?/?$" $up.url))) -}}
+{{- fail (printf "upstreamProxy.url %q: use http://host:port, https://host:port or direct, with credentials in username and the Secret slot upstream-proxy" $up.url) -}}
+{{- end -}}
 {{- if and .Values.serviceMonitor.enabled (not .Values.central.enabled) -}}
 {{- fail "serviceMonitor.enabled scrapes central scrim, which central.enabled=false does not deploy; use podMonitor for sidecars" -}}
 {{- end -}}
@@ -56,7 +92,7 @@ monitor with nothing to scrape.
 {{- fail "secrets.externalSecrets.enabled needs secrets.externalSecrets.secretStoreRef.name" -}}
 {{- end -}}
 {{- range $slot, $_ := .Values.secrets.existing -}}
-{{- if not (has $slot (list "admin" "metrics" "postgres" "valkey" "nats" "otlp" "loki" "kafka")) -}}
-{{- fail (printf "secrets.existing.%s: no such slot (admin, metrics, postgres, valkey, nats, otlp, loki, kafka)" $slot) -}}
+{{- if not (has $slot (list "admin" "metrics" "postgres" "valkey" "nats" "otlp" "loki" "kafka" "upstream-proxy")) -}}
+{{- fail (printf "secrets.existing.%s: no such slot (admin, metrics, postgres, valkey, nats, otlp, loki, kafka, upstream-proxy)" $slot) -}}
 {{- end -}}
 {{- end -}}

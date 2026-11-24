@@ -1,0 +1,2 @@
+# expect: identity.clientCertificates.crls.configMap needs crls.keys
+identity: {clientCertificates: {enabled: true, ca: {configMap: c}, crls: {configMap: crl}}}

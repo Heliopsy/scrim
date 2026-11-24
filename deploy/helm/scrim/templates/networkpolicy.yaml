@@ -7,6 +7,8 @@
 Central scrim, through chart.std.networkPolicy: agents reach the LLM and
 forward proxy ports (and the edge listener with edge.enabled), Prometheus the metrics port, adminFrom the admin port,
 issuerFrom (every source when empty) the issuer port with identity.issuer.enabled,
+clientCertificatesFrom (every source when empty) the TLS listeners with
+identity.clientCertificates.enabled,
 the helm test pods the listeners; scrim reaches DNS, the API server
 (TokenReview) and what networkPolicy.scrimEgress allows. central.networkPolicy
 adds to it.
@@ -32,6 +34,14 @@ adds to it.
   {{- /* Public keys only: open to every source unless issuerFrom narrows it. */ -}}
   {{- $rule := dict "ports" (list (dict "port" (int $iss.port) "protocol" "TCP")) -}}
   {{- with $np.issuerFrom }}{{ $_ := set $rule "from" . }}{{ end -}}
+  {{- $ingress = append $ingress $rule -}}
+{{- end -}}
+{{- if include "scrim.clientCertsOn" . -}}
+  {{- $cc := .Values.identity.clientCertificates -}}
+  {{- $tlsPorts := list (dict "port" (int $cc.llmPort) "protocol" "TCP") -}}
+  {{- if $cc.forwardPort }}{{ $tlsPorts = append $tlsPorts (dict "port" (int $cc.forwardPort) "protocol" "TCP") }}{{ end -}}
+  {{- $rule := dict "ports" $tlsPorts -}}
+  {{- with $np.clientCertificatesFrom }}{{ $_ := set $rule "from" . }}{{ end -}}
   {{- $ingress = append $ingress $rule -}}
 {{- end -}}
 {{- if .Values.tests.enabled -}}

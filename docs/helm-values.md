@@ -109,6 +109,11 @@ kubernetes-replicator (`global.replication`).
 | upstreamCA | object | See the keys below. | Upstream TLS trust for the data plane (LLM proxy and tool proxy), as dataplane.upstream-ca-file. |
 | upstreamCA.configMap | string | `""` | ConfigMap in the release namespace with a PEM bundle of extra roots for upstream TLS (private tool hosts, corporate TLS inspection). System and Mozilla roots stay trusted. |
 | upstreamCA.key | string | `"ca.crt"` | Key of the bundle in that ConfigMap. |
+| upstreamProxy | object | See the keys below. | scrim's own outbound connections through an HTTP proxy (network.upstream-proxy.*, docs/configuration.md "Upstream proxy"), in central and sidecar mode: providers, chained upstreams, tool hosts, stores, notifiers, audit sinks and identity endpoints, as CONNECT tunnels with TLS to the destination inside them. The Kubernetes API (TokenReview) is always reached directly. A proxy that re-signs TLS needs its CA in upstreamCA. NetworkPolicies must let scrim reach the proxy (networkPolicy.scrimEgress and sidecarEgress). |
+| upstreamProxy.url | string | `""` | http://host:port or https://host:port. Empty: the chart sets nothing (scrim uses HTTPS_PROXY from its environment, if any); `direct` turns a proxy from the environment off. |
+| upstreamProxy.noProxy | list | `[]` | Destinations reached directly: host names (with their subdomains), `.domain`, IP addresses and CIDR ranges, each with an optional `:port`, or `*`. |
+| upstreamProxy.inClusterDirect | bool | `true` | Also reach in-cluster Services directly: adds `.svc` and `.<global.clusterDomain>` to noProxy. Add Service and pod CIDRs to noProxy for destinations given by address. |
+| upstreamProxy.username | string | `""` | User name for the proxy (Basic Proxy-Authorization), with the password in the Secret slot `upstream-proxy` (key `password`): secrets.existing.upstream-proxy or an ExternalSecret. In sidecar mode the same Secret (name and key) must exist in every agent namespace. |
 | ca | object | See the keys below. | Interception CA: the tool proxy signs leaves for bound hosts with it; agents trust its certificate. The key never leaves scrim's pods. |
 | ca.create | bool | `true` | Generate a CA with Helm on first install and keep it (Secret with helm.sh/resource-policy: keep, reused on upgrade through lookup). Ed25519, PKCS#8. Ignored when existingSecret is set. |
 | ca.validityDays | int | `730` | Validity of a generated CA in days. |
@@ -201,6 +206,23 @@ kubernetes-replicator (`global.replication`).
 | identity.issuer.service.type | string | `"ClusterIP"` | Service type. ClusterIP behind an Ingress or Gateway that terminates TLS. |
 | identity.issuer.service.annotations | object | `{}` | Service annotations. |
 | identity.issuer.service.labels | object | `{}` | Service labels. |
+| identity.clientCertificates.enabled | bool | `false` | Turn client certificate identity on (central scrim). Needs `ca.configMap`. |
+| identity.clientCertificates.ca | object | See the keys below. | Trust anchors (identity.client-certificates.ca): a ConfigMap in the release namespace with a PEM bundle of the CA certificates that issue agent certificates. Only these are trusted, never the system roots. |
+| identity.clientCertificates.ca.configMap | string | `""` | ConfigMap with the bundle. |
+| identity.clientCertificates.ca.key | string | `"ca.crt"` | Key of the bundle in that ConfigMap. |
+| identity.clientCertificates.crls | object | See the keys below. | Certificate revocation lists (identity.client-certificates.crl-files), PEM or DER, read again every `refresh`. Once any CRL is set, a certificate whose issuer has none here is refused, and a CRL past its next update refuses its issuer's certificates. |
+| identity.clientCertificates.crls.configMap | string | `""` | ConfigMap with the CRLs (DER ones under binaryData). Empty: revocation is not checked; use short-lived certificates. |
+| identity.clientCertificates.crls.keys | list | `[]` | Keys of the CRLs in that ConfigMap, one file each. Required with configMap. |
+| identity.clientCertificates.agents | object | `{}` | Agents by certificate (identity.client-certificates.agents): agent name to selectors `spiffe:ID`, `cn:NAME`, `dns:NAME`, `uri:URI`, `email:ADDRESS` (globs allowed), `scope:`, `label:K=V`. |
+| identity.clientCertificates.unmapped | string | `"unknown"` | What a verified certificate no rule maps becomes: unknown, or derive (the agent is named after the certificate's SPIFFE ID). |
+| identity.clientCertificates.refresh | string | `"1m"` | How often the trust anchors and CRLs are read again. |
+| identity.clientCertificates.serverNames | list | `[]` | Names the TLS listeners' certificate is issued for besides the Service's in-cluster names: the DNS names and addresses agents outside the cluster connect to. The certificate comes from the interception CA, which agents already trust. |
+| identity.clientCertificates.llmPort | int | `9796` | Port of the TLS LLM base URL (proxy.tls-listen), on the container and the Service. |
+| identity.clientCertificates.forwardPort | int | `9797` | Port of the TLS forward proxy (proxy.forward-tls-listen), on the container and the Service. 0 leaves it off. |
+| identity.clientCertificates.service | object | See the keys below. | The Service `<fullname>-mtls`, with the TLS listeners only. Every connection must present a certificate that chains to `ca`, so it may be a LoadBalancer; terminate nothing in front of it (TLS passthrough only), or scrim never sees the certificate. |
+| identity.clientCertificates.service.type | string | `"ClusterIP"` | Service type. |
+| identity.clientCertificates.service.annotations | object | `{}` | Service annotations. |
+| identity.clientCertificates.service.labels | object | `{}` | Service labels. |
 | edge | object | See the keys below. | Edge forwarder (central mode): Kyverno adds a native sidecar running `scrim edge` to agent pods labelled `central`. It serves SSH_AUTH_SOCK, loopback database ports and the agent API socket (the exec broker included) in the pod and carries every connection to central scrim's edge listener over TLS, with the pod's projected identity token. Keys, database passwords and exec secrets stay in central scrim. Needs identity.kubernetes.enabled and kyverno.enabled (or the sidecar copied into the pod spec). |
 | edge.enabled | bool | `false` | Serve the edge listener in central scrim (edge.listen) and inject the forwarder into agent pods labelled `central`. |
 | edge.port | int | `9794` | Port of the edge listener, on the scrim container and the Service. |
@@ -337,6 +359,7 @@ kubernetes-replicator (`global.replication`).
 | networkPolicy.prometheus | object | `{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}},"podSelector":{}}` | Where Prometheus scrapes from (used when metrics.enabled). |
 | networkPolicy.adminFrom | list | `[]` | Peers allowed to the admin TCP port (NetworkPolicy `from` entries). |
 | networkPolicy.issuerFrom | list | `[]` | Peers allowed to the issuer port with identity.issuer.enabled (NetworkPolicy `from` entries: the Ingress controller, in-cluster stores). Empty allows every source: the port serves public keys only. |
+| networkPolicy.clientCertificatesFrom | list | `[]` | Peers allowed to the TLS listeners with identity.clientCertificates.enabled (NetworkPolicy `from` entries). Empty allows every source: each connection must present a client certificate that chains to identity.clientCertificates.ca. |
 | networkPolicy.labels | object | `{}` | Labels on every NetworkPolicy the chart renders (tpl). |
 | networkPolicy.annotations | object | `{}` | Annotations on every NetworkPolicy the chart renders. |
 | sidecar | object | See the keys below. | Sidecar mode: an in-pod `scrim proxy` on loopback for pods labelled `sidecar`. |

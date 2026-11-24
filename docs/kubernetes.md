@@ -148,6 +148,8 @@ These settings are written to a second file, `chart.yaml`, read after yours, so 
 | `metrics.enabled`, `metrics.path`, `metrics.auth.token`, `metrics.allow-unauthenticated-remote` | from `metrics` | the same |
 | `identity.kubernetes.*` | from `identity.kubernetes`; scrim's own API token is the pod's mounted service account | the same, with the pod's API token from a projected volume only the scrim container mounts |
 | `identity.issuer.*` | from `identity.issuer` ([Identity issuer](#identity-issuer)); listener on `0.0.0.0:9795` | not set: the issuer runs in central scrim only |
+| `identity.client-certificates.*`, `proxy.tls-listen`, `proxy.forward-tls-listen` | from `identity.clientCertificates` ([Client certificates](#client-certificates)) | not set |
+| `network.upstream-proxy.*` | from `upstreamProxy` ([Upstream proxy](#upstream-proxy)) | the same, the password Secret under the same name in the agent namespace |
 | `api.socket`, `admin.url` | `/run/scrim/api.sock`, `unix:/run/scrim/admin.sock` (or TCP with `admin.tcp`) | the same, Unix only |
 | `state.backend`, `events.backend` | `postgres` and `postgres` with `postgres.enabled` (the DSN from the Secret slot `postgres`), else `memory` and `local` | `memory`, `local` |
 | `deployment.replicas` | `central.replicaCount`, or `central.autoscaling.maxReplicas` with the HPA | `1` |
@@ -201,6 +203,37 @@ ConfigMap and set `upstreamCA.configMap` and `upstreamCA.key`. The chart mounts 
 `dataplane.upstream-ca-file`, which the control plane passes to the data plane once, when it starts
 it. In sidecar mode the ConfigMap must exist under the same name in each agent
 namespace.
+
+### Upstream proxy
+
+On a cluster that reaches the internet only through an HTTP proxy, set `upstreamProxy.url`. The
+chart writes `network.upstream-proxy` ([configuration.md](configuration.md#upstream-proxy)) for
+central scrim and the sidecars, so scrim's own connections to providers, tool hosts, stores,
+notifiers and audit sinks go through it as `CONNECT` tunnels, after redaction, with TLS to the
+destination inside the tunnel:
+
+```yaml
+upstreamProxy:
+  url: http://proxy.corp.example:3128
+  noProxy: [10.0.0.0/8, bao.internal]
+  username: scrim
+secrets:
+  existing:
+    upstream-proxy: corp-proxy    # Secret with the key `password`
+upstreamCA:
+  configMap: corp-roots           # only for a proxy that re-signs TLS
+```
+
+- `inClusterDirect` (on) adds `.svc` and `.<global.clusterDomain>` to `noProxy`, so in-cluster
+  stores and sinks are reached directly. Add Service or pod CIDRs to `noProxy` for destinations
+  given by address. The Kubernetes API (TokenReview) is always reached directly.
+- The password comes from the Secret slot `upstream-proxy` (key `password`), never from values. In
+  sidecar mode the slot must be `secrets.existing.upstream-proxy`, a Secret that exists under that
+  name in every agent namespace; the Kyverno policy mounts it into the scrim container only.
+- `url: direct` turns off a proxy scrim would otherwise take from `HTTPS_PROXY` in its environment.
+  With `url` empty the chart sets nothing.
+- The NetworkPolicies must let scrim reach the proxy: `networkPolicy.scrimEgress` (central) and
+  `networkPolicy.sidecarEgress`. Their default allows port 443 only; a proxy on 3128 needs a rule.
 
 ## Agent pods
 
@@ -537,13 +570,46 @@ root.
 
 For more than one replica, or to avoid the downtime of `Recreate`, use operator-managed keys.
 
+### Client certificates
+
+Agents outside the cluster, or pods holding a SPIFFE SVID, can identify themselves with a client
+certificate instead of a token ([identity.md](identity.md#client-certificates)).
+`identity.clientCertificates.enabled` serves the LLM base URL and the forward proxy again on TLS
+listeners that require a certificate chaining to the CAs in `identity.clientCertificates.ca`:
+
+```yaml
+identity:
+  clientCertificates:
+    enabled: true
+    ca: {configMap: agents-ca}                       # PEM bundle under ca.crt
+    crls: {configMap: agents-crl, keys: [issuing.crl]}
+    agents:
+      builder: "spiffe:spiffe://example.org/agents/builder"
+      ci: "cn:ci-runner-* scope:secrets:list"
+    serverNames: [scrim.example.org]
+    service: {type: LoadBalancer}
+```
+
+- The listeners are on `llmPort` (9796) and `forwardPort` (9797, 0 to leave it off) of the
+  Service `<fullname>-mtls`, which carries nothing else, so it can be a LoadBalancer. Put no TLS
+  terminator in front of it: scrim must see the certificate (TLS passthrough only).
+- Their certificate comes from scrim's CA, which agents already trust, for the Service's in-cluster
+  names and `serverNames` (the names and addresses agents outside the cluster connect to).
+- The trust anchors and CRLs are ConfigMaps (public data), read again every `refresh`. List each CRL
+  key in `crls.keys`. Without CRLs revocation is not checked; issue certificates that live for
+  hours.
+- With `edge.enabled`, forwarders may present a certificate instead of the pod's token.
+- `networkPolicy.clientCertificatesFrom` narrows who may connect; empty allows every source, since
+  every connection needs a valid certificate.
+
 ## Secrets the chart mounts
 
 The credentials the chart itself wires in are Secret slots (the shared helpers of
 `templates/_helpers.tpl`): `postgres` (key `dsn`), `admin` (key `token`, for `admin.tcp`),
 `metrics` (key `token`), `valkey` (key `password`, with `valkey.auth`), `nats` (key `token` or
 `password`, with `nats.auth`), `otlp` (key `token`, with `auditSinks.otlp.auth`), `loki` (key
-`password`, with `auditSinks.loki.auth`) and `kafka` (key `password`, with a SASL mechanism).
+`password`, with `auditSinks.loki.auth`), `kafka` (key `password`, with a SASL mechanism) and
+`upstream-proxy` (key `password`, with `upstreamProxy`).
 A slot's Secret is the one named in `secrets.existing.<slot>`, or an ExternalSecret the chart
 renders from `secrets.externalSecrets.data.<slot>`, or, for `metrics` only, a Secret the chart
 generates on first install and keeps (`helm.sh/resource-policy: keep`).

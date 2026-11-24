@@ -1,0 +1,3 @@
+# expect: config.identity.client-certificates conflicts with identity.clientCertificates.enabled
+identity: {clientCertificates: {enabled: true, ca: {configMap: c}}}
+config: {identity: {client-certificates: {enabled: true}}}

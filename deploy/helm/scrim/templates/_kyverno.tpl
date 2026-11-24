@@ -103,6 +103,11 @@ the policy as JSON.
       mountPath: /run/secrets/scrim/metrics
       readOnly: true
     {{- end }}
+    {{- if and .Values.upstreamProxy.url (include "scrim.slotSupplied" (list . "upstream-proxy")) }}
+    - name: scrim-upstream-proxy
+      mountPath: /run/secrets/scrim/upstream-proxy
+      readOnly: true
+    {{- end }}
     {{- range .Values.sidecar.secretMounts }}
     - name: scrim-secret-{{ .name }}
       mountPath: /run/secrets/scrim/{{ .name }}
@@ -133,6 +138,17 @@ the policy as JSON.
 - name: scrim-upstream-ca
   configMap:
     name: {{ .Values.upstreamCA.configMap }}
+{{- end }}
+{{- if and .Values.upstreamProxy.url (include "scrim.slotSupplied" (list . "upstream-proxy")) }}
+{{- $key := include "chart.secretKey" (list . "upstream-proxy" "password") }}
+# secrets.existing.upstream-proxy, which must exist in every agent namespace.
+- name: scrim-upstream-proxy
+  secret:
+    secretName: {{ include "chart.secretName" (list . "upstream-proxy") }}
+    defaultMode: 0444
+    items:
+      - key: {{ $key }}
+        path: {{ $key }}
 {{- end }}
 {{- if .Values.identity.kubernetes.enabled }}
 - name: scrim-kube-api

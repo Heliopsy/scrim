@@ -215,12 +215,29 @@ refuses them so a values file never carries a secret.
 {{- if hasKey . "issuer" -}}
 {{- fail "config.identity.issuer is set by the chart; use the identity.issuer values" -}}
 {{- end -}}
+{{- if and (hasKey . "client-certificates") $.Values.identity.clientCertificates.enabled -}}
+{{- fail "config.identity.client-certificates conflicts with identity.clientCertificates.enabled: set it in one place (the values also mount the CA and expose the listeners)" -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- include "scrim.checkIssuer" . -}}
 {{- range $section := list "state" "events" "deployment" "valkey" "nats" -}}
 {{- if hasKey $cfg $section -}}
 {{- fail (printf "config.%s is set by the chart; use the postgres, events, valkey and nats values and central.replicaCount" $section) -}}
+{{- end -}}
+{{- end -}}
+{{- with (index $cfg "network") -}}
+{{- $up := index (ternary . dict (kindIs "map" .)) "upstream-proxy" -}}
+{{- if and (kindIs "map" $up) (hasKey $up "password") (not (include "scrim.isRef" (index $up "password"))) -}}
+{{- fail "config.network.upstream-proxy.password holds a literal; use upstreamProxy with the Secret slot upstream-proxy, or a reference" -}}
+{{- end -}}
+{{- if and (kindIs "map" .) (hasKey . "upstream-proxy") $.Values.upstreamProxy.url -}}
+{{- fail "config.network.upstream-proxy conflicts with upstreamProxy.url: set it in one place" -}}
+{{- end -}}
+{{- end -}}
+{{- with (index $cfg "proxy") -}}
+{{- if and (kindIs "map" .) (or (hasKey . "tls-listen") (hasKey . "forward-tls-listen")) $.Values.identity.clientCertificates.enabled -}}
+{{- fail "config.proxy.tls-listen and forward-tls-listen conflict with identity.clientCertificates.enabled, which sets them from llmPort and forwardPort" -}}
 {{- end -}}
 {{- end -}}
 {{- if hasKey $cfg "metrics" -}}
@@ -271,6 +288,81 @@ policy:
 {{- end }}
 {{- end -}}
 
+{{/*
+network.upstream-proxy.* from the upstreamProxy values, central and sidecar.
+The password comes from the Secret slot upstream-proxy, mounted at
+/run/secrets/scrim/upstream-proxy (central) or from the Secret of the same
+name in the agent namespace (sidecar).
+*/}}
+{{- define "scrim.upstreamProxySettings" -}}
+{{- $u := .Values.upstreamProxy -}}
+{{- if $u.url }}
+network:
+  upstream-proxy:
+    url: {{ $u.url | quote }}
+{{- $np := list -}}
+{{- if and $u.inClusterDirect (ne $u.url "direct") -}}
+{{- $np = list ".svc" (printf ".%s" .Values.global.clusterDomain) -}}
+{{- end -}}
+{{- $np = concat $np (default list $u.noProxy) | uniq -}}
+{{- with $np }}
+    no-proxy:
+      {{- toYaml . | nindent 6 }}
+{{- end }}
+{{- with $u.username }}
+    username: {{ . | quote }}
+{{- end }}
+{{- if include "scrim.slotSupplied" (list . "upstream-proxy") }}
+    password: file:/run/secrets/scrim/upstream-proxy/{{ include "chart.secretKey" (list . "upstream-proxy" "password") }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/* "true" when client certificate identity is on (central scrim only). */}}
+{{- define "scrim.clientCertsOn" -}}
+{{- if and .Values.central.enabled .Values.identity.clientCertificates.enabled -}}true{{- end -}}
+{{- end -}}
+
+{{/* Name of the Service of the TLS listeners. */}}
+{{- define "scrim.mtlsServiceName" -}}
+{{- printf "%s-mtls" (include "scrim.fullname" .) -}}
+{{- end -}}
+
+{{/*
+identity.client-certificates.*, indented under identity:. The trust anchors
+and CRLs come from ConfigMaps mounted at /etc/scrim/client-ca and
+/etc/scrim/client-crl. The listeners' certificate names the mtls Service's
+in-cluster names and serverNames.
+*/}}
+{{- define "scrim.clientCertSettings" -}}
+{{- $c := .Values.identity.clientCertificates -}}
+{{- $svc := include "scrim.mtlsServiceName" . -}}
+{{- $ns := include "scrim.namespace" . -}}
+client-certificates:
+  enabled: true
+  ca: file:/etc/scrim/client-ca/{{ $c.ca.key }}
+{{- if $c.crls.configMap }}
+  crl-files:
+{{- range $c.crls.keys }}
+    - /etc/scrim/client-crl/{{ . }}
+{{- end }}
+{{- end }}
+  unmapped: {{ $c.unmapped }}
+  refresh: {{ $c.refresh }}
+  server-names:
+    - {{ printf "%s.%s.svc.%s" $svc $ns .Values.global.clusterDomain }}
+    - {{ printf "%s.%s.svc" $svc $ns }}
+    - {{ printf "%s.%s" $svc $ns }}
+    - {{ $svc }}
+{{- range $c.serverNames }}
+    - {{ . | quote }}
+{{- end }}
+{{- with $c.agents }}
+  agents:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
+{{- end -}}
+
 {{/* "true" when a Secret slot that is never generated has a source: an existing Secret or an ExternalSecret. */}}
 {{- define "scrim.slotSupplied" -}}
 {{- $root := index . 0 -}}
@@ -318,6 +410,9 @@ identity:
 {{- end }}
 {{- if and .issuer .root.Values.identity.issuer.enabled }}
   {{- include "scrim.issuerSettings" .root | nindent 2 }}
+{{- end }}
+{{- if and .issuer (include "scrim.clientCertsOn" .root) }}
+  {{- include "scrim.clientCertSettings" .root | nindent 2 }}
 {{- end }}
 {{- end -}}
 

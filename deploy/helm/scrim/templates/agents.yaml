@@ -72,6 +72,9 @@ data:
     {{- include "scrim.metricsSettings" (dict "root" $ "listen" (printf "0.0.0.0:%v" $.Values.metrics.port)) | nindent 4 }}
     {{- $api := include "scrim.sidecarAPIPath" $ }}
     {{- include "scrim.identitySettings" (dict "root" $ "tokenFile" (printf "%s/token" $api) "caFile" (printf "%s/ca.crt" $api)) | nindent 4 }}
+    {{- with include "scrim.upstreamProxySettings" $ | trim }}
+    {{- . | nindent 4 }}
+    {{- end }}
     admin:
       url: unix:/run/scrim/admin.sock
     redaction:
