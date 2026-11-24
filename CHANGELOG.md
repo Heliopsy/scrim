@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.0.0](https://github.com/Heliopsy/scrim/compare/v0.6.0...v1.0.0) (2026-11-24)
+
+
+### Features
+
+* **chart:** expose the identity issuer ([#137](https://github.com/Heliopsy/scrim/issues/137)) ([9b792a0](https://github.com/Heliopsy/scrim/commit/9b792a0ffbcf2e926005b58fc35e92e5cac1cdbf))
+* **identity:** per-agent store identity by token exchange ([#128](https://github.com/Heliopsy/scrim/issues/128)) ([6ec395b](https://github.com/Heliopsy/scrim/commit/6ec395bdb21c2646300173314f5c70438e97d976))
+* **identity:** scrim as an identity provider for agents ([#123](https://github.com/Heliopsy/scrim/issues/123)) ([35b225d](https://github.com/Heliopsy/scrim/commit/35b225da556979324f32810ce22e2b5c05ee9ac4))
+* **identity:** separate redaction identity and opt-in per-agent redaction ([#126](https://github.com/Heliopsy/scrim/issues/126)) ([17de7f7](https://github.com/Heliopsy/scrim/commit/17de7f76f5b053e9a2c180626a26cbd4c36ceeb1))
+* **plugins:** store and notifier plugins with a versioned contract ([#125](https://github.com/Heliopsy/scrim/issues/125)) ([7ae1d4b](https://github.com/Heliopsy/scrim/commit/7ae1d4bd0c93972574430db0a06668ab57e4d0c4))
+
+
+### Bug Fixes
+
+* **config:** resolve store references in every secret setting ([#124](https://github.com/Heliopsy/scrim/issues/124)) ([d41fd89](https://github.com/Heliopsy/scrim/commit/d41fd89993b5c32196dfc9115eaef830c581af2d))
+* **redaction:** keep unescaping JSON when a decoded backslash can start the next escape ([#142](https://github.com/Heliopsy/scrim/issues/142)) ([6c21a26](https://github.com/Heliopsy/scrim/commit/6c21a266a3d9cc71718f03772f40ffa4c74b9d73))
+* **redaction:** redact scrim's own credentials from provider requests ([#140](https://github.com/Heliopsy/scrim/issues/140)) ([61f9fce](https://github.com/Heliopsy/scrim/commit/61f9fcebb0d007248545e5083dbd405d4e6b0cf6))
+* **redaction:** replace a longer value whole around a value nested in it ([#135](https://github.com/Heliopsy/scrim/issues/135)) ([92aaba3](https://github.com/Heliopsy/scrim/commit/92aaba3da192f32490a8438848d7c00efbf82a60))
+* **stores:** keep catalog secrets loaded across refreshes ([#130](https://github.com/Heliopsy/scrim/issues/130)) ([c67f0b8](https://github.com/Heliopsy/scrim/commit/c67f0b804ec178fa991ab95d78290781c1aa968e))
+* **stores:** push values a store watch reports to the data plane ([#133](https://github.com/Heliopsy/scrim/issues/133)) ([48ff0b2](https://github.com/Heliopsy/scrim/commit/48ff0b2a53abc96b93c6e091297ff07fbb3ba948))
+
+
+### Miscellaneous Chores
+
+* **release:** release 1.0.0 ([#145](https://github.com/Heliopsy/scrim/issues/145)) ([becf3e7](https://github.com/Heliopsy/scrim/commit/becf3e7adb108a30e892d3f37cb4518753f27e43))
+
 ## [0.6.0](https://github.com/Heliopsy/scrim/compare/v0.5.0...v0.6.0) (2026-11-23)
 
 
