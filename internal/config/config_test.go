@@ -265,3 +265,39 @@ func TestBoolFlag(t *testing.T) {
 		t.Fatalf("bool flag not applied: %v", err)
 	}
 }
+
+func TestWeakeningValues(t *testing.T) {
+	r := config.NewRegistry()
+	k := config.MustRegisterIn(r, config.Spec[string]{
+		Key: "redaction.binary", Default: "scan", Enum: []string{"scan", "block", "pass"},
+		Description: "Binary parts.", Weakening: true, WeakeningValues: []string{"pass"},
+		Profiles: map[string]string{"ci": "block"},
+	})
+	if !k.Setting().Weakens("pass") || k.Setting().Weakens("block") || k.Setting().Weakens("scan") {
+		t.Fatal("only pass weakens")
+	}
+	for v, want := range map[string]bool{"scan": false, "block": false, "pass": true} {
+		c, err := config.Load(r, config.EnvLayer([]string{"SCRIM_REDACTION_BINARY=" + v}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len(c.Weakened()) == 1; got != want {
+			t.Errorf("%s: weakened = %v, want %v", v, c.Weakened(), want)
+		}
+		if got := len(config.WeakenedSettings(c)) == 1; got != want {
+			t.Errorf("%s: WeakenedSettings = %v, want %v", v, config.WeakenedSettings(c), want)
+		}
+	}
+	bad := []config.Spec[string]{
+		{Key: "a.default-weakens", Default: "pass", Enum: []string{"scan", "pass"}, Description: "x", Weakening: true, WeakeningValues: []string{"pass"}},
+		{Key: "a.not-weakening", Default: "scan", Enum: []string{"scan", "pass"}, Description: "x", WeakeningValues: []string{"pass"}},
+		{Key: "a.not-in-enum", Default: "scan", Enum: []string{"scan", "pass"}, Description: "x", Weakening: true, WeakeningValues: []string{"off"}},
+		{Key: "a.profile-weakens", Default: "scan", Enum: []string{"scan", "pass"}, Description: "x", Weakening: true, WeakeningValues: []string{"pass"},
+			Profiles: map[string]string{"ci": "pass"}},
+	}
+	for _, s := range bad {
+		if _, err := config.RegisterIn(r, s); err == nil {
+			t.Errorf("RegisterIn(%q) succeeded, want error", s.Key)
+		}
+	}
+}

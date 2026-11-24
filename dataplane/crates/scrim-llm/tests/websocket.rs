@@ -239,7 +239,7 @@ async fn realtime_seeds_never_reach_the_provider_and_replies_are_restored() {
     assert!(got[0].contains(&fx.placeholder("s2")));
     assert!(got[1].contains(&p0));
     assert!(got[2].contains(&p1));
-    // The audio is binary content and leaves untouched.
+    // The audio is binary content: scanned, found clean and forwarded untouched.
     assert_eq!(got[3], messages[3]);
     // The handshake: the agent's credential unchanged, other headers redacted, no extension.
     let hs = &up.handshakes()[0];
@@ -271,8 +271,9 @@ async fn realtime_seeds_never_reach_the_provider_and_replies_are_restored() {
     assert!(texts.iter().all(|t| !t.contains(&fx.value("s1"))));
     assert!(texts.iter().all(|t| !t.contains(&p0)));
 
-    // Audit: the handshake, the messages that had something replaced and the unscanned audio
-    // once, then the restore counters when the connection closes.
+    // Audit: the handshake and the messages that had something replaced, then the restore
+    // counters when the connection closes. Under the default scan binary policy the audio is
+    // decoded and scanned, found clean and forwarded unchanged, so it is not reported unscanned.
     c.close(None).await.unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     while !ws
@@ -289,10 +290,12 @@ async fn realtime_seeds_never_reach_the_provider_and_replies_are_restored() {
         .iter()
         .filter(|e| matches!(e, AuditEvent::Forwarded { .. }))
         .count();
-    assert_eq!(forwarded, 1 + 3 + 1, "{events:?}");
-    assert!(events.iter().any(
-        |e| matches!(e, AuditEvent::Forwarded { unscanned, .. } if unscanned == &["audio/unknown"])
-    ));
+    assert_eq!(forwarded, 1 + 3, "{events:?}");
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, AuditEvent::Forwarded { unscanned, .. } if !unscanned.is_empty()))
+    );
     // The close code reached the provider without a reason.
     let deadline = Instant::now() + Duration::from_secs(5);
     while !up

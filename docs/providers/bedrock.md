@@ -19,7 +19,7 @@ instead of IAM keys, set `api-key: <reference>`; scrim sends it as `Authorizatio
 | Path | Body |
 | --- | --- |
 | `POST /model/{modelId}/invoke`, `/invoke-with-response-stream` | Anthropic Messages (`anthropic_version` and the other configuration stay byte-identical, as for the Anthropic API) |
-| `POST /model/{modelId}/converse`, `/converse-stream` | Converse: `inferenceConfig`, `guardrailConfig`, `performanceConfig`, the tool choice and signed reasoning stay byte-identical; messages, system prompts, tool specifications and tool results are redacted; image, document and video bytes are binary and pass unscanned ([limitations](../limitations.md#redaction)) |
+| `POST /model/{modelId}/converse`, `/converse-stream` | Converse: `inferenceConfig`, `guardrailConfig`, `performanceConfig`, the tool choice and signed reasoning stay byte-identical; messages, system prompts, tool specifications and tool results are redacted; image, document and video bytes are binary parts, scanned under `redaction.binary` ([limitations](../limitations.md#redaction)) |
 | `POST /model/{modelId}/count-tokens` | The base64 Anthropic body in `input.invokeModel.body` is decoded, redacted and encoded again; the `converse` form is redacted as JSON |
 | anything else | Redacted as generic JSON, response passed through |
 

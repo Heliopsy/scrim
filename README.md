@@ -153,8 +153,9 @@ read on your machine (see [What scrim does not protect](#what-scrim-does-not-pro
   authenticates after redaction ([docs/providers](docs/providers/README.md)).
 - Capture mode, which writes each request exactly as it left for the provider.
 - Chaining through a context-compression proxy, with redaction first.
-- Images, PDFs and other binary parts pass unscanned
-  ([docs/limitations.md](docs/limitations.md#redaction)).
+- Images, PDFs and other attachments are decoded and scanned, metadata and document text included,
+  and a request whose attachment holds a secret is refused (`redaction.binary`; text in pixels is
+  not read, see [docs/limitations.md](docs/limitations.md#redaction)).
 
 ### Credential injection
 
@@ -424,7 +425,8 @@ The model, the agent, the agent's tools and anything they fetch from the network
 
 - The agent's local transcript, memory and history files. scrim protects the wire, not the agent's
   disk.
-- Images, PDFs and other binary parts, which pass unscanned.
+- Text rendered into image pixels (no OCR), and attachments referenced by URL, which scrim does
+  not fetch.
 - Transforms outside the bypass matrix, such as look-alike Unicode, spelled-out values, compressed
   or base85 content, and values the agent splits across fields or requests.
 - Secrets that no configured store holds and the fallback detectors miss.

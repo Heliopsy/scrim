@@ -13,7 +13,7 @@ The leak suite has four parts:
 - a **leak checker**, written independently of scrim's redactor and guard, that looks for every
   seeded value in what the fake provider received, under far more encodings than the redactor
   matches, including fragments;
-- the **bypass matrix**: 859 rows, each a way a secret can sit in a request other than verbatim,
+- the **bypass matrix**: 1009 rows, each a way a secret can sit in a request other than verbatim,
   with the outcome scrim must produce, over HTTP and over WebSocket;
 - a **scenario corpus** of realistic agent sessions (reading `.env`, printing configs, a diff with
   keys, a log with tokens, an MCP tool result, a Kubernetes Secret, `curl -v`, `env`), played by a
@@ -248,15 +248,20 @@ transform's and its placement's expectation.
 | `metadata` | request metadata (user id, metadata map) ([anthropic-messages openai-chat openai-realtime openai-responses openai-responses-ws]) | redacted | |
 | `unknown-field` | an undocumented top-level field (like Claude Code's safeguards field) ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | redacted | |
 | `unknown-block-field` | an undocumented field inside a content block ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | redacted | |
-| `document-text` | a plain-text document or file input ([anthropic-messages openai-chat openai-responses openai-responses-ws]) | redacted | |
+| `document-text` | a plain-text document or file input ([anthropic-messages gemini openai-chat openai-responses openai-responses-ws]) | redacted | |
 | `header` | a custom HTTP request header (on a WebSocket API, in the handshake) ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | guard | |
 | `query` | the request URL query string (on a WebSocket API, the handshake URL's) ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | guard | |
-| `image-metadata` | text in an image's PNG tEXt metadata ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: images and other binary parts pass unscanned under the default binary policy |
+| `image-metadata` | text in an image's PNG tEXt metadata ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | withheld | the scan binary policy reads PNG text chunks and refuses the request: an image cannot be redacted in place |
+| `image-metadata-compressed` | text in an image's compressed PNG zTXt metadata ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | withheld | the scan binary policy inflates compressed PNG text chunks |
+| `jpeg-comment` | text in a JPEG COM segment ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | withheld | the scan binary policy reads JPEG comment and APP segments |
+| `svg-text` | text drawn by an SVG image ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | withheld | the scan binary policy reads SVG as text, entities decoded |
+| `pdf-text` | text in a PDF page's Flate-compressed content stream ([anthropic-messages gemini openai-chat openai-responses openai-responses-ws]) | withheld | the scan binary policy inflates PDF streams and reads their strings |
+| `image-pixels` | the value as an image's pixel data (rendered text in a screenshot) ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: pixel data is not decoded and text in an image is not recognised (no OCR) |
 | `split-blocks` | the value split across two content blocks of one message ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: a value split by the agent across separate fields is matched only by the guard's fragment rules, if at all |
 | `split-tool-results` | the value split across two tool results ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: a value split by the agent across separate tool results is not reassembled |
 | `split-requests` | the value split across two requests chained by previous_response_id (two events on one socket in the WebSocket mode) ([openai-responses openai-responses-ws]) | limitation | limitation: server-side conversation state lets halves arrive in separate requests |
 | `ws-binary-frame` | the tool result event sent as a binary WebSocket frame ([openai-realtime openai-responses-ws]) | redacted | |
-| `audio-buffer` | text in base64 audio appended to the Realtime input buffer ([openai-realtime]) | limitation | limitation: base64 audio is a binary part passed unscanned under the default binary policy |
+| `audio-buffer` | text in base64 audio appended to the Realtime input buffer ([openai-realtime]) | withheld | the scan binary policy decodes base64 audio and refuses the message when its bytes hold a value (speech is not transcribed) |
 <!-- matrix:end -->
 
 ### WebSocket rows
@@ -273,7 +278,7 @@ with nothing forwarded is `withheld`. The handshake is checked for seeds like an
 not a forwarded message: a proxy that opened the upstream socket and refused the first event has
 still withheld the conversation, while a seed in the handshake it forwarded is a leak. Rows that
 exist only over WebSocket are `ws-binary-frame` (the event as a binary frame, which scrim redacts
-as text when it is UTF-8) and `audio-buffer` (text in base64 audio, a binary part like an image).
+as text when it is UTF-8) and `audio-buffer` (text in base64 audio, a binary part scanned like an image).
 A placement with no WebSocket form (a streaming flag, a tool result made of blocks in Realtime, a
 file input in Realtime) has no row there.
 
@@ -410,7 +415,7 @@ identity and of test coverage.
 | Limitation | Matrix rows | Mitigation |
 | --- | --- | --- |
 | The agent's local transcripts, memory and history files hold real values: scrim protects the wire, not the agent's disk. | none | Keep agent state on an encrypted disk; restored values only reach tools the tool policy names. |
-| Images, PDFs, audio and other binary parts pass unscanned, including text in image metadata and base64 audio sent to the Realtime API. In the Gemini API that is every `inlineData` part, a `text/plain` document included, so the matrix has no Gemini `document-text` row. scrim 1.0 has no setting to block them. | `image-metadata`, `audio-buffer` | Keep secrets out of images and documents the agent attaches. |
+| Text rendered into image pixels is not recognised (no OCR); pixel data is not decoded, and speech in audio is not transcribed. Binary parts under the weakening `redaction.binary: pass` are not scanned at all. | `image-pixels` | Keep secrets off screen when the agent takes screenshots; keep the default `scan` policy. |
 | Look-alike Unicode substitution (Cyrillic or fullwidth letters) is not matched: confusable tables are unbounded and no shell tool produces it. | `homoglyphs`, `fullwidth` | none yet |
 | Values spelled out in words (NATO alphabet) are not matched: any language or alphabet would do. | `nato-spelling` | none yet |
 | Compressed content (`gzip`, `zlib`) is not decompressed: decompression is unbounded work per byte. | `gzip-base64` | none yet |

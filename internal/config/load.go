@@ -112,7 +112,7 @@ func (c *Config) Entries() []Entry {
 func (c *Config) Weakened() []Entry {
 	var out []Entry
 	for _, e := range c.Entries() {
-		if e.Setting.Weakening && !equalValues(e.Value, e.Setting.Default) {
+		if e.Setting.Weakens(e.Value) {
 			out = append(out, e)
 		}
 	}

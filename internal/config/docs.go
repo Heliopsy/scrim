@@ -69,7 +69,13 @@ func Reference(r *Registry) []byte {
 			b.WriteString("| Flag | none |\n")
 		}
 		fmt.Fprintf(&b, "| Reload | %s |\n", reloadText(s))
-		if s.Weakening {
+		if s.Weakening && len(s.WeakeningValues) > 0 {
+			vals := make([]string, len(s.WeakeningValues))
+			for i, v := range s.WeakeningValues {
+				vals[i] = code(docValue(s, v))
+			}
+			fmt.Fprintf(&b, "| Weakening | **yes** when set to %s: logged at start-up and on reload while active, listed in `scrim status` |\n", strings.Join(vals, " or "))
+		} else if s.Weakening {
 			b.WriteString("| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |\n")
 		}
 		if len(s.Enum) > 0 {

@@ -456,6 +456,64 @@ func (ListenerKind) EnumDescriptor() ([]byte, []int) {
 	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{6}
 }
 
+// BinaryPolicy is what the LLM proxy does with binary content parts
+// (images, documents, audio): `redaction.binary`.
+type BinaryPolicy int32
+
+const (
+	BinaryPolicy_BINARY_POLICY_UNSPECIFIED BinaryPolicy = 0 // treated as SCAN
+	// SCAN decodes each part and scans it and the text it carries; a secret
+	// found there, or a part that cannot be decoded, refuses the request.
+	BinaryPolicy_BINARY_POLICY_SCAN BinaryPolicy = 1
+	// BLOCK refuses every request with a binary part.
+	BinaryPolicy_BINARY_POLICY_BLOCK BinaryPolicy = 2
+	// PASS forwards binary parts unscanned (weakening).
+	BinaryPolicy_BINARY_POLICY_PASS BinaryPolicy = 3
+)
+
+// Enum value maps for BinaryPolicy.
+var (
+	BinaryPolicy_name = map[int32]string{
+		0: "BINARY_POLICY_UNSPECIFIED",
+		1: "BINARY_POLICY_SCAN",
+		2: "BINARY_POLICY_BLOCK",
+		3: "BINARY_POLICY_PASS",
+	}
+	BinaryPolicy_value = map[string]int32{
+		"BINARY_POLICY_UNSPECIFIED": 0,
+		"BINARY_POLICY_SCAN":        1,
+		"BINARY_POLICY_BLOCK":       2,
+		"BINARY_POLICY_PASS":        3,
+	}
+)
+
+func (x BinaryPolicy) Enum() *BinaryPolicy {
+	p := new(BinaryPolicy)
+	*p = x
+	return p
+}
+
+func (x BinaryPolicy) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (BinaryPolicy) Descriptor() protoreflect.EnumDescriptor {
+	return file_scrim_dataplane_v1_dataplane_proto_enumTypes[7].Descriptor()
+}
+
+func (BinaryPolicy) Type() protoreflect.EnumType {
+	return &file_scrim_dataplane_v1_dataplane_proto_enumTypes[7]
+}
+
+func (x BinaryPolicy) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use BinaryPolicy.Descriptor instead.
+func (BinaryPolicy) EnumDescriptor() ([]byte, []int) {
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{7}
+}
+
 type EventKind int32
 
 const (
@@ -516,11 +574,11 @@ func (x EventKind) String() string {
 }
 
 func (EventKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_scrim_dataplane_v1_dataplane_proto_enumTypes[7].Descriptor()
+	return file_scrim_dataplane_v1_dataplane_proto_enumTypes[8].Descriptor()
 }
 
 func (EventKind) Type() protoreflect.EnumType {
-	return &file_scrim_dataplane_v1_dataplane_proto_enumTypes[7]
+	return &file_scrim_dataplane_v1_dataplane_proto_enumTypes[8]
 }
 
 func (x EventKind) Number() protoreflect.EnumNumber {
@@ -529,7 +587,7 @@ func (x EventKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use EventKind.Descriptor instead.
 func (EventKind) EnumDescriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{7}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{8}
 }
 
 type MetricType int32
@@ -568,11 +626,11 @@ func (x MetricType) String() string {
 }
 
 func (MetricType) Descriptor() protoreflect.EnumDescriptor {
-	return file_scrim_dataplane_v1_dataplane_proto_enumTypes[8].Descriptor()
+	return file_scrim_dataplane_v1_dataplane_proto_enumTypes[9].Descriptor()
 }
 
 func (MetricType) Type() protoreflect.EnumType {
-	return &file_scrim_dataplane_v1_dataplane_proto_enumTypes[8]
+	return &file_scrim_dataplane_v1_dataplane_proto_enumTypes[9]
 }
 
 func (x MetricType) Number() protoreflect.EnumNumber {
@@ -581,7 +639,7 @@ func (x MetricType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use MetricType.Descriptor instead.
 func (MetricType) EnumDescriptor() ([]byte, []int) {
-	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{8}
+	return file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP(), []int{9}
 }
 
 type HelloRequest struct {
@@ -2933,7 +2991,8 @@ type RedactionSettings struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// min_value_length is the shortest value matched in free text; shorter
 	// values are matched only in exact and encoded forms.
-	MinValueLength uint32 `protobuf:"varint,1,opt,name=min_value_length,json=minValueLength,proto3" json:"min_value_length,omitempty"`
+	MinValueLength uint32       `protobuf:"varint,1,opt,name=min_value_length,json=minValueLength,proto3" json:"min_value_length,omitempty"`
+	Binary         BinaryPolicy `protobuf:"varint,2,opt,name=binary,proto3,enum=scrim.dataplane.v1.BinaryPolicy" json:"binary,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2973,6 +3032,13 @@ func (x *RedactionSettings) GetMinValueLength() uint32 {
 		return x.MinValueLength
 	}
 	return 0
+}
+
+func (x *RedactionSettings) GetBinary() BinaryPolicy {
+	if x != nil {
+		return x.Binary
+	}
+	return BinaryPolicy_BINARY_POLICY_UNSPECIFIED
 }
 
 type ApplySnapshotResponse struct {
@@ -4976,9 +5042,10 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x04kind\x18\x02 \x01(\x0e2 .scrim.dataplane.v1.ListenerKindR\x04kind\x12\x18\n" +
 	"\aaddress\x18\x03 \x01(\tR\aaddress\x12%\n" +
 	"\x0eblock_unrouted\x18\x04 \x01(\bR\rblockUnrouted\x12\x10\n" +
-	"\x03tls\x18\x05 \x01(\bR\x03tls\"=\n" +
+	"\x03tls\x18\x05 \x01(\bR\x03tls\"w\n" +
 	"\x11RedactionSettings\x12(\n" +
-	"\x10min_value_length\x18\x01 \x01(\rR\x0eminValueLength\"}\n" +
+	"\x10min_value_length\x18\x01 \x01(\rR\x0eminValueLength\x128\n" +
+	"\x06binary\x18\x02 \x01(\x0e2 .scrim.dataplane.v1.BinaryPolicyR\x06binary\"}\n" +
 	"\x15ApplySnapshotResponse\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12'\n" +
 	"\x0fapplied_version\x18\x02 \x01(\x04R\x0eappliedVersion\x12\x1f\n" +
@@ -5187,7 +5254,12 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x1bLISTENER_KIND_FORWARD_PROXY\x10\x03\x12\x1d\n" +
 	"\x19LISTENER_KIND_TRANSPARENT\x10\x04\x12\x1c\n" +
 	"\x18LISTENER_KIND_TOOL_PROXY\x10\x05\x12\x15\n" +
-	"\x11LISTENER_KIND_SNI\x10\x06*\xe2\x02\n" +
+	"\x11LISTENER_KIND_SNI\x10\x06*v\n" +
+	"\fBinaryPolicy\x12\x1d\n" +
+	"\x19BINARY_POLICY_UNSPECIFIED\x10\x00\x12\x16\n" +
+	"\x12BINARY_POLICY_SCAN\x10\x01\x12\x17\n" +
+	"\x13BINARY_POLICY_BLOCK\x10\x02\x12\x16\n" +
+	"\x12BINARY_POLICY_PASS\x10\x03*\xe2\x02\n" +
 	"\tEventKind\x12\x1a\n" +
 	"\x16EVENT_KIND_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14EVENT_KIND_REDACTION\x10\x01\x12\x1b\n" +
@@ -5230,7 +5302,7 @@ func file_scrim_dataplane_v1_dataplane_proto_rawDescGZIP() []byte {
 	return file_scrim_dataplane_v1_dataplane_proto_rawDescData
 }
 
-var file_scrim_dataplane_v1_dataplane_proto_enumTypes = make([]protoimpl.EnumInfo, 9)
+var file_scrim_dataplane_v1_dataplane_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
 var file_scrim_dataplane_v1_dataplane_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
 var file_scrim_dataplane_v1_dataplane_proto_goTypes = []any{
 	(ProtocolVersion)(0),             // 0: scrim.dataplane.v1.ProtocolVersion
@@ -5240,135 +5312,137 @@ var file_scrim_dataplane_v1_dataplane_proto_goTypes = []any{
 	(Effect)(0),                      // 4: scrim.dataplane.v1.Effect
 	(ConditionOp)(0),                 // 5: scrim.dataplane.v1.ConditionOp
 	(ListenerKind)(0),                // 6: scrim.dataplane.v1.ListenerKind
-	(EventKind)(0),                   // 7: scrim.dataplane.v1.EventKind
-	(MetricType)(0),                  // 8: scrim.dataplane.v1.MetricType
-	(*HelloRequest)(nil),             // 9: scrim.dataplane.v1.HelloRequest
-	(*HelloResponse)(nil),            // 10: scrim.dataplane.v1.HelloResponse
-	(*Snapshot)(nil),                 // 11: scrim.dataplane.v1.Snapshot
-	(*ClientCertificateTrust)(nil),   // 12: scrim.dataplane.v1.ClientCertificateTrust
-	(*RedactionScope)(nil),           // 13: scrim.dataplane.v1.RedactionScope
-	(*CaCertificate)(nil),            // 14: scrim.dataplane.v1.CaCertificate
-	(*ToolAlias)(nil),                // 15: scrim.dataplane.v1.ToolAlias
-	(*RestoreSettings)(nil),          // 16: scrim.dataplane.v1.RestoreSettings
-	(*ValueEntry)(nil),               // 17: scrim.dataplane.v1.ValueEntry
-	(*AwsSigV4)(nil),                 // 18: scrim.dataplane.v1.AwsSigV4
-	(*CaptureRule)(nil),              // 19: scrim.dataplane.v1.CaptureRule
-	(*PlaceholderKey)(nil),           // 20: scrim.dataplane.v1.PlaceholderKey
-	(*Policy)(nil),                   // 21: scrim.dataplane.v1.Policy
-	(*TableRule)(nil),                // 22: scrim.dataplane.v1.TableRule
-	(*Clause)(nil),                   // 23: scrim.dataplane.v1.Clause
-	(*Condition)(nil),                // 24: scrim.dataplane.v1.Condition
-	(*PolicyRule)(nil),               // 25: scrim.dataplane.v1.PolicyRule
-	(*Route)(nil),                    // 26: scrim.dataplane.v1.Route
-	(*RouteAuth)(nil),                // 27: scrim.dataplane.v1.RouteAuth
-	(*AwsSigV4Auth)(nil),             // 28: scrim.dataplane.v1.AwsSigV4Auth
-	(*HeaderAuth)(nil),               // 29: scrim.dataplane.v1.HeaderAuth
-	(*GoogleServiceAccountAuth)(nil), // 30: scrim.dataplane.v1.GoogleServiceAccountAuth
-	(*GoogleMetadataAuth)(nil),       // 31: scrim.dataplane.v1.GoogleMetadataAuth
-	(*EntraClientSecretAuth)(nil),    // 32: scrim.dataplane.v1.EntraClientSecretAuth
-	(*RouteChain)(nil),               // 33: scrim.dataplane.v1.RouteChain
-	(*Listener)(nil),                 // 34: scrim.dataplane.v1.Listener
-	(*RedactionSettings)(nil),        // 35: scrim.dataplane.v1.RedactionSettings
-	(*ApplySnapshotResponse)(nil),    // 36: scrim.dataplane.v1.ApplySnapshotResponse
-	(*EventsRequest)(nil),            // 37: scrim.dataplane.v1.EventsRequest
-	(*EventBatch)(nil),               // 38: scrim.dataplane.v1.EventBatch
-	(*Event)(nil),                    // 39: scrim.dataplane.v1.Event
-	(*PolicyRequest)(nil),            // 40: scrim.dataplane.v1.PolicyRequest
-	(*AskRequest)(nil),               // 41: scrim.dataplane.v1.AskRequest
-	(*AskCaller)(nil),                // 42: scrim.dataplane.v1.AskCaller
-	(*AskAnswer)(nil),                // 43: scrim.dataplane.v1.AskAnswer
-	(*StatusRequest)(nil),            // 44: scrim.dataplane.v1.StatusRequest
-	(*StatusResponse)(nil),           // 45: scrim.dataplane.v1.StatusResponse
-	(*RedactionStatus)(nil),          // 46: scrim.dataplane.v1.RedactionStatus
-	(*ToolProxyStatus)(nil),          // 47: scrim.dataplane.v1.ToolProxyStatus
-	(*CaptureRequest)(nil),           // 48: scrim.dataplane.v1.CaptureRequest
-	(*CaptureResult)(nil),            // 49: scrim.dataplane.v1.CaptureResult
-	(*ListenerStatus)(nil),           // 50: scrim.dataplane.v1.ListenerStatus
-	(*MetricsRequest)(nil),           // 51: scrim.dataplane.v1.MetricsRequest
-	(*MetricsResponse)(nil),          // 52: scrim.dataplane.v1.MetricsResponse
-	(*MetricFamily)(nil),             // 53: scrim.dataplane.v1.MetricFamily
-	(*MetricSample)(nil),             // 54: scrim.dataplane.v1.MetricSample
-	(*RedactRequest)(nil),            // 55: scrim.dataplane.v1.RedactRequest
-	(*RedactResponse)(nil),           // 56: scrim.dataplane.v1.RedactResponse
-	nil,                              // 57: scrim.dataplane.v1.ValueEntry.LabelsEntry
-	nil,                              // 58: scrim.dataplane.v1.Event.AttrsEntry
-	nil,                              // 59: scrim.dataplane.v1.PolicyRequest.AgentLabelsEntry
-	nil,                              // 60: scrim.dataplane.v1.PolicyRequest.SecretLabelsEntry
-	nil,                              // 61: scrim.dataplane.v1.ToolProxyStatus.UnsupportedDestinationsEntry
+	(BinaryPolicy)(0),                // 7: scrim.dataplane.v1.BinaryPolicy
+	(EventKind)(0),                   // 8: scrim.dataplane.v1.EventKind
+	(MetricType)(0),                  // 9: scrim.dataplane.v1.MetricType
+	(*HelloRequest)(nil),             // 10: scrim.dataplane.v1.HelloRequest
+	(*HelloResponse)(nil),            // 11: scrim.dataplane.v1.HelloResponse
+	(*Snapshot)(nil),                 // 12: scrim.dataplane.v1.Snapshot
+	(*ClientCertificateTrust)(nil),   // 13: scrim.dataplane.v1.ClientCertificateTrust
+	(*RedactionScope)(nil),           // 14: scrim.dataplane.v1.RedactionScope
+	(*CaCertificate)(nil),            // 15: scrim.dataplane.v1.CaCertificate
+	(*ToolAlias)(nil),                // 16: scrim.dataplane.v1.ToolAlias
+	(*RestoreSettings)(nil),          // 17: scrim.dataplane.v1.RestoreSettings
+	(*ValueEntry)(nil),               // 18: scrim.dataplane.v1.ValueEntry
+	(*AwsSigV4)(nil),                 // 19: scrim.dataplane.v1.AwsSigV4
+	(*CaptureRule)(nil),              // 20: scrim.dataplane.v1.CaptureRule
+	(*PlaceholderKey)(nil),           // 21: scrim.dataplane.v1.PlaceholderKey
+	(*Policy)(nil),                   // 22: scrim.dataplane.v1.Policy
+	(*TableRule)(nil),                // 23: scrim.dataplane.v1.TableRule
+	(*Clause)(nil),                   // 24: scrim.dataplane.v1.Clause
+	(*Condition)(nil),                // 25: scrim.dataplane.v1.Condition
+	(*PolicyRule)(nil),               // 26: scrim.dataplane.v1.PolicyRule
+	(*Route)(nil),                    // 27: scrim.dataplane.v1.Route
+	(*RouteAuth)(nil),                // 28: scrim.dataplane.v1.RouteAuth
+	(*AwsSigV4Auth)(nil),             // 29: scrim.dataplane.v1.AwsSigV4Auth
+	(*HeaderAuth)(nil),               // 30: scrim.dataplane.v1.HeaderAuth
+	(*GoogleServiceAccountAuth)(nil), // 31: scrim.dataplane.v1.GoogleServiceAccountAuth
+	(*GoogleMetadataAuth)(nil),       // 32: scrim.dataplane.v1.GoogleMetadataAuth
+	(*EntraClientSecretAuth)(nil),    // 33: scrim.dataplane.v1.EntraClientSecretAuth
+	(*RouteChain)(nil),               // 34: scrim.dataplane.v1.RouteChain
+	(*Listener)(nil),                 // 35: scrim.dataplane.v1.Listener
+	(*RedactionSettings)(nil),        // 36: scrim.dataplane.v1.RedactionSettings
+	(*ApplySnapshotResponse)(nil),    // 37: scrim.dataplane.v1.ApplySnapshotResponse
+	(*EventsRequest)(nil),            // 38: scrim.dataplane.v1.EventsRequest
+	(*EventBatch)(nil),               // 39: scrim.dataplane.v1.EventBatch
+	(*Event)(nil),                    // 40: scrim.dataplane.v1.Event
+	(*PolicyRequest)(nil),            // 41: scrim.dataplane.v1.PolicyRequest
+	(*AskRequest)(nil),               // 42: scrim.dataplane.v1.AskRequest
+	(*AskCaller)(nil),                // 43: scrim.dataplane.v1.AskCaller
+	(*AskAnswer)(nil),                // 44: scrim.dataplane.v1.AskAnswer
+	(*StatusRequest)(nil),            // 45: scrim.dataplane.v1.StatusRequest
+	(*StatusResponse)(nil),           // 46: scrim.dataplane.v1.StatusResponse
+	(*RedactionStatus)(nil),          // 47: scrim.dataplane.v1.RedactionStatus
+	(*ToolProxyStatus)(nil),          // 48: scrim.dataplane.v1.ToolProxyStatus
+	(*CaptureRequest)(nil),           // 49: scrim.dataplane.v1.CaptureRequest
+	(*CaptureResult)(nil),            // 50: scrim.dataplane.v1.CaptureResult
+	(*ListenerStatus)(nil),           // 51: scrim.dataplane.v1.ListenerStatus
+	(*MetricsRequest)(nil),           // 52: scrim.dataplane.v1.MetricsRequest
+	(*MetricsResponse)(nil),          // 53: scrim.dataplane.v1.MetricsResponse
+	(*MetricFamily)(nil),             // 54: scrim.dataplane.v1.MetricFamily
+	(*MetricSample)(nil),             // 55: scrim.dataplane.v1.MetricSample
+	(*RedactRequest)(nil),            // 56: scrim.dataplane.v1.RedactRequest
+	(*RedactResponse)(nil),           // 57: scrim.dataplane.v1.RedactResponse
+	nil,                              // 58: scrim.dataplane.v1.ValueEntry.LabelsEntry
+	nil,                              // 59: scrim.dataplane.v1.Event.AttrsEntry
+	nil,                              // 60: scrim.dataplane.v1.PolicyRequest.AgentLabelsEntry
+	nil,                              // 61: scrim.dataplane.v1.PolicyRequest.SecretLabelsEntry
+	nil,                              // 62: scrim.dataplane.v1.ToolProxyStatus.UnsupportedDestinationsEntry
 }
 var file_scrim_dataplane_v1_dataplane_proto_depIdxs = []int32{
-	17, // 0: scrim.dataplane.v1.Snapshot.values:type_name -> scrim.dataplane.v1.ValueEntry
-	20, // 1: scrim.dataplane.v1.Snapshot.placeholder_keys:type_name -> scrim.dataplane.v1.PlaceholderKey
-	21, // 2: scrim.dataplane.v1.Snapshot.policy:type_name -> scrim.dataplane.v1.Policy
-	26, // 3: scrim.dataplane.v1.Snapshot.routes:type_name -> scrim.dataplane.v1.Route
-	34, // 4: scrim.dataplane.v1.Snapshot.listeners:type_name -> scrim.dataplane.v1.Listener
-	35, // 5: scrim.dataplane.v1.Snapshot.redaction:type_name -> scrim.dataplane.v1.RedactionSettings
-	19, // 6: scrim.dataplane.v1.Snapshot.capture_rules:type_name -> scrim.dataplane.v1.CaptureRule
-	16, // 7: scrim.dataplane.v1.Snapshot.restore:type_name -> scrim.dataplane.v1.RestoreSettings
-	14, // 8: scrim.dataplane.v1.Snapshot.tool_proxy_ca:type_name -> scrim.dataplane.v1.CaCertificate
-	17, // 9: scrim.dataplane.v1.Snapshot.unavailable:type_name -> scrim.dataplane.v1.ValueEntry
-	13, // 10: scrim.dataplane.v1.Snapshot.redaction_scopes:type_name -> scrim.dataplane.v1.RedactionScope
-	12, // 11: scrim.dataplane.v1.Snapshot.client_certificates:type_name -> scrim.dataplane.v1.ClientCertificateTrust
+	18, // 0: scrim.dataplane.v1.Snapshot.values:type_name -> scrim.dataplane.v1.ValueEntry
+	21, // 1: scrim.dataplane.v1.Snapshot.placeholder_keys:type_name -> scrim.dataplane.v1.PlaceholderKey
+	22, // 2: scrim.dataplane.v1.Snapshot.policy:type_name -> scrim.dataplane.v1.Policy
+	27, // 3: scrim.dataplane.v1.Snapshot.routes:type_name -> scrim.dataplane.v1.Route
+	35, // 4: scrim.dataplane.v1.Snapshot.listeners:type_name -> scrim.dataplane.v1.Listener
+	36, // 5: scrim.dataplane.v1.Snapshot.redaction:type_name -> scrim.dataplane.v1.RedactionSettings
+	20, // 6: scrim.dataplane.v1.Snapshot.capture_rules:type_name -> scrim.dataplane.v1.CaptureRule
+	17, // 7: scrim.dataplane.v1.Snapshot.restore:type_name -> scrim.dataplane.v1.RestoreSettings
+	15, // 8: scrim.dataplane.v1.Snapshot.tool_proxy_ca:type_name -> scrim.dataplane.v1.CaCertificate
+	18, // 9: scrim.dataplane.v1.Snapshot.unavailable:type_name -> scrim.dataplane.v1.ValueEntry
+	14, // 10: scrim.dataplane.v1.Snapshot.redaction_scopes:type_name -> scrim.dataplane.v1.RedactionScope
+	13, // 11: scrim.dataplane.v1.Snapshot.client_certificates:type_name -> scrim.dataplane.v1.ClientCertificateTrust
 	2,  // 12: scrim.dataplane.v1.ToolAlias.role:type_name -> scrim.dataplane.v1.ToolRole
 	1,  // 13: scrim.dataplane.v1.RestoreSettings.display_mode:type_name -> scrim.dataplane.v1.DisplayMode
-	15, // 14: scrim.dataplane.v1.RestoreSettings.tools:type_name -> scrim.dataplane.v1.ToolAlias
+	16, // 14: scrim.dataplane.v1.RestoreSettings.tools:type_name -> scrim.dataplane.v1.ToolAlias
 	3,  // 15: scrim.dataplane.v1.ValueEntry.class:type_name -> scrim.dataplane.v1.ValueClass
-	18, // 16: scrim.dataplane.v1.ValueEntry.aws_sigv4:type_name -> scrim.dataplane.v1.AwsSigV4
-	57, // 17: scrim.dataplane.v1.ValueEntry.labels:type_name -> scrim.dataplane.v1.ValueEntry.LabelsEntry
-	25, // 18: scrim.dataplane.v1.Policy.rules:type_name -> scrim.dataplane.v1.PolicyRule
+	19, // 16: scrim.dataplane.v1.ValueEntry.aws_sigv4:type_name -> scrim.dataplane.v1.AwsSigV4
+	58, // 17: scrim.dataplane.v1.ValueEntry.labels:type_name -> scrim.dataplane.v1.ValueEntry.LabelsEntry
+	26, // 18: scrim.dataplane.v1.Policy.rules:type_name -> scrim.dataplane.v1.PolicyRule
 	4,  // 19: scrim.dataplane.v1.Policy.default_effect:type_name -> scrim.dataplane.v1.Effect
-	22, // 20: scrim.dataplane.v1.Policy.table:type_name -> scrim.dataplane.v1.TableRule
+	23, // 20: scrim.dataplane.v1.Policy.table:type_name -> scrim.dataplane.v1.TableRule
 	4,  // 21: scrim.dataplane.v1.TableRule.effect:type_name -> scrim.dataplane.v1.Effect
-	23, // 22: scrim.dataplane.v1.TableRule.clauses:type_name -> scrim.dataplane.v1.Clause
-	24, // 23: scrim.dataplane.v1.Clause.conditions:type_name -> scrim.dataplane.v1.Condition
+	24, // 22: scrim.dataplane.v1.TableRule.clauses:type_name -> scrim.dataplane.v1.Clause
+	25, // 23: scrim.dataplane.v1.Clause.conditions:type_name -> scrim.dataplane.v1.Condition
 	5,  // 24: scrim.dataplane.v1.Condition.op:type_name -> scrim.dataplane.v1.ConditionOp
 	4,  // 25: scrim.dataplane.v1.PolicyRule.effect:type_name -> scrim.dataplane.v1.Effect
-	33, // 26: scrim.dataplane.v1.Route.chain:type_name -> scrim.dataplane.v1.RouteChain
-	27, // 27: scrim.dataplane.v1.Route.auth:type_name -> scrim.dataplane.v1.RouteAuth
-	28, // 28: scrim.dataplane.v1.RouteAuth.aws_sigv4:type_name -> scrim.dataplane.v1.AwsSigV4Auth
-	29, // 29: scrim.dataplane.v1.RouteAuth.header:type_name -> scrim.dataplane.v1.HeaderAuth
-	30, // 30: scrim.dataplane.v1.RouteAuth.google_service_account:type_name -> scrim.dataplane.v1.GoogleServiceAccountAuth
-	31, // 31: scrim.dataplane.v1.RouteAuth.google_metadata:type_name -> scrim.dataplane.v1.GoogleMetadataAuth
-	32, // 32: scrim.dataplane.v1.RouteAuth.entra_client_secret:type_name -> scrim.dataplane.v1.EntraClientSecretAuth
+	34, // 26: scrim.dataplane.v1.Route.chain:type_name -> scrim.dataplane.v1.RouteChain
+	28, // 27: scrim.dataplane.v1.Route.auth:type_name -> scrim.dataplane.v1.RouteAuth
+	29, // 28: scrim.dataplane.v1.RouteAuth.aws_sigv4:type_name -> scrim.dataplane.v1.AwsSigV4Auth
+	30, // 29: scrim.dataplane.v1.RouteAuth.header:type_name -> scrim.dataplane.v1.HeaderAuth
+	31, // 30: scrim.dataplane.v1.RouteAuth.google_service_account:type_name -> scrim.dataplane.v1.GoogleServiceAccountAuth
+	32, // 31: scrim.dataplane.v1.RouteAuth.google_metadata:type_name -> scrim.dataplane.v1.GoogleMetadataAuth
+	33, // 32: scrim.dataplane.v1.RouteAuth.entra_client_secret:type_name -> scrim.dataplane.v1.EntraClientSecretAuth
 	6,  // 33: scrim.dataplane.v1.Listener.kind:type_name -> scrim.dataplane.v1.ListenerKind
-	39, // 34: scrim.dataplane.v1.EventBatch.events:type_name -> scrim.dataplane.v1.Event
-	7,  // 35: scrim.dataplane.v1.Event.kind:type_name -> scrim.dataplane.v1.EventKind
-	4,  // 36: scrim.dataplane.v1.Event.effect:type_name -> scrim.dataplane.v1.Effect
-	58, // 37: scrim.dataplane.v1.Event.attrs:type_name -> scrim.dataplane.v1.Event.AttrsEntry
-	59, // 38: scrim.dataplane.v1.PolicyRequest.agent_labels:type_name -> scrim.dataplane.v1.PolicyRequest.AgentLabelsEntry
-	60, // 39: scrim.dataplane.v1.PolicyRequest.secret_labels:type_name -> scrim.dataplane.v1.PolicyRequest.SecretLabelsEntry
-	40, // 40: scrim.dataplane.v1.AskRequest.request:type_name -> scrim.dataplane.v1.PolicyRequest
-	42, // 41: scrim.dataplane.v1.AskRequest.caller:type_name -> scrim.dataplane.v1.AskCaller
-	4,  // 42: scrim.dataplane.v1.AskAnswer.effect:type_name -> scrim.dataplane.v1.Effect
-	50, // 43: scrim.dataplane.v1.StatusResponse.listeners:type_name -> scrim.dataplane.v1.ListenerStatus
-	47, // 44: scrim.dataplane.v1.StatusResponse.tool_proxy:type_name -> scrim.dataplane.v1.ToolProxyStatus
-	46, // 45: scrim.dataplane.v1.StatusResponse.redaction:type_name -> scrim.dataplane.v1.RedactionStatus
-	61, // 46: scrim.dataplane.v1.ToolProxyStatus.unsupported_destinations:type_name -> scrim.dataplane.v1.ToolProxyStatus.UnsupportedDestinationsEntry
-	6,  // 47: scrim.dataplane.v1.ListenerStatus.kind:type_name -> scrim.dataplane.v1.ListenerKind
-	53, // 48: scrim.dataplane.v1.MetricsResponse.families:type_name -> scrim.dataplane.v1.MetricFamily
-	8,  // 49: scrim.dataplane.v1.MetricFamily.type:type_name -> scrim.dataplane.v1.MetricType
-	54, // 50: scrim.dataplane.v1.MetricFamily.samples:type_name -> scrim.dataplane.v1.MetricSample
-	9,  // 51: scrim.dataplane.v1.DataPlane.Hello:input_type -> scrim.dataplane.v1.HelloRequest
-	11, // 52: scrim.dataplane.v1.DataPlane.ApplySnapshot:input_type -> scrim.dataplane.v1.Snapshot
-	37, // 53: scrim.dataplane.v1.DataPlane.Events:input_type -> scrim.dataplane.v1.EventsRequest
-	43, // 54: scrim.dataplane.v1.DataPlane.Asks:input_type -> scrim.dataplane.v1.AskAnswer
-	44, // 55: scrim.dataplane.v1.DataPlane.Status:input_type -> scrim.dataplane.v1.StatusRequest
-	49, // 56: scrim.dataplane.v1.DataPlane.Captures:input_type -> scrim.dataplane.v1.CaptureResult
-	51, // 57: scrim.dataplane.v1.DataPlane.Metrics:input_type -> scrim.dataplane.v1.MetricsRequest
-	55, // 58: scrim.dataplane.v1.DataPlane.Redact:input_type -> scrim.dataplane.v1.RedactRequest
-	10, // 59: scrim.dataplane.v1.DataPlane.Hello:output_type -> scrim.dataplane.v1.HelloResponse
-	36, // 60: scrim.dataplane.v1.DataPlane.ApplySnapshot:output_type -> scrim.dataplane.v1.ApplySnapshotResponse
-	38, // 61: scrim.dataplane.v1.DataPlane.Events:output_type -> scrim.dataplane.v1.EventBatch
-	41, // 62: scrim.dataplane.v1.DataPlane.Asks:output_type -> scrim.dataplane.v1.AskRequest
-	45, // 63: scrim.dataplane.v1.DataPlane.Status:output_type -> scrim.dataplane.v1.StatusResponse
-	48, // 64: scrim.dataplane.v1.DataPlane.Captures:output_type -> scrim.dataplane.v1.CaptureRequest
-	52, // 65: scrim.dataplane.v1.DataPlane.Metrics:output_type -> scrim.dataplane.v1.MetricsResponse
-	56, // 66: scrim.dataplane.v1.DataPlane.Redact:output_type -> scrim.dataplane.v1.RedactResponse
-	59, // [59:67] is the sub-list for method output_type
-	51, // [51:59] is the sub-list for method input_type
-	51, // [51:51] is the sub-list for extension type_name
-	51, // [51:51] is the sub-list for extension extendee
-	0,  // [0:51] is the sub-list for field type_name
+	7,  // 34: scrim.dataplane.v1.RedactionSettings.binary:type_name -> scrim.dataplane.v1.BinaryPolicy
+	40, // 35: scrim.dataplane.v1.EventBatch.events:type_name -> scrim.dataplane.v1.Event
+	8,  // 36: scrim.dataplane.v1.Event.kind:type_name -> scrim.dataplane.v1.EventKind
+	4,  // 37: scrim.dataplane.v1.Event.effect:type_name -> scrim.dataplane.v1.Effect
+	59, // 38: scrim.dataplane.v1.Event.attrs:type_name -> scrim.dataplane.v1.Event.AttrsEntry
+	60, // 39: scrim.dataplane.v1.PolicyRequest.agent_labels:type_name -> scrim.dataplane.v1.PolicyRequest.AgentLabelsEntry
+	61, // 40: scrim.dataplane.v1.PolicyRequest.secret_labels:type_name -> scrim.dataplane.v1.PolicyRequest.SecretLabelsEntry
+	41, // 41: scrim.dataplane.v1.AskRequest.request:type_name -> scrim.dataplane.v1.PolicyRequest
+	43, // 42: scrim.dataplane.v1.AskRequest.caller:type_name -> scrim.dataplane.v1.AskCaller
+	4,  // 43: scrim.dataplane.v1.AskAnswer.effect:type_name -> scrim.dataplane.v1.Effect
+	51, // 44: scrim.dataplane.v1.StatusResponse.listeners:type_name -> scrim.dataplane.v1.ListenerStatus
+	48, // 45: scrim.dataplane.v1.StatusResponse.tool_proxy:type_name -> scrim.dataplane.v1.ToolProxyStatus
+	47, // 46: scrim.dataplane.v1.StatusResponse.redaction:type_name -> scrim.dataplane.v1.RedactionStatus
+	62, // 47: scrim.dataplane.v1.ToolProxyStatus.unsupported_destinations:type_name -> scrim.dataplane.v1.ToolProxyStatus.UnsupportedDestinationsEntry
+	6,  // 48: scrim.dataplane.v1.ListenerStatus.kind:type_name -> scrim.dataplane.v1.ListenerKind
+	54, // 49: scrim.dataplane.v1.MetricsResponse.families:type_name -> scrim.dataplane.v1.MetricFamily
+	9,  // 50: scrim.dataplane.v1.MetricFamily.type:type_name -> scrim.dataplane.v1.MetricType
+	55, // 51: scrim.dataplane.v1.MetricFamily.samples:type_name -> scrim.dataplane.v1.MetricSample
+	10, // 52: scrim.dataplane.v1.DataPlane.Hello:input_type -> scrim.dataplane.v1.HelloRequest
+	12, // 53: scrim.dataplane.v1.DataPlane.ApplySnapshot:input_type -> scrim.dataplane.v1.Snapshot
+	38, // 54: scrim.dataplane.v1.DataPlane.Events:input_type -> scrim.dataplane.v1.EventsRequest
+	44, // 55: scrim.dataplane.v1.DataPlane.Asks:input_type -> scrim.dataplane.v1.AskAnswer
+	45, // 56: scrim.dataplane.v1.DataPlane.Status:input_type -> scrim.dataplane.v1.StatusRequest
+	50, // 57: scrim.dataplane.v1.DataPlane.Captures:input_type -> scrim.dataplane.v1.CaptureResult
+	52, // 58: scrim.dataplane.v1.DataPlane.Metrics:input_type -> scrim.dataplane.v1.MetricsRequest
+	56, // 59: scrim.dataplane.v1.DataPlane.Redact:input_type -> scrim.dataplane.v1.RedactRequest
+	11, // 60: scrim.dataplane.v1.DataPlane.Hello:output_type -> scrim.dataplane.v1.HelloResponse
+	37, // 61: scrim.dataplane.v1.DataPlane.ApplySnapshot:output_type -> scrim.dataplane.v1.ApplySnapshotResponse
+	39, // 62: scrim.dataplane.v1.DataPlane.Events:output_type -> scrim.dataplane.v1.EventBatch
+	42, // 63: scrim.dataplane.v1.DataPlane.Asks:output_type -> scrim.dataplane.v1.AskRequest
+	46, // 64: scrim.dataplane.v1.DataPlane.Status:output_type -> scrim.dataplane.v1.StatusResponse
+	49, // 65: scrim.dataplane.v1.DataPlane.Captures:output_type -> scrim.dataplane.v1.CaptureRequest
+	53, // 66: scrim.dataplane.v1.DataPlane.Metrics:output_type -> scrim.dataplane.v1.MetricsResponse
+	57, // 67: scrim.dataplane.v1.DataPlane.Redact:output_type -> scrim.dataplane.v1.RedactResponse
+	60, // [60:68] is the sub-list for method output_type
+	52, // [52:60] is the sub-list for method input_type
+	52, // [52:52] is the sub-list for extension type_name
+	52, // [52:52] is the sub-list for extension extendee
+	0,  // [0:52] is the sub-list for field type_name
 }
 
 func init() { file_scrim_dataplane_v1_dataplane_proto_init() }
@@ -5388,7 +5462,7 @@ func file_scrim_dataplane_v1_dataplane_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_scrim_dataplane_v1_dataplane_proto_rawDesc), len(file_scrim_dataplane_v1_dataplane_proto_rawDesc)),
-			NumEnums:      9,
+			NumEnums:      10,
 			NumMessages:   53,
 			NumExtensions: 0,
 			NumServices:   1,

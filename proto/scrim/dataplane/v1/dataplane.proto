@@ -629,10 +629,24 @@ message Listener {
   bool tls = 5;
 }
 
+// BinaryPolicy is what the LLM proxy does with binary content parts
+// (images, documents, audio): `redaction.binary`.
+enum BinaryPolicy {
+  BINARY_POLICY_UNSPECIFIED = 0;  // treated as SCAN
+  // SCAN decodes each part and scans it and the text it carries; a secret
+  // found there, or a part that cannot be decoded, refuses the request.
+  BINARY_POLICY_SCAN = 1;
+  // BLOCK refuses every request with a binary part.
+  BINARY_POLICY_BLOCK = 2;
+  // PASS forwards binary parts unscanned (weakening).
+  BINARY_POLICY_PASS = 3;
+}
+
 message RedactionSettings {
   // min_value_length is the shortest value matched in free text; shorter
   // values are matched only in exact and encoded forms.
   uint32 min_value_length = 1;
+  BinaryPolicy binary = 2;
 }
 
 message ApplySnapshotResponse {

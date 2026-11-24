@@ -5,6 +5,7 @@ package matrix
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -328,7 +329,7 @@ func (r *Runner) RunRow(ctx context.Context, row Row, seed leak.Seed) Result {
 	placeholder := false
 	for _, e := range ex {
 		res.Findings = append(res.Findings, checker.Check(e.Capture)...)
-		if ph.Match(e.Body) || ph.MatchString(e.RawQuery) || headerMatch(ph, e.Header) {
+		if ph.Match(e.Body) || base64Match(ph, e.Body) || ph.MatchString(e.RawQuery) || headerMatch(ph, e.Header) {
 			placeholder = true
 		}
 	}
@@ -392,6 +393,21 @@ func merged(ex []fp.Exchange) leak.Capture {
 	}
 	b.WriteByte(']')
 	return leak.Capture{Seq: 0, Body: b.Bytes()}
+}
+
+// base64Runs finds base64 text long enough to hold a placeholder: a file
+// attachment's data, bare or in a `data:` URL.
+var base64Runs = regexp.MustCompile(`[A-Za-z0-9+/]{24,}={0,2}`)
+
+// base64Match reports whether a placeholder sits inside base64 text of body,
+// as it does in a text document the proxy redacted and encoded again.
+func base64Match(re *regexp.Regexp, body []byte) bool {
+	for _, run := range base64Runs.FindAll(body, -1) {
+		if d, err := base64.StdEncoding.DecodeString(string(run)); err == nil && re.Match(d) {
+			return true
+		}
+	}
+	return false
 }
 
 func headerMatch(re *regexp.Regexp, h http.Header) bool {

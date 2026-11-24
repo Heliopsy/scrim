@@ -26,6 +26,7 @@ arc-swap = "1.7"
 base64 = "0.23"
 bytes = "1"
 crc32fast = "1.5"
+flate2 = "1"
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 hmac = "0.13"
 http = "1"
@@ -70,6 +71,11 @@ scrim-llm = { path = ".", features = ["test-util", "intercept", "redact"] }
 name = "latency_gate"
 harness = false
 required-features = ["test-util"]
+
+[[bench]]
+name = "binary_scan"
+harness = false
+required-features = ["test-util", "redact"]
 
 [lints]
 workspace = true

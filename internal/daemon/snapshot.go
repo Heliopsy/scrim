@@ -196,9 +196,12 @@ func SlugFor(bd catalog.Binding, ref stores.Ref) string {
 func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 	cfg := b.Config()
 	snap := &pb.Snapshot{
-		Listeners:    cloneListeners(b.Listeners),
-		Routes:       routes(cfg),
-		Redaction:    &pb.RedactionSettings{MinValueLength: uint32(MinValueLength.Get(cfg))}, //nolint:gosec // validated to 1..1024
+		Listeners: cloneListeners(b.Listeners),
+		Routes:    routes(cfg),
+		Redaction: &pb.RedactionSettings{
+			MinValueLength: uint32(MinValueLength.Get(cfg)), //nolint:gosec // validated to 1..1024
+			Binary:         binaryPolicy(BinaryPolicy.Get(cfg)),
+		},
 		CaptureRules: captureRulesPB(cfg),
 		Policy:       &pb.Policy{DefaultEffect: pb.Effect_EFFECT_DENY},
 		Restore:      restoreSettings(cfg),
@@ -641,4 +644,17 @@ func ProviderHosts(cfg *config.Config) []string {
 		}
 	}
 	return out
+}
+
+// binaryPolicy maps `redaction.binary` to the snapshot's enum. An unknown value
+// (the registry's enum rules it out) maps to scan, the safe default.
+func binaryPolicy(v string) pb.BinaryPolicy {
+	switch v {
+	case "block":
+		return pb.BinaryPolicy_BINARY_POLICY_BLOCK
+	case "pass":
+		return pb.BinaryPolicy_BINARY_POLICY_PASS
+	default:
+		return pb.BinaryPolicy_BINARY_POLICY_SCAN
+	}
 }

@@ -54,6 +54,30 @@ func TestStatusJSONShowsWeakenedAndState(t *testing.T) {
 	}
 }
 
+// TestBinaryPassIsWeakened: redaction.binary pass is reported as weakened by
+// status and doctor; block, also a value other than the default, is not.
+func TestBinaryPassIsWeakened(t *testing.T) {
+	for v, want := range map[string]bool{"pass": true, "block": false, "scan": false} {
+		e, out, errb := newEnv(isolatedEnv(t, "SCRIM_REDACTION_BINARY="+v)...)
+		if code := Run(context.Background(), e, []string{"status", "-o", "json"}); code != 0 {
+			t.Fatalf("%s: exit %d: %s", v, code, errb.String())
+		}
+		var r status.Report
+		if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		got := len(r.Weakened) == 1 && r.Weakened[0].Key == "redaction.binary"
+		if got != want || (!want && len(r.Weakened) != 0) {
+			t.Errorf("%s: status weakened = %+v", v, r.Weakened)
+		}
+		e, out, _ = newEnv(isolatedEnv(t, "SCRIM_REDACTION_BINARY="+v)...)
+		_ = Run(context.Background(), e, []string{"doctor"})
+		if got := strings.Contains(out.String(), "redaction.binary"); got != want {
+			t.Errorf("%s: doctor names redaction.binary = %v:\n%s", v, got, out.String())
+		}
+	}
+}
+
 func TestStatusHumanAndBadOutput(t *testing.T) {
 	e, out, _ := newEnv(isolatedEnv(t)...)
 	if code := Run(context.Background(), e, []string{"status"}); code != 0 {
