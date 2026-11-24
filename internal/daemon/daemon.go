@@ -51,6 +51,7 @@ import (
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/dataplane"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
+	"github.com/heliopsy/scrim/internal/identity"
 	"github.com/heliopsy/scrim/internal/identity/issuer"
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/obs"
@@ -98,6 +99,11 @@ type Addrs struct {
 	ForwardProxy string `json:"forward_proxy,omitempty"`
 	// ToolProxy is host:port of the tool proxy.
 	ToolProxy string `json:"tool_proxy,omitempty"`
+	// BaseURLTLS, ForwardProxyTLS and ToolProxyTLS are the same over TLS,
+	// for callers identified by client certificates.
+	BaseURLTLS      string `json:"base_url_tls,omitempty"`
+	ForwardProxyTLS string `json:"forward_proxy_tls,omitempty"`
+	ToolProxyTLS    string `json:"tool_proxy_tls,omitempty"`
 	// Transparent are host:port of the transparent listeners nftables
 	// redirects covered users to.
 	Transparent []string `json:"transparent,omitempty"`
@@ -190,6 +196,9 @@ type Daemon struct {
 	// kubeTokens are the service account tokens scrim verified, redacted
 	// until they expire.
 	kubeTokens *sessionTokens
+	// certTrust is the trust of client certificate identity, nil when it is
+	// off.
+	certTrust *identity.CertTrustSource
 	// scopes checks what each agent's own store identity can read, only
 	// with redaction.limit-to-agent-identity on.
 	scopes *redactscope.Checker
@@ -375,12 +384,21 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	if len(governed) > 0 {
 		pp.Gate.StoreAccess = access
 	}
+	certTrust, err := agentapi.CertTrustSource(runCtx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	listeners := ListenersFrom(cfg)
+	if err := checkTLSListeners(listeners, certTrust); err != nil {
+		return nil, err
+	}
+	d.certTrust = certTrust
 	d.builder = &SnapshotBuilder{
 		Config:    a.Config.Current,
 		Values:    values,
 		Catalog:   d.catalog.Current,
 		CA:        o.CA,
-		Listeners: ListenersFrom(cfg),
+		Listeners: listeners,
 		Labels:    a.Stores.Labels,
 		Policy: func() *pb.Policy {
 			ver, _ := pp.Rules.Health()
@@ -393,6 +411,11 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 			p.AskTimeoutMillis = askTimeoutMillis(approval.Timeout.Get(a.Config.Current()), rs.Config())
 			return p
 		},
+	}
+	if certTrust != nil {
+		d.builder.ClientCertificates = func() *pb.ClientCertificateTrust {
+			return clientCertificatesPB(certTrust.Current(), agentapi.CertServerNames.Get(a.Config.Current()))
+		}
 	}
 	d.builder.SetKeys(ring)
 	d.cleanup = append(d.cleanup, func() { d.builder.SetKeys(nil) })
@@ -437,7 +460,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		notices = logw
 	}
 	d.runtime, err = agentapi.New(a, agentapi.Options{Stderr: notices, Placeholders: placeholders{d.builder}, OnMint: d.tokens.add,
-		OnKubeToken: d.kubeTokens.addKube})
+		OnKubeToken: d.kubeTokens.addKube, CertTrust: certTrust})
 	if err != nil {
 		return nil, err
 	}
@@ -487,6 +510,12 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	d.goRun("dataplane", func() error { return ignoreCanceled(d.sup.Run(runCtx)) })
 	d.goRun("sessions", func() error { d.sweepSessions(runCtx); return nil })
 	d.goRun("credential files", func() error { d.ownCreds.watch(runCtx, d.pusher.Trigger); return nil })
+	if certTrust != nil {
+		d.goRun("client certificates", func() error {
+			d.watchCertTrust(runCtx, agentapi.CertRefresh.Get(cfg))
+			return nil
+		})
+	}
 	if d.scopes != nil {
 		d.goRun("redaction scopes", func() error { d.scopes.Run(runCtx); return nil })
 	}
@@ -809,13 +838,25 @@ func (d *Daemon) setDataPlaneAddrs(st *pb.StatusResponse) {
 		}
 		switch l.GetKind() {
 		case pb.ListenerKind_LISTENER_KIND_BASE_URL:
-			d.addrs.BaseURL = "http://" + addr
+			if l.GetTls() {
+				d.addrs.BaseURLTLS = "https://" + addr
+			} else {
+				d.addrs.BaseURL = "http://" + addr
+			}
 		case pb.ListenerKind_LISTENER_KIND_UNIX:
 			d.addrs.BaseURLSocket = addr
 		case pb.ListenerKind_LISTENER_KIND_FORWARD_PROXY:
-			d.addrs.ForwardProxy = addr
+			if l.GetTls() {
+				d.addrs.ForwardProxyTLS = addr
+			} else {
+				d.addrs.ForwardProxy = addr
+			}
 		case pb.ListenerKind_LISTENER_KIND_TOOL_PROXY:
-			d.addrs.ToolProxy = addr
+			if l.GetTls() {
+				d.addrs.ToolProxyTLS = addr
+			} else {
+				d.addrs.ToolProxy = addr
+			}
 		case pb.ListenerKind_LISTENER_KIND_TRANSPARENT:
 			d.addrs.Transparent = append(d.addrs.Transparent, addr)
 		case pb.ListenerKind_LISTENER_KIND_SNI:

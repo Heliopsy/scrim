@@ -135,7 +135,8 @@ func auditEntry(e *pb.Event) audit.Entry {
 		out.Effect = policy.EffectFromPB(e.GetEffect())
 	}
 	switch e.GetKind() {
-	case pb.EventKind_EVENT_KIND_GUARD_REFUSAL, pb.EventKind_EVENT_KIND_ERROR, pb.EventKind_EVENT_KIND_INTERCEPTION_REFUSED:
+	case pb.EventKind_EVENT_KIND_GUARD_REFUSAL, pb.EventKind_EVENT_KIND_ERROR, pb.EventKind_EVENT_KIND_INTERCEPTION_REFUSED,
+		pb.EventKind_EVENT_KIND_CLIENT_CERTIFICATE_REFUSED:
 		out.Outcome = audit.OutcomeRefused
 	default:
 		out.Outcome = audit.OutcomeOK

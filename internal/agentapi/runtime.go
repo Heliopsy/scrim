@@ -73,6 +73,9 @@ type Options struct {
 	// OnKubeToken, when set, receives every Kubernetes service account
 	// token scrim verified (see identity.KubeResolver.OnVerified).
 	OnKubeToken func(tok []byte, expires time.Time)
+	// CertTrust is the trust of client certificate identity
+	// ([CertTrustSource]); nil refuses client certificates.
+	CertTrust *identity.CertTrustSource
 }
 
 // New builds the local API and entry page from the composition root and
@@ -159,7 +162,13 @@ func New(a *app.App, o Options) (*Runtime, error) {
 	if kr != nil {
 		kr.OnVerified = o.OnKubeToken
 	}
-	resolver := &identity.Resolver{Peers: peers, Sessions: mgr, Kubernetes: kr}
+	cr, err := CertResolver(cfg, o.CertTrust)
+	if err != nil {
+		_ = entryLn.Close()
+		_ = sockLn.Close()
+		return nil, err
+	}
+	resolver := &identity.Resolver{Peers: peers, Sessions: mgr, Kubernetes: kr, Certificates: cr}
 	api := &localapi.Server{Resolver: *resolver, Sessions: mgr, Tools: svc,
 		Auditor: auditor, Logger: a.Log, ServerVersion: version.Version}
 	return &Runtime{Socket: path, EntryURL: links.Base(), Service: svc, Sessions: mgr, Resolver: resolver,

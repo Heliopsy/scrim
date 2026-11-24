@@ -690,6 +690,24 @@
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         },
+        "client-cert-file": {
+          "default": "",
+          "description": "PEM client certificate (chain) the forwarder presents to the central scrim instead of a service account token, for a central scrim with identity.client-certificates. Read again for every connection, so a rotated certificate is used at once. Needs edge-forwarder.client-key-file.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EDGE_FORWARDER_CLIENT_CERT_FILE",
+          "x-scrim-flag": "--edge-forwarder-client-cert-file",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "client-key-file": {
+          "default": "",
+          "description": "PEM private key of edge-forwarder.client-cert-file. It stays in the pod: the TLS handshake proves the forwarder holds it.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_EDGE_FORWARDER_CLIENT_KEY_FILE",
+          "x-scrim-flag": "--edge-forwarder-client-key-file",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
         "connect-timeout": {
           "default": "10s",
           "description": "How long the forwarder waits for the central scrim before it refuses the local connection.",
@@ -914,6 +932,86 @@
     "identity": {
       "additionalProperties": false,
       "properties": {
+        "client-certificates": {
+          "additionalProperties": false,
+          "properties": {
+            "agents": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Agents by client certificate: agent name to space-separated selectors spiffe:ID, cn:NAME, dns:NAME, uri:URI, email:ADDRESS (globs allowed, * does not cross /), scope:SCOPE, label:K=V. A certificate no rule maps follows identity.client-certificates.unmapped.",
+              "type": "object",
+              "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_AGENTS",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "ca": {
+              "default": "",
+              "description": "Trust anchors client certificates must chain to: a PEM bundle of CA certificates, as a reference (file:/path, env:NAME, cred:NAME or a store reference such as bao://kv/pki#ca). No system roots are used.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_CA",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "crl-files": {
+              "default": [],
+              "description": "Certificate revocation lists (PEM or DER files) checked for every client certificate. With any set, a certificate whose issuer has no current CRL among them is refused, and so is every certificate of an issuer whose CRL is past its next update. Empty checks no revocation: use short-lived certificates.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_CRL_FILES",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "enabled": {
+              "default": false,
+              "description": "Identify callers by the client certificate they present on scrim's TLS listeners (proxy.tls-listen, proxy.forward-tls-listen, tool-proxy.tls-listen and edge.listen). Needs identity.client-certificates.ca.",
+              "type": "boolean",
+              "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_ENABLED",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "refresh": {
+              "default": "1m0s",
+              "description": "How often the trust anchors and CRL files are read again. A new CRL applies to new connections within this bound.",
+              "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_REFRESH",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "server-names": {
+              "default": [
+                "localhost",
+                "127.0.0.1",
+                "::1"
+              ],
+              "description": "Host names and IP addresses the certificate of scrim's TLS proxy listeners carries, signed by scrim's CA. A client that sends no server name, or one not in the list, gets the address it connected to when that is listed, else the first name.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_SERVER_NAMES",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "unmapped": {
+              "default": "unknown",
+              "description": "What a verified client certificate no identity.client-certificates.agents rule maps becomes: unknown treats it as an unknown caller, derive names the agent after its SPIFFE ID without the spiffe:// prefix (a certificate without one stays unknown).",
+              "enum": [
+                "unknown",
+                "derive"
+              ],
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_UNMAPPED",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        },
         "issuer": {
           "additionalProperties": false,
           "properties": {
@@ -1704,6 +1802,15 @@
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         },
+        "forward-tls-listen": {
+          "default": "",
+          "description": "TCP address of the forward proxy over TLS (HTTPS_PROXY=https://<address>). Callers must present a client certificate to the proxy (identity.client-certificates). Empty disables it.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_PROXY_FORWARD_TLS_LISTEN",
+          "x-scrim-flag": "--proxy-forward-tls-listen",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
         "listen": {
           "default": "127.0.0.1:9790",
           "description": "TCP address of the LLM proxy base URL (agents use http://<address>/anthropic and http://<address>/openai/v1). Empty disables it; keep it on loopback.",
@@ -1728,6 +1835,15 @@
           "type": "string",
           "x-scrim-env": "SCRIM_PROXY_SOCKET",
           "x-scrim-flag": "--proxy-socket",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "tls-listen": {
+          "default": "",
+          "description": "TCP address of the LLM proxy base URL over TLS (https://<address>/anthropic and so on). Callers must present a client certificate (identity.client-certificates). Empty disables it.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_PROXY_TLS_LISTEN",
+          "x-scrim-flag": "--proxy-tls-listen",
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         },
@@ -2494,6 +2610,15 @@
           "type": "string",
           "x-scrim-env": "SCRIM_TOOL_PROXY_LISTEN",
           "x-scrim-flag": "--tool-proxy-listen",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "tls-listen": {
+          "default": "",
+          "description": "TCP address of the HTTPS tool proxy over TLS. Callers must present a client certificate to the proxy (identity.client-certificates). Empty disables it.",
+          "type": "string",
+          "x-scrim-env": "SCRIM_TOOL_PROXY_TLS_LISTEN",
+          "x-scrim-flag": "--tool-proxy-tls-listen",
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         }
