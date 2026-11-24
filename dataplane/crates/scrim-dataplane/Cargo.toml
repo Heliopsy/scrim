@@ -27,13 +27,16 @@ rustls-pki-types = { version = "1.16.0", features = ["std"] }
 arc-swap.workspace = true
 prost.workspace = true
 getrandom = "0.4"
-rustix = { workspace = true, features = ["process", "mm", "fs", "net", "std"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros", "sync", "time", "signal"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros", "sync", "time", "signal", "io-std", "io-util"] }
 tokio-stream = { workspace = true, features = ["sync", "net"] }
 tonic = { workspace = true, features = ["server", "router", "codegen"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter", "std"] }
 zeroize.workspace = true
+
+# Descriptor adoption, process hardening and SO_ORIGINAL_DST; none of it exists on Windows.
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["process", "mm", "fs", "net", "std"] }
 
 [dev-dependencies]
 tonic = { workspace = true, features = ["channel", "codegen"] }

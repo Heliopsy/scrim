@@ -17,6 +17,8 @@
     missing_docs,
     unreachable_pub
 )]
+// Runs the aws CLI and curl with a Unix PATH against LocalStack in podman.
+#![cfg(unix)]
 
 use std::path::Path;
 use std::process::Command;

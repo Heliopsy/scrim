@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! The gRPC service the control plane calls, served on the inherited socket.
+//! The gRPC service the control plane calls, served on the connection it handed down (an
+//! inherited socket on Unix, stdin and stdout with `--stdio`).
 
 use std::io;
 use std::pin::Pin;
@@ -10,7 +11,6 @@ use std::task::{Context, Poll};
 use scrim_proto::v1;
 use scrim_proto::v1::data_plane_server::{DataPlane, DataPlaneServer};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::UnixStream;
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tonic::transport::server::Connected;
@@ -25,19 +25,35 @@ use crate::settings::Settings;
 /// Serves the control plane on `stream` until the control plane closes its
 /// end, then returns. Returning means the process must exit: a data plane
 /// without its control plane refuses all traffic.
-pub async fn run(stream: std::os::unix::net::UnixStream, hardening: Hardening) -> io::Result<()> {
-    stream.set_nonblocking(true)?;
-    let stream = UnixStream::from_std(stream)?;
+pub async fn run<S>(stream: S, hardening: Hardening) -> io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
     let shared = Shared::with_settings(&Settings::from_env()).map_err(io::Error::other)?;
     serve(stream, Arc::new(shared), hardening).await
 }
 
-/// Serves `stream` with the given shared state. Used by [`run`] and tests.
-pub async fn serve(
-    stream: UnixStream,
-    shared: Arc<Shared>,
+/// [`run`] on the socket inherited from the control plane.
+#[cfg(unix)]
+pub async fn run_socket(
+    stream: std::os::unix::net::UnixStream,
     hardening: Hardening,
 ) -> io::Result<()> {
+    stream.set_nonblocking(true)?;
+    run(tokio::net::UnixStream::from_std(stream)?, hardening).await
+}
+
+/// [`run`] on stdin (from the control plane) and stdout (to it). EOF on stdin is the control
+/// plane closing its end.
+pub async fn run_stdio(hardening: Hardening) -> io::Result<()> {
+    run(crate::transport::stdio(), hardening).await
+}
+
+/// Serves `stream` with the given shared state. Used by [`run`] and tests.
+pub async fn serve<S>(stream: S, shared: Arc<Shared>, hardening: Hardening) -> io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
     let (closed_tx, closed_rx) = oneshot::channel();
     let conn = ParentConn {
         inner: stream,
@@ -63,12 +79,12 @@ pub async fn serve(
 
 /// The inherited connection. Dropping it (when hyper finishes the
 /// connection) signals shutdown.
-struct ParentConn {
-    inner: UnixStream,
+struct ParentConn<S> {
+    inner: S,
     closed: Option<oneshot::Sender<()>>,
 }
 
-impl Drop for ParentConn {
+impl<S> Drop for ParentConn<S> {
     fn drop(&mut self) {
         if let Some(tx) = self.closed.take() {
             let _ = tx.send(());
@@ -76,12 +92,12 @@ impl Drop for ParentConn {
     }
 }
 
-impl Connected for ParentConn {
+impl<S> Connected for ParentConn<S> {
     type ConnectInfo = ();
     fn connect_info(&self) -> Self::ConnectInfo {}
 }
 
-impl AsyncRead for ParentConn {
+impl<S: AsyncRead + Unpin> AsyncRead for ParentConn<S> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -91,7 +107,7 @@ impl AsyncRead for ParentConn {
     }
 }
 
-impl AsyncWrite for ParentConn {
+impl<S: AsyncWrite + Unpin> AsyncWrite for ParentConn<S> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
