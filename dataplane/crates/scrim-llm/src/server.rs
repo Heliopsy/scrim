@@ -5,7 +5,6 @@
 
 use std::convert::Infallible;
 use std::future::Future;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -111,7 +110,7 @@ pub async fn serve_tcp(
 /// Binds a Unix socket at `path` with mode 0600, replacing a stale socket file. Refuses to
 /// replace anything that is not a socket.
 #[cfg(unix)]
-pub fn bind_unix(path: &Path) -> std::io::Result<tokio::net::UnixListener> {
+pub fn bind_unix(path: &std::path::Path) -> std::io::Result<tokio::net::UnixListener> {
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
     match std::fs::symlink_metadata(path) {
         Ok(md) if md.file_type().is_socket() => std::fs::remove_file(path)?,

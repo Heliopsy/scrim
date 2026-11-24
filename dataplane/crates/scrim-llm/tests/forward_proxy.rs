@@ -266,6 +266,8 @@ async fn failures_on_intercepted_hosts_are_closed() {
     assert!(w.upstream.received().is_empty());
 }
 
+// Windows curl uses Schannel, which wants a revocation check the test CA cannot answer.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn curl_with_https_proxy_is_redacted() {
     if std::process::Command::new("curl")

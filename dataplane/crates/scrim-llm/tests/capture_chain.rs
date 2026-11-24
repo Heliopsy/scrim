@@ -90,6 +90,8 @@ async fn captured_request_is_byte_identical_to_what_upstream_received() {
     assert!(meta.contains("2023-06-01") && meta.contains("[masked]"));
 }
 
+// The permission check reads Unix mode bits.
+#[cfg(unix)]
 #[tokio::test]
 async fn capture_refuses_a_world_readable_directory() {
     use std::os::unix::fs::PermissionsExt;

@@ -3,7 +3,8 @@
 //! The scrim data plane (design D1, D11, D12).
 //!
 //! The control plane starts this binary as a child and hands it one end of a
-//! socketpair. Over that socket the data plane serves the gRPC service in
+//! socketpair (Unix) or its stdin and stdout (Windows), see [`transport`].
+//! Over that connection the data plane serves the gRPC service in
 //! `proto/scrim/dataplane/v1`: it takes versioned snapshots (value
 //! dictionary, placeholder keys, compiled policy, routes, listeners), streams
 //! events back, and asks the control plane only when a rule says "ask".
@@ -29,7 +30,7 @@
 //! - [`metrics`]: counters and histograms aggregated in process when the control plane asks
 //!   for them (`SCRIM_DP_METRICS=1`), read over the Metrics call once per scrape.
 //!
-//! The process exits when the control plane's end of the socket closes, so a
+//! The process exits when the control plane's end of the connection closes, so a
 //! dead control plane never leaves a data plane serving traffic.
 
 pub mod asks;
@@ -39,6 +40,7 @@ pub mod engine;
 pub mod events;
 pub mod harden;
 pub mod identity;
+#[cfg(unix)]
 pub mod inherit;
 pub mod listeners;
 pub mod metrics;
@@ -47,6 +49,7 @@ pub mod scopes;
 pub mod server;
 pub mod settings;
 pub mod snapshot;
+pub mod transport;
 
 /// The data plane build version reported in Hello, Status and `--version`.
 /// Release builds set `SCRIM_BUILD_VERSION`; other builds report the crate

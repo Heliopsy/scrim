@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! The boundary protocol from the client side, over a real socketpair.
+//! The boundary protocol from the client side, over a real socketpair (an in-memory duplex
+//! stream where there are no Unix sockets).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 
@@ -12,14 +13,24 @@ use scrim_dataplane::engine::{Engine, Shared};
 use scrim_dataplane::harden::Hardening;
 use scrim_proto::v1;
 use scrim_proto::v1::data_plane_client::DataPlaneClient;
-use tokio::net::UnixStream;
 use tokio::task::JoinHandle;
 use tonic::transport::{Channel, Endpoint};
 
 type Served = JoinHandle<std::io::Result<()>>;
 
+#[cfg(unix)]
+fn pair() -> (tokio::net::UnixStream, tokio::net::UnixStream) {
+    tokio::net::UnixStream::pair().unwrap()
+}
+
+// Windows has no socketpair; the server is generic over the stream.
+#[cfg(not(unix))]
+fn pair() -> (tokio::io::DuplexStream, tokio::io::DuplexStream) {
+    tokio::io::duplex(1 << 16)
+}
+
 async fn connect() -> (DataPlaneClient<Channel>, Arc<Shared>, Served) {
-    let (ours, theirs) = UnixStream::pair().unwrap();
+    let (ours, theirs) = pair();
     let shared = Arc::new(Shared::new().unwrap());
     let server = tokio::spawn(scrim_dataplane::server::serve(
         theirs,
@@ -255,7 +266,12 @@ async fn tool_proxy_listener_ca_and_captures() {
         .iter()
         .find(|l| l.name == "transparent")
         .unwrap();
-    assert!(transparent.bound, "{transparent:?}");
+    // Transparent listeners need SO_ORIGINAL_DST, which only Linux has.
+    assert_eq!(
+        transparent.bound,
+        cfg!(target_os = "linux"),
+        "{transparent:?}"
+    );
     let sni = status.listeners.iter().find(|l| l.name == "sni").unwrap();
     assert!(!sni.bound && sni.error.contains("cannot bind"), "{sni:?}");
     assert!(

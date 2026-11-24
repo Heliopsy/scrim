@@ -18,6 +18,8 @@
     missing_docs,
     unreachable_pub
 )]
+// Runs kubectl with a Unix PATH against a kind cluster.
+#![cfg(unix)]
 
 use std::collections::HashMap;
 use std::process::Command;
