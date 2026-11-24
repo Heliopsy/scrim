@@ -70,7 +70,9 @@ the newest event when it starts, and acts on what other replicas did:
 | `approval.decided` | releases the requests it holds for that approval at once |
 | `breakglass.changed` | re-reads the deny-all state, pushes a snapshot to its data plane and denies its pending approvals |
 | `config.reloaded` | logs a warning when a peer announces a configuration digest different from its own |
-| `grant.changed`, `session.revoked` | nothing: grants and sessions are read from the database on every request, so a revocation made on one replica is refused on every replica's next request |
+| `grant.changed` | nothing: grants are read from the database on every request, so a revocation made on one replica is refused on every replica's next request |
+| `session.revoked` | sessions are read from the database on every request, so the token is refused on every replica's next request; the replica also takes the session out of its narrowed redaction scopes (`redaction.limit-to-agent-identity`) and keeps redacting its token until it expires |
+| `redaction.token` | reads the shared token the event names, opens it and adds it to its redaction set ([Shared tokens](#shared-tokens)) |
 
 The data plane keeps no allow answer and no grant between requests: every operation that needs one
 asks the control plane again, so it adds nothing to these bounds.
@@ -99,8 +101,25 @@ so each event is delivered once and in order, and a notification lost with a con
 event. While the listener is connected the outbox is also read once a minute as a safety net.
 
 `deployment.replicas` (default 1) states how many replicas share the configuration; the Helm chart
-sets it. With more than 1, start-up fails when `events.backend` is `local` or `state.backend` is
-`memory` or `sqlite`, naming the setting to change.
+sets it. With more than 1, start-up fails when `events.backend` is `local`, `state.backend` is
+`memory` or `sqlite`, or `redaction.placeholder-keys` is empty, naming the setting to change.
+
+### Shared tokens
+
+scrim redacts its own tokens: `scrim run` session tokens, the Kubernetes service account tokens it
+verified and the identity tokens its issuer signed. With `state.backend: postgres` and
+`redaction.placeholder-keys` set, every replica redacts every live token, whichever replica minted or
+verified it. The replica that gets a token writes it to the `redaction_tokens` table sealed with
+AES-256-GCM, under a key derived with HKDF from the placeholder key, and announces the row with a
+`redaction.token` event; every replica reads the row, opens it and adds the token. The table holds
+the ciphertext, the placeholder key version, the expiry and a row ID (the session ID, or a keyed hash
+of the token), never the token. Valkey and NATS still carry empty wake-ups only.
+
+A replica loads every live shared token before its data plane gets its first snapshot. Tokens leave
+every replica's redaction set when they expire, and any replica's session sweep deletes their rows.
+A row sealed under a placeholder key version a replica no longer has is skipped and logged by row
+ID. Writing a token is retried in the background until it succeeds; until then only the replica
+that has it redacts it. Without placeholder keys (one replica on PostgreSQL), nothing is shared.
 
 Bounds on how long a change made on one replica takes to act on another:
 

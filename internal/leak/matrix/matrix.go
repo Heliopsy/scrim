@@ -7,7 +7,8 @@
 //
 // Rows are the product of two catalogues: every [Transform] in the primary
 // placement (a tool result) of every API, and every [Placement] with a small
-// set of transforms. Each row states its expectation:
+// set of transforms. The APIs are the HTTP ones and the WebSocket ones
+// ([fp.AllAPIs]); a WebSocket row sends one conversation on one connection. Each row states its expectation:
 //
 //   - redacted: the request is forwarded and the value is replaced by a
 //     placeholder (the redactor's own variants)
@@ -120,7 +121,7 @@ func Rows() []Row {
 	}
 	primary, _ := PlacementByID("tool-result")
 	perPlacement := []string{"raw", "json-html-escaped", "base64-std@1", "reversed", "spaced-letters"}
-	for _, api := range fp.APIs {
+	for _, api := range fp.AllAPIs {
 		for _, t := range Transforms {
 			add(api, t, primary)
 		}
@@ -171,7 +172,7 @@ func Markdown() string {
 	b = append(b, "\n| Placement | Where | Expected | Note |\n| --- | --- | --- | --- |\n"...)
 	for _, p := range Placements {
 		var apis []string
-		for _, api := range fp.APIs {
+		for _, api := range fp.AllAPIs {
 			if p.Build(api, Content{Value: "x"}, EscapeMinimal) != nil {
 				apis = append(apis, string(api))
 			}

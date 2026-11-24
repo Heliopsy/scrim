@@ -17,7 +17,10 @@
 //!   streamed chunk;
 //! - time added per streamed chunk while the proxy restores a 20,000-event stream with the
 //!   production placeholders, chunked at event and mid-event boundaries;
-//! - the request and chunk paths with metrics off and on (`metrics.enabled`).
+//! - the request and chunk paths with metrics off and on (`metrics.enabled`);
+//! - latency added per WebSocket message: a 4 KB Realtime event through the proxy (1,000
+//!   secrets) to a fake WebSocket provider that answers each with one event, against the same
+//!   round trip direct to the provider.
 //!
 //! # Method
 //!
@@ -1008,6 +1011,8 @@ fn main() {
         }
     }
 
+    websocket_messages(&budget, quick, rounds, &mut report.failures);
+
     println!();
     let pass = report.failures.is_empty();
     if let Ok(path) = std::env::var("SCRIM_PERF_JSON") {
@@ -1034,5 +1039,123 @@ fn main() {
             println!("BUDGET EXCEEDED: {f}");
         }
         std::process::exit(1);
+    }
+}
+
+/// Round trips of one text message on `c`, sorted.
+async fn round_trips<S>(
+    c: &mut tokio_tungstenite::WebSocketStream<S>,
+    msg: &str,
+    n: usize,
+) -> Vec<Duration>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let mut v = Vec::with_capacity(n);
+    for _ in 0..n {
+        let t = Instant::now();
+        c.send(Message::text(msg.to_string())).await.unwrap();
+        while !matches!(c.next().await, Some(Ok(Message::Text(_)))) {}
+        v.push(t.elapsed());
+    }
+    v
+}
+
+/// WebSocket message budget (performance spec, "WebSocket message budget").
+fn websocket_messages(
+    budget: &serde_json::Value,
+    quick: bool,
+    rounds: usize,
+    failures: &mut Vec<String>,
+) {
+    use scrim_llm::testing::FakeWsUpstream;
+    use scrim_llm::{Provider, Proxy, ProxyConfig, RouteConfig, SnapshotCell};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let Some(limit) = budget["websocket_message_p99_ms"].as_f64() else {
+        return;
+    };
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let iters = if quick { 50 } else { 2000 };
+    let (via, direct) = rt.block_on(async {
+        let mut fx = Fixture::generated(1000);
+        fx.fast_guard = true;
+        let up = FakeWsUpstream::start(vec![], |m| {
+            vec![m.replace("conversation.item.create", "conversation.item.done")]
+        })
+        .await;
+        let cfg = ProxyConfig {
+            routes: vec![RouteConfig {
+                name: "openai".into(),
+                prefix: "/openai".into(),
+                upstream: up.url(),
+                provider: Provider::Openai,
+                strip_prefix: true,
+                chain: None,
+                hosts: vec![],
+                auth: None,
+            }],
+            ..ProxyConfig::default()
+        };
+        let proxy = Arc::new(
+            Proxy::new(
+                cfg,
+                Arc::new(SnapshotCell::with(fx.snapshot())),
+                Arc::new(scrim_llm::NoAudit),
+            )
+            .unwrap(),
+        );
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(scrim_llm::server::serve_tcp(l, proxy, std::future::pending()));
+        let text: String = (0..4000).map(|i| (b'a' + (i % 26) as u8) as char).collect();
+        let msg = serde_json::json!({"type":"conversation.item.create","item":{"type":"message","role":"user","content":[{"type":"input_text","text":text}]}}).to_string();
+        let connect = |a: std::net::SocketAddr, path: &str| {
+            let req = format!("ws://{a}{path}").into_client_request().unwrap();
+            async move {
+                let tcp = tokio::net::TcpStream::connect(a).await.unwrap();
+                tcp.set_nodelay(true).unwrap();
+                tokio_tungstenite::client_async(req, tcp).await.unwrap().0
+            }
+        };
+        let mut via = connect(addr, "/openai/v1/realtime").await;
+        let mut direct = connect(up.addr, "/v1/realtime").await;
+        round_trips(&mut via, &msg, 50).await;
+        round_trips(&mut direct, &msg, 50).await;
+        let mut best: Option<(Duration, Duration)> = None;
+        // Nearest-rank p99 of one round's round trips.
+        let p99 = |mut v: Vec<Duration>| {
+            v.sort_unstable();
+            v[(v.len() * 99).div_ceil(100).saturating_sub(1)]
+        };
+        for _ in 0..rounds {
+            let v = round_trips(&mut via, &msg, iters).await;
+            let d = round_trips(&mut direct, &msg, iters).await;
+            let r = (p99(v), p99(d));
+            if best.is_none_or(|b| r.0.saturating_sub(r.1) < b.0.saturating_sub(b.1)) {
+                best = Some(r);
+            }
+        }
+        best.unwrap()
+    });
+    let ms = |d: Duration| d.as_secs_f64() * 1e3;
+    let added = ms(via.saturating_sub(direct));
+    println!(
+        "\n## WebSocket messages (4 KB Realtime event, 1,000 secrets)\n\n| via proxy p99 | direct p99 | added p99 | budget |\n|---|---|---|---|"
+    );
+    println!(
+        "| {:.3} ms | {:.3} ms | {added:.3} ms | {limit} ms |",
+        ms(via),
+        ms(direct)
+    );
+    if added > limit {
+        failures.push(format!(
+            "websocket message added p99: {added:.3} ms > {limit} ms"
+        ));
     }
 }

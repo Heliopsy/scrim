@@ -38,6 +38,13 @@ data:
         - {{ printf "%s.%s.svc" $short $ns }}
         - {{ printf "%s.%s" $short $ns }}
         - {{ $short }}
+      # The edge CA, never the interception CA.
+      ca:
+        cert-file: /etc/scrim/edge-ca/tls.crt
+        key: file:/etc/scrim/edge-ca/tls.key
+      {{- if .Values.edge.ca.legacyInterceptionCertificate }}
+      legacy-interception-certificate: true
+      {{- end }}
     {{- end }}
     admin:
       {{- if .Values.admin.tcp.enabled }}

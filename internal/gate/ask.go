@@ -4,6 +4,8 @@ package gate
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strconv"
 	"time"
 
@@ -17,13 +19,14 @@ import (
 // How an ask's caller was identified, in the decision's audit attribute
 // "caller".
 const (
-	CallerNone     = "none"       // the transport carried nothing: unknown
-	CallerSession  = "session"    // a verified session
-	CallerKube     = "kubernetes" // a verified Kubernetes service account token
-	CallerPeer     = "peer"       // a Unix peer mapped by identity.peers
-	CallerUnmapped = "unmapped"   // a Unix peer no session or mapping covers
-	CallerRefused  = "refused"    // a named session that could not be verified
-	CallerError    = "error"      // resolving the caller failed
+	CallerNone     = "none"        // the transport carried nothing: unknown
+	CallerSession  = "session"     // a verified session
+	CallerKube     = "kubernetes"  // a verified Kubernetes service account token
+	CallerCert     = "certificate" // a verified client certificate
+	CallerPeer     = "peer"        // a Unix peer mapped by identity.peers
+	CallerUnmapped = "unmapped"    // a Unix peer no session or mapping covers
+	CallerRefused  = "refused"     // a named session that could not be verified
+	CallerError    = "error"       // resolving the caller failed
 )
 
 // Answer handles one ask from the data plane: the data plane sends a request
@@ -94,9 +97,14 @@ func (g *Gate) caller(ctx context.Context, a *pb.AskRequest) (identity.Identity,
 	claim := identity.TransportClaim{
 		SessionID: c.GetSessionId(), Proof: c.GetSessionProof(), AskID: a.GetId(), Deadline: a.GetDeadlineUnixNano(),
 		UnixPeer: c.GetUnixPeer(), Peer: identity.Peer{UID: c.GetPeerUid(), GID: c.GetPeerGid(), PID: c.GetPeerPid()},
-		KubernetesToken: c.GetKubernetesToken(),
+		KubernetesToken: c.GetKubernetesToken(), ClientCertificateChain: c.GetClientCertificateChain(),
 	}
 	attrs := map[string]string{}
+	if chain := claim.ClientCertificateChain; len(chain) > 0 {
+		// Public: lets an operator find the certificate a refusal was about.
+		sum := sha256.Sum256(chain[0])
+		attrs["cert_sha256"] = hex.EncodeToString(sum[:])
+	}
 	if claim.SessionID != "" {
 		attrs["session"] = claim.SessionID
 	}
@@ -119,6 +127,9 @@ func (g *Gate) caller(ctx context.Context, a *pb.AskRequest) (identity.Identity,
 		if len(claim.KubernetesToken) > 0 && claim.SessionID == "" {
 			attrs["caller_token"] = CallerKube
 		}
+		if len(claim.ClientCertificateChain) > 0 {
+			attrs["caller_token"] = CallerCert
+		}
 		return identity.Unknown(claim.Peer), attrs
 	}
 	switch {
@@ -132,6 +143,13 @@ func (g *Gate) caller(ctx context.Context, a *pb.AskRequest) (identity.Identity,
 		attrs["service_account"] = id.Labels[identity.LabelServiceAccount]
 		if p := id.Labels[identity.LabelPod]; p != "" {
 			attrs["pod"] = p
+		}
+	case id.Source == identity.SourceCertificate:
+		attrs["caller"] = CallerCert
+		for _, k := range []string{identity.LabelSPIFFEID, identity.LabelCertCN} {
+			if v := id.Labels[k]; v != "" {
+				attrs[k] = v
+			}
 		}
 	default:
 		attrs["caller"] = CallerPeer

@@ -7,6 +7,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -24,6 +26,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
+	"github.com/heliopsy/scrim/internal/ca"
 	"github.com/heliopsy/scrim/internal/edge"
 	"github.com/heliopsy/scrim/internal/gate"
 	"github.com/heliopsy/scrim/internal/identity"
@@ -72,6 +75,7 @@ func startEdgeDaemon(t *testing.T, rules, entries, extraConfig string) *edgeSetu
 edge:
   listen: 127.0.0.1:0
   server-names: [scrim.scrim.svc.cluster.local, 127.0.0.1]
+  ca: {dir: `+filepath.Join(h.dir, "edge-ca")+`}
 `+extraConfig)...)
 	if err := os.WriteFile(cfgPath, cfg, 0o600); err != nil {
 		t.Fatal(err)
@@ -91,15 +95,110 @@ edge:
 }
 
 // forwarder returns a forwarder for the pod whose token is tok, trusting
-// the daemon's CA as agent pods do.
+// the daemon's edge CA as agent pods do.
 func (s *edgeSetup) forwarder(t *testing.T, tok string) *edge.Forwarder {
 	t.Helper()
-	tc, err := edge.NewTLSConfig([]byte(s.d.TrustBundlePEM()), "scrim.scrim.svc.cluster.local")
+	return s.forwarderTrusting(t, tok, s.d.EdgeTrustBundlePEM())
+}
+
+func (s *edgeSetup) forwarderTrusting(t *testing.T, tok, caPEM string) *edge.Forwarder {
+	t.Helper()
+	tc, err := edge.NewTLSConfig([]byte(caPEM), "scrim.scrim.svc.cluster.local")
 	if err != nil {
 		t.Fatal(err)
 	}
 	return &edge.Forwarder{Central: s.d.Addrs().Edge, TLS: tc, DialTimeout: 5 * time.Second,
 		Token: func() ([]byte, error) { return []byte(tok), nil }}
+}
+
+// oldForwarder is a forwarder as scrim 1.0 built it: it trusts the
+// interception CA and does not announce the edge CA.
+func (s *edgeSetup) oldForwarder(t *testing.T, tok string) *edge.Forwarder {
+	t.Helper()
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(s.d.TrustBundlePEM())) {
+		t.Fatal("no interception CA")
+	}
+	tc := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool, ServerName: "scrim.scrim.svc.cluster.local",
+		NextProtos: []string{"http/1.1"}}
+	return &edge.Forwarder{Central: s.d.Addrs().Edge, TLS: tc, DialTimeout: 5 * time.Second,
+		Token: func() ([]byte, error) { return []byte(tok), nil }}
+}
+
+// TestEdgeListenerHasItsOwnCA: the edge listener's certificate comes from
+// the edge CA, a name-constrained CA with its own key. A forwarder that
+// trusts the interception CA is refused; one that trusts the edge CA is
+// served.
+func TestEdgeListenerHasItsOwnCA(t *testing.T) {
+	s := startEdgeDaemon(t, "default: deny\n", "", "")
+	edgePEM, interception := s.d.EdgeTrustBundlePEM(), s.d.TrustBundlePEM()
+	if edgePEM == "" || interception == "" {
+		t.Fatal("no edge or interception CA")
+	}
+	if ca.SharesKey([]string{edgePEM}, []string{interception}) {
+		t.Fatal("the edge CA has the interception CA's key")
+	}
+	blk, _ := pem.Decode([]byte(edgePEM))
+	edgeCert, err := x509.ParseCertificate(blk.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !edgeCert.PermittedDNSDomainsCritical || len(edgeCert.PermittedDNSDomains) != 1 ||
+		edgeCert.PermittedDNSDomains[0] != "scrim.scrim.svc.cluster.local" || len(edgeCert.PermittedIPRanges) != 1 ||
+		!edgeCert.MaxPathLenZero {
+		t.Fatalf("edge CA constraints: dns %v ip %v pathlen0 %v", edgeCert.PermittedDNSDomains, edgeCert.PermittedIPRanges, edgeCert.MaxPathLenZero)
+	}
+	tok := s.kapi.issue("agents", "agent-a")
+	if id, err := s.forwarder(t, tok).Check(s.ctx); err != nil || id.Agent == "" {
+		t.Fatalf("forwarder trusting the edge CA: %v %v\n%s", id, err, s.h.logs.String())
+	}
+	if err := refusedCertificate(t, s.forwarderTrusting(t, tok, interception), s.ctx); err != nil {
+		t.Fatalf("a forwarder trusting the interception CA: %v", err)
+	}
+	if err := refusedCertificate(t, s.oldForwarder(t, tok), s.ctx); err != nil {
+		t.Fatalf("a 1.0 forwarder without %s: %v", edge.LegacyInterceptionCertificate.Name(), err)
+	}
+}
+
+// refusedCertificate dials through f and reports an error unless the
+// handshake failed on an unknown authority before the token was read.
+func refusedCertificate(t *testing.T, f *edge.Forwarder, ctx context.Context) error {
+	t.Helper()
+	f.Token = func() ([]byte, error) {
+		t.Error("the forwarder read its token for a central certificate it does not trust")
+		return nil, errors.New("no token")
+	}
+	c, err := f.Dial(ctx, edge.PathSSHAgent)
+	if err == nil {
+		_ = c.Close()
+		return errors.New("connected")
+	}
+	var unknown x509.UnknownAuthorityError
+	if !errors.As(err, &unknown) {
+		return fmt.Errorf("failed otherwise: %w", err)
+	}
+	return nil
+}
+
+// TestEdgeLegacyInterceptionCertificate: during an upgrade window a 1.0
+// forwarder, which trusts the interception CA and does not announce the
+// edge CA, is served the interception CA's certificate, while a current
+// forwarder still accepts only the edge CA.
+func TestEdgeLegacyInterceptionCertificate(t *testing.T) {
+	s := startEdgeDaemon(t, "default: deny\n", "", "  legacy-interception-certificate: true\n")
+	tok := s.kapi.issue("agents", "agent-a")
+	if id, err := s.oldForwarder(t, tok).Check(s.ctx); err != nil || id.Agent == "" {
+		t.Fatalf("1.0 forwarder in the upgrade window: %v %v\n%s", id, err, s.h.logs.String())
+	}
+	if id, err := s.forwarder(t, tok).Check(s.ctx); err != nil || id.Agent == "" {
+		t.Fatalf("forwarder trusting the edge CA: %v %v", id, err)
+	}
+	if err := refusedCertificate(t, s.forwarderTrusting(t, tok, s.d.TrustBundlePEM()), s.ctx); err != nil {
+		t.Fatalf("a current forwarder trusting the interception CA: %v", err)
+	}
+	if !strings.Contains(s.h.logs.String(), "legacy-interception-certificate is on") {
+		t.Fatal("no warning about the weakening setting")
+	}
 }
 
 // sshServer accepts one key for any user and reports whether the login

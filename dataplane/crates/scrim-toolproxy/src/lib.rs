@@ -90,8 +90,9 @@ pub use credential::{
     PlaceholderKind, ValidationError,
 };
 pub use decide::{
-    ClientInfo, InjectionDecision, InjectionPolicy, InjectionRequest, KUBERNETES_USER,
-    KubernetesToken, SessionVerifier, is_session_id, parse_kubernetes_token, parse_session_token,
+    ClientCertificate, ClientInfo, InjectionDecision, InjectionPolicy, InjectionRequest,
+    KUBERNETES_USER, KubernetesToken, SessionVerifier, is_session_id, parse_kubernetes_token,
+    parse_session_token,
 };
 pub use engine::{RequestSigner, Snapshot, ToolProxyConfig};
 pub use error::{ErrorCode, Refusal};

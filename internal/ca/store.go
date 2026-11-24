@@ -68,17 +68,21 @@ func (s diskState) validate() error {
 // $XDG_STATE_HOME/scrim/ca, or ~/.local/state/scrim/ca. getenv nil means
 // os.Getenv.
 func DefaultDir(getenv func(string) string) (string, error) {
+	return defaultDir(getenv, interceptionProfile.dirName)
+}
+
+func defaultDir(getenv func(string) string, name string) (string, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
 	if dir := getenv("XDG_STATE_HOME"); dir != "" && filepath.IsAbs(dir) {
-		return filepath.Join(dir, "scrim", "ca"), nil
+		return filepath.Join(dir, "scrim", name), nil
 	}
 	home, err := homeDir(getenv)
 	if err != nil {
 		return "", fmt.Errorf("ca: no XDG_STATE_HOME and %w", err)
 	}
-	return filepath.Join(home, ".local", "state", "scrim", "ca"), nil
+	return filepath.Join(home, ".local", "state", "scrim", name), nil
 }
 
 func homeDir(getenv func(string) string) (string, error) {
