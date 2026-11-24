@@ -99,6 +99,31 @@ pub struct Snapshot {
     /// which is the safe side.
     #[prost(message, repeated, tag = "14")]
     pub redaction_scopes: ::prost::alloc::vec::Vec<RedactionScope>,
+    /// client_certificates is the trust for client certificates on listeners
+    /// with `tls` set (agent-identity spec, "Mutual TLS identity"). Absent, such
+    /// a listener refuses every connection.
+    #[prost(message, optional, tag = "15")]
+    pub client_certificates: ::core::option::Option<ClientCertificateTrust>,
+}
+/// ClientCertificateTrust says which client certificates a TLS listener
+/// accepts. Everything in it is public.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClientCertificateTrust {
+    /// trust_anchors_pem are the CA certificates a client certificate must chain
+    /// to, PEM. No system roots are used.
+    #[prost(string, tag = "1")]
+    pub trust_anchors_pem: ::prost::alloc::string::String,
+    /// crls_der are certificate revocation lists, DER. Empty means revocation is
+    /// not checked (short-lived certificates). When any is present, the end
+    /// entity's issuer must have one that is current: a certificate whose issuer
+    /// has none, or whose CRL is past its next update, is refused.
+    #[prost(bytes = "vec", repeated, tag = "2")]
+    pub crls_der: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    /// server_names are the names the listener's own certificate carries,
+    /// signed by the current tool-proxy CA. A client that sends no server name,
+    /// or one not in the list, gets the first.
+    #[prost(string, repeated, tag = "3")]
+    pub server_names: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 /// RedactionScope is the redaction set of one agent's sessions: the whole
 /// dictionary minus the values whose store refused that agent's own identity.
@@ -585,6 +610,15 @@ pub struct Listener {
     /// rule is bound to, instead of passing them through untouched.
     #[prost(bool, tag = "4")]
     pub block_unrouted: bool,
+    /// tls, for BASE_URL, FORWARD_PROXY and TOOL_PROXY listeners: accept TLS
+    /// only, with a certificate for Snapshot.client_certificates.server_names,
+    /// and require a client certificate that chains to its trust anchors, is
+    /// within its validity period and is not revoked. A connection whose
+    /// certificate fails is closed in the handshake and reported as
+    /// EVENT_KIND_CLIENT_CERTIFICATE_REFUSED. Every request on the connection
+    /// carries the chain in AskCaller.client_certificate_chain.
+    #[prost(bool, tag = "5")]
+    pub tls: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RedactionSettings {
@@ -777,6 +811,15 @@ pub struct AskCaller {
     /// forwarded. Empty when the request carried no such token.
     #[prost(bytes = "vec", tag = "7")]
     pub kubernetes_token: ::prost::alloc::vec::Vec<u8>,
+    /// client_certificate_chain is the certificate chain the client presented
+    /// on a listener with `tls` set, leaf first, DER. The data plane verified it
+    /// in the handshake, which also proved the client holds the leaf's private
+    /// key; the control plane verifies the chain again against its own trust
+    /// anchors and revocation lists and maps the leaf to an agent. Public. When
+    /// it is present, session_id, session_proof and kubernetes_token are empty:
+    /// the certificate is the request's only identity.
+    #[prost(bytes = "vec", repeated, tag = "8")]
+    pub client_certificate_chain: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AskAnswer {
@@ -1319,6 +1362,8 @@ pub enum EventKind {
     Capture = 9,
     /// a client refused scrim's certificate
     InterceptionRefused = 10,
+    /// a TLS listener refused a client's certificate
+    ClientCertificateRefused = 11,
 }
 impl EventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1338,6 +1383,7 @@ impl EventKind {
             Self::Error => "EVENT_KIND_ERROR",
             Self::Capture => "EVENT_KIND_CAPTURE",
             Self::InterceptionRefused => "EVENT_KIND_INTERCEPTION_REFUSED",
+            Self::ClientCertificateRefused => "EVENT_KIND_CLIENT_CERTIFICATE_REFUSED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1354,6 +1400,9 @@ impl EventKind {
             "EVENT_KIND_ERROR" => Some(Self::Error),
             "EVENT_KIND_CAPTURE" => Some(Self::Capture),
             "EVENT_KIND_INTERCEPTION_REFUSED" => Some(Self::InterceptionRefused),
+            "EVENT_KIND_CLIENT_CERTIFICATE_REFUSED" => {
+                Some(Self::ClientCertificateRefused)
+            }
             _ => None,
         }
     }
