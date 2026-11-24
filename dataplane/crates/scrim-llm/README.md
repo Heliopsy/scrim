@@ -153,5 +153,6 @@ only once `scrim-redact` is wired in (`engine.enforce`).
 - Compressed request bodies are refused, not decompressed.
 - A placeholder written with JSON `\u` escapes inside streamed tool arguments is left unresolved.
 - Synthesised flush events in Responses streams reuse the template's `sequence_number`.
-- WebSocket provider messages are restored for OpenAI Realtime and Responses WebSocket mode only, and capture records client messages, not provider messages.
+- WebSocket provider messages are restored for OpenAI Realtime and Responses WebSocket mode only,
+  and capture records client messages, not provider messages.
 - Gemini, Bedrock, Vertex and Foundry routes are later tasks (11.3, 11.4).

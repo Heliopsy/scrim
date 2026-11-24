@@ -125,8 +125,8 @@ env_http_headers = { "x-scrim-session" = "SCRIM_SESSION_TOKEN" }
 Codex options given at the top level apply to every subcommand, so `scrim run -- codex exec ...`
 works. Codex first tries the Responses API over WebSocket. scrim serves the WebSocket and redacts
 every message like a request body; if the provider refuses the handshake, Codex falls back to HTTPS.
-Both go to scrim's loopback listener, never to the provider. Tested with Codex CLI 0.171 (HTTPS
-fallback; the WebSocket path is tested against a fake provider, not the real Codex).
+Both go to scrim's loopback listener, never to the provider. Tested with Codex CLI 0.171 over
+WebSocket, against a fake model.
 
 ### Other agents (`generic`)
 

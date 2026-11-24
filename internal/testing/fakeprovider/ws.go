@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -83,6 +84,9 @@ type wsConn struct {
 	items   []any
 	convID  string
 	events  int
+	// Responses WebSocket mode: the full input and output of each response
+	// on this connection, by response id, for previous_response_id.
+	history map[string][]any
 }
 
 func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, api API) {
@@ -395,20 +399,55 @@ func (wc *wsConn) responses(msg []byte, ex *Exchange) ([][]byte, int) {
 		return wc.responsesError(http.StatusBadRequest, "unknown_event", "unknown client event type "+jsonString(typ)), http.StatusBadRequest
 	}
 	delete(m, "type")
+	full := wc.chain(m)
 	ex.Model, _ = m["model"].(string)
 	ex.PromptBytes, ex.CachedBytes = wc.s.cache(OpenAIResponses, ex.Model, msg)
-	turn := Turn{API: OpenAIResponsesWS, Model: ex.Model, Stream: true, Body: m, Placeholders: ex.Placeholders, Header: wc.base.Header}
-	turn.ToolResults, turn.Assistant = countTurns(OpenAIResponses, m)
+	turn := Turn{API: OpenAIResponsesWS, Model: ex.Model, Stream: true, Body: full, Placeholders: ex.Placeholders, Header: wc.base.Header}
+	turn.ToolResults, turn.Assistant = countTurns(OpenAIResponses, full)
 	reply := wc.responder()(turn)
 	if reply.Status != 0 && reply.Status != http.StatusOK {
 		return wc.responsesError(reply.Status, errorCode(reply.Status), reply.Error), reply.Status
 	}
 	sum := sha256.Sum256(msg)
 	g := &gen{idSeed: hex.EncodeToString(sum[:]), chunk: wc.s.opts.ChunkSize, model: ex.Model, cached: ex.CachedBytes / 4, input: max(1, ex.PromptBytes/4)}
-	_, evs := g.responsesEvents(reply)
+	resp, evs := g.responsesEvents(reply)
+	wc.remember(resp, full)
 	out := make([][]byte, 0, len(evs))
 	for _, e := range evs {
 		out = append(out, marshalEvent(e.data))
 	}
 	return out, http.StatusOK
+}
+
+// chain returns the request as the model sees it: with previous_response_id
+// naming an earlier response on this connection, its input and output come
+// before the request's own input, as the Responses API does. An unknown id
+// leaves the request as sent.
+func (wc *wsConn) chain(m map[string]any) map[string]any {
+	prev, _ := m["previous_response_id"].(string)
+	past, ok := wc.history[prev]
+	if prev == "" || !ok {
+		return m
+	}
+	full := make(map[string]any, len(m))
+	for k, v := range m {
+		full[k] = v
+	}
+	input, _ := m["input"].([]any)
+	full["input"] = append(slices.Clone(past), input...)
+	return full
+}
+
+// remember stores a response's full input and output under its id.
+func (wc *wsConn) remember(resp, req map[string]any) {
+	id, _ := resp["id"].(string)
+	if id == "" {
+		return
+	}
+	input, _ := req["input"].([]any)
+	output, _ := resp["output"].([]any)
+	if wc.history == nil {
+		wc.history = map[string][]any{}
+	}
+	wc.history[id] = append(slices.Clone(input), output...)
 }

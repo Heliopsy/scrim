@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -346,5 +347,67 @@ func TestResponsesWebSocket(t *testing.T) {
 	// The repeated request finds its prompt in the cache.
 	if ex[4].CachedBytes == 0 {
 		t.Error("websocket mode does not report prompt caching")
+	}
+}
+
+// TestResponsesWebSocketPreviousResponse checks that a response.create naming
+// an earlier response on the socket is answered with that response's input
+// and output in front of its own, as Codex chains turns over WebSocket.
+func TestResponsesWebSocketPreviousResponse(t *testing.T) {
+	var seen []Turn
+	var mu sync.Mutex
+	fake := New(Options{Responder: func(tn Turn) Reply {
+		mu.Lock()
+		defer mu.Unlock()
+		seen = append(seen, tn)
+		if tn.ToolResults == 0 {
+			return Reply{ToolCalls: []ToolCall{{Name: "Bash", Input: map[string]any{"command": "ls"}}}}
+		}
+		return Reply{Text: "Done."}
+	}})
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	c := dialWS(t, wsURL(srv.URL, "/v1/responses"), bearer())
+
+	sendWS(t, c, websocket.MessageText, `{"type":"response.create","model":"gpt-x","input":[{"role":"user","content":"go"}]}`)
+	var done struct {
+		Response struct {
+			ID     string `json:"id"`
+			Output []struct {
+				CallID string `json:"call_id"`
+			} `json:"output"`
+		} `json:"response"`
+	}
+	evs := readWS(t, c, "response.completed")
+	if err := json.Unmarshal(evs[len(evs)-1], &done); err != nil || done.Response.ID == "" || len(done.Response.Output) != 1 {
+		t.Fatalf("first response: %v %s", err, evs[len(evs)-1])
+	}
+	next := `{"type":"response.create","model":"gpt-x","previous_response_id":"` + done.Response.ID +
+		`","input":[{"type":"function_call_output","call_id":"` + done.Response.Output[0].CallID + `","output":"a b"}]}`
+	sendWS(t, c, websocket.MessageText, next)
+	got, err := ParseEvents(OpenAIResponsesWS, readWS(t, c, "response.completed"))
+	if err != nil || got.Text != "Done." {
+		t.Fatalf("second response: %v %+v", err, got)
+	}
+	// An unknown id leaves the request as sent.
+	sendWS(t, c, websocket.MessageText, `{"type":"response.create","model":"gpt-x","previous_response_id":"resp_unknown","input":[{"role":"user","content":"again"}]}`)
+	readWS(t, c, "response.completed")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 3 {
+		t.Fatalf("%d turns", len(seen))
+	}
+	in, _ := seen[1].Body["input"].([]any)
+	if seen[1].ToolResults != 1 || len(in) != 3 {
+		t.Errorf("chained turn: %d tool results, input %v", seen[1].ToolResults, in)
+	}
+	if in, _ := seen[2].Body["input"].([]any); len(in) != 1 {
+		t.Errorf("unknown previous id: input %v", in)
+	}
+	// What was sent is recorded, not the chained input.
+	ex := fake.Exchanges()
+	if body := string(ex[len(ex)-2].Body); body != next {
+		t.Errorf("recorded %s", body)
 	}
 }
