@@ -7,8 +7,8 @@ use std::fmt;
 use zeroize::Zeroize;
 
 use crate::v1::{
-    AskCaller, CaCertificate, CaptureRequest, PlaceholderKey, RedactRequest, UpstreamProxy,
-    ValueEntry,
+    AskCaller, CaCertificate, CaptureRequest, ClientCertificateTrust, PlaceholderKey,
+    RedactRequest, UpstreamProxy, ValueEntry,
 };
 
 /// What `Debug` prints in place of secret bytes.
@@ -118,6 +118,24 @@ impl fmt::Debug for UpstreamProxy {
     }
 }
 
+impl fmt::Debug for ClientCertificateTrust {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ClientCertificateTrust")
+            .field("trust_anchors_pem", &self.trust_anchors_pem.len())
+            .field("crls_der", &self.crls_der.len())
+            .field("server_names", &self.server_names)
+            .field("listener_chain_pem", &self.listener_chain_pem.len())
+            .field("listener_key_pem", &Redacted(self.listener_key_pem.len()))
+            .finish()
+    }
+}
+
+impl Drop for ClientCertificateTrust {
+    fn drop(&mut self) {
+        self.listener_key_pem.zeroize();
+    }
+}
+
 impl Drop for UpstreamProxy {
     fn drop(&mut self) {
         self.password.zeroize();
@@ -200,6 +218,11 @@ mod tests {
         proxy.username = "scrim".into();
         proxy.password.clone_from(&secret);
         snap.upstream_proxy = Some(proxy);
+        let mut trust = crate::v1::ClientCertificateTrust::default();
+        trust.server_names = vec!["scrim.example.test".into()];
+        trust.listener_chain_pem = "-----BEGIN CERTIFICATE-----".into();
+        trust.listener_key_pem.clone_from(&secret);
+        snap.client_certificates = Some(trust);
         let out = format!("{snap:?} {snap:#?} {capture:?} {ask:?} {ask:#?} {redact:?}");
         let as_text = String::from_utf8(secret.clone()).unwrap_or_default();
         assert!(!out.contains(&as_text), "debug output leaks: {out}");
@@ -210,6 +233,7 @@ mod tests {
         assert!(out.contains(super::REDACTED));
         assert!(out.contains("bao://kv/x#token"));
         assert!(out.contains("proxy.example.test:3128"));
+        assert!(out.contains("scrim.example.test"));
     }
 
     #[test]

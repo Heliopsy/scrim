@@ -252,3 +252,86 @@ catalog:
 		t.Fatal("the credential reached the log")
 	}
 }
+
+// TestEndToEndOperatorListenerCertificate runs the daemon with the real data
+// plane and an operator's certificate for the TLS listeners: agents verify
+// the listener against the operator's CA, not scrim's, and a renewal written
+// over the same files is presented on new connections without a restart.
+func TestEndToEndOperatorListenerCertificate(t *testing.T) {
+	bin := realDataPlane(t)
+	fake := fakeprovider.New(fakeprovider.Options{})
+	up := httptest.NewServer(fake)
+	defer up.Close()
+
+	h := newHarness(t, seed(t, "sk-e2e-"))
+	agents := certtest.NewCA(t, "agents CA")
+	operator := certtest.NewCA(t, "operator CA")
+	builder := agents.Issue(t, certtest.Leaf{CN: "builder-1", SPIFFE: "spiffe://example.org/agents/builder"})
+	first := operator.Issue(t, certtest.Leaf{CN: "scrim-1", DNS: []string{"localhost"}, ServerOnly: true})
+	caFile := filepath.Join(h.dir, "agents-ca.pem")
+	certFile, keyFile := filepath.Join(h.dir, "listener.crt"), filepath.Join(h.dir, "listener.key")
+	write := func(p string, b []byte) {
+		t.Helper()
+		if err := os.WriteFile(p, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(caFile, agents.PEM)
+	write(certFile, first.CertPEM)
+	write(keyFile, first.KeyPEM)
+	h.editConfig(t, "  forward-listen: 127.0.0.1:0\n", "  forward-listen: 127.0.0.1:0\n  tls-listen: 127.0.0.1:0\n")
+	h.editConfig(t, "catalog:\n", `identity:
+  client-certificates:
+    enabled: true
+    ca: file:`+caFile+`
+    refresh: 200ms
+    listener-cert-file: `+certFile+`
+    listener-key: file:`+keyFile+`
+    agents:
+      builder: "spiffe:spiffe://example.org/agents/builder"
+catalog:
+`)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	d := h.startReal(t, ctx, bin, up.URL)
+	host := strings.TrimPrefix(d.Addrs().BaseURLTLS, "https://")
+	// The operator's certificate names localhost, not the address.
+	base := "https://" + strings.Replace(host, "127.0.0.1", "localhost", 1)
+
+	// The certificate the listener presents, verified against the operator's CA.
+	served := func() (string, error) {
+		pool := x509.NewCertPool()
+		pool.AppendCertsFromPEM(operator.PEM)
+		conn, err := tls.Dial("tcp", host, &tls.Config{RootCAs: pool, ServerName: "localhost", MinVersion: tls.VersionTLS12,
+			GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return &builder.TLS, nil }})
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = conn.Close() }()
+		return conn.ConnectionState().PeerCertificates[0].Subject.CommonName, nil
+	}
+	if cn, err := served(); err != nil || cn != "scrim-1" {
+		t.Fatalf("served %q, %v\n%s", cn, err, h.logs.String())
+	}
+	code, err := certMessages(ctx, certClient(t, string(operator.PEM), &builder, ""), base, nil, "hello")
+	if err != nil || code != http.StatusOK {
+		t.Fatalf("provider request: %d %v\n%s", code, err, h.logs.String())
+	}
+	// scrim's own CA no longer vouches for the listener.
+	if _, err := certMessages(ctx, certClient(t, d.TrustBundlePEM(), &builder, ""), base, nil, "hello"); err == nil {
+		t.Fatal("a client trusting only scrim's CA reached the listener")
+	}
+
+	// A half-written renewal (new certificate, old key) keeps the one in force; the full one replaces it.
+	second := operator.Issue(t, certtest.Leaf{CN: "scrim-2", DNS: []string{"localhost"}, ServerOnly: true})
+	write(certFile, second.CertPEM)
+	time.Sleep(time.Second)
+	if cn, err := served(); err != nil || cn != "scrim-1" {
+		t.Fatalf("after a mismatched pair: %q, %v", cn, err)
+	}
+	write(keyFile, second.KeyPEM)
+	eventually(t, "the renewed certificate served", func() bool { cn, err := served(); return err == nil && cn == "scrim-2" })
+	if strings.Contains(h.logs.String(), "PRIVATE KEY") {
+		t.Fatal("the listener key reached the log")
+	}
+}

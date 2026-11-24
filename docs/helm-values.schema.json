@@ -1050,7 +1050,18 @@
             },
             "serverNames": {
               "type": "array",
-              "description": "Names the TLS listeners' certificate is issued for besides the Service's in-cluster names: the DNS names and addresses agents outside the cluster connect to. The certificate comes from the interception CA, which agents already trust."
+              "description": "Names the TLS listeners' certificate is issued for besides the Service's in-cluster names: the DNS names and addresses agents outside the cluster connect to. The certificate comes from the interception CA, which agents already trust. Not used with listenerCertificate.existingSecret."
+            },
+            "listenerCertificate": {
+              "type": "object",
+              "description": "A certificate of your own for the TLS listeners (identity.client-certificates.listener-cert-file and listener-key), so agents verify them against your PKI instead of trusting scrim's CA.",
+              "properties": {
+                "existingSecret": {
+                  "type": "string",
+                  "description": "kubernetes.io/tls Secret with `tls.crt` (end entity first, then intermediates) and `tls.key`, such as one cert-manager keeps renewed. scrim reads both again every `refresh` and presents a renewal on new connections without a restart. Empty: scrim's CA issues it."
+                }
+              },
+              "additionalProperties": false
             },
             "llmPort": {
               "type": "integer",

@@ -54,6 +54,9 @@ monitor with nothing to scrape.
 {{- if not $cc.ca.configMap -}}
 {{- fail "identity.clientCertificates.enabled needs identity.clientCertificates.ca.configMap: a ConfigMap with the PEM bundle of the CAs that issue agent certificates" -}}
 {{- end -}}
+{{- if and $cc.listenerCertificate.existingSecret (or (eq $cc.listenerCertificate.existingSecret (include "scrim.caSecretName" .)) (eq $cc.listenerCertificate.existingSecret (include "scrim.edgeCASecretName" .))) -}}
+{{- fail (printf "identity.clientCertificates.listenerCertificate.existingSecret %q is a CA's Secret; the listeners need a server certificate" $cc.listenerCertificate.existingSecret) -}}
+{{- end -}}
 {{- if and $cc.crls.configMap (not $cc.crls.keys) -}}
 {{- fail "identity.clientCertificates.crls.configMap needs crls.keys: the key of each CRL in the ConfigMap" -}}
 {{- end -}}

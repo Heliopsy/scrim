@@ -594,7 +594,10 @@ identity:
   Service `<fullname>-mtls`, which carries nothing else, so it can be a LoadBalancer. Put no TLS
   terminator in front of it: scrim must see the certificate (TLS passthrough only).
 - Their certificate comes from scrim's CA, which agents already trust, for the Service's in-cluster
-  names and `serverNames` (the names and addresses agents outside the cluster connect to).
+  names and `serverNames` (the names and addresses agents outside the cluster connect to). To
+  present one from your own PKI instead, set `listenerCertificate.existingSecret` to a
+  `kubernetes.io/tls` Secret, such as a cert-manager Certificate's; scrim reads it again every
+  `refresh`, so a renewal is presented without restarting the pod.
 - The trust anchors and CRLs are ConfigMaps (public data), read again every `refresh`. List each CRL
   key in `crls.keys`. Without CRLs revocation is not checked; issue certificates that live for
   hours.

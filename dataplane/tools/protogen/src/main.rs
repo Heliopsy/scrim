@@ -28,6 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ".scrim.dataplane.v1.AskCaller",
         ".scrim.dataplane.v1.RedactRequest",
         ".scrim.dataplane.v1.UpstreamProxy",
+        ".scrim.dataplane.v1.ClientCertificateTrust",
     ]);
 
     tonic_prost_build::configure()

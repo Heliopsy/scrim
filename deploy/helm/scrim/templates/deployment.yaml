@@ -39,6 +39,10 @@ http://<fullname>.<namespace>.svc); the ServiceAccount is "<fullname>-proxy".
 {{- if include "scrim.clientCertsOn" . -}}
   {{- $mounts = append $mounts (dict "name" "client-ca" "mountPath" "/etc/scrim/client-ca" "readOnly" true) -}}
   {{- $vols = append $vols (dict "name" "client-ca" "configMap" (dict "name" $cc.ca.configMap "items" (list (dict "key" $cc.ca.key "path" $cc.ca.key)))) -}}
+  {{- with $cc.listenerCertificate.existingSecret -}}
+    {{- $mounts = append $mounts (dict "name" "listener-cert" "mountPath" "/etc/scrim/listener" "readOnly" true) -}}
+    {{- $vols = append $vols (dict "name" "listener-cert" "secret" (dict "secretName" . "defaultMode" 0440 "items" (list (dict "key" "tls.crt" "path" "tls.crt") (dict "key" "tls.key" "path" "tls.key")))) -}}
+  {{- end -}}
   {{- if $cc.crls.configMap -}}
     {{- $items := list -}}
     {{- range $cc.crls.keys }}{{ $items = append $items (dict "key" . "path" .) }}{{ end -}}

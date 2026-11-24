@@ -1,6 +1,6 @@
 # Central mode with client certificate identity: the TLS LLM and forward proxy listeners, their
-# Service and NetworkPolicy rule, the CA bundle and a CRL from ConfigMaps, and the edge listener
-# accepting forwarder certificates.
+# Service and NetworkPolicy rule, the CA bundle and a CRL from ConfigMaps, an operator listener
+# certificate from a TLS Secret, and the edge listener accepting forwarder certificates.
 identity:
   clientCertificates:
     enabled: true
@@ -10,6 +10,7 @@ identity:
       builder: "spiffe:spiffe://example.org/agents/builder"
       ci: "cn:ci-runner-* scope:secrets:list"
     serverNames: [scrim.example.org]
+    listenerCertificate: {existingSecret: scrim-listener-tls}
     service: {type: LoadBalancer}
 edge:
   enabled: true

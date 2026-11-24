@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -76,7 +77,10 @@ func checkSnapshotTLS(s *pb.Snapshot) error {
 	if anchors == 0 {
 		return fmt.Errorf("snapshot: %s has no trust anchors", agentapi.CertCA.Name())
 	}
-	named := false
+	if (t.GetListenerChainPem() == "") != (len(t.GetListenerKeyPem()) == 0) {
+		return fmt.Errorf("snapshot: %s and %s go together", agentapi.CertListenerCertFile.Name(), agentapi.CertListenerKey.Name())
+	}
+	named := t.GetListenerChainPem() != ""
 	for _, n := range t.GetServerNames() {
 		if strings.TrimSuffix(strings.TrimSpace(n), ".") != "" {
 			named = true
@@ -95,17 +99,27 @@ func checkSnapshotTLS(s *pb.Snapshot) error {
 }
 
 // clientCertificatesPB is the snapshot's trust for the TLS listeners, nil
-// before the trust was loaded.
-func clientCertificatesPB(t *identity.CertTrust, names []string) *pb.ClientCertificateTrust {
+// before the trust was loaded, with the operator's listener certificate
+// when lc is set.
+func clientCertificatesPB(t *identity.CertTrust, names []string, lc *identity.ListenerCert) *pb.ClientCertificateTrust {
 	if t == nil {
 		return nil
 	}
-	return &pb.ClientCertificateTrust{TrustAnchorsPem: string(t.RootsPEM), CrlsDer: t.CRLsDER, ServerNames: names}
+	out := &pb.ClientCertificateTrust{TrustAnchorsPem: string(t.RootsPEM), CrlsDer: t.CRLsDER, ServerNames: names}
+	if lc != nil {
+		var key []byte
+		if err := lc.Key.Expose(func(b []byte) error { key = slices.Clone(b); return nil }); err == nil && len(key) > 0 {
+			out.ListenerChainPem = string(lc.ChainPEM)
+			out.ListenerKeyPem = key
+		}
+	}
+	return out
 }
 
-// watchCertTrust reads the trust anchors and CRLs again every period and
-// pushes a snapshot when they changed, so the data plane checks new
-// connections against the new lists. A read that fails keeps the trust in
+// watchCertTrust reads the trust anchors and CRLs, and the operator's
+// listener certificate, again every period and pushes a snapshot when they
+// changed, so the data plane checks new connections against the new lists
+// and presents the new certificate. A read that fails keeps the trust in
 // force: a CRL that is not replaced still expires at its next update.
 func (d *Daemon) watchCertTrust(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
@@ -122,6 +136,18 @@ func (d *Daemon) watchCertTrust(ctx context.Context, every time.Duration) {
 			d.log.Warn("could not reload the client certificate trust anchors or CRLs; keeping the ones in force", "err", err)
 		case changed:
 			d.log.Info("client certificate trust anchors or CRLs changed")
+			d.pusher.Trigger()
+		}
+		if d.listenerCert == nil {
+			continue
+		}
+		changed, err = d.listenerCert.Reload()
+		switch {
+		case err != nil:
+			d.log.Warn("could not reload the listener certificate; keeping the one in force", "err", err)
+		case changed:
+			c := d.listenerCert.Current()
+			d.log.Info("listener certificate changed", "subject", c.Leaf.Subject.String(), "not_after", c.Leaf.NotAfter)
 			d.pusher.Trigger()
 		}
 	}

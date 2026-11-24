@@ -331,7 +331,8 @@ network:
 {{/*
 identity.client-certificates.*, indented under identity:. The trust anchors
 and CRLs come from ConfigMaps mounted at /etc/scrim/client-ca and
-/etc/scrim/client-crl. The listeners' certificate names the mtls Service's
+/etc/scrim/client-crl, an operator listener certificate from a TLS Secret
+mounted at /etc/scrim/listener. The listeners' certificate names the mtls Service's
 in-cluster names and serverNames.
 */}}
 {{- define "scrim.clientCertSettings" -}}
@@ -349,6 +350,10 @@ client-certificates:
 {{- end }}
   unmapped: {{ $c.unmapped }}
   refresh: {{ $c.refresh }}
+{{- if $c.listenerCertificate.existingSecret }}
+  listener-cert-file: /etc/scrim/listener/tls.crt
+  listener-key: file:/etc/scrim/listener/tls.key
+{{- end }}
   server-names:
     - {{ printf "%s.%s.svc.%s" $svc $ns .Values.global.clusterDomain }}
     - {{ printf "%s.%s.svc" $svc $ns }}

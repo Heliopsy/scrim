@@ -137,3 +137,13 @@ func (ca *CA) CRL(t testing.TB, nextUpdate time.Time, revoked ...*x509.Certifica
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: der})
 }
+
+// KeyPEM is the CA's private key, PKCS#8 PEM.
+func (ca *CA) KeyPEM(t testing.TB) []byte {
+	t.Helper()
+	kd, err := x509.MarshalPKCS8PrivateKey(ca.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: kd})
+}

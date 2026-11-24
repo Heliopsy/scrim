@@ -318,6 +318,7 @@ func (s *Supervisor) Redact(ctx context.Context, text []byte) (*pb.RedactRespons
 // out of reach; that copy is a documented limitation.
 func wipe(snap *pb.Snapshot) {
 	clear(snap.GetUpstreamProxy().GetPassword())
+	clear(snap.GetClientCertificates().GetListenerKeyPem())
 	for _, v := range snap.GetValues() {
 		clear(v.Value)
 	}

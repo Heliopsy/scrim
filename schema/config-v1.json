@@ -1013,6 +1013,23 @@
               "x-scrim-restart-required": true,
               "x-scrim-weakening": false
             },
+            "listener-cert-file": {
+              "default": "",
+              "description": "PEM certificate (end entity first, then intermediates) scrim's TLS proxy listeners present instead of one its CA issues, so agents need not trust scrim's CA for them. Needs identity.client-certificates.listener-key. Read again every identity.client-certificates.refresh: a certificate renewed in place is used for new connections; one that does not parse, does not match the key or has expired is not, and the one in force stays.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_LISTENER_CERT_FILE",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "listener-key": {
+              "default": "",
+              "description": "Reference to the PEM private key of identity.client-certificates.listener-cert-file (file:, env:, cred: or a store reference), resolved again every identity.client-certificates.refresh. One of scrim's own credentials: redacted from provider traffic and never logged.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_LISTENER_KEY",
+              "x-scrim-restart-required": true,
+              "x-scrim-secret-ref": true,
+              "x-scrim-weakening": false
+            },
             "refresh": {
               "default": "1m0s",
               "description": "How often the trust anchors and CRL files are read again. A new CRL applies to new connections within this bound.",
@@ -1028,7 +1045,7 @@
                 "127.0.0.1",
                 "::1"
               ],
-              "description": "Host names and IP addresses the certificate of scrim's TLS proxy listeners carries, signed by scrim's CA. A client that sends no server name, or one not in the list, gets the address it connected to when that is listed, else the first name.",
+              "description": "Host names and IP addresses the certificate of scrim's TLS proxy listeners carries, signed by scrim's CA. A client that sends no server name, or one not in the list, gets the address it connected to when that is listed, else the first name. Not used with identity.client-certificates.listener-cert-file.",
               "items": {
                 "type": "string"
               },
