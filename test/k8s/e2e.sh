@@ -402,7 +402,9 @@ probe_pod() {
   printf 'apiVersion: v1\nkind: Pod\nmetadata: {name: %s}\nspec: {containers: [{name: c, image: "%s"}]}\n' "$1" "$2" |
     kwait 120 -n scrim-e2e create --dry-run=server -o jsonpath='{.spec.containers[0].image}' -f - 2>&1
 }
-signed_image="ghcr.io/heliopsy/scrim:0.6.0" # x-release-please-version
+# A release that is already published and signed. Not the version being
+# released: its release pull request runs this before the image exists.
+signed_image="ghcr.io/heliopsy/scrim:0.6.2"
 # An OCI referrers index of the same repository: matched by the policy, never signed.
 unsigned_image="ghcr.io/heliopsy/scrim:sha256-490a9ca52efeba6f9ed4c886f0dba55e33325603988c6570dd29477827cf683e"
 out="$(probe_pod signed-scrim "$signed_image")" || fail "the signed release image was refused: $out"
