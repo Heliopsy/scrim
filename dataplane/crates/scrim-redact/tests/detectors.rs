@@ -587,11 +587,12 @@ fn repository_corpus() {
             continue;
         };
         bytes += text.len();
+        // Forward slashes on every platform, as DELIBERATE lists them.
         let rel = f
             .strip_prefix(&root)
             .unwrap_or(f)
             .to_string_lossy()
-            .to_string();
+            .replace('\\', "/");
         let mut out = Vec::new();
         s.redactor()
             .redact_with(text.as_bytes(), &mut out, &mut |h| {
