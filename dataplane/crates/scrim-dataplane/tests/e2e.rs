@@ -16,6 +16,10 @@
 //!   credential never restored, a deny rule refusing an injection, an ask rule answered over the
 //!   `Asks` stream (allow, deny, no answer, stream down), and break-glass.
 //!
+//! - Upstream proxy: provider routes and tool hosts reached through a `CONNECT` proxy with
+//!   credentials, TLS verified end to end inside the tunnel, `NO_PROXY` destinations direct, a
+//!   refused password failing closed.
+//!
 //! Every event, every refusal body and the data plane's own stderr are checked for the
 //! generated values.
 
@@ -46,6 +50,7 @@ use scrim_llm::testing::{FakeUpstream, Recorded, Scripted, random_value};
 use scrim_proto::v1;
 use scrim_proto::v1::data_plane_client::DataPlaneClient;
 use scrim_redact as rc;
+use scrim_upstream_proxy::testing::{Options as ProxyOptions, TestProxy};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tonic::transport::{Channel, Endpoint};
@@ -436,9 +441,10 @@ fn upstream_ca() -> CertifiedIssuer<'static, KeyPair> {
     CertifiedIssuer::self_signed(p, key).unwrap()
 }
 
-async fn tool_api(ca: &CertifiedIssuer<'static, KeyPair>) -> ToolApi {
+/// A TLS server configuration for `names`, issued by `ca`, speaking HTTP/1.1.
+fn tls_server(ca: &CertifiedIssuer<'static, KeyPair>, names: &[&str]) -> rustls::ServerConfig {
     let key = KeyPair::generate().unwrap();
-    let cert = CertificateParams::new(vec!["localhost".to_owned()])
+    let cert = CertificateParams::new(names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>())
         .unwrap()
         .signed_by(&key, ca)
         .unwrap();
@@ -454,7 +460,16 @@ async fn tool_api(ca: &CertifiedIssuer<'static, KeyPair>) -> ToolApi {
     )
     .unwrap();
     cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
-    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(cfg));
+    cfg
+}
+
+async fn tool_api(ca: &CertifiedIssuer<'static, KeyPair>) -> ToolApi {
+    tool_api_for(ca, &["localhost"]).await
+}
+
+/// The tool API with a certificate for `names`.
+async fn tool_api_for(ca: &CertifiedIssuer<'static, KeyPair>, names: &[&str]) -> ToolApi {
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls_server(ca, names)));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let seen = Arc::new(Mutex::new(Vec::new()));
@@ -1529,4 +1544,186 @@ async fn rules_deny_injection_and_asks_round_trip_over_the_asks_stream() {
 
     dp.stop(&s).await;
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ------------------------------------------------------------------ upstream proxy
+
+/// A TLS front for the fake provider, which speaks plain HTTP: terminates TLS for `names` with a
+/// certificate from `ca` and relays the bytes to `to`. Returns its port.
+async fn tls_front(
+    ca: &CertifiedIssuer<'static, KeyPair>,
+    names: &[&str],
+    to: std::net::SocketAddr,
+) -> u16 {
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls_server(ca, names)));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((tcp, _)) = listener.accept().await {
+            let acceptor = acceptor.clone();
+            tokio::spawn(async move {
+                let Ok(mut tls) = acceptor.accept(tcp).await else {
+                    return;
+                };
+                let Ok(mut up) = TcpStream::connect(to).await else {
+                    return;
+                };
+                let _ = tokio::io::copy_bidirectional(&mut tls, &mut up).await;
+            });
+        }
+    });
+    port
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn outbound_connections_go_through_the_upstream_proxy() {
+    let s = Secrets::new();
+    let dir = test_dir("upstream-proxy");
+    let ca = upstream_ca();
+    let ca_file = dir.join("upstream-ca.pem");
+    std::fs::write(&ca_file, ca.pem()).unwrap();
+    let unix = dir.join("llm.sock");
+
+    let provider = FakeUpstream::start_with(provider_stream).await;
+    // Destination names that resolve nowhere: only the proxy can reach them (it sends every
+    // tunnel to 127.0.0.1:<port>), so a direct connection attempt fails instead of passing.
+    let front = tls_front(&ca, &["api.provider.test"], provider.addr).await;
+    let api = tool_api_for(&ca, &["localhost", "tools.corp.test"]).await;
+    let pw = random_value("proxy_pw_");
+    let proxy = TestProxy::start(ProxyOptions {
+        require_authorization: Some(format!(
+            "Basic {}",
+            base64(format!("scrim:{pw}").as_bytes())
+        )),
+        ..ProxyOptions::default()
+    })
+    .await;
+    let mut dp = DataPlane::launch(&ca_file).await;
+    let stderr = Arc::clone(&dp.stderr);
+
+    // A second front: a proxy change applies to new connections, and pooled ones to the first
+    // front keep the route they were opened with.
+    let front2 = tls_front(&ca, &["api.provider.test"], provider.addr).await;
+    let with_proxy = |version: u64, password: &str, front: u16| {
+        let mut snap = snapshot(&s, &provider, api.port, &unix);
+        snap.version = version;
+        snap.routes[0].upstream = format!("https://api.provider.test:{front}");
+        snap.values[1].bound_hosts = vec![
+            format!("tools.corp.test:{}", api.port),
+            format!("localhost:{}", api.port),
+        ];
+        if let Some(p) = snap.policy.as_mut() {
+            p.table.push(rule(
+                "acme-corp",
+                v1::Effect::Allow,
+                vec![
+                    cond("op", "inject"),
+                    cond("secret.ref", "bao://kv/app#acme_key"),
+                    cond("dest.host", "tools.corp.test"),
+                ],
+            ));
+        }
+        let mut up = v1::UpstreamProxy::default();
+        up.url = format!("http://{}", proxy.addr());
+        up.no_proxy = vec!["localhost".into()];
+        up.username = "scrim".into();
+        up.password = password.as_bytes().to_vec();
+        snap.upstream_proxy = Some(up);
+        snap
+    };
+    dp.client
+        .apply_snapshot(with_proxy(1, &pw, front))
+        .await
+        .unwrap();
+    let st = dp.status().await;
+    assert!(st.ready, "{}", s.scrub(&format!("{st:?}")));
+    let base = DataPlane::listener(&st, "base");
+    let fwd = DataPlane::listener(&st, "proxy");
+    let ca_pem = st.ca_trust_bundle_pem.clone();
+
+    // 1. A provider request: redacted, then through the tunnel, TLS verified for
+    //    api.provider.test against the upstream CA.
+    let got = send_http(
+        TcpStream::connect(&base).await.unwrap(),
+        post_messages("/anthropic/v1/messages", &base, messages_request(&s)),
+    )
+    .await;
+    assert_eq!(got.status, 200, "{}", s.scrub(&got.body));
+    check_llm_round_trip(&s, &provider, 0, &got.body);
+    let seen = proxy.seen();
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    assert_eq!(seen[0].target, format!("api.provider.test:{front}"));
+    assert!(seen[0].sent_authorization && seen[0].opened);
+
+    // 2. A tool request through scrim's forward proxy: the credential is injected toward the
+    //    bound host, inside TLS the upstream proxy cannot read.
+    let req = http::Request::get("/v1/items")
+        .header("host", format!("tools.corp.test:{}", api.port))
+        .header("x-api-key", &s.api_ph)
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let got = via_proxy(&fwd, &ca_pem, "tools.corp.test", api.port, req).await;
+    assert_eq!(got.status, 200, "{}", s.scrub(&got.body));
+    assert_eq!(
+        api.seen.lock().unwrap()[0]
+            .get("x-api-key")
+            .map(http::HeaderValue::as_bytes),
+        Some(s.api.as_bytes())
+    );
+    assert!(got.body.contains(&s.api_ph), "{}", s.scrub(&got.body));
+    let seen = proxy.seen();
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    assert_eq!(seen[1].target, format!("tools.corp.test:{}", api.port));
+    // What crossed the proxy was ciphertext: no value, no placeholder, no password.
+    let relayed = String::from_utf8_lossy(&proxy.tunnelled_bytes()).into_owned();
+    s.assert_absent("bytes through the upstream proxy", &relayed);
+    assert!(!relayed.contains(&s.api_ph) && !relayed.contains(&pw));
+
+    // 3. NO_PROXY: localhost is reached directly.
+    let req = http::Request::get("/v1/items")
+        .header("host", format!("localhost:{}", api.port))
+        .header("x-api-key", &s.api_ph)
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let got = via_proxy(&fwd, &ca_pem, "localhost", api.port, req).await;
+    assert_eq!(got.status, 200, "{}", s.scrub(&got.body));
+    assert_eq!(api.seen.lock().unwrap().len(), 2);
+    assert_eq!(
+        proxy.seen().len(),
+        2,
+        "NO_PROXY destination went through the proxy"
+    );
+
+    // 4. A password the proxy refuses fails closed: nothing reaches the provider and nothing
+    //    falls back to a direct connection.
+    dp.client
+        .apply_snapshot(with_proxy(2, "wrong-password-for-test", front2))
+        .await
+        .unwrap();
+    let got = send_http(
+        TcpStream::connect(&base).await.unwrap(),
+        post_messages("/anthropic/v1/messages", &base, messages_request(&s)),
+    )
+    .await;
+    assert_eq!(got.status, 502, "{}", s.scrub(&got.body));
+    assert_eq!(provider.received().len(), 1);
+    let seen = proxy.seen();
+    assert!(
+        seen.len() > 2 && seen.iter().skip(2).all(|c| !c.opened),
+        "{seen:?}"
+    );
+    s.assert_absent("refusal", &got.body);
+
+    // 5. A proxy the data plane cannot use rejects the snapshot; the one in force stays.
+    let mut bad = with_proxy(3, &pw, front2);
+    if let Some(up) = bad.upstream_proxy.as_mut() {
+        up.url = "socks5://127.0.0.1:1080".into();
+    }
+    assert!(dp.client.apply_snapshot(bad).await.is_err());
+    assert_eq!(dp.status().await.applied_snapshot_version, 2);
+
+    dp.stop(&s).await;
+    let err = String::from_utf8_lossy(&stderr.lock().unwrap()).into_owned();
+    assert!(!err.contains(&pw), "the proxy password reached stderr");
+    assert!(!err.contains(&base64(format!("scrim:{pw}").as_bytes())));
 }

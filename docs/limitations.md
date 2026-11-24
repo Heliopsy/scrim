@@ -75,9 +75,15 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   messages are not written by capture mode. Base64 audio in Realtime events is a binary part like
   an image ([Redaction](#redaction)). Other upgrades than WebSocket are refused
   (`501 upgrade_unsupported`).
-- **`scrim run` replaces an inherited `HTTPS_PROXY`** instead of chaining to it, and runtimes with
-  their own trust store (Java, for one) do not trust scrim's CA inside the session
-  ([run.md](run.md#limitations)).
+- **A running scrim keeps its own upstream proxy.** `scrim run` chains an inherited `HTTPS_PROXY`
+  behind scrim only when it starts scrim itself; a scrim already running as a service uses the
+  upstream proxy it was configured with for every session, and `scrim run` only warns when yours
+  differs ([run.md](run.md#corporate-proxies)). Runtimes with their own trust store (Java, for one)
+  do not trust scrim's CA inside the session ([run.md](run.md#limitations)).
+- **Not every outbound connection uses the upstream proxy.** PostgreSQL, Valkey and NATS
+  connections, plugins and Kubernetes TokenReview connect directly
+  ([configuration.md](configuration.md#upstream-proxy)). Connections already open when the proxy
+  changes keep their route until they close.
 
 ## Implementation
 
@@ -88,7 +94,9 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
 - **Credentials that SDKs and HTTP clients take as strings are copied out of scrim's secret
   type.** The AWS SDK takes access keys as Go strings, so every signature copies them, and the
   copies live as long as the SDK's own. Store tokens sent in an HTTP `Authorization` header (for
-  example Infisical's access token) are strings for the length of the request. None of these can
+  example Infisical's access token) are strings for the length of the request, and the control
+  plane's HTTP clients take the upstream proxy password as a string in the proxy URL for each
+  connection. None of these can
   be wiped; they are freed and eventually overwritten.
 - **Short credentials of scrim's own are not redacted.** scrim's own credentials (notifier
   tokens, the admin and metrics tokens, audit sink, Valkey, NATS and Postgres passwords, signing

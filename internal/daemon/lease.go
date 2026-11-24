@@ -38,6 +38,9 @@ type RunEndpoints struct {
 	CACertPEM []byte
 	// Bypass lists loopback upstreams the agent must reach directly.
 	Bypass []string
+	// UpstreamProxy is the daemon's upstream proxy (URL without
+	// credentials) or "direct"; empty when the daemon does not say.
+	UpstreamProxy string
 }
 
 // Lease is one `scrim run`'s use of a daemon: a shared one found running,
@@ -127,7 +130,8 @@ func acquireSystem(ctx context.Context, cfg *config.Config) (*Lease, error) {
 		return nil, fmt.Errorf("the scrim system service is not ready: %v", ep.Problems)
 	}
 	l := &Lease{cfg: cfg, sys: c, ca: []byte(ep.CAPEM),
-		info: Info{Ready: true, Bypass: ep.Bypass, Addrs: Addrs{AgentAPI: sock, BaseURL: ep.BaseURL, ForwardProxy: ep.ForwardProxy}}}
+		info: Info{Ready: true, Bypass: ep.Bypass, UpstreamProxy: ep.UpstreamProxy,
+			Addrs: Addrs{AgentAPI: sock, BaseURL: ep.BaseURL, ForwardProxy: ep.ForwardProxy}}}
 	if ep.ForwardProxy != "" && len(l.ca) == 0 {
 		c.Close()
 		return nil, errors.New("the scrim system service runs a forward proxy but reports no CA certificate to trust")
@@ -142,7 +146,10 @@ func (l *Lease) Endpoints() RunEndpoints {
 		a = l.own.Addrs()
 	}
 	ep := RunEndpoints{APISocket: a.AgentAPI, LLMBaseURL: a.BaseURL, Routes: maps.Clone(DefaultRoutes),
-		CACertPEM: slices.Clone(l.ca), Bypass: slices.Clone(l.info.Bypass)}
+		CACertPEM: slices.Clone(l.ca), Bypass: slices.Clone(l.info.Bypass), UpstreamProxy: l.info.UpstreamProxy}
+	if l.own != nil {
+		ep.UpstreamProxy = upstreamProxyName(l.own.app.Config.Current())
+	}
 	// Cloud provider routes are read from this run's configuration; a system
 	// service is not asked for its own.
 	if l.cfg != nil {

@@ -7,7 +7,8 @@
 //! `just proto` (see `dataplane/tools/protogen`), so building the data plane
 //! needs no protoc. CI fails if the committed output is stale.
 //!
-//! [`v1::ValueEntry`] and [`v1::PlaceholderKey`] carry secret material. Their
+//! [`v1::ValueEntry`], [`v1::PlaceholderKey`], [`v1::UpstreamProxy`] and the
+//! other messages listed in `secret_fields` carry secret material. Their
 //! `Debug` output is redacted and their bytes are zeroed on drop.
 
 /// Protocol version 1 of the boundary.

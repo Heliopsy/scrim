@@ -308,6 +308,12 @@ func (c *Config) ResolveRef(ctx context.Context, ref SecretRef) (secret.Value, e
 	return c.resolver.resolve(ctx, ref)
 }
 
+// Getenv returns a variable of the environment the Config was built from
+// (Options.Environ, or the process environment), for settings whose default
+// comes from a standard variable outside the SCRIM_ namespace, such as the
+// upstream proxy from HTTPS_PROXY. Empty when unset.
+func (c *Config) Getenv(name string) string { return c.resolver.env[name] }
+
 // SecretAt returns the resolved value of a secret field by its full key:
 // a secret-ref setting (`stores.token`) or a collection secret field
 // (`stores.bao-prod.token`).

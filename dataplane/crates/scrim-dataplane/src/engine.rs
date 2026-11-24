@@ -24,6 +24,7 @@ use scrim_proto::v1;
 use scrim_toolproxy::{
     CaRing, CertificateAuthority, CompiledSnapshot, ToolProxy, UpstreamSettings,
 };
+use scrim_upstream_proxy::{ProxyHandle, UpstreamProxy};
 
 use crate::asks::{Answer, Broker};
 use crate::events::Bus;
@@ -104,6 +105,9 @@ pub struct Shared {
     pub listeners: Listeners,
     /// Metrics, when the control plane asked for them (`SCRIM_DP_METRICS`).
     pub metrics: Option<Arc<DataPlaneMetrics>>,
+    /// The upstream proxy every outbound connection of both engines goes through, from the
+    /// snapshot in force (`Snapshot.upstream_proxy`).
+    pub upstream_proxy: ProxyHandle,
     /// Serialises applies, so versions are checked and published in order.
     apply: tokio::sync::Mutex<()>,
 }
@@ -136,7 +140,9 @@ impl Shared {
         let metrics = settings
             .metrics
             .then(|| Arc::new(DataPlaneMetrics::default()));
+        let upstream_proxy = ProxyHandle::new();
         let llm_cfg = ProxyConfig {
+            upstream_proxy: upstream_proxy.clone(),
             tls: TlsConfig {
                 extra_ca_file: settings.extra_ca_file.clone(),
                 ..TlsConfig::default()
@@ -160,6 +166,7 @@ impl Shared {
             extra_roots: settings
                 .extra_roots()
                 .map_err(|e| SetupError(format!("tool proxy: {e}")))?,
+            upstream_proxy: upstream_proxy.clone(),
             ..UpstreamSettings::default()
         };
         let tool_proxy = ToolProxy::builder()
@@ -179,6 +186,7 @@ impl Shared {
             llm,
             listeners: Listeners::default(),
             metrics,
+            upstream_proxy,
             apply: tokio::sync::Mutex::new(()),
         })
     }
@@ -213,6 +221,7 @@ impl Shared {
         mut snap: v1::Snapshot,
     ) -> Result<(u64, u32), Rejected> {
         let ca = std::mem::take(&mut snap.tool_proxy_ca);
+        let proxy = upstream_proxy(snap.upstream_proxy.take())?;
         let in_force = self.applied_version();
         let this = Arc::clone(self);
         // Building the dictionary and compiling the tool proxy's credentials is CPU work of up
@@ -241,6 +250,14 @@ impl Shared {
         let version = bundle.version;
         let count = u32::try_from(bundle.applied.values.len()).unwrap_or(u32::MAX);
         let bundle = Arc::new(bundle);
+        // New connections use the snapshot's proxy from here; pooled ones keep their route until
+        // they close.
+        if let Some(p) = &proxy {
+            tracing::debug!(proxy = %p.display(), credentials = p.has_credentials(), "upstream proxy in force");
+        } else {
+            tracing::debug!("no upstream proxy: connecting directly");
+        }
+        self.upstream_proxy.set(proxy);
         // The one swap: from here every new request of every engine reads this version.
         self.snapshot.store(Some(Arc::clone(&bundle)));
         self.listeners.reconcile(&bundle.applied.listeners, self);
@@ -255,6 +272,20 @@ impl Shared {
         self.captures.detach();
         self.snapshot.store(None);
     }
+}
+
+/// The snapshot's upstream proxy. A proxy the control plane sent but this side cannot use
+/// rejects the snapshot: connecting directly instead would bypass the operator's proxy.
+fn upstream_proxy(p: Option<v1::UpstreamProxy>) -> Result<Option<UpstreamProxy>, Rejected> {
+    let Some(p) = p else {
+        return Ok(None);
+    };
+    if p.url.is_empty() {
+        return Ok(None);
+    }
+    UpstreamProxy::new(&p.url, &p.no_proxy, &p.username, &p.password)
+        .map(Some)
+        .map_err(|e| Rejected::Invalid(format!("upstream_proxy: {e}")))
 }
 
 /// Makes the tool proxy's CA ring match the generations the control plane sent: exactly one

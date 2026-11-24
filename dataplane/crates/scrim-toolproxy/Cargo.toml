@@ -32,6 +32,7 @@ rustls-native-certs = "0.8"
 scrim-dns = { path = "../scrim-dns" }
 scrim-proto = { path = "../scrim-proto" }
 scrim-redact = { path = "../scrim-redact" }
+scrim-upstream-proxy = { path = "../scrim-upstream-proxy" }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

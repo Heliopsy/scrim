@@ -1484,6 +1484,54 @@
       },
       "type": "object"
     },
+    "network": {
+      "additionalProperties": false,
+      "properties": {
+        "upstream-proxy": {
+          "additionalProperties": false,
+          "properties": {
+            "no-proxy": {
+              "default": [],
+              "description": "Destinations reached directly rather than through the upstream proxy: a host name (also matching its subdomains), .domain (subdomains only), an IP address or CIDR range, each optionally with :port, or * for all. Loopback is always direct. With the proxy from the environment, NO_PROXY is added.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-scrim-env": "SCRIM_NETWORK_UPSTREAM_PROXY_NO_PROXY",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            },
+            "password": {
+              "default": "",
+              "description": "Reference to the upstream proxy password (env:, file:, cred: or a store reference; a store reference needs that store reachable without the proxy). Redacted from provider traffic like scrim's other credentials.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_NETWORK_UPSTREAM_PROXY_PASSWORD",
+              "x-scrim-restart-required": false,
+              "x-scrim-secret-ref": true,
+              "x-scrim-weakening": false
+            },
+            "url": {
+              "default": "",
+              "description": "HTTP proxy scrim's own outbound connections go through (providers, chained upstreams, tool hosts, stores, notifiers, audit sinks, identity endpoints): http://host:port or https://host:port, as an HTTP CONNECT tunnel with TLS to the destination inside it. Empty takes HTTPS_PROXY (then https_proxy, HTTP_PROXY, http_proxy) from scrim's own environment, with its NO_PROXY; `direct` connects directly whatever the environment says. Credentials go in username and password, never in the URL.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_NETWORK_UPSTREAM_PROXY_URL",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            },
+            "username": {
+              "default": "",
+              "description": "User name sent to the upstream proxy (Basic Proxy-Authorization on every CONNECT), with network.upstream-proxy.password. Overrides the user info of an environment proxy URL.",
+              "type": "string",
+              "x-scrim-env": "SCRIM_NETWORK_UPSTREAM_PROXY_USERNAME",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
     "notify": {
       "additionalProperties": false,
       "properties": {

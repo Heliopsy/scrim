@@ -38,6 +38,10 @@ type Endpoints struct {
 	// caveman on 127.0.0.1:8787) that the agent must reach directly, never
 	// through the forward proxy, so traffic does not loop.
 	Bypass []string
+	// UpstreamProxy is where scrim's own outbound connections go: the
+	// upstream proxy's URL without credentials, "direct", or empty when the
+	// daemon does not say (an older one).
+	UpstreamProxy string
 }
 
 // route returns the prefix for provider.

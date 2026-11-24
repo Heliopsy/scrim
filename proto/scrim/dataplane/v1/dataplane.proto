@@ -18,8 +18,10 @@
 // would misread bumps PROTOCOL_VERSION; both sides and their tests change in
 // the same commit.
 //
-// Secrets: ValueEntry.value, PlaceholderKey.key, CaptureRequest.value and
-// CaCertificate.key_pem are the only fields that hold secret material.
+// Secrets: ValueEntry.value, PlaceholderKey.key, CaptureRequest.value,
+// CaCertificate.key_pem and UpstreamProxy.password are the only fields that
+// hold secret material (with AskCaller.kubernetes_token and
+// RedactRequest.text, see AGENTS.md).
 // Generated debug printers for those messages are replaced by redacting ones
 // on both sides; neither may be logged, echoed in an error or copied into an
 // event.
@@ -166,6 +168,12 @@ message Snapshot {
   // with `tls` set (agent-identity spec, "Mutual TLS identity"). Absent, such
   // a listener refuses every connection.
   ClientCertificateTrust client_certificates = 15;
+  // upstream_proxy is the HTTP proxy every outbound connection of the data
+  // plane goes through (provider routes, chained upstreams, tool hosts,
+  // transparent pass-through), as an HTTP CONNECT tunnel. Absent, the data
+  // plane connects directly, as a data plane that does not know the field
+  // does.
+  UpstreamProxy upstream_proxy = 16;
 }
 
 // ClientCertificateTrust says which client certificates a TLS listener
@@ -183,6 +191,24 @@ message ClientCertificateTrust {
   // signed by the current tool-proxy CA. A client that sends no server name,
   // or one not in the list, gets the first.
   repeated string server_names = 3;
+}
+
+// UpstreamProxy is the outbound HTTP proxy (interception spec, "Outbound
+// connections through an upstream proxy"). TLS to the destination runs
+// inside the tunnel and is verified against the destination's name; the
+// proxy sees only the CONNECT line and ciphertext.
+message UpstreamProxy {
+  // url is `http://host:port` or `https://host:port`, without user info.
+  string url = 1;
+  // no_proxy lists destinations reached directly: `*`, a host name (which
+  // also matches its subdomains), `.domain` (subdomains only), an IP address
+  // or a CIDR range, each optionally with `:port`. The control plane always
+  // includes loopback.
+  repeated string no_proxy = 2;
+  // username and password are sent as Basic `Proxy-Authorization` on every
+  // CONNECT. password is secret; both are empty without authentication.
+  string username = 3;
+  bytes password = 4;
 }
 
 // RedactionScope is the redaction set of one agent's sessions: the whole

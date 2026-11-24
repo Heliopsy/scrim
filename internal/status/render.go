@@ -77,6 +77,9 @@ func WriteHuman(w io.Writer, r Report) error {
 	for _, m := range r.Interception {
 		p.line("  %s", m)
 	}
+	if r.UpstreamProxy != "" {
+		p.line("  outbound: %s", outbound(r.UpstreamProxy))
+	}
 	for _, m := range r.AgentModes {
 		p.line("  %s:", m.Mode)
 		for _, f := range m.Files {
@@ -275,4 +278,12 @@ func when(t time.Time) string {
 		return "never"
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+// outbound describes where scrim's own connections go.
+func outbound(up string) string {
+	if up == "direct" {
+		return "direct (no upstream proxy)"
+	}
+	return "through upstream proxy " + up
 }

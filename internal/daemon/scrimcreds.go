@@ -17,6 +17,7 @@ import (
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/dbproxy"
 	"github.com/heliopsy/scrim/internal/natsconn"
+	"github.com/heliopsy/scrim/internal/netproxy"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/state/postgres"
 	"github.com/heliopsy/scrim/internal/stores/refresh"
@@ -45,8 +46,10 @@ var credFilePoll = 30 * time.Second
 // exposed"): every resolved secret-ref setting and collection secret field
 // of the running configuration (admin and metrics tokens, notifier, audit
 // sink, Valkey, NATS and PostgreSQL credentials, signing keys, the CA key,
-// placeholder keys, store credentials), the password inside
-// state.postgres.dsn and each key of a PEM bundle on their own, and the
+// placeholder keys, store credentials, the upstream proxy password), the
+// password inside state.postgres.dsn and each key of a PEM bundle on their
+// own, the password of an upstream proxy URL taken from the environment,
+// and the
 // credential files scrim's clients read themselves (nats.credentials-file,
 // identity.kubernetes.token-file). They carry no reference: redacted, never
 // injected. Database passwords have their own source (databasePasswords).
@@ -94,6 +97,12 @@ func (s *scrimCredentials) EachValue(fn func(refresh.Source, secret.Value)) {
 			part.Wipe()
 		}
 	})
+	if v := envProxyPassword(cfg); !v.IsZero() {
+		if v.Len() >= ownCredMinLen {
+			fn(refresh.Source{}, v)
+		}
+		v.Wipe()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, f := range credFiles(cfg) {
@@ -129,7 +138,30 @@ func short(cfg *config.Config) []string {
 			out = append(out, key)
 		}
 	})
+	if v := envProxyPassword(cfg); !v.IsZero() {
+		if v.Len() < ownCredMinLen {
+			out = append(out, "upstream proxy password from the environment")
+		}
+		v.Wipe()
+	}
 	return out
+}
+
+// envProxyPassword is the password in the user info of the proxy URL scrim
+// took from its environment (HTTPS_PROXY=http://user:password@proxy:3128),
+// when network.upstream-proxy.password does not replace it: one of scrim's
+// own credentials that no setting holds. The password setting itself is a
+// secret-ref setting and joins the set with the others. The caller wipes the
+// result.
+func envProxyPassword(cfg *config.Config) secret.Value {
+	if _, ok := cfg.Secret(netproxy.Password); ok {
+		return secret.Value{}
+	}
+	p, err := netproxy.Resolve(cfg)
+	if err != nil || p.Source != netproxy.SourceEnvironment {
+		return secret.Value{}
+	}
+	return p.Password()
 }
 
 // warnShort logs the settings short leaves out of the redaction set.

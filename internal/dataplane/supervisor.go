@@ -317,6 +317,7 @@ func (s *Supervisor) Redact(ctx context.Context, text []byte) (*pb.RedactRespons
 // wipe zeroes the secret bytes of a sent snapshot. The gRPC send buffer is
 // out of reach; that copy is a documented limitation.
 func wipe(snap *pb.Snapshot) {
+	clear(snap.GetUpstreamProxy().GetPassword())
 	for _, v := range snap.GetValues() {
 		clear(v.Value)
 	}
