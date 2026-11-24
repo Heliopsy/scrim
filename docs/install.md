@@ -10,10 +10,15 @@ published on its own as `scrim-dataplane`, for Kubernetes sidecars.
 | Linux arm64 | `scrim_<version>_linux_arm64.tar.gz` |
 | macOS Intel | `scrim_<version>_darwin_amd64.tar.gz` |
 | macOS Apple | `scrim_<version>_darwin_arm64.tar.gz` |
+| Windows x86-64 | `scrim_<version>_windows_amd64.tar.gz` |
+| Windows arm64 | `scrim_<version>_windows_arm64.tar.gz` |
 
 The Linux binaries are statically linked and need nothing from the host but the kernel. The macOS
-binaries need only the base system. `scrim-dataplane_<version>_<os>_<arch>.tar.gz` holds the data
-plane alone for the same four platforms.
+binaries need only the base system. The Windows binaries (`scrim.exe`) need Windows 10 version 1809
+or Windows Server 2019 or later (for Unix sockets) and nothing else: the C runtime is linked in.
+Windows supports less than Linux and macOS; see [Windows](#windows) below.
+`scrim-dataplane_<version>_<os>_<arch>.tar.gz` holds the data plane alone for the same six
+platforms.
 
 Images, both multi-arch (linux/amd64, linux/arm64), distroless, non-root (UID 65532):
 
@@ -52,7 +57,7 @@ and optionally the [GitHub CLI](https://cli.github.com/) for the provenance chec
 
 ```sh
 VERSION=1.0.0
-OS=linux        # linux or darwin
+OS=linux        # linux, darwin or windows (see Windows below)
 ARCH=amd64      # amd64 or arm64
 BASE=https://github.com/Heliopsy/scrim/releases/download/v$VERSION
 
@@ -125,13 +130,62 @@ curl -fsSLO "$BASE/checksums.txt.sigstore.json"
    To run it as a service (a systemd user or system unit, or a Quadlet container), see
    [service.md](service.md): `scrim install --user` or `sudo scrim install --system`.
 
-   On macOS a file downloaded by a browser carries the quarantine attribute; the binaries are not
-   notarised yet. After verifying, clear it with `xattr -d com.apple.quarantine scrim`. A download
-   with `curl` is not quarantined.
+   The macOS binaries are signed with a Developer ID and notarised by Apple when the release says
+   so; the release notes of a release whose darwin binaries are not notarised say that. Check a
+   binary with `codesign --verify --strict --verbose=2 scrim` (it names the Developer ID) and
+   `spctl --assess --type execute -vv scrim`. A binary that is not notarised and was downloaded by a
+   browser carries the quarantine attribute: after verifying it as above, clear it with
+   `xattr -d com.apple.quarantine scrim`. A download with `curl` is not quarantined.
 
 The SBOM for an archive is `scrim_${VERSION}_${OS}_${ARCH}.tar.gz.spdx.json`, covered by the same
 signed checksums. It lists the Go modules of the control plane and the Rust crates of the embedded
 data plane.
+
+## Windows
+
+Download and verify the archive the same way, from Git Bash or WSL with the commands above
+(`OS=windows`), or from PowerShell with `cosign.exe` and the GitHub CLI:
+
+<!-- docs-test: skip: PowerShell on Windows, downloads a published release -->
+
+```powershell
+$VERSION = "1.0.0"; $ARCH = "amd64"   # or arm64
+$BASE = "https://github.com/Heliopsy/scrim/releases/download/v$VERSION"
+$ARCHIVE = "scrim_${VERSION}_windows_${ARCH}.tar.gz"
+foreach ($f in $ARCHIVE, "checksums.txt", "checksums.txt.sigstore.json") {
+  Invoke-WebRequest -Uri "$BASE/$f" -OutFile $f
+}
+cosign verify-blob --bundle checksums.txt.sigstore.json `
+  --certificate-identity-regexp '^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$' `
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
+$want = (Select-String -Path checksums.txt -Pattern "  $ARCHIVE$").Line.Split(" ")[0]
+if ((Get-FileHash $ARCHIVE -Algorithm SHA256).Hash.ToLower() -ne $want) { throw "checksum mismatch" }
+gh attestation verify $ARCHIVE --repo Heliopsy/scrim --signer-workflow Heliopsy/scrim/.github/workflows/release.yaml
+tar -xzf $ARCHIVE scrim.exe
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Programs\scrim" | Out-Null
+Move-Item -Force scrim.exe "$env:LOCALAPPDATA\Programs\scrim\scrim.exe"
+& "$env:LOCALAPPDATA\Programs\scrim\scrim.exe" version
+```
+
+`tar` is part of Windows 10 and later. Add `%LOCALAPPDATA%\Programs\scrim` to your user `Path` to
+run `scrim` from any shell. The Windows binaries are not Authenticode-signed, so SmartScreen may warn
+about a file downloaded by a browser; the signed checksums and the provenance are what tie it to
+the release.
+
+What runs on Windows:
+
+- `scrim proxy` (the daemon) with its embedded data plane, the stores, the policy and approvals,
+  the agent API and `scrim mcp`.
+- `scrim run` with the base URL and forward proxy modes, session tokens and the CA trust variables.
+  Start it from a shell; there is no `scrim install` service unit on Windows yet.
+
+Where scrim keeps its files: when `HOME` is unset, scrim uses `%USERPROFILE%` for it, so the
+configuration is `%USERPROFILE%\.config\scrim\config.yaml` and state is under
+`%USERPROFILE%\.local\state\scrim` (set `XDG_CONFIG_HOME` or `XDG_STATE_HOME` to move them).
+Sockets go to `%TEMP%\scrim` and the unpacked data plane to `%LOCALAPPDATA%\scrim`. Directories
+scrim creates for keys and state get a DACL that grants only you, SYSTEM and Administrators, and
+scrim refuses a key or state directory whose DACL grants any other account. Settings that need Unix
+make scrim refuse to start, each named; [limitations.md](limitations.md#platforms) lists them.
 
 ## Check the published results
 
@@ -241,6 +295,47 @@ The data plane image runs stateless and needs no volume:
 ```sh
 podman run --rm --read-only --cap-drop=all ghcr.io/heliopsy/scrim-dataplane:1.0.0 --version
 ```
+
+## For maintainers: macOS signing and notarisation
+
+The release workflow signs and notarises the darwin binaries when five repository secrets are set
+(Settings, Secrets and variables, Actions, Repository secrets). With none set, the release still
+publishes; its darwin binaries are unsigned, the workflow prints a notice, and the release notes say
+they are not notarised. With only some set, the release fails and names the missing ones. Only the
+two macOS signing jobs, which build nothing, receive them.
+
+| Secret | What it holds |
+| --- | --- |
+| `APPLE_DEVELOPER_ID_P12` | base64 of a `.p12` file with the **Developer ID Application** certificate and its private key |
+| `APPLE_DEVELOPER_ID_P12_PASSWORD` | the password the `.p12` was exported with |
+| `APPLE_NOTARY_API_KEY` | base64 of the App Store Connect API key file (`AuthKey_<KEYID>.p8`) |
+| `APPLE_NOTARY_API_KEY_ID` | that key's ID (10 characters, shown next to the key) |
+| `APPLE_NOTARY_API_ISSUER_ID` | the issuer ID shown above the key list (a UUID) |
+
+To create them (needs an Apple Developer Program membership; the Account Holder creates the
+certificate):
+
+1. On a Mac, Keychain Access, Certificate Assistant, Request a Certificate From a Certificate
+   Authority, saved to disk. At developer.apple.com, Certificates, Identifiers & Profiles,
+   Certificates, add a **Developer ID Application** certificate (G2 Sub-CA) from that request,
+   download it and open it so it lands in your login keychain next to its private key.
+2. In Keychain Access, select the certificate with its key, Export, format Personal Information
+   Exchange (.p12), with a strong password. Then `base64 -i DeveloperID.p12 | pbcopy` and paste it as
+   `APPLE_DEVELOPER_ID_P12`; the password is `APPLE_DEVELOPER_ID_P12_PASSWORD`. Delete the `.p12`
+   file afterwards.
+3. At App Store Connect, Users and Access, Integrations, App Store Connect API, Team Keys, generate a
+   key with the **Developer** role. Download `AuthKey_<KEYID>.p8` (it can be downloaded once),
+   `base64 -i AuthKey_<KEYID>.p8 | pbcopy` into `APPLE_NOTARY_API_KEY`, and copy the key ID and the
+   issuer ID into the other two secrets.
+4. Dispatch the release workflow on a pre-release tag and check that the "Sign and notarise the
+   darwin binaries" job reports `Accepted`.
+
+`scripts/release/macos-sign.sh` holds the steps: a temporary keychain, `codesign` with the hardened
+runtime and a secure timestamp, `notarytool submit --wait`. The data planes are signed before they
+are embedded, so the copy inside `scrim` stays byte for byte the shipped `scrim-dataplane`. Signed
+darwin binaries carry Apple's timestamp and are not byte-reproducible; the reproducibility check
+covers linux-amd64. Bare executables cannot carry a stapled ticket, so Gatekeeper looks the
+notarisation up online the first time a downloaded binary runs.
 
 ## Build from source
 
