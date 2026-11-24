@@ -56,7 +56,9 @@ else
 fi
 [ "$got" = "$sum" ] || { echo "::error::rustup-init has sha256 $got, pinned $sum"; exit 1; }
 chmod +x "$dir/rustup-init$exe"
-"$dir/rustup-init$exe" -y --no-modify-path --profile minimal --default-toolchain none
+# A runner image with a system Rust (no rustup) in /usr/local/bin is not an
+# error: rustup goes first on PATH and the toolchain file still decides.
+RUSTUP_INIT_SKIP_PATH_CHECK=yes "$dir/rustup-init$exe" -y --no-modify-path --profile minimal --default-toolchain none
 rm -rf "$dir"
 echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
 "${CARGO_HOME:-$HOME/.cargo}/bin/rustup" --version
