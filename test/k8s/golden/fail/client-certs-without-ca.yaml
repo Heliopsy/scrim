@@ -1,0 +1,2 @@
+# expect: identity.clientCertificates.enabled needs identity.clientCertificates.ca.configMap
+identity: {clientCertificates: {enabled: true}}

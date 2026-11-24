@@ -1,0 +1,99 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: Client certificate identity (identity.clientCertificates.*)
+templates:
+  - config.yaml
+  - deployment.yaml
+  - client-certificates.yaml
+  - networkpolicy.yaml
+release:
+  name: rel
+  namespace: ns
+set:
+  identity.clientCertificates.enabled: true
+  identity.clientCertificates.ca.configMap: agents-ca
+tests:
+  - it: renders nothing by default
+    template: client-certificates.yaml
+    set:
+      identity.clientCertificates.enabled: false
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: leaves the TLS listeners and client-certificates out by default
+    template: config.yaml
+    set:
+      identity.clientCertificates.enabled: false
+    asserts:
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: "tls-listen|client-certificates"}
+  - it: serves the TLS listeners and trusts the mounted CA bundle only
+    template: config.yaml
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "forward-listen: 0.0.0.0:9791\n  tls-listen: 0.0.0.0:9796\n  forward-tls-listen: 0.0.0.0:9797\n"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "client-certificates:\n    enabled: true\n    ca: file:/etc/scrim/client-ca/ca.crt\n    unmapped: unknown\n    refresh: 1m\n"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "server-names:\n      - rel-scrim-mtls.ns.svc.cluster.local\n      - rel-scrim-mtls.ns.svc\n      - rel-scrim-mtls.ns\n      - rel-scrim-mtls\n"}
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: crl-files}
+  - it: lists each CRL, adds serverNames and maps agents
+    template: config.yaml
+    set:
+      identity.clientCertificates.crls: {configMap: crl, keys: [a.crl, b.crl]}
+      identity.clientCertificates.serverNames: [scrim.example.org, 192.0.2.10]
+      identity.clientCertificates.agents: {ci: "cn:ci-*"}
+      identity.clientCertificates.unmapped: derive
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "crl-files:\n      - /etc/scrim/client-crl/a.crl\n      - /etc/scrim/client-crl/b.crl\n"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "      - rel-scrim-mtls\n      - \"scrim.example.org\"\n      - \"192.0.2.10\"\n    agents:\n      ci: cn:ci-\\*\n"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "unmapped: derive"}
+  - it: forwardPort 0 serves the TLS base URL only
+    set:
+      identity.clientCertificates.forwardPort: 0
+    asserts:
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: forward-tls-listen}
+        template: config.yaml
+      - equal:
+          path: spec.ports
+          value: [{name: mtls-llm, port: 9796, targetPort: mtls-llm, protocol: TCP, appProtocol: https}]
+        template: client-certificates.yaml
+  - it: mounts the CA bundle and the CRLs from their ConfigMaps
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Deployment}
+    set:
+      identity.clientCertificates.crls: {configMap: crl, keys: [a.crl]}
+    asserts:
+      - contains: {path: spec.template.spec.volumes, content: {name: client-ca, configMap: {name: agents-ca, items: [{key: ca.crt, path: ca.crt}]}}}
+      - contains: {path: spec.template.spec.volumes, content: {name: client-crl, configMap: {name: crl, items: [{key: a.crl, path: a.crl}]}}}
+      - contains: {path: 'spec.template.spec.containers[0].volumeMounts', content: {name: client-ca, mountPath: /etc/scrim/client-ca, readOnly: true}}
+      - contains: {path: 'spec.template.spec.containers[0].ports', content: {name: mtls-llm, containerPort: 9796, protocol: TCP}}
+      - contains: {path: 'spec.template.spec.containers[0].ports', content: {name: mtls-forward, containerPort: 9797, protocol: TCP}}
+  - it: keeps the TLS listeners off the central Service
+    template: deployment.yaml
+    documentSelector: {path: kind, value: Service}
+    asserts:
+      - notContains: {path: spec.ports, content: {name: mtls-llm, port: 9796, targetPort: mtls-llm, protocol: TCP, appProtocol: https}}
+      - lengthEqual: {path: spec.ports, count: 2}
+  - it: gives the TLS listeners a Service of their own
+    template: client-certificates.yaml
+    set:
+      identity.clientCertificates.service: {type: LoadBalancer, annotations: {a: b}}
+    asserts:
+      - equal: {path: metadata.name, value: rel-scrim-mtls}
+      - equal: {path: spec.type, value: LoadBalancer}
+      - equal: {path: metadata.annotations.a, value: b}
+      - contains: {path: spec.ports, content: {name: mtls-forward, port: 9797, targetPort: mtls-forward, protocol: TCP}}
+  - it: opens the TLS ports to every source unless clientCertificatesFrom narrows them
+    template: networkpolicy.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim}
+    set:
+      networkPolicy.enabled: true
+    asserts:
+      - contains:
+          path: spec.ingress
+          content: {ports: [{port: 9796, protocol: TCP}, {port: 9797, protocol: TCP}]}
+  - it: narrows the TLS ports to clientCertificatesFrom
+    template: networkpolicy.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim}
+    set:
+      networkPolicy.enabled: true
+      networkPolicy.clientCertificatesFrom: [{ipBlock: {cidr: 192.0.2.0/24}}]
+    asserts:
+      - contains:
+          path: spec.ingress
+          content: {from: [{ipBlock: {cidr: 192.0.2.0/24}}], ports: [{port: 9796, protocol: TCP}, {port: 9797, protocol: TCP}]}

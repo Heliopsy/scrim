@@ -1,0 +1,3 @@
+# expect: identity.clientCertificates.enabled serves TLS listeners in central scrim
+central: {enabled: false}
+identity: {clientCertificates: {enabled: true, ca: {configMap: c}}}

@@ -1,0 +1,15 @@
+{{- /* SPDX-License-Identifier: AGPL-3.0-only */ -}}
+{{- /*
+Client certificate identity (identity.clientCertificates.*): a Service with the
+TLS listeners only, which require a client certificate, so it can be exposed
+outside the cluster (TLS passthrough) without exposing the plain listeners.
+*/ -}}
+{{- if include "scrim.clientCertsOn" . }}
+{{- $c := .Values.identity.clientCertificates -}}
+{{- $ports := list (dict "name" "mtls-llm" "port" (int $c.llmPort) "targetPort" "mtls-llm" "protocol" "TCP" "appProtocol" "https") -}}
+{{- if $c.forwardPort -}}
+  {{- $ports = append $ports (dict "name" "mtls-forward" "port" (int $c.forwardPort) "targetPort" "mtls-forward" "protocol" "TCP") -}}
+{{- end -}}
+{{- include "chart.std.service" (dict "root" . "comp" "proxy" "values" (dict "service" $c.service)
+      "name" (include "scrim.mtlsServiceName" .) "ports" $ports) }}
+{{- end }}

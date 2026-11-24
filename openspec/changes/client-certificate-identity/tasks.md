@@ -27,4 +27,4 @@
 ## 5. Follow-ups (not in this change)
 
 - [ ] 5.1 Optional operator-supplied certificate and key for the TLS listeners (needs a secret field in the snapshot)
-- [ ] 5.2 Helm chart values for `identity.client-certificates.*` and the TLS listener settings
+- [x] 5.2 Helm chart values for `identity.client-certificates.*` and the TLS listener settings

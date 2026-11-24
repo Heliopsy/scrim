@@ -1,0 +1,17 @@
+# Sidecar mode behind a corporate proxy: the in-pod scrim gets the same network.upstream-proxy and
+# mounts the password Secret, which exists in every agent namespace.
+central:
+  enabled: false
+agents:
+  namespaces: [agents]
+kyverno:
+  enabled: true
+sidecar:
+  enabled: true
+  egressGuard: {image: registry.example.com/nft:1}
+upstreamProxy:
+  url: https://proxy.corp.example:3129
+  username: scrim
+secrets:
+  existing:
+    upstream-proxy: corp-proxy

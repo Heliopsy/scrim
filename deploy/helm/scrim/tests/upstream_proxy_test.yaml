@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+suite: Upstream proxy (upstreamProxy.*)
+templates:
+  - config.yaml
+  - agents.yaml
+  - deployment.yaml
+  - secrets.yaml
+release:
+  name: rel
+  namespace: ns
+set:
+  upstreamProxy.url: http://proxy.corp.example:3128
+tests:
+  - it: sets nothing without a url, so scrim's environment applies
+    template: config.yaml
+    set:
+      upstreamProxy.url: ""
+    asserts:
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: "upstream-proxy"}
+  - it: reaches in-cluster Services directly by default
+    template: config.yaml
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "network:\n  upstream-proxy:\n    url: \"http://proxy.corp.example:3128\"\n    no-proxy:\n      - .svc\n      - .cluster.local\n"}
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: "username|password"}
+  - it: adds noProxy after the in-cluster entries, once each, in the cluster's domain
+    template: config.yaml
+    set:
+      upstreamProxy.noProxy: [10.0.0.0/8, .svc]
+      global.clusterDomain: k8s.example
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "no-proxy:\n      - .svc\n      - .k8s.example\n      - 10.0.0.0/8\nadmin:"}
+  - it: inClusterDirect off leaves noProxy as given
+    template: config.yaml
+    set:
+      upstreamProxy.inClusterDirect: false
+      upstreamProxy.noProxy: [bao.internal]
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "no-proxy:\n      - bao.internal\n"}
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: "- .svc"}
+  - it: direct adds no no-proxy entries
+    template: config.yaml
+    set:
+      upstreamProxy.url: direct
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "upstream-proxy:\n    url: \"direct\"\nadmin:"}
+  - it: takes the password from the Secret slot, mounted in central scrim
+    set:
+      upstreamProxy.username: scrim
+      secrets.existing.upstream-proxy: corp-proxy
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "username: \"scrim\"\n    password: file:/run/secrets/scrim/upstream-proxy/password\n"}
+        template: config.yaml
+      - contains:
+          path: spec.template.spec.volumes
+          content: {name: upstream-proxy-secret, secret: {secretName: corp-proxy, defaultMode: 0440, items: [{key: password, path: password}]}}
+        template: deployment.yaml
+        documentSelector: {path: kind, value: Deployment}
+  - it: renders an ExternalSecret for the slot
+    template: secrets.yaml
+    set:
+      secrets.externalSecrets: {enabled: true, secretStoreRef: {name: s}, data: {upstream-proxy: {password: corp/proxy}}}
+    asserts:
+      - containsDocument: {kind: ExternalSecret, apiVersion: external-secrets.io/v1, name: rel-scrim-upstream-proxy}
+  - it: gives the sidecar the same proxy
+    template: agents.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim-sidecar-config}
+    set:
+      central.enabled: false
+      sidecar.enabled: true
+      sidecar.egressGuard.enabled: false
+      agents.namespaces: [agents]
+      secrets.existing.upstream-proxy: corp-proxy
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "upstream-proxy:\n    url: \"http://proxy.corp.example:3128\"\n"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "password: file:/run/secrets/scrim/upstream-proxy/password"}

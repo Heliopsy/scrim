@@ -35,12 +35,24 @@ http://<fullname>.<namespace>.svc); the ServiceAccount is "<fullname>-proxy".
   {{- $mounts = append $mounts (dict "name" "upstream-ca" "mountPath" "/etc/scrim/upstream-ca" "readOnly" true) -}}
   {{- $vols = append $vols (dict "name" "upstream-ca" "configMap" (dict "name" .Values.upstreamCA.configMap)) -}}
 {{- end -}}
+{{- $cc := .Values.identity.clientCertificates -}}
+{{- if include "scrim.clientCertsOn" . -}}
+  {{- $mounts = append $mounts (dict "name" "client-ca" "mountPath" "/etc/scrim/client-ca" "readOnly" true) -}}
+  {{- $vols = append $vols (dict "name" "client-ca" "configMap" (dict "name" $cc.ca.configMap "items" (list (dict "key" $cc.ca.key "path" $cc.ca.key)))) -}}
+  {{- if $cc.crls.configMap -}}
+    {{- $items := list -}}
+    {{- range $cc.crls.keys }}{{ $items = append $items (dict "key" . "path" .) }}{{ end -}}
+    {{- $mounts = append $mounts (dict "name" "client-crl" "mountPath" "/etc/scrim/client-crl" "readOnly" true) -}}
+    {{- $vols = append $vols (dict "name" "client-crl" "configMap" (dict "name" $cc.crls.configMap "items" $items)) -}}
+  {{- end -}}
+{{- end -}}
 {{- /* Secret slots: the setting references /run/secrets/scrim/<slot>/<key>. */ -}}
 {{- $slots := list -}}
 {{- if .Values.postgres.enabled }}{{ $slots = append $slots (list "postgres" "dsn") }}{{ end -}}
 {{- if .Values.admin.tcp.enabled }}{{ $slots = append $slots (list "admin" "token") }}{{ end -}}
 {{- if and $m.enabled (not $m.allowUnauthenticatedRemote) }}{{ $slots = append $slots (list "metrics" "token") }}{{ end -}}
 {{- range (include "scrim.scaleSlots" . | fromJsonArray) }}{{ $slots = append $slots . }}{{ end -}}
+{{- if and .Values.upstreamProxy.url (include "scrim.slotSupplied" (list . "upstream-proxy")) }}{{ $slots = append $slots (list "upstream-proxy" "password") }}{{ end -}}
 {{- range $slots -}}
   {{- $slot := index . 0 -}}
   {{- $key := include "chart.secretKey" (list $ $slot (index . 1)) -}}
@@ -89,6 +101,13 @@ http://<fullname>.<namespace>.svc); the ServiceAccount is "<fullname>-proxy".
 {{- if .Values.edge.enabled -}}
   {{- $ports = append $ports (dict "name" "edge" "containerPort" (int .Values.edge.port) "protocol" "TCP") -}}
   {{- $svcPorts = append $svcPorts (dict "name" "edge" "port" (int .Values.edge.port) "targetPort" "edge" "protocol" "TCP") -}}
+{{- end -}}
+{{- if include "scrim.clientCertsOn" . -}}
+  {{- /* Exposed by the mtls Service (client-certificates.yaml), not the central one. */ -}}
+  {{- $ports = append $ports (dict "name" "mtls-llm" "containerPort" (int $cc.llmPort) "protocol" "TCP") -}}
+  {{- if $cc.forwardPort -}}
+    {{- $ports = append $ports (dict "name" "mtls-forward" "containerPort" (int $cc.forwardPort) "protocol" "TCP") -}}
+  {{- end -}}
 {{- end -}}
 {{- if $iss.enabled -}}
   {{- /* Exposed by the issuer's own Service (issuer.yaml), not the central one. */ -}}

@@ -228,7 +228,8 @@ By default scrim uses the proxy it was started with: `HTTPS_PROXY`, then `https_
 `HTTP_PROXY` and `http_proxy`, with the hosts in `NO_PROXY` (or `no_proxy`) reached directly. A
 scrim that `scrim run` starts runs in your shell's environment, so a corporate `HTTPS_PROXY` in
 your shell is its upstream without any configuration. A service started by systemd, launchd or
-Kubernetes has its own environment: set the proxy there or in the configuration.
+Kubernetes has its own environment: set the proxy there or in the configuration (with the Helm
+chart, `upstreamProxy`, [kubernetes.md](kubernetes.md#upstream-proxy)).
 
 ```yaml
 network:

@@ -1,0 +1,3 @@
+# expect: config.network.upstream-proxy conflicts with upstreamProxy.url
+upstreamProxy: {url: "http://proxy:3128"}
+config: {network: {upstream-proxy: {url: "http://other:3128"}}}

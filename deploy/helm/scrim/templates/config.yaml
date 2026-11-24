@@ -22,12 +22,22 @@ data:
     proxy:
       listen: 0.0.0.0:9790
       forward-listen: 0.0.0.0:9791
+      {{- if include "scrim.clientCertsOn" . }}
+      {{- $cc := .Values.identity.clientCertificates }}
+      tls-listen: 0.0.0.0:{{ $cc.llmPort }}
+      {{- if $cc.forwardPort }}
+      forward-tls-listen: 0.0.0.0:{{ $cc.forwardPort }}
+      {{- end }}
+      {{- end }}
     {{- if .Values.upstreamCA.configMap }}
     dataplane:
       upstream-ca-file: /etc/scrim/upstream-ca/{{ .Values.upstreamCA.key }}
     {{- end }}
     {{- include "scrim.metricsSettings" (dict "root" . "listen" (printf "0.0.0.0:%v" .Values.metrics.port)) | nindent 4 }}
     {{- include "scrim.identitySettings" (dict "root" . "issuer" true) | nindent 4 }}
+    {{- with include "scrim.upstreamProxySettings" . | trim }}
+    {{- . | nindent 4 }}
+    {{- end }}
     {{- if .Values.edge.enabled }}
     {{- $short := include "scrim.fullname" . }}
     {{- $ns := include "scrim.namespace" . }}
