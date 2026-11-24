@@ -596,6 +596,84 @@ func (t *Tx) QueryAudit(ctx context.Context, q state.AuditQuery) ([]audit.Entry,
 	return collect(t.db, rows, "query audit", scanAudit)
 }
 
+// --- redaction tokens
+
+const redactionTokenCols = `id, kind, key_version, sealed, created_at, expires_at`
+
+// PutRedactionToken implements [state.Tx]. One statement on both engines,
+// so two replicas sharing the same token at once both succeed.
+func (t *Tx) PutRedactionToken(ctx context.Context, r *state.RedactionToken) error {
+	if err := t.begin("PutRedactionToken", true); err != nil {
+		return err
+	}
+	if r.ID == "" || r.ExpiresAt.IsZero() || len(r.Sealed) == 0 {
+		return fmt.Errorf("put redaction token: id, expiry and sealed bytes are required")
+	}
+	// The sealed bytes go in as []byte, which the scrubber leaves alone:
+	// they are ciphertext, and a scrubbed copy could not be opened.
+	_, err := t.exec(ctx, "put redaction token",
+		`INSERT INTO redaction_tokens (`+redactionTokenCols+`) VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (id) DO UPDATE SET sealed = excluded.sealed, key_version = excluded.key_version,
+		   expires_at = CASE WHEN excluded.expires_at > redaction_tokens.expires_at
+		                     THEN excluded.expires_at ELSE redaction_tokens.expires_at END`,
+		r.ID, r.Kind, int64(r.KeyVersion), r.Sealed, ts(r.CreatedAt), ts(r.ExpiresAt))
+	return err
+}
+
+func scanRedactionToken(sc interface{ Scan(...any) error }) (state.RedactionToken, error) {
+	var (
+		r                state.RedactionToken
+		version          int64
+		created, expires sql.NullInt64
+	)
+	if err := sc.Scan(&r.ID, &r.Kind, &version, &r.Sealed, &created, &expires); err != nil {
+		return r, err
+	}
+	if version < 1 || version > 255 {
+		return r, fmt.Errorf("redaction token %s: stored key version out of range", r.ID)
+	}
+	r.KeyVersion = int(version)
+	r.CreatedAt, r.ExpiresAt = fromTS(created), fromTS(expires)
+	return r, nil
+}
+
+// GetRedactionToken implements [state.Tx].
+func (t *Tx) GetRedactionToken(ctx context.Context, id string) (*state.RedactionToken, error) {
+	if err := t.begin("GetRedactionToken", false); err != nil {
+		return nil, err
+	}
+	r, err := scanRedactionToken(t.row(ctx, `SELECT `+redactionTokenCols+` FROM redaction_tokens WHERE id = ?`, id))
+	if err != nil {
+		return nil, t.db.mapErr(err, "get redaction token")
+	}
+	return &r, nil
+}
+
+// ListRedactionTokens implements [state.Tx].
+func (t *Tx) ListRedactionTokens(ctx context.Context, liveAt time.Time) ([]state.RedactionToken, error) {
+	if err := t.begin("ListRedactionTokens", false); err != nil {
+		return nil, err
+	}
+	rows, err := t.query(ctx, "list redaction tokens",
+		`SELECT `+redactionTokenCols+` FROM redaction_tokens WHERE expires_at > ? ORDER BY id`, liveAt.UnixNano())
+	if err != nil {
+		return nil, err
+	}
+	return collect(t.db, rows, "list redaction tokens", scanRedactionToken)
+}
+
+// DeleteRedactionTokens implements [state.Tx].
+func (t *Tx) DeleteRedactionTokens(ctx context.Context, expiredAt time.Time) (int, error) {
+	if err := t.begin("DeleteRedactionTokens", true); err != nil {
+		return 0, err
+	}
+	res, err := t.exec(ctx, "delete redaction tokens", `DELETE FROM redaction_tokens WHERE expires_at <= ?`, expiredAt.UnixNano())
+	if err != nil {
+		return 0, err
+	}
+	return int(affected(res)), nil
+}
+
 // --- events
 
 // Emit implements [state.Tx].

@@ -291,8 +291,9 @@ export CODEX_CA_CERTIFICATE=~/.local/share/scrim/ca-bundle.pem
 codex
 ```
 
-Codex first tries the Responses API over WebSocket. scrim serves HTTP only, so Codex falls back to
-HTTPS after a few seconds; both attempts go through scrim (observed in `scrim run`'s Codex tests).
+Codex first tries the Responses API over WebSocket. scrim serves the WebSocket and redacts each
+message as it redacts a request body; if the provider refuses the handshake, Codex falls back to
+HTTPS. Both go through scrim.
 
 Other runtimes are in [CA trust per runtime](#ca-trust-per-runtime).
 

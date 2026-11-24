@@ -54,11 +54,23 @@ pub fn prepare_timed(
     body: &[u8],
     timed: bool,
 ) -> Result<Outgoing, Refusal> {
+    prepare_planned(snap, body, timed, |b| codec::plan(api, b))
+}
+
+/// [`prepare_timed`] with the codec plan made by `planner` (WebSocket messages, whose events are
+/// planned per protocol in [`crate::websocket`]). It is called again when text documents inside
+/// binary parts were redacted and the body re-encoded.
+pub(crate) fn prepare_planned(
+    snap: &Snapshot,
+    body: &[u8],
+    timed: bool,
+    planner: impl Fn(&[u8]) -> Result<codec::Plan, codec::PlanError>,
+) -> Result<Outgoing, Refusal> {
     let clock = || timed.then(Instant::now);
     let since = |t: Option<Instant>| t.map_or(Duration::ZERO, |t| t.elapsed());
     let started = clock();
     let malformed = |e: codec::PlanError| Refusal::new(RefusalReason::MalformedBody, e.to_string());
-    let mut plan = codec::plan(api, body).map_err(malformed)?;
+    let mut plan = planner(body).map_err(malformed)?;
     let mut report = RedactReport::default();
     let mut text_repaired = Vec::new();
     let spliced;
@@ -81,7 +93,7 @@ pub fn prepare_timed(
                 text.edits.sort_unstable_by_key(|e| e.0);
                 spliced = crate::json::splice(body, &text.edits);
                 body = &spliced;
-                plan = codec::plan(api, body).map_err(malformed)?;
+                plan = planner(body).map_err(malformed)?;
             }
             report = text.report;
             text_repaired = text.guard_repaired;

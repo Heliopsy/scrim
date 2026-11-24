@@ -15,6 +15,7 @@ pub(crate) mod anthropic;
 pub(crate) mod converse;
 pub mod gemini;
 pub(crate) mod openai_chat;
+pub(crate) mod openai_realtime;
 pub(crate) mod openai_responses;
 
 use crate::engine::RestoreSite;
@@ -114,7 +115,7 @@ impl Plan {
         });
     }
 
-    fn finish(mut self) -> Self {
+    pub(crate) fn finish(mut self) -> Self {
         self.verbatim.sort_unstable();
         let mut merged: Vec<(usize, usize)> = Vec::with_capacity(self.verbatim.len());
         for (s, e) in self.verbatim {

@@ -67,11 +67,14 @@ type Options struct {
 	SeedsOut string
 	// Suites to run; default both.
 	Suites []string
-	// APIs to run; default all.
+	// APIs to run; default all, the WebSocket ones included
+	// ([fp.AllAPIs]). The scenario corpus runs on the HTTP ones only.
 	APIs []fp.API
 	// Rows keeps matrix rows whose ID starts with any of these prefixes.
 	Rows []string
-	// Prefix maps an API to the proxy's route prefix for it.
+	// Prefix maps an API to the proxy's route prefix for it. A WebSocket
+	// API without an entry of its own takes the openai-responses entry: both
+	// are OpenAI routes.
 	Prefix map[fp.API]string
 	// Header is sent with every request (the agent's provider auth).
 	Header http.Header
@@ -123,7 +126,14 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 		}
 	}
 	if len(o.APIs) == 0 {
-		o.APIs = fp.APIs
+		o.APIs = fp.AllAPIs
+	}
+	if p, ok := o.Prefix[fp.OpenAIResponses]; ok {
+		for _, api := range fp.WSAPIs {
+			if _, set := o.Prefix[api]; !set {
+				o.Prefix[api] = p
+			}
+		}
 	}
 	if o.Proxy == "" {
 		return nil, errors.New("no proxy: pass --proxy URL (or builtin:passthrough / builtin:naive to test the suite itself)")
@@ -369,6 +379,10 @@ func ParseAPI(s string) (fp.API, error) {
 		return fp.OpenAIResponses, nil
 	case "gemini", "google", "google-gemini":
 		return fp.Gemini, nil
+	case "openai-realtime", "realtime":
+		return fp.OpenAIRealtime, nil
+	case "openai-responses-ws", "responses-ws":
+		return fp.OpenAIResponsesWS, nil
 	}
-	return "", fmt.Errorf("unknown api %q (anthropic, openai-chat, openai-responses, gemini)", s)
+	return "", fmt.Errorf("unknown api %q (anthropic, openai-chat, openai-responses, gemini, openai-realtime, openai-responses-ws)", s)
 }

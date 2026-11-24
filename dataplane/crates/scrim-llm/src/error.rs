@@ -18,7 +18,12 @@
 //! | `chain_unavailable`    | 502    | chained upstream unreachable, `on-unavailable: fail`   |
 //! | `upstream_unavailable` | 502    | provider unreachable                                   |
 //! | `policy_denied`        | 403    | denied by a rule, or the approval was not granted      |
-//! | `upgrade_unsupported`  | 501    | protocol upgrade (WebSocket), refused before anything  |
+//! | `upgrade_unsupported`  | 501    | protocol upgrade other than WebSocket, or a WebSocket  |
+//! |                        |        | handshake on a listener that cannot upgrade            |
+//!
+//! On an open WebSocket connection a refusal cannot be an HTTP response: the client gets one
+//! text message, [`Refusal::ws_event`], and a close frame with [`Refusal::close_code`] and the
+//! reason code as the close reason.
 //!
 //! 422 is the redaction-failed status: every redaction or guard failure uses it, and nothing is
 //! forwarded. Every proxy-generated response carries `x-scrim-error: <reason>` so it is never
@@ -125,7 +130,7 @@ impl Refusal {
             RefusalReason::UpstreamUnavailable => "scrim: the provider is unreachable",
             RefusalReason::PolicyDenied => "scrim: request denied by policy",
             RefusalReason::UpgradeUnsupported => {
-                "scrim: protocol upgrades (WebSocket) cannot be redacted; use HTTPS requests"
+                "scrim: this protocol upgrade cannot be redacted; only WebSocket is supported"
             }
             RefusalReason::CredentialUnavailable => {
                 "scrim: the provider credentials for this route are unavailable"
@@ -149,6 +154,37 @@ impl Refusal {
             );
         }
         m
+    }
+
+    /// The WebSocket close code for a refusal on an open connection (RFC 6455 section 7.4):
+    /// 1009 for a message over the limit, 1013 (try again later) when values or credentials are
+    /// not loaded, 1014 (bad gateway) when the provider failed, 1011 when capture failed, and
+    /// 1008 (policy violation) for everything else, every redaction and guard failure included.
+    pub fn close_code(&self) -> u16 {
+        match self.reason {
+            RefusalReason::BodyTooLarge => 1009,
+            RefusalReason::NotReady | RefusalReason::CredentialUnavailable => 1013,
+            RefusalReason::UpstreamUnavailable | RefusalReason::ChainUnavailable => 1014,
+            RefusalReason::CaptureFailed => 1011,
+            _ => 1008,
+        }
+    }
+
+    /// The error event sent on an open WebSocket connection before it is closed, in the shape of
+    /// an `OpenAI` Realtime and Responses `error` event:
+    /// `{"type":"error","error":{"type":"scrim_error","code":...,"message":...}}`. It carries
+    /// nothing from the refused message, not even its `event_id`.
+    pub fn ws_event(&self) -> String {
+        serde_json::json!({
+            "type": "error",
+            "error": {
+                "type": "scrim_error",
+                "code": self.reason.code(),
+                "message": self.message(),
+                "param": null,
+            }
+        })
+        .to_string()
     }
 
     /// Renders the refusal in the error shape of `api`.
@@ -221,6 +257,15 @@ mod tests {
         assert_eq!(v["error"]["status"], "INVALID_ARGUMENT");
         assert_eq!(v["error"]["details"][0]["reason"], "guard_refused");
         assert!(v["error"]["message"].as_str().unwrap().contains("db/pw"));
+        let ev: serde_json::Value = serde_json::from_str(&r.ws_event()).unwrap();
+        assert_eq!(ev["type"], "error");
+        assert_eq!(ev["error"]["code"], "guard_refused");
+        assert!(ev["error"]["message"].as_str().unwrap().contains("db/pw"));
+        assert_eq!(r.close_code(), 1008);
+        assert_eq!(
+            Refusal::new(RefusalReason::BodyTooLarge, "").close_code(),
+            1009
+        );
         let nr = Refusal::new(RefusalReason::NotReady, "").to_response(Api::Generic);
         assert_eq!(nr.status(), 503);
         assert_eq!(nr.headers()[http::header::RETRY_AFTER], "1");

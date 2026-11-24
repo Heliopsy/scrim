@@ -30,6 +30,10 @@
 //! Converse, both with the binary event stream). Routes for cloud providers authenticate the redacted request themselves
 //! ([`auth`]). Other paths on a provider route are forwarded with the whole body redacted and the
 //! response passed through.
+//!
+//! WebSocket handshakes on a route are served message by message ([`websocket`]): the `OpenAI`
+//! Realtime API and the Responses API WebSocket mode with restore, any other path with every
+//! client message redacted whole.
 
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
@@ -61,6 +65,7 @@ mod sse;
 pub mod stream;
 pub mod token;
 pub mod upstream;
+pub mod websocket;
 
 #[cfg(feature = "test-util")]
 pub mod testing;

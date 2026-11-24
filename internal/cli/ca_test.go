@@ -182,3 +182,42 @@ func TestCAKeyNeverPrinted(t *testing.T) {
 		t.Fatal("a private key block appears in CLI output")
 	}
 }
+
+func TestCAExportRotateEdge(t *testing.T) {
+	f := newCAFixture(t)
+	if code, _, errb := f.run(t, "ca", "export", "--edge"); code == 0 || !strings.Contains(errb, "edge.server-names") {
+		t.Fatalf("edge export without names: %d %s", code, errb)
+	}
+	run := func(args ...string) (int, string, string) {
+		e, out, errb := newEnv("HOME="+f.home, "XDG_STATE_HOME="+f.state, "XDG_CONFIG_HOME="+f.home+"/.config",
+			"SCRIM_EDGE_SERVER_NAMES=scrim.scrim.svc")
+		return Run(context.Background(), e, args), out.String(), errb.String()
+	}
+	code, out, errb := run("ca", "export", "--edge")
+	if code != 0 {
+		t.Fatalf("edge export: %d %s", code, errb)
+	}
+	certs := pemCerts(t, out)
+	if len(certs) != 1 || !strings.HasPrefix(certs[0].Subject.CommonName, ca.EdgeCommonName+" ") ||
+		len(certs[0].PermittedDNSDomains) != 1 || certs[0].PermittedDNSDomains[0] != "scrim.scrim.svc" {
+		t.Fatalf("edge export: %+v", certs)
+	}
+	if _, err := os.Stat(filepath.Join(f.state, "scrim", "edge-ca", "state.json")); err != nil {
+		t.Fatal("the edge CA is not in its own directory")
+	}
+	_, interception, _ := run("ca", "export")
+	if pemCerts(t, interception)[0].Equal(certs[0]) {
+		t.Fatal("the interception CA and the edge CA are the same")
+	}
+	code, out, errb = run("ca", "rotate", "--edge")
+	if code != 0 || !strings.Contains(out, "export --edge") {
+		t.Fatalf("edge rotate: %d %s %s", code, out, errb)
+	}
+	_, out, _ = run("ca", "export", "--edge")
+	if after := pemCerts(t, out); len(after) != 2 || !after[1].Equal(certs[0]) {
+		t.Fatal("edge export after rotation must list the new edge CA, then the previous")
+	}
+	if _, again, _ := run("ca", "export"); again != interception {
+		t.Fatal("rotating the edge CA changed the interception CA")
+	}
+}

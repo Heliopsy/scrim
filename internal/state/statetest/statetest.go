@@ -36,6 +36,7 @@ func Run(t *testing.T, f Factory) {
 		{"GrantUseAndRevoke", grantUseAndRevoke},
 		{"Sessions", sessions},
 		{"SessionsByAgent", sessionsByAgent},
+		{"RedactionTokens", redactionTokens},
 		{"ApplyIsAtomic", applyIsAtomic},
 		{"ApplyNeedsAudit", applyNeedsAudit},
 		{"AuditQuery", auditQuery},
@@ -633,6 +634,87 @@ func auditTap(t *testing.T, s state.Store) {
 	if len(seen) != 2 {
 		t.Fatalf("tap ran after it was removed (%d calls)", len(seen))
 	}
+}
+
+func redactionTokens(t *testing.T, s state.Store) {
+	ctx := t.Context()
+	// Every byte value, so a backend that stores text or scrubs the bytes
+	// fails.
+	sealed := make([]byte, 256)
+	for i := range sealed {
+		sealed[i] = byte(i)
+	}
+	a := &state.RedactionToken{ID: "s1", Kind: state.TokenSession, KeyVersion: 2, Sealed: sealed,
+		CreatedAt: t0, ExpiresAt: t0.Add(time.Hour)}
+	b := &state.RedactionToken{ID: "k1", Kind: state.TokenKubernetes, KeyVersion: 1, Sealed: []byte{1, 2, 3},
+		CreatedAt: t0, ExpiresAt: t0.Add(time.Minute)}
+	update(t, s, func(tx state.Tx) error {
+		if err := tx.PutRedactionToken(ctx, a); err != nil {
+			return err
+		}
+		return tx.PutRedactionToken(ctx, b)
+	})
+	if err := s.Update(ctx, func(tx state.Tx) error {
+		return tx.PutRedactionToken(ctx, &state.RedactionToken{ID: "x", Kind: state.TokenIssuer, KeyVersion: 1, ExpiresAt: t0})
+	}); err == nil {
+		t.Fatal("a token without sealed bytes was stored")
+	}
+	_ = s.View(ctx, func(tx state.Tx) error {
+		got, err := tx.GetRedactionToken(ctx, "s1")
+		if err != nil || got.Kind != state.TokenSession || got.KeyVersion != 2 || string(got.Sealed) != string(sealed) ||
+			!got.CreatedAt.Equal(t0) || !got.ExpiresAt.Equal(t0.Add(time.Hour)) {
+			t.Errorf("stored token differs: %+v, %v", got, err)
+		}
+		if _, err := tx.GetRedactionToken(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
+			t.Errorf("GetRedactionToken missing: %v", err)
+		}
+		live, err := tx.ListRedactionTokens(ctx, t0.Add(30*time.Minute))
+		if err != nil || len(live) != 1 || live[0].ID != "s1" {
+			t.Errorf("live tokens = %+v, %v", live, err)
+		}
+		all, _ := tx.ListRedactionTokens(ctx, t0)
+		if len(all) != 2 || all[0].ID != "k1" || all[1].ID != "s1" {
+			t.Errorf("all tokens = %+v", all)
+		}
+		return nil
+	})
+	if err := s.View(ctx, func(tx state.Tx) error { return tx.PutRedactionToken(ctx, a) }); err == nil {
+		t.Error("PutRedactionToken inside View succeeded")
+	}
+	// A second put of the same ID replaces the sealed bytes and key version
+	// and keeps the later expiry, whichever put carries it.
+	update(t, s, func(tx state.Tx) error {
+		return tx.PutRedactionToken(ctx, &state.RedactionToken{ID: "s1", Kind: state.TokenSession, KeyVersion: 3,
+			Sealed: []byte{9}, CreatedAt: t0.Add(time.Second), ExpiresAt: t0.Add(time.Minute)})
+	})
+	update(t, s, func(tx state.Tx) error {
+		return tx.PutRedactionToken(ctx, &state.RedactionToken{ID: "k1", Kind: state.TokenKubernetes, KeyVersion: 1,
+			Sealed: []byte{1, 2, 3}, CreatedAt: t0, ExpiresAt: t0.Add(2 * time.Hour)})
+	})
+	_ = s.View(ctx, func(tx state.Tx) error {
+		got, _ := tx.GetRedactionToken(ctx, "s1")
+		if got.KeyVersion != 3 || string(got.Sealed) != "\x09" || !got.ExpiresAt.Equal(t0.Add(time.Hour)) || !got.CreatedAt.Equal(t0) {
+			t.Errorf("after an earlier-expiring put: %+v", got)
+		}
+		got, _ = tx.GetRedactionToken(ctx, "k1")
+		if !got.ExpiresAt.Equal(t0.Add(2 * time.Hour)) {
+			t.Errorf("a later expiry was not kept: %+v", got)
+		}
+		return nil
+	})
+	var n int
+	update(t, s, func(tx state.Tx) error {
+		var err error
+		n, err = tx.DeleteRedactionTokens(ctx, t0.Add(time.Hour))
+		return err
+	})
+	_ = s.View(ctx, func(tx state.Tx) error {
+		all, _ := tx.ListRedactionTokens(ctx, t0)
+		if n != 1 || len(all) != 1 || all[0].ID != "k1" {
+			t.Errorf("after deleting those expired at the hour: deleted %d, left %+v", n, all)
+		}
+		return nil
+	})
 }
 
 func viewIsReadOnly(t *testing.T, s state.Store) {

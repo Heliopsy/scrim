@@ -217,6 +217,17 @@ tests:
       edge: {enabled: true, databases: {app: 5432}}
     asserts:
       - failedTemplate: {errorPattern: 'edge.databases.app: no database "app" in config.databases'}
+  - it: refuses the interception CA's Secret as the edge CA
+    set:
+      edge: {enabled: true, ca: {existingSecret: rel-scrim-ca, certificate: x}}
+    asserts:
+      - failedTemplate: {errorPattern: 'edge.ca.existingSecret "rel-scrim-ca" is the interception CA''s Secret'}
+  - it: refuses an operator's interception CA Secret as the edge CA
+    set:
+      ca: {existingSecret: corp-ca, certificate: x}
+      edge: {enabled: true, ca: {existingSecret: corp-ca, certificate: x}}
+    asserts:
+      - failedTemplate: {errorPattern: 'edge.ca.existingSecret "corp-ca" is the interception CA''s Secret'}
   - it: refuses an edge port another listener uses
     set:
       edge: {enabled: true, port: 9790}

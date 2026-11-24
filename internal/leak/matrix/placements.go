@@ -32,7 +32,8 @@ func (c Content) halves() (string, string) {
 	return c.Before + c.Value[:mid], c.Value[mid:] + c.After
 }
 
-// Request is one HTTP request a row sends through the proxy.
+// Request is one HTTP request a row sends through the proxy, or one
+// WebSocket conversation.
 type Request struct {
 	API    fp.API
 	Path   string
@@ -40,6 +41,18 @@ type Request struct {
 	Header http.Header
 	Body   []byte
 	Stream bool
+	// WS sends the request as a WebSocket conversation: a GET upgrade of
+	// Path and Query with Header, then each of Messages in order on that
+	// connection. Body is unused. The secret-bearing message comes first,
+	// so a proxy that refuses it has forwarded nothing.
+	WS       bool
+	Messages []Frame
+}
+
+// Frame is one WebSocket message: a text frame, or a binary one.
+type Frame struct {
+	Binary bool
+	Data   []byte
 }
 
 // Placement is where in a provider request the secret-bearing content goes.
@@ -246,6 +259,11 @@ func geminiMCPContent(texts ...string) any {
 }
 
 func req(api fp.API, body any, mode Escape, stream bool) Request {
+	if api == fp.OpenAIResponsesWS {
+		// The WebSocket mode carries a Responses create body as the fields
+		// of one response.create event.
+		return wsReq(api, mode, append(obj("type", "response.create"), body.(orderedMap)...))
+	}
 	h := http.Header{}
 	h.Set("Content-Type", "application/json")
 	if api == fp.Anthropic {
@@ -258,14 +276,54 @@ func req(api fp.API, body any, mode Escape, stream bool) Request {
 	return r
 }
 
+// wsReq builds a WebSocket conversation of text messages to the API's
+// canonical URL.
+func wsReq(api fp.API, mode Escape, msgs ...any) Request {
+	r := Request{API: api, Path: api.Path(), Query: api.Query(), Header: http.Header{}, Stream: true, WS: true}
+	for _, m := range msgs {
+		r.Messages = append(r.Messages, Frame{Data: encode(m, mode)})
+	}
+	return r
+}
+
+// Realtime client events. A real session's function_call items come from
+// the model and live on the server, so a client sends its tool result alone
+// and the secret-bearing event can open the conversation.
+
+func rtCreate() any { return obj("type", "response.create") }
+
+func rtItem(item any) any { return obj("type", "conversation.item.create", "item", item) }
+
+func rtUserItem(parts ...any) any {
+	return obj("type", "message", "role", "user", "content", parts)
+}
+
+func rtUser(parts ...any) any { return rtItem(rtUserItem(parts...)) }
+
+func rtText(t string) any { return obj("type", "input_text", "text", t) }
+
+func rtCall(id, command string) any {
+	return rtItem(obj("type", "function_call", "call_id", id, "name", toolName, "arguments", string(encode(obj("command", command), EscapeMinimal))))
+}
+
+func rtOutput(id, output string) any {
+	return rtItem(obj("type", "function_call_output", "call_id", id, "output", output))
+}
+
+func rtSession(field string, v any) any {
+	return obj("type", "session.update", "session", obj("type", "realtime", field, v))
+}
+
 // standard builds the primary tool-result request, with optional changes.
 func standard(api fp.API, c Content, mode Escape, stream bool) Request {
 	switch api {
+	case fp.OpenAIRealtime:
+		return wsReq(api, mode, rtOutput(callID, c.Text()), rtCreate())
 	case fp.Anthropic:
 		return req(api, anthropicParts{messages: anthropicToolTurn(c.Command, c.Text()), stream: stream}.body(), mode, stream)
 	case fp.OpenAIChat:
 		return req(api, chatParts{messages: chatToolTurn(c.Command, c.Text()), stream: stream}.body(), mode, stream)
-	case fp.OpenAIResponses:
+	case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 		return req(api, responsesParts{input: responsesToolTurn(c.Command, c.Text()), stream: stream}.body(), mode, stream)
 	case fp.Gemini:
 		return req(api, geminiParts{contents: geminiToolTurn(c.Command, obj("output", c.Text()))}.body(), mode, stream)
@@ -280,7 +338,13 @@ var Placements = []Placement{
 	{ID: "tool-result", Desc: "tool result content as a string (primary placement)", Expect: Redacted,
 		Build: func(api fp.API, c Content, mode Escape) []Request { return one(standard(api, c, mode, false)) }},
 	{ID: "tool-result-streaming", Desc: "tool result in a streaming request", Expect: Redacted,
-		Build: func(api fp.API, c Content, mode Escape) []Request { return one(standard(api, c, mode, true)) }},
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			if api.WebSocket() {
+				// Every WebSocket response streams: tool-result is this row.
+				return nil
+			}
+			return one(standard(api, c, mode, true))
+		}},
 	{ID: "tool-result-blocks", Desc: "tool result content as text blocks", Expect: Redacted,
 		Build: func(api fp.API, c Content, mode Escape) []Request {
 			switch api {
@@ -288,7 +352,7 @@ var Placements = []Placement{
 				return one(req(api, anthropicParts{messages: anthropicToolTurn(c.Command, []any{obj("type", "text", "text", c.Text())})}.body(), mode, false))
 			case fp.OpenAIChat:
 				return one(req(api, chatParts{messages: chatToolTurn(c.Command, []any{obj("type", "text", "text", c.Text())})}.body(), mode, false))
-			case fp.OpenAIResponses:
+			case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 				return one(req(api, responsesParts{input: responsesToolTurn(c.Command, []any{obj("type", "input_text", "text", c.Text())})}.body(), mode, false))
 			case fp.Gemini:
 				return one(req(api, geminiParts{contents: geminiToolTurn(c.Command, geminiMCPContent(c.Text()))}.body(), mode, false))
@@ -302,10 +366,12 @@ var Placements = []Placement{
 				return one(req(api, anthropicParts{messages: []any{obj("role", "user", "content", c.Text())}}.body(), mode, false))
 			case fp.OpenAIChat:
 				return one(req(api, chatParts{messages: []any{obj("role", "user", "content", c.Text())}}.body(), mode, false))
-			case fp.OpenAIResponses:
+			case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 				return one(req(api, responsesParts{input: []any{obj("role", "user", "content", c.Text())}}.body(), mode, false))
 			case fp.Gemini:
 				return one(req(api, geminiParts{contents: []any{geminiText("user", c.Text())}}.body(), mode, false))
+			case fp.OpenAIRealtime:
+				return one(wsReq(api, mode, rtUser(rtText(c.Text())), rtCreate()))
 			}
 			return nil
 		}},
@@ -316,10 +382,12 @@ var Placements = []Placement{
 				return one(req(api, anthropicParts{messages: []any{obj("role", "user", "content", []any{obj("type", "text", "text", c.Text())})}}.body(), mode, false))
 			case fp.OpenAIChat:
 				return one(req(api, chatParts{messages: []any{obj("role", "user", "content", []any{obj("type", "text", "text", c.Text())})}}.body(), mode, false))
-			case fp.OpenAIResponses:
+			case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 				return one(req(api, responsesParts{input: []any{obj("type", "message", "role", "user", "content", []any{obj("type", "input_text", "text", c.Text())})}}.body(), mode, false))
 			case fp.Gemini:
 				return one(req(api, geminiParts{contents: []any{geminiText("user", "Here is the service's output:", c.Text())}}.body(), mode, false))
+			case fp.OpenAIRealtime:
+				return one(wsReq(api, mode, rtUser(rtText("Here is the service's output:"), rtText(c.Text())), rtCreate()))
 			}
 			return nil
 		}},
@@ -330,10 +398,12 @@ var Placements = []Placement{
 				return one(req(api, anthropicParts{system: []any{obj("type", "text", "text", sysText), obj("type", "text", "text", c.Text(), "cache_control", obj("type", "ephemeral"))}, messages: []any{obj("role", "user", "content", userAsk)}}.body(), mode, false))
 			case fp.OpenAIChat:
 				return one(req(api, chatParts{messages: []any{obj("role", "developer", "content", c.Text()), obj("role", "user", "content", userAsk)}}.body(), mode, false))
-			case fp.OpenAIResponses:
+			case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 				return one(req(api, responsesParts{instructions: c.Text(), input: []any{obj("role", "user", "content", userAsk)}}.body(), mode, false))
 			case fp.Gemini:
 				return one(req(api, geminiParts{system: obj("parts", []any{obj("text", sysText), obj("text", c.Text())}), contents: []any{geminiText("user", userAsk)}}.body(), mode, false))
+			case fp.OpenAIRealtime:
+				return one(wsReq(api, mode, rtSession("instructions", c.Text()), rtUser(rtText(userAsk)), rtCreate()))
 			}
 			return nil
 		}},
@@ -345,10 +415,14 @@ var Placements = []Placement{
 				return one(req(api, anthropicParts{messages: anthropicToolTurn(cmd, "")}.body(), mode, false))
 			case fp.OpenAIChat:
 				return one(req(api, chatParts{messages: chatToolTurn(cmd, "")}.body(), mode, false))
-			case fp.OpenAIResponses:
+			case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 				return one(req(api, responsesParts{input: responsesToolTurn(cmd, "")}.body(), mode, false))
 			case fp.Gemini:
 				return one(req(api, geminiParts{contents: geminiToolTurn(cmd, obj("output", ""))}.body(), mode, false))
+			case fp.OpenAIRealtime:
+				// The client echoes the call it ran back into the
+				// conversation, then its (empty) output.
+				return one(wsReq(api, mode, rtCall(callID, cmd), rtOutput(callID, ""), rtCreate()))
 			}
 			return nil
 		}},
@@ -362,10 +436,13 @@ var Placements = []Placement{
 				return one(req(api, anthropicParts{messages: hist(obj("role", "assistant", "content", []any{obj("type", "text", "text", c.Text())}))}.body(), mode, false))
 			case fp.OpenAIChat:
 				return one(req(api, chatParts{messages: hist(obj("role", "assistant", "content", c.Text()))}.body(), mode, false))
-			case fp.OpenAIResponses:
+			case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 				return one(req(api, responsesParts{input: hist(obj("type", "message", "role", "assistant", "content", []any{obj("type", "output_text", "text", c.Text())}))}.body(), mode, false))
 			case fp.Gemini:
 				return one(req(api, geminiParts{contents: []any{geminiText("user", userAsk), geminiText("model", c.Text()), geminiText("user", "Thanks, go on.")}}.body(), mode, false))
+			case fp.OpenAIRealtime:
+				asst := rtItem(obj("type", "message", "role", "assistant", "content", []any{obj("type", "output_text", "text", c.Text())}))
+				return one(wsReq(api, mode, asst, rtUser(rtText("Thanks, go on.")), rtCreate()))
 			}
 			return nil
 		}},
@@ -377,10 +454,12 @@ var Placements = []Placement{
 				return one(req(api, anthropicParts{tools: []any{bashToolAnthropic(c.Text())}, messages: msgs}.body(), mode, false))
 			case fp.OpenAIChat:
 				return one(req(api, chatParts{tools: []any{bashToolChat(c.Text())}, messages: msgs}.body(), mode, false))
-			case fp.OpenAIResponses:
+			case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 				return one(req(api, responsesParts{tools: []any{bashToolResponses(c.Text())}, input: msgs}.body(), mode, false))
 			case fp.Gemini:
 				return one(req(api, geminiParts{tools: []any{bashToolGemini(c.Text())}, contents: []any{geminiText("user", userAsk)}}.body(), mode, false))
+			case fp.OpenAIRealtime:
+				return one(wsReq(api, mode, rtSession("tools", []any{bashToolResponses(c.Text())}), rtUser(rtText(userAsk)), rtCreate()))
 			}
 			return nil
 		}},
@@ -392,8 +471,13 @@ var Placements = []Placement{
 				return one(req(api, anthropicParts{messages: msgs, extra: []kv{{"metadata", obj("user_id", c.Text())}}}.body(), mode, false))
 			case fp.OpenAIChat:
 				return one(req(api, chatParts{messages: msgs, extra: []kv{{"user", c.Text()}, {"metadata", obj("session", c.Text())}}}.body(), mode, false))
-			case fp.OpenAIResponses:
+			case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 				return one(req(api, responsesParts{input: msgs, extra: []kv{{"metadata", obj("session", c.Text())}}}.body(), mode, false))
+			case fp.OpenAIRealtime:
+				// An out-of-band response carries its own input, so the
+				// metadata-bearing event is the whole conversation.
+				return one(wsReq(api, mode, obj("type", "response.create", "response", obj(
+					"conversation", "none", "metadata", obj("session", c.Text()), "input", []any{rtUserItem(rtText(userAsk))}))))
 			}
 			// The Gemini API has no metadata or user field (Vertex AI's
 			// labels are not accepted by generativelanguage.googleapis.com);
@@ -409,10 +493,13 @@ var Placements = []Placement{
 				return one(req(api, anthropicParts{messages: msgs, extra: extra}.body(), mode, false))
 			case fp.OpenAIChat:
 				return one(req(api, chatParts{messages: msgs, extra: extra}.body(), mode, false))
-			case fp.OpenAIResponses:
+			case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 				return one(req(api, responsesParts{input: msgs, extra: extra}.body(), mode, false))
 			case fp.Gemini:
 				return one(req(api, geminiParts{contents: []any{geminiText("user", userAsk)}, extra: extra}.body(), mode, false))
+			case fp.OpenAIRealtime:
+				ev := append(obj("type", "conversation.item.create", "item", rtUserItem(rtText(userAsk))), extra...)
+				return one(wsReq(api, mode, ev, rtCreate()))
 			}
 			return nil
 		}},
@@ -423,10 +510,12 @@ var Placements = []Placement{
 				return one(req(api, anthropicParts{messages: []any{obj("role", "user", "content", []any{obj("type", "text", "text", userAsk, "x_source", c.Text())})}}.body(), mode, false))
 			case fp.OpenAIChat:
 				return one(req(api, chatParts{messages: []any{obj("role", "user", "content", userAsk, "x_source", c.Text())}}.body(), mode, false))
-			case fp.OpenAIResponses:
+			case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 				return one(req(api, responsesParts{input: []any{obj("type", "message", "role", "user", "content", []any{obj("type", "input_text", "text", userAsk, "x_source", c.Text())})}}.body(), mode, false))
 			case fp.Gemini:
 				return one(req(api, geminiParts{contents: []any{obj("role", "user", "parts", []any{obj("text", userAsk, "x_source", c.Text())})}}.body(), mode, false))
+			case fp.OpenAIRealtime:
+				return one(wsReq(api, mode, rtUser(obj("type", "input_text", "text", userAsk, "x_source", c.Text())), rtCreate()))
 			}
 			return nil
 		}},
@@ -440,7 +529,7 @@ var Placements = []Placement{
 				data := "data:text/plain;base64," + base64.StdEncoding.EncodeToString([]byte(c.Text()))
 				file := obj("type", "file", "file", obj("filename", ".env", "file_data", data))
 				return one(req(api, chatParts{messages: []any{obj("role", "user", "content", []any{file, obj("type", "text", "text", userAsk)})}}.body(), mode, false))
-			case fp.OpenAIResponses:
+			case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 				data := "data:text/plain;base64," + base64.StdEncoding.EncodeToString([]byte(c.Text()))
 				file := obj("type", "input_file", "filename", ".env", "file_data", data)
 				return one(req(api, responsesParts{input: []any{obj("type", "message", "role", "user", "content", []any{file, obj("type", "input_text", "text", userAsk)})}}.body(), mode, false))
@@ -450,18 +539,24 @@ var Placements = []Placement{
 				doc := obj("inlineData", obj("mimeType", "text/plain", "data", base64.StdEncoding.EncodeToString([]byte(c.Text()))))
 				return one(req(api, geminiParts{contents: []any{obj("role", "user", "parts", []any{doc, obj("text", userAsk)})}}.body(), mode, false))
 			}
+			// The Realtime API takes no file input.
 			return nil
 		}},
-	{ID: "header", Desc: "a custom HTTP request header", Expect: Guard,
+	{ID: "header", Desc: "a custom HTTP request header (on a WebSocket API, in the handshake)", Expect: Guard,
 		Build: func(api fp.API, c Content, mode Escape) []Request {
 			r := standard(api, Content{Command: c.Command, Before: "(no output)"}, mode, false)
 			r.Header.Set("X-Debug-Context", headerSafe(c.Text()))
 			return one(r)
 		}},
-	{ID: "query", Desc: "the request URL query string", Expect: Guard,
+	{ID: "query", Desc: "the request URL query string (on a WebSocket API, the handshake URL's)", Expect: Guard,
 		Build: func(api fp.API, c Content, mode Escape) []Request {
 			r := standard(api, Content{Command: c.Command, Before: "(no output)"}, mode, false)
-			r.Query = url.Values{"trace": {c.Text()}}
+			q := url.Values{}
+			for k, vs := range r.Query {
+				q[k] = vs
+			}
+			q.Set("trace", c.Text())
+			r.Query = q
 			return one(r)
 		}},
 	{ID: "image-metadata", Desc: "text in an image's PNG tEXt metadata", Expect: Withheld,
@@ -503,10 +598,14 @@ var Placements = []Placement{
 				return one(req(api, anthropicParts{messages: anthropicToolTurn(c.Command, []any{obj("type", "text", "text", a), obj("type", "text", "text", b)})}.body(), mode, false))
 			case fp.OpenAIChat:
 				return one(req(api, chatParts{messages: chatToolTurn(c.Command, []any{obj("type", "text", "text", a), obj("type", "text", "text", b)})}.body(), mode, false))
-			case fp.OpenAIResponses:
+			case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 				return one(req(api, responsesParts{input: responsesToolTurn(c.Command, []any{obj("type", "input_text", "text", a), obj("type", "input_text", "text", b)})}.body(), mode, false))
 			case fp.Gemini:
 				return one(req(api, geminiParts{contents: geminiToolTurn(c.Command, geminiMCPContent(a, b))}.body(), mode, false))
+			case fp.OpenAIRealtime:
+				// A function_call_output is a string; the blocks are a
+				// user message's parts.
+				return one(wsReq(api, mode, rtUser(rtText(a), rtText(b)), rtCreate()))
 			}
 			return nil
 		}},
@@ -525,7 +624,7 @@ var Placements = []Placement{
 					obj("role", "assistant", "content", nil, "tool_calls", []any{obj("id", callID+"2", "type", "function", "function", obj("name", toolName, "arguments", `{"command":"tail -c +41 .env"}`))}),
 					obj("role", "tool", "tool_call_id", callID+"2", "content", b))
 				return one(req(api, chatParts{messages: msgs}.body(), mode, false))
-			case fp.OpenAIResponses:
+			case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 				in := append(responsesToolTurn("head -c 40 .env", a),
 					obj("type", "function_call", "call_id", callID+"2", "name", toolName, "arguments", `{"command":"tail -c +41 .env"}`),
 					obj("type", "function_call_output", "call_id", callID+"2", "output", b))
@@ -535,13 +634,15 @@ var Placements = []Placement{
 					obj("role", "model", "parts", []any{geminiCall("tail -c +41 .env")}),
 					obj("role", "user", "parts", []any{geminiResult(obj("output", b))}))
 				return one(req(api, geminiParts{contents: contents}.body(), mode, false))
+			case fp.OpenAIRealtime:
+				return one(wsReq(api, mode, rtOutput(callID, a), rtOutput(callID+"2", b), rtCreate()))
 			}
 			return nil
 		}},
-	{ID: "split-requests", Desc: "the value split across two requests chained by previous_response_id", Expect: Limitation,
+	{ID: "split-requests", Desc: "the value split across two requests chained by previous_response_id (two events on one socket in the WebSocket mode)", Expect: Limitation,
 		Note: "limitation: server-side conversation state lets halves arrive in separate requests",
 		Build: func(api fp.API, c Content, mode Escape) []Request {
-			if api != fp.OpenAIResponses {
+			if api != fp.OpenAIResponses && api != fp.OpenAIResponsesWS {
 				return nil
 			}
 			a, b := c.halves()
@@ -551,7 +652,31 @@ var Placements = []Placement{
 				obj("type", "function_call_output", "call_id", callID+"2", "output", b),
 			}
 			r2 := req(api, responsesParts{input: in2, extra: []kv{{"previous_response_id", "resp_previous"}}}.body(), mode, false)
+			if api == fp.OpenAIResponsesWS {
+				// The WebSocket mode's own use: the second response.create
+				// follows the first on the same connection.
+				r1.Messages = append(r1.Messages, r2.Messages...)
+				return one(r1)
+			}
 			return []Request{r1, r2}
+		}},
+	{ID: "ws-binary-frame", Desc: "the tool result event sent as a binary WebSocket frame", Expect: Redacted,
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			if !api.WebSocket() {
+				return nil
+			}
+			r := standard(api, c, mode, false)
+			r.Messages[0].Binary = true
+			return one(r)
+		}},
+	{ID: "audio-buffer", Desc: "text in base64 audio appended to the Realtime input buffer", Expect: Withheld,
+		Note: "the scan binary policy decodes base64 audio and refuses the message when its bytes hold a value (speech is not transcribed)",
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			if api != fp.OpenAIRealtime {
+				return nil
+			}
+			audio := base64.StdEncoding.EncodeToString([]byte(c.Text()))
+			return one(wsReq(api, mode, obj("type", "input_audio_buffer.append", "audio", audio), rtCreate()))
 		}},
 }
 

@@ -51,6 +51,34 @@ var (
 		RestartRequired: true,
 		Validate:        optionalHostPort,
 	})
+	// TLSListen is the LLM proxy base URL over TLS, for callers identified
+	// by client certificates.
+	TLSListen = config.Register(config.Spec[string]{
+		Key: "proxy.tls-listen",
+		Description: "TCP address of the LLM proxy base URL over TLS (https://<address>/anthropic and so on). Callers must " +
+			"present a client certificate (identity.client-certificates). Empty disables it.",
+		Flag:            true,
+		RestartRequired: true,
+		Validate:        optionalHostPort,
+	})
+	// ForwardTLSListen is the forward proxy over TLS (an HTTPS proxy).
+	ForwardTLSListen = config.Register(config.Spec[string]{
+		Key: "proxy.forward-tls-listen",
+		Description: "TCP address of the forward proxy over TLS (HTTPS_PROXY=https://<address>). Callers must present a " +
+			"client certificate to the proxy (identity.client-certificates). Empty disables it.",
+		Flag:            true,
+		RestartRequired: true,
+		Validate:        optionalHostPort,
+	})
+	// ToolProxyTLSListen is the HTTPS tool proxy over TLS.
+	ToolProxyTLSListen = config.Register(config.Spec[string]{
+		Key: "tool-proxy.tls-listen",
+		Description: "TCP address of the HTTPS tool proxy over TLS. Callers must present a client certificate to the proxy " +
+			"(identity.client-certificates). Empty disables it.",
+		Flag:            true,
+		RestartRequired: true,
+		Validate:        optionalHostPort,
+	})
 	// TransparentListen are the transparent listeners nftables redirects
 	// covered users' connections to (scrim install --transparent).
 	TransparentListen = config.Register(config.Spec[[]string]{

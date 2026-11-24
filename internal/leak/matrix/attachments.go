@@ -41,7 +41,7 @@ func attachment(api fp.API, mediaType string, data []byte, mode Escape) []Reques
 			part = obj("type", "image_url", "image_url", obj("url", dataURL))
 		}
 		return one(req(api, chatParts{messages: []any{obj("role", "user", "content", []any{part, obj("type", "text", "text", ask)})}}.body(), mode, false))
-	case fp.OpenAIResponses:
+	case fp.OpenAIResponses, fp.OpenAIResponsesWS:
 		part := obj("type", "input_file", "filename", "attachment", "file_data", dataURL)
 		if isImage {
 			part = obj("type", "input_image", "image_url", dataURL)
@@ -50,6 +50,12 @@ func attachment(api fp.API, mediaType string, data []byte, mode Escape) []Reques
 	case fp.Gemini:
 		part := obj("inlineData", obj("mimeType", mediaType, "data", b64))
 		return one(req(api, geminiParts{contents: []any{obj("role", "user", "parts", []any{part, obj("text", ask)})}}.body(), mode, false))
+	case fp.OpenAIRealtime:
+		// The Realtime API takes images as input_image parts and no files.
+		if isImage {
+			img := obj("type", "input_image", "image_url", dataURL)
+			return one(wsReq(api, mode, rtUser(img, rtText(ask)), rtCreate()))
+		}
 	}
 	return nil
 }

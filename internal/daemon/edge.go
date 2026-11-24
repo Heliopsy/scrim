@@ -4,11 +4,13 @@ package daemon
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 
 	"github.com/heliopsy/scrim/internal/agentapi"
+	"github.com/heliopsy/scrim/internal/ca"
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/edge"
 	"github.com/heliopsy/scrim/internal/obs"
@@ -19,27 +21,87 @@ import (
 // connect to (specs/credential-injection "Edge forwarder for local
 // sockets"). Callers are identified by their Kubernetes service account
 // token only, through the agent API's resolver, so policy, approvals and
-// audit see them as on the proxy. The certificate is issued from scrim's
-// CA, which the pods already trust.
+// audit see them as on the proxy. The certificate is issued from the edge
+// CA (edge.ca.*), which is never the interception CA: the key that signs
+// certificates for intercepted hosts cannot impersonate scrim to the
+// forwarders. With edge.legacy-interception-certificate, forwarders from
+// before the edge CA get a certificate from the interception CA (caFn).
 func (d *Daemon) startEdge(ctx context.Context, cfg *config.Config, caFn func() []CAGeneration) error {
 	addr := edge.ListenAddr.Get(cfg)
 	if addr == "" {
 		return nil
 	}
-	kr := d.runtime.Resolver.Kubernetes
-	if kr == nil {
-		return fmt.Errorf("%s needs identity.kubernetes.enabled: the edge listener identifies agent pods by their service account token",
-			edge.ListenAddr.Name())
+	kr, cr := d.runtime.Resolver.Kubernetes, d.runtime.Resolver.Certificates
+	if kr == nil && cr == nil {
+		return fmt.Errorf("%s needs identity.kubernetes.enabled or identity.client-certificates.enabled: the edge listener identifies "+
+			"agent pods by their service account token or client certificate", edge.ListenAddr.Name())
 	}
 	names := edge.ServerNames.Get(cfg)
 	if len(names) == 0 {
 		return fmt.Errorf("%s needs %s: the names forwarders reach scrim by, for its certificate",
 			edge.ListenAddr.Name(), edge.ServerNames.Name())
 	}
-	if caFn == nil {
-		return fmt.Errorf("%s needs scrim's CA to issue its certificate", edge.ListenAddr.Name())
+	m, err := ca.OpenEdge(ctx, cfg, obs.WithComponent(d.app.Log, "edge-ca"), names, ca.Options{})
+	if err != nil {
+		return fmt.Errorf("%s: %w", edge.ListenAddr.Name(), err)
 	}
-	certs := &edge.Certs{Names: names, CA: func() (string, secret.Value, error) {
+	d.cleanup = append(d.cleanup, m.Close)
+	if caFn != nil && ca.SharesKey(certPEMs(m.Certificates()), interceptionPEMs(caFn)) {
+		return fmt.Errorf("%s: the edge CA has the interception CA's key; give it its own (edge.ca.cert-file and edge.ca.key, or a generated one)",
+			edge.ListenAddr.Name())
+	}
+	d.edgeTrust = m.TrustBundlePEM
+	certs := &edge.Certs{Names: names, CA: currentCA(caGenerations(m))}
+	if edge.LegacyInterceptionCertificate.Get(cfg) {
+		if caFn == nil {
+			return fmt.Errorf("%s needs the interception CA", edge.LegacyInterceptionCertificate.Name())
+		}
+		certs.Legacy = currentCA(caFn)
+		if _, err := certs.LegacyCertificate(); err != nil {
+			return fmt.Errorf("%s: issuing the legacy certificate: %w", edge.LegacyInterceptionCertificate.Name(), err)
+		}
+		d.log.Warn(edge.LegacyInterceptionCertificate.Name() + " is on: forwarders that do not announce the edge CA get a " +
+			"certificate from the interception CA; turn it off once every agent pod runs the new forwarder")
+	}
+	// Issue once now, so a CA that cannot sign stops start-up instead of
+	// every handshake.
+	if _, err := certs.GetCertificate(nil); err != nil {
+		return fmt.Errorf("%s: issuing the listener's certificate: %w", edge.ListenAddr.Name(), err)
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("%s: %w", edge.ListenAddr.Name(), err)
+	}
+	srv := &edge.Server{
+		Certificates: cr,
+		API:          d.runtime.Handler(),
+		SSH:          d.runtime.SSHAgent(),
+		Database:     d.edgeDatabase,
+		Auditor:      agentapi.Audit{State: d.app.State},
+		Log:          obs.WithComponent(d.app.Log, "edge"),
+	}
+	if kr != nil {
+		srv.Identify = kr.Resolve
+	}
+	tcfg := edge.TLSConfig(certs.GetCertificate)
+	if cr != nil {
+		// Verified per request against the trust in force (CRLs included),
+		// so a refusal is audited instead of failing the handshake.
+		tcfg.ClientAuth = tls.RequestClientCert
+	}
+	d.addrs.Edge = ln.Addr().String()
+	// Rotations of a generated edge CA; the next handshake issues from the
+	// new generation.
+	d.goRun("edge CA", func() error { m.Run(ctx, nil); return nil })
+	d.goRun("edge", func() error { return ignoreCanceled(srv.Serve(ctx, ln, tcfg)) })
+	d.log.Info("edge listener started", "listen", d.addrs.Edge, "names", names)
+	return nil
+}
+
+// currentCA returns the current generation of the CA caFn supplies, with a
+// key the caller wipes; the other generations' keys are wiped here.
+func currentCA(caFn func() []CAGeneration) edge.CASource {
+	return func() (string, secret.Value, error) {
 		var (
 			pem string
 			key secret.Value
@@ -55,28 +117,35 @@ func (d *Daemon) startEdge(ctx context.Context, cfg *config.Config, caFn func() 
 			return "", secret.Value{}, errors.New("no current CA generation")
 		}
 		return pem, key, nil
-	}}
-	// Issue once now, so a CA that cannot sign stops start-up instead of
-	// every handshake.
-	if _, err := certs.GetCertificate(nil); err != nil {
-		return fmt.Errorf("%s: issuing the listener's certificate: %w", edge.ListenAddr.Name(), err)
 	}
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("%s: %w", edge.ListenAddr.Name(), err)
+}
+
+func certPEMs(cs []ca.Certificate) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = c.PEM
 	}
-	srv := &edge.Server{
-		Identify: kr.Resolve,
-		API:      d.runtime.Handler(),
-		SSH:      d.runtime.SSHAgent(),
-		Database: d.edgeDatabase,
-		Auditor:  agentapi.Audit{State: d.app.State},
-		Log:      obs.WithComponent(d.app.Log, "edge"),
+	return out
+}
+
+func interceptionPEMs(caFn func() []CAGeneration) []string {
+	gens := caFn()
+	out := make([]string, len(gens))
+	for i, g := range gens {
+		out[i] = g.CertPEM
+		g.Key.Wipe()
 	}
-	d.addrs.Edge = ln.Addr().String()
-	d.goRun("edge", func() error { return ignoreCanceled(srv.Serve(ctx, ln, edge.TLSConfig(certs.GetCertificate))) })
-	d.log.Info("edge listener started", "listen", d.addrs.Edge, "names", names)
-	return nil
+	return out
+}
+
+// EdgeTrustBundlePEM returns the edge CA certificates the forwarders must
+// trust (the current one and, during an overlap, the previous one), or ""
+// without an edge listener. Public material.
+func (d *Daemon) EdgeTrustBundlePEM() string {
+	if d.edgeTrust == nil {
+		return ""
+	}
+	return d.edgeTrust()
 }
 
 // edgeDatabase serves a tunnelled connection with the database's auth proxy;

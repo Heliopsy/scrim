@@ -36,6 +36,9 @@ monitor with nothing to scrape.
 {{- if has (int .Values.edge.port) $taken -}}
 {{- fail (printf "edge.port %v is taken by another scrim listener" .Values.edge.port) -}}
 {{- end -}}
+{{- if and .Values.edge.ca.existingSecret (eq .Values.edge.ca.existingSecret (include "scrim.caSecretName" .)) -}}
+{{- fail (printf "edge.ca.existingSecret %q is the interception CA's Secret; the edge CA needs a key of its own" .Values.edge.ca.existingSecret) -}}
+{{- end -}}
 {{- $cfgDBs := default dict (index (default dict .Values.config) "databases") -}}
 {{- range $name, $port := .Values.edge.databases -}}
 {{- if and (not $.Values.existingConfigMap) (not (hasKey $cfgDBs $name)) -}}

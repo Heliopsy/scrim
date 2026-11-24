@@ -57,6 +57,13 @@ func (g *generation) wipe() {
 // trusts only this CA validates leaf -> cross certificate -> this CA, and
 // the cross certificate counts as one intermediate below it.
 func newGeneration(now time.Time, validity time.Duration) (*generation, error) {
+	return generate(now, validity, &interceptionProfile)
+}
+
+// generate creates a generation of the CA prof describes. An edge CA is
+// name-constrained to prof.names, may sign only server certificates and
+// no further CA (path length 0).
+func generate(now time.Time, validity time.Duration, prof *profile) (*generation, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("ca: generate key: %w", err)
@@ -79,7 +86,7 @@ func newGeneration(now time.Time, validity time.Duration) (*generation, error) {
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			Organization: []string{Organization},
-			CommonName:   fmt.Sprintf("%s %d %s", CommonName, now.Unix(), hex.EncodeToString(sn[:min(4, len(sn))])),
+			CommonName:   fmt.Sprintf("%s %d %s", prof.commonName, now.Unix(), hex.EncodeToString(sn[:min(4, len(sn))])),
 		},
 		NotBefore:             now.Add(-clockSkew),
 		NotAfter:              now.Add(validity),
@@ -88,6 +95,12 @@ func newGeneration(now time.Time, validity time.Duration) (*generation, error) {
 		IsCA:                  true,
 		MaxPathLen:            1,
 		SubjectKeyId:          ski,
+	}
+	if prof.names != nil {
+		tmpl.MaxPathLen, tmpl.MaxPathLenZero = 0, true
+		tmpl.KeyUsage = x509.KeyUsageCertSign | x509.KeyUsageCRLSign
+		tmpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+		constrain(tmpl, prof.names)
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {

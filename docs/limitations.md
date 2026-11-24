@@ -62,8 +62,14 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   agent settings enforce; DNS override is bypassed by connecting to an address; hooks see tool
   results and prompts, never the model traffic. [interception.md](interception.md) has the table.
 - **MCP-only use intercepts nothing.** The agent's model requests go straight to the provider.
-- **WebSocket traffic to a provider is not redacted.** The LLM proxy refuses the upgrade
-  (`501 upgrade_unsupported`); Codex falls back to HTTPS, a client that cannot fall back fails.
+- **WebSocket restore is limited to OpenAI's protocols.** Client messages on every provider route
+  are redacted and guarded like request bodies, but placeholders in provider messages are restored
+  only for the OpenAI Realtime API (`/v1/realtime`) and the Responses API WebSocket mode
+  (`/v1/responses`). Elsewhere (for example the Gemini Live API) the agent sees placeholders. The
+  model speaks a placeholder aloud in Realtime audio, since audio is not restored, and server
+  messages are not written by capture mode. Base64 audio in Realtime events is a binary part like
+  an image ([Redaction](#redaction)). Other upgrades than WebSocket are refused
+  (`501 upgrade_unsupported`).
 - **`scrim run` replaces an inherited `HTTPS_PROXY`** instead of chaining to it, and runtimes with
   their own trust store (Java, for one) do not trust scrim's CA inside the session
   ([run.md](run.md#limitations)).
@@ -85,10 +91,13 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   and named in a start-up warning, because redacting it would rewrite unrelated text. Per-agent
   store tokens (`identity.store-credentials`) and the edge forwarder's token file are not in the
   set either: scrim does not keep the first in memory, and the second lives in the agent pod.
-- **The edge listener's certificate is issued by the interception CA.** One CA key signs the
-  certificates scrim presents for TLS interception and the certificate the edge forwarders check.
-  Anyone holding that key can impersonate scrim to the forwarders as well as to agents. Protect it
-  like the placeholder key ([ca.md](ca.md)).
+- **The chart's generated edge CA is not name-constrained.** The edge listener has a CA of its own,
+  trusted only by the edge forwarders, and a CA scrim generates is constrained to the edge names.
+  Helm cannot add name constraints, so the edge CA the chart generates can sign for any name; only
+  the forwarders trust it, but its key should be protected like the interception CA's. Supply a
+  constrained one with `edge.ca.existingSecret` ([edge-forwarder.md](edge-forwarder.md#the-edge-ca)).
+  While `edge.legacy-interception-certificate` is on during an upgrade, forwarders from 1.0 still
+  trust the interception CA for the edge listener.
 - **The latency gate measures a stand-in engine for added request latency.** Its proxy overhead and
   per-chunk budgets are enforced, but the redactor and guard in it are a simple Aho-Corasick
   implementation, and `budget.json` reports their numbers without enforcing them. The production
@@ -119,9 +128,13 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   gets that session's narrower redaction. It applies only to agents with a static credential in
   `identity.store-credentials`: Kubernetes passthrough agents and agents that log in by token
   exchange are never narrowed (they keep the whole redaction set). [identity.md](identity.md#redaction-identity)
-- **Client certificates are not an agent identity in 1.0**, although the agent-identity spec
-  describes them. Callers are identified by peer credentials, session tokens and Kubernetes service
-  account tokens.
+- **Client certificates are checked against CRL files only.** OCSP is not supported, and only the
+  end entity certificate is checked against CRLs. Without a CRL, a stolen client certificate and
+  key work until the certificate expires; use short-lived certificates
+  ([identity.md](identity.md#revocation)). The TLS listeners' own certificate comes from the
+  interception CA, so agents have to trust that CA; there is no setting for a certificate and key
+  of your own yet. The Helm chart does not expose `identity.client-certificates.*` or the TLS
+  listener settings yet; set them in the config file or environment.
 - **Per-agent store identity is not available for every store.** Only `openbao`, `vault`, `awssm`,
   `ssm`, `gcpsm`, `azkv` and `infisical` take per-agent credentials; a store configured for one
   that does not refuses every use. Infisical cannot check writes per agent, and Bitwarden Secrets
@@ -129,15 +142,12 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
 
 ## Several replicas
 
-- **Session tokens are redacted only by the replica that minted them.** Each scrim keeps the
-  session tokens it minted in its own redaction set; the shared state holds only their hashes. A
-  token minted through one replica is accepted by the others, but if the agent prints it and the
-  request goes through another replica, that replica does not redact it. Where agents use `scrim
-  run` sessions against several replicas, keep each agent's connections on one replica (session
-  affinity on the load balancer).
-- **Narrowed redaction follows the same rule.** `redaction.limit-to-agent-identity` narrows only on
-  the replica whose data plane holds the session's token; elsewhere the session gets the whole
-  redaction set, which is safe but inconsistent.
+- **The state database and the placeholder key together reveal every live scrim token.** Replicas
+  share session, service account and identity tokens through PostgreSQL, sealed under a key derived
+  from the placeholder key, so every replica redacts them. Whoever holds both the database (or a
+  backup of it) and the placeholder key can open them until they expire. Someone who can write the
+  database can delete the rows, and a token is then redacted only by the replica that minted or
+  verified it.
 - **Decision links need a shared key.** Without `approvals.signing-key`, each process signs with a
   random key, and links stop working on restart and on other replicas
   ([approvals.md](approvals.md)).

@@ -12,6 +12,7 @@
 //! | Unix socket listener | the kernel's peer credentials (uid, gid, pid) |
 //! | forward proxy | the session named in `Proxy-Authorization: Basic` (user name), and the verifier of the session token sent as the password; or a Kubernetes service account token as the password of the user `k8s` |
 //! | base-URL listener | the `x-scrim-session` header (stripped before forwarding): a session token, a bare session id, or a Kubernetes service account token |
+//! | listener with `tls` set | the client certificate chain verified in the handshake ([`crate::mtls`]); it is the request's only identity, and session headers and proxy credentials are ignored |
 //!
 //! A request that carries none of these is an unknown caller: `agent.known` is false, decided
 //! locally, so a rule such as `deny when !agent.known` refuses it without a round trip. A
@@ -30,8 +31,8 @@ use scrim_llm::server::UnixPeer;
 use scrim_policy::{Agent, Caller, FieldSet, Request};
 use scrim_proto::v1;
 use scrim_toolproxy::{
-    ClientInfo, KubernetesToken, SessionVerifier, is_session_id, parse_kubernetes_token,
-    parse_session_token,
+    ClientCertificate, ClientInfo, KubernetesToken, SessionVerifier, is_session_id,
+    parse_kubernetes_token, parse_session_token,
 };
 
 /// What one request's transport said about its sender.
@@ -46,23 +47,35 @@ pub struct Identity {
     pub verifier: Option<SessionVerifier>,
     /// The Kubernetes service account token the request carried instead of a session.
     pub kubernetes_token: Option<KubernetesToken>,
+    /// The client certificate chain verified by a TLS listener. When set, the other fields are
+    /// empty: the certificate is the request's only identity.
+    pub client_certificate: Option<ClientCertificate>,
 }
 
 impl Identity {
+    fn of_certificate(c: &ClientCertificate) -> Self {
+        Self {
+            client_certificate: Some(c.clone()),
+            ..Self::default()
+        }
+    }
+
     /// The identity of a request to the LLM proxy: the Unix peer of a socket listener, the
     /// session of the forward-proxy connection it was tunnelled through, else the
     /// `x-scrim-session` header.
     pub fn of_llm(headers: &http::HeaderMap, extensions: &http::Extensions) -> Self {
         let peer = extensions.get::<UnixPeer>().copied();
-        if let Some(c) = extensions
-            .get::<ClientInfo>()
-            .filter(|c| c.session.is_some() || c.kubernetes_token.is_some())
-        {
+        let info = extensions.get::<ClientInfo>();
+        if let Some(cert) = info.and_then(|c| c.client_certificate.as_ref()) {
+            return Self::of_certificate(cert);
+        }
+        if let Some(c) = info.filter(|c| c.session.is_some() || c.kubernetes_token.is_some()) {
             return Self {
                 session: c.session.clone(),
                 peer,
                 verifier: c.verifier.clone(),
                 kubernetes_token: c.kubernetes_token.clone(),
+                client_certificate: None,
             };
         }
         let mut id = Self {
@@ -88,17 +101,24 @@ impl Identity {
     /// The identity of a request through the tool proxy: the session of its proxy connection.
     pub fn of_tool(extensions: &http::Extensions) -> Self {
         let c = extensions.get::<ClientInfo>();
+        if let Some(cert) = c.and_then(|c| c.client_certificate.as_ref()) {
+            return Self::of_certificate(cert);
+        }
         Self {
             session: c.and_then(|c| c.session.clone()),
             peer: None,
             verifier: c.and_then(|c| c.verifier.clone()),
             kubernetes_token: c.and_then(|c| c.kubernetes_token.clone()),
+            client_certificate: None,
         }
     }
 
     /// Whether the transport carried nothing: an unknown caller.
     pub fn is_anonymous(&self) -> bool {
-        self.session.is_none() && self.peer.is_none() && self.kubernetes_token.is_none()
+        self.session.is_none()
+            && self.peer.is_none()
+            && self.kubernetes_token.is_none()
+            && self.client_certificate.is_none()
     }
 
     /// The restore engine's caller: an unknown caller (`agent.known` false) when the transport
@@ -134,6 +154,10 @@ impl Identity {
                 .kubernetes_token
                 .as_ref()
                 .map_or_else(Vec::new, |t| t.as_bytes().to_vec()),
+            client_certificate_chain: self
+                .client_certificate
+                .as_ref()
+                .map_or_else(Vec::new, |c| c.chain().iter().map(|d| d.to_vec()).collect()),
         })
     }
 }
@@ -161,6 +185,7 @@ mod tests {
             session: Some("from-proxy".into()),
             verifier: None,
             kubernetes_token: None,
+            client_certificate: None,
         });
         let id = Identity::of_llm(&h, &ext);
         assert_eq!(id.session.as_deref(), Some("from-proxy"));
@@ -198,6 +223,7 @@ mod tests {
             session: None,
             verifier: None,
             kubernetes_token: parse_kubernetes_token(jwt.as_bytes()),
+            client_certificate: None,
         });
         let id = Identity::of_tool(&ext);
         assert_eq!(
@@ -218,5 +244,31 @@ mod tests {
         let mut req = Request::default();
         id.apply(&mut req);
         assert_eq!(req.unknown, FieldSet::AGENT);
+    }
+
+    #[test]
+    fn a_client_certificate_is_the_only_identity() {
+        let der = rustls_pki_types::CertificateDer::from(vec![0x30, 0x03, 0x02, 0x01, 0x01]);
+        let cert = ClientCertificate::new(vec![der.clone()]).unwrap();
+        let mut h = http::HeaderMap::new();
+        let token = format!("scrim_st_abcdefghijklmn23_{}", "x".repeat(43));
+        h.insert(scrim_llm::SESSION_HEADER, token.parse().unwrap());
+        let mut ext = http::Extensions::new();
+        ext.insert(ClientInfo {
+            client_certificate: Some(cert.clone()),
+            session: Some("from-proxy".into()),
+            ..ClientInfo::default()
+        });
+        for id in [Identity::of_llm(&h, &ext), Identity::of_tool(&ext)] {
+            assert!(id.session.is_none() && id.verifier.is_none() && id.kubernetes_token.is_none());
+            assert!(!id.is_anonymous());
+            let ask = id.ask_caller().unwrap();
+            assert_eq!(ask.client_certificate_chain, vec![der.to_vec()]);
+            assert!(ask.session_id.is_empty() && ask.session_proof.is_empty());
+            let mut req = Request::default();
+            id.apply(&mut req);
+            assert_eq!(req.unknown, FieldSet::AGENT, "agent rules ask");
+        }
+        assert!(format!("{cert:?}").starts_with("ClientCertificate(sha256:"));
     }
 }

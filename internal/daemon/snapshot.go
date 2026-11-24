@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/heliopsy/scrim/internal/catalog"
 	"github.com/heliopsy/scrim/internal/config"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
@@ -68,6 +70,10 @@ type SnapshotBuilder struct {
 	// entries of the snapshot being built; nil (the default, and always
 	// unless redaction.limit-to-agent-identity is on) sends none.
 	RedactionScopes func(values []*pb.ValueEntry) []*pb.RedactionScope
+	// ClientCertificates returns the trust of the TLS listeners; nil (or a
+	// nil result) sends none, and the data plane refuses every connection to
+	// a TLS listener.
+	ClientCertificates func() *pb.ClientCertificateTrust
 
 	mu   sync.Mutex
 	keys *placeholder.Ring
@@ -236,6 +242,12 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 	snap.ValueLabels = true
 	snap.Values = b.values(cat, keys)
 	b.bindProviderRefs(snap.Routes)
+	if b.ClientCertificates != nil {
+		snap.ClientCertificates = b.ClientCertificates()
+	}
+	if err := checkSnapshotTLS(snap); err != nil {
+		return nil, err
+	}
 	if b.RedactionScopes != nil {
 		snap.RedactionScopes = b.RedactionScopes(snap.Values)
 	}
@@ -561,6 +573,15 @@ func ListenersFrom(cfg *config.Config) []*pb.Listener {
 	if a := ToolProxyListen.Get(cfg); a != "" {
 		out = append(out, &pb.Listener{Name: "tool-proxy", Kind: pb.ListenerKind_LISTENER_KIND_TOOL_PROXY, Address: a})
 	}
+	if a := TLSListen.Get(cfg); a != "" {
+		out = append(out, &pb.Listener{Name: "llm-tls", Kind: pb.ListenerKind_LISTENER_KIND_BASE_URL, Address: a, Tls: true})
+	}
+	if a := ForwardTLSListen.Get(cfg); a != "" {
+		out = append(out, &pb.Listener{Name: "forward-tls", Kind: pb.ListenerKind_LISTENER_KIND_FORWARD_PROXY, Address: a, Tls: true})
+	}
+	if a := ToolProxyTLSListen.Get(cfg); a != "" {
+		out = append(out, &pb.Listener{Name: "tool-proxy-tls", Kind: pb.ListenerKind_LISTENER_KIND_TOOL_PROXY, Address: a, Tls: true})
+	}
 	block := TransparentUnrouted.Get(cfg) == "block"
 	for i, a := range TransparentListen.Get(cfg) {
 		name := "transparent"
@@ -578,7 +599,8 @@ func ListenersFrom(cfg *config.Config) []*pb.Listener {
 func cloneListeners(in []*pb.Listener) []*pb.Listener {
 	out := make([]*pb.Listener, len(in))
 	for i, l := range in {
-		out[i] = &pb.Listener{Name: l.GetName(), Kind: l.GetKind(), Address: l.GetAddress()}
+		// Every field: a hand copy once dropped BlockUnrouted.
+		out[i] = proto.Clone(l).(*pb.Listener)
 	}
 	return out
 }

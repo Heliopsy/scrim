@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! WebSocket upgrades are refused at once (llm-proxy spec "Protocol upgrades are refused"):
-//! Codex tries the Responses API over WebSocket first and falls back to HTTPS only when the
-//! handshake fails, so the refusal must be immediate and nothing may reach the provider.
+//! Upgrades other than a WebSocket handshake scrim can serve are refused at once (llm-proxy spec
+//! "Protocol upgrades are refused"): the upgraded stream could not be redacted, so the refusal
+//! is immediate and nothing reaches the provider. WebSocket handshakes are served
+//! (`tests/websocket.rs`).
 
 #![allow(
     clippy::pedantic,
@@ -45,16 +46,16 @@ async fn raw(addr: std::net::SocketAddr, req: &str) -> (String, Duration) {
     (String::from_utf8(head).unwrap(), t.elapsed())
 }
 
-fn handshake(path: &str, connection: &str) -> String {
+fn handshake(path: &str, connection: &str, upgrade: &str, version: &str) -> String {
     format!(
-        "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: {connection}\r\nUpgrade: websocket\r\n\
-         Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
-         Authorization: Bearer agent-own-key\r\nOpenAI-Beta: responses_websockets=2026-02-06\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: {connection}\r\nUpgrade: {upgrade}\r\n\
+         Sec-WebSocket-Version: {version}\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Authorization: Bearer agent-own-key\r\n\r\n"
     )
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn websocket_upgrade_is_refused_at_once_and_nothing_reaches_the_provider() {
+async fn other_upgrades_are_refused_at_once_and_nothing_reaches_the_provider() {
     let fx = fixture();
     // A provider that would accept anything, slowly: a forwarded handshake would show up here
     // and take at least this long.
@@ -62,13 +63,15 @@ async fn websocket_upgrade_is_refused_at_once_and_nothing_reaches_the_provider()
     slow.delay = Duration::from_secs(2);
     let up = FakeUpstream::start(slow).await;
     let h = start(Some(&fx), up, |_| {}).await;
-    for (path, conn) in [
-        ("/openai/v1/responses", "Upgrade"),
-        ("/openai/v1/responses", "keep-alive, upgrade"),
-        ("/anthropic/v1/messages", "Upgrade"),
+    for (path, conn, upgrade, version) in [
+        ("/openai/v1/responses", "Upgrade", "h2c", "13"),
+        ("/openai/v1/responses", "keep-alive, upgrade", "h2c", "13"),
+        ("/anthropic/v1/messages", "Upgrade", "TLS/1.2", "13"),
+        // A WebSocket version scrim does not speak.
+        ("/openai/v1/realtime", "Upgrade", "websocket", "8"),
     ] {
-        let (head, took) = raw(h.addr, &handshake(path, conn)).await;
-        assert!(head.starts_with("HTTP/1.1 501"), "{path}: {head}");
+        let (head, took) = raw(h.addr, &handshake(path, conn, upgrade, version)).await;
+        assert!(head.starts_with("HTTP/1.1 501"), "{path} {upgrade}: {head}");
         assert!(
             head.to_ascii_lowercase()
                 .contains("x-scrim-error: upgrade_unsupported"),
@@ -87,11 +90,15 @@ async fn websocket_upgrade_is_refused_at_once_and_nothing_reaches_the_provider()
 
 #[tokio::test(flavor = "multi_thread")]
 async fn upgrade_is_refused_even_before_the_values_load() {
-    // Not ready would answer 503 with Retry-After, which a client may retry; an upgrade gets the
-    // definitive answer so the client falls back.
+    // Not ready would answer 503 with Retry-After, which a client may retry; an upgrade scrim
+    // cannot serve gets the definitive answer.
     let up = FakeUpstream::start(Scripted::json(200, "{}")).await;
     let h = start(None, up, |_| {}).await;
-    let (head, took) = raw(h.addr, &handshake("/openai/v1/responses", "Upgrade")).await;
+    let (head, took) = raw(
+        h.addr,
+        &handshake("/openai/v1/responses", "Upgrade", "h2c", "13"),
+    )
+    .await;
     assert!(head.starts_with("HTTP/1.1 501"), "{head}");
     assert!(took < Duration::from_millis(100), "refused after {took:?}");
     assert!(h.upstream.received().is_empty());
