@@ -564,13 +564,13 @@ var Placements = []Placement{
 			// no file input.
 			return nil
 		}},
-	{ID: "header", Desc: "a custom HTTP request header", Expect: Guard,
+	{ID: "header", Desc: "a custom HTTP request header (on a WebSocket API, in the handshake)", Expect: Guard,
 		Build: func(api fp.API, c Content, mode Escape) []Request {
 			r := standard(api, Content{Command: c.Command, Before: "(no output)"}, mode, false)
 			r.Header.Set("X-Debug-Context", headerSafe(c.Text()))
 			return one(r)
 		}},
-	{ID: "query", Desc: "the request URL query string", Expect: Guard,
+	{ID: "query", Desc: "the request URL query string (on a WebSocket API, the handshake URL's)", Expect: Guard,
 		Build: func(api fp.API, c Content, mode Escape) []Request {
 			r := standard(api, Content{Command: c.Command, Before: "(no output)"}, mode, false)
 			q := url.Values{}
@@ -654,7 +654,7 @@ var Placements = []Placement{
 			}
 			return nil
 		}},
-	{ID: "split-requests", Desc: "the value split across two requests chained by previous_response_id", Expect: Limitation,
+	{ID: "split-requests", Desc: "the value split across two requests chained by previous_response_id (two events on one socket in the WebSocket mode)", Expect: Limitation,
 		Note: "limitation: server-side conversation state lets halves arrive in separate requests",
 		Build: func(api fp.API, c Content, mode Escape) []Request {
 			if api != fp.OpenAIResponses && api != fp.OpenAIResponsesWS {
