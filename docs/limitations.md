@@ -26,8 +26,13 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
 ## Redaction
 
 - **Secrets scrim does not know.** Redaction matches the values your stores hold. A secret in no
-  configured store is caught only if a fallback detector (pattern rules and entropy) recognises
-  it. Point a store at every secret source the agent can reach.
+  configured store is caught only if a fallback detector recognises its format: the detectors
+  cover cloud keys, API tokens of common services, private keys, JWTs and database URL passwords
+  ([configuration.md](configuration.md#redactiondetectorsdisable) lists them), match the value as
+  written (not base64 or another encoding of it), and leave passwords and random keys with no
+  known prefix or key name alone. The generic `password = ...` rule is off by default
+  (`redaction.detectors.enable`), and entropy matching has no setting. Point a store at every
+  secret source the agent can reach.
 - **Transforms outside the bypass matrix.** Look-alike Unicode, values spelled out in words,
   compressed content, the base85 family, and values the agent splits across fields, tool results
   or requests (including server-side state such as `previous_response_id`) are not matched. The

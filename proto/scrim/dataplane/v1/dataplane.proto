@@ -647,6 +647,14 @@ message RedactionSettings {
   // values are matched only in exact and encoded forms.
   uint32 min_value_length = 1;
   BinaryPolicy binary = 2;
+  // detectors_off switches every fallback pattern rule off
+  // (redaction.detectors.enabled false). The zero value keeps the defaults.
+  bool detectors_off = 3;
+  // detectors_disabled names pattern rules switched off.
+  repeated string detectors_disabled = 4;
+  // detectors_enabled names pattern rules that are off by default and
+  // switched on.
+  repeated string detectors_enabled = 5;
 }
 
 message ApplySnapshotResponse {

@@ -402,6 +402,9 @@ is out of date.
 | [`ratelimit.valkey.prefix`](#ratelimitvalkeyprefix) | string | `scrim:rl:` | restart required |
 | [`redaction.allow-empty-targets`](#redactionallow-empty-targets) | bool | `false` | restart required |
 | [`redaction.binary`](#redactionbinary) | string | `scan` | hot |
+| [`redaction.detectors.disable`](#redactiondetectorsdisable) | list | `[]` | hot |
+| [`redaction.detectors.enable`](#redactiondetectorsenable) | list | `[]` | hot |
+| [`redaction.detectors.enabled`](#redactiondetectorsenabled) | bool | `true` | hot |
 | [`redaction.limit-to-agent-identity`](#redactionlimit-to-agent-identity) | bool | `false` | restart required |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
@@ -2684,6 +2687,42 @@ Images, PDFs and other binary parts of provider requests. scan decodes each part
 | Reload | hot |
 | Weakening | **yes** when set to `pass`: logged at start-up and on reload while active, listed in `scrim status` |
 | Values | `scan`, `block`, `pass` |
+
+#### `redaction.detectors.disable`
+
+Fallback pattern rules to turn off, by name: aws-access-key-id, aws-secret-access-key, github-token, github-fine-grained-token, anthropic-api-key, openai-api-key, gitlab-token, slack-token, slack-webhook-url, stripe-key, stripe-webhook-secret, google-api-key, google-oauth-client-secret, npm-token, pypi-token, docker-hub-token, huggingface-token, twilio-credential, sendgrid-api-key, azure-storage-key, azure-shared-access-key, azure-ad-client-secret, digitalocean-token, shopify-token, atlassian-api-token, database-url-password, hashicorp-vault-token, doppler-token, onepassword-service-account-token, grafana-token, sentry-token, linear-api-key, postman-api-key, age-secret-key, databricks-token, jwt, private-key.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_REDACTION_DETECTORS_DISABLE` |
+| Flag | none |
+| Reload | hot |
+
+#### `redaction.detectors.enable`
+
+Fallback pattern rules that are off by default to turn on, by name: generic-secret-assignment. A rule may not be in both lists.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_REDACTION_DETECTORS_ENABLE` |
+| Flag | none |
+| Reload | hot |
+
+#### `redaction.detectors.enabled`
+
+Run the fallback pattern rules, which replace secrets in known formats (cloud keys, API tokens, private keys, database URL passwords) that no store holds. false turns every rule off, whatever redaction.detectors.enable names. Values your stores hold are redacted either way.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `true` |
+| Environment | `SCRIM_REDACTION_DETECTORS_ENABLED` |
+| Flag | none |
+| Reload | hot |
 
 #### `redaction.limit-to-agent-identity`
 

@@ -13,8 +13,9 @@ The leak suite has four parts:
 - a **leak checker**, written independently of scrim's redactor and guard, that looks for every
   seeded value in what the fake provider received, under far more encodings than the redactor
   matches, including fragments;
-- the **bypass matrix**: 1009 rows, each a way a secret can sit in a request other than verbatim,
-  with the outcome scrim must produce, over HTTP and over WebSocket;
+- the **bypass matrix**: 1159 rows, each a way a secret can sit in a request other than verbatim,
+  or a secret in a known format that is in no store, with the outcome scrim must produce, over
+  HTTP and over WebSocket;
 - a **scenario corpus** of realistic agent sessions (reading `.env`, printing configs, a diff with
   keys, a log with tokens, an MCP tool result, a Kubernetes Secret, `curl -v`, `env`), played by a
   built-in agent on every HTTP API, streaming and not, twice each, to measure prompt caching. The
@@ -171,6 +172,11 @@ placement below with the transforms `raw`, `json-html-escaped`, `base64-std@1`, 
 `spaced-letters`. Row IDs read `<api>/<placement>/<transform>`. A row takes the more lenient of its
 transform's and its placement's expectation.
 
+The `unknown-secret` rows (`<api>/unknown-secret/<format>`) carry a value that is in no store: it is
+generated for the run and never written to the seed file, so only scrim's fallback detectors
+(`redaction.detectors.*`) can stop it. Each runs once per API in a tool result. Formats a default
+detector covers expect `redacted` and gate; the others are limitations.
+
 <!-- matrix:begin -->
 | Transform | Representative command | Expected | Note |
 | --- | --- | --- | --- |
@@ -262,6 +268,34 @@ transform's and its placement's expectation.
 | `split-requests` | the value split across two requests chained by previous_response_id (two events on one socket in the WebSocket mode) ([openai-responses openai-responses-ws]) | limitation | limitation: server-side conversation state lets halves arrive in separate requests |
 | `ws-binary-frame` | the tool result event sent as a binary WebSocket frame ([openai-realtime openai-responses-ws]) | redacted | |
 | `audio-buffer` | text in base64 audio appended to the Realtime input buffer ([openai-realtime]) | withheld | the scan binary policy decodes base64 audio and refuses the message when its bytes hold a value (speech is not transcribed) |
+
+| Unknown secret | Representative command | Expected | Note |
+| --- | --- | --- | --- |
+| `aws-secret-access-key` | `cat .env` | redacted | |
+| `aws-credentials-csv` | `cat credentials.csv` | redacted | |
+| `github-token` | `cat .env` | redacted | |
+| `github-fine-grained-token` | `gh auth status -t` | redacted | |
+| `gitlab-token` | `cat ~/.config/glab-cli/config.yml` | redacted | |
+| `slack-token` | `cat .env` | redacted | |
+| `slack-webhook-url` | `cat alerting.yaml` | redacted | |
+| `stripe-key` | `cat .env` | redacted | |
+| `google-api-key` | `cat config.js` | redacted | |
+| `openai-api-key` | `cat .env` | redacted | |
+| `anthropic-api-key` | `cat .env` | redacted | |
+| `npm-token` | `cat ~/.npmrc` | redacted | |
+| `pypi-token` | `cat ~/.pypirc` | redacted | |
+| `docker-hub-token` | `cat .env` | redacted | |
+| `huggingface-token` | `cat ~/.cache/huggingface/token` | redacted | |
+| `twilio-auth-token` | `cat .env` | redacted | |
+| `sendgrid-api-key` | `cat .env` | redacted | |
+| `azure-storage-key` | `cat appsettings.json` | redacted | |
+| `digitalocean-token` | `cat ~/.config/doctl/config.yaml` | redacted | |
+| `shopify-token` | `cat .env` | redacted | |
+| `atlassian-api-token` | `cat .env` | redacted | |
+| `database-url-password` | `cat .env` | redacted | |
+| `private-key` | `cat id_ed25519` | redacted | |
+| `random-password` | `cat .env` | limitation | limitation: a secret in no store and in no known format is not matched (redaction.detectors.enable: [generic-secret-assignment] covers literal assignments, off by default) |
+| `base64-encoded-token` | `kubectl get secret billing -o yaml` | limitation | limitation: detectors match a format as written; an encoded value that is in no store is not decoded |
 <!-- matrix:end -->
 
 ### WebSocket rows

@@ -193,6 +193,19 @@ func TestNaiveRedactorPattern(t *testing.T) {
 			t.Errorf("double-escaped password should leak through the naive stub: %s", r.Describe())
 		}
 	}
+	// Unknown secrets are in no seed set, so the naive stub cannot know them.
+	unknown := 0
+	for _, r := range results {
+		if strings.Contains(r.Row, "/unknown-secret/") {
+			unknown++
+			if r.Outcome != matrix.OutcomeLeaked {
+				t.Errorf("naive stub should leak an unknown secret: %s", r.Describe())
+			}
+		}
+	}
+	if want := len(matrix.UnknownFormats) * len(fp.AllAPIs); unknown != want {
+		t.Errorf("unknown-secret results = %d, want one per format and API (%d)", unknown, want)
+	}
 	tot := matrix.Tally(results)
 	t.Logf("naive stub: %+v", tot)
 }

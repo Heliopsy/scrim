@@ -218,6 +218,7 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
     );
     let config = rc::Config {
         min_len: usize::try_from(min_value_length).unwrap_or(usize::MAX),
+        detectors: detector_config(snap.redaction.as_ref()),
         ..rc::Config::default()
     };
     let core = Arc::new(
@@ -285,6 +286,17 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
         llm,
         tool_proxy,
     })
+}
+
+/// The fallback detector settings of `redaction.detectors.*`. Unset fields keep the defaults.
+fn detector_config(r: Option<&v1::RedactionSettings>) -> rc::DetectorConfig {
+    let mut d = rc::DetectorConfig::default();
+    if let Some(r) = r {
+        d.rules_enabled = !r.detectors_off;
+        d.disabled_rules.clone_from(&r.detectors_disabled);
+        d.enabled_rules.clone_from(&r.detectors_enabled);
+    }
+    d
 }
 
 /// The LLM proxy's routes. Routes that authenticate themselves take their credentials from the
@@ -912,6 +924,50 @@ mod tests {
         let b = ok(s);
         assert!(b.tool_proxy.credentials.credentials()[0].binding.is_none());
         assert_eq!(b.applied.values[0].bound_hosts, vec!["api.example.test"]);
+    }
+
+    /// `redaction.detectors.*` reaches the redaction core: the group switch, a rule switched
+    /// off, a rule off by default switched on, and an unknown name rejecting the snapshot.
+    #[test]
+    fn detector_settings_apply() {
+        // Built at run time so no token-shaped literal is committed.
+        let tok = format!("dop_v1_{}", "0123456789abcdef".repeat(4));
+        let assign = "DB_PASSWORD=Xk9#mQ2vL7pR4zT";
+        let detects = |r: Option<v1::RedactionSettings>, text: &str| {
+            let mut s = snap(1);
+            s.redaction = r;
+            let b = ok(s);
+            let mut out = Vec::new();
+            b.applied
+                .redaction
+                .redactor()
+                .redact(text.as_bytes(), &mut out)
+                .unwrap();
+            out != text.as_bytes()
+        };
+        assert!(detects(None, &tok));
+        assert!(!detects(None, assign));
+        let off = v1::RedactionSettings {
+            detectors_off: true,
+            ..Default::default()
+        };
+        assert!(!detects(Some(off), &tok));
+        let one_off = v1::RedactionSettings {
+            detectors_disabled: vec!["digitalocean-token".into()],
+            ..Default::default()
+        };
+        assert!(!detects(Some(one_off), &tok));
+        let generic = v1::RedactionSettings {
+            detectors_enabled: vec!["generic-secret-assignment".into()],
+            ..Default::default()
+        };
+        assert!(detects(Some(generic), assign));
+        let mut bad = snap(1);
+        bad.redaction = Some(v1::RedactionSettings {
+            detectors_disabled: vec!["no-such-rule".into()],
+            ..Default::default()
+        });
+        assert!(build(bad, 0, &Hooks::default()).is_err());
     }
 
     #[test]
