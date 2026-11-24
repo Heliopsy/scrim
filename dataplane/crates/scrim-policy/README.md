@@ -5,7 +5,7 @@ and context-aware escaping of restored values (design D5). It decides what reach
 so it fails closed: anything it does not understand keeps the placeholder or goes to the control
 plane.
 
-Spec: `openspec/changes/scrim-v1/specs/policy-approvals` ("Data-plane decisions equal control-plane
+Spec: `openspec/specs/policy-approvals` ("Data-plane decisions equal control-plane
 decisions", "Rules only restrict restore", "Restore request attributes") and `specs/redaction`
 ("Resolution follows tool policy" through "Share and reveal").
 

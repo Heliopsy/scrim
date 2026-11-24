@@ -6,7 +6,7 @@ and checked by an independent guard before it leaves; responses, streamed or not
 placeholders resolved only where the restore policy allows. Anything that cannot be made safe is
 refused with a documented error and nothing reaches the provider.
 
-Spec: `openspec/changes/scrim-v1/specs/llm-proxy`, plus the base-URL and forward-proxy parts of
+Spec: `openspec/specs/llm-proxy`, plus the base-URL and forward-proxy parts of
 `specs/interception`, `specs/redaction` (restore side) and `specs/performance`.
 
 ## What it does

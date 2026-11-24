@@ -441,7 +441,7 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 The shipping matcher hashes each 8-byte window, so throughput stays near constant as the secret set
 grows (design D13). The budget in the
-[performance spec](openspec/changes/scrim-v1/specs/performance/spec.md) is p99 added latency under
+[performance spec](openspec/specs/performance/spec.md) is p99 added latency under
 5 ms for a 1 MB body with 1,000 secrets and under 10 ms with 10,000, and under 50 µs per streamed
 chunk; the latency gate (`crates/scrim-llm/benches/budget.json`) fails CI and the release when a
 build exceeds it.
@@ -498,10 +498,10 @@ veil's per-tool policy.
 | [docs/leak-assurance.md](docs/leak-assurance.md) | The leak suite, the bypass matrix, the end-to-end matrix and published results |
 | [docs/limitations.md](docs/limitations.md) | What scrim does not protect against |
 
-The behaviour contract is the OpenSpec change in
-[`openspec/changes/scrim-v1`](openspec/changes/scrim-v1/): the
-[proposal](openspec/changes/scrim-v1/proposal.md), the
-[design decisions](openspec/changes/scrim-v1/design.md) and one spec per capability.
+The behaviour contract is one OpenSpec spec per capability in [`openspec/specs`](openspec/specs/).
+The 1.0 [proposal](openspec/changes/archive/2026-11-24-scrim-v1/proposal.md) and
+[design decisions](openspec/changes/archive/2026-11-24-scrim-v1/design.md) are in the archived change
+[`openspec/changes/archive/2026-11-24-scrim-v1`](openspec/changes/archive/2026-11-24-scrim-v1/).
 
 ## Building from source
 

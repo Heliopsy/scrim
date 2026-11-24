@@ -7,7 +7,7 @@ directory, points the tool at it with the tool's own override variables, and the
 placeholder for the real value on connections to the hosts the credential is bound to (design D5).
 Nothing is written outside the session directory, and it is removed when the agent exits.
 
-Spec: `openspec/changes/scrim-v1/specs/credential-injection` ("Placeholder credentials for
+Spec: `openspec/specs/credential-injection` ("Placeholder credentials for
 command-line tools", "Built-in tool profiles", "Tool profile selection", "Catalog entries take their
 tool profile's binding", "Environment overrides before file tricks", "Tools that print their own
 credentials", "Testing tool profiles", "Credential helpers").

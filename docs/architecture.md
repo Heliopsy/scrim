@@ -1,9 +1,8 @@
 # Architecture
 
 This page shows how scrim is put together and how a request moves through it. It describes scrim
-1.0. The normative contract is the OpenSpec change in
-[`openspec/changes/scrim-v1`](../openspec/changes/scrim-v1/): the decisions D1 to D17 are in
-[`design.md`](../openspec/changes/scrim-v1/design.md), the requirements in its `specs/` directory.
+1.0. The normative contract is the OpenSpec specs in [`openspec/specs`](../openspec/specs/); the
+decisions D1 to D17 are in the archived 1.0 change's [`design.md`](../openspec/changes/archive/2026-11-24-scrim-v1/design.md).
 Where this page and the specs disagree, the specs win.
 
 scrim is one binary with two processes at runtime. The Go control plane reads secret stores,

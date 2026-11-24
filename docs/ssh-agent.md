@@ -5,7 +5,7 @@ use it like any agent, but the keys live in your stores and never leave scrim: t
 public keys and signatures. Every signature is a policy decision (op `ssh.sign`) that can allow,
 deny or ask a human, and every one is audited.
 
-Spec: `openspec/changes/scrim-v1/specs/credential-injection` ("SSH agent" and the requirements
+Spec: `openspec/specs/credential-injection` ("SSH agent" and the requirements
 after it). Code: `internal/sshagent` (protocol), `internal/sshkeys` (keys, policy, signing),
 `internal/run/sshagent.go` (the session socket).
 

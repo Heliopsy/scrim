@@ -24,7 +24,7 @@ file the agent read, from reaching the provider, but they do not stop an agent o
 command that sets out to reach the provider directly. Methods 3 and 5, and managed settings for
 the agent's own endpoint, enforce. See [Combining methods](#combining-methods).
 
-Spec: `openspec/changes/scrim-v1/specs/interception`, with design D5, D8 and D11 and the
+Spec: `openspec/specs/interception`, with design D5, D8 and D11 and the
 `deployment` and `agent-identity` specs. The spec names its modes differently; the mapping is in
 [Spec modes and these methods](#spec-modes-and-these-methods).
 

@@ -1,8 +1,8 @@
 # scrim documentation
 
 User documentation for scrim. The [project README](../README.md) explains what scrim does and how
-to start. The behaviour contract, with every requirement and scenario, is the OpenSpec change in
-[`openspec/changes/scrim-v1`](../openspec/changes/scrim-v1/).
+to start. The behaviour contract, with every requirement and scenario, is the OpenSpec specs in
+[`openspec/specs`](../openspec/specs/).
 
 ## Design
 
