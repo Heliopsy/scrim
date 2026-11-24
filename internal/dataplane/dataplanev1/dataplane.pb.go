@@ -2834,8 +2834,16 @@ type RedactionSettings struct {
 	// min_value_length is the shortest value matched in free text; shorter
 	// values are matched only in exact and encoded forms.
 	MinValueLength uint32 `protobuf:"varint,1,opt,name=min_value_length,json=minValueLength,proto3" json:"min_value_length,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// detectors_off switches every fallback pattern rule off
+	// (redaction.detectors.enabled false). The zero value keeps the defaults.
+	DetectorsOff bool `protobuf:"varint,2,opt,name=detectors_off,json=detectorsOff,proto3" json:"detectors_off,omitempty"`
+	// detectors_disabled names pattern rules switched off.
+	DetectorsDisabled []string `protobuf:"bytes,3,rep,name=detectors_disabled,json=detectorsDisabled,proto3" json:"detectors_disabled,omitempty"`
+	// detectors_enabled names pattern rules that are off by default and
+	// switched on.
+	DetectorsEnabled []string `protobuf:"bytes,4,rep,name=detectors_enabled,json=detectorsEnabled,proto3" json:"detectors_enabled,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *RedactionSettings) Reset() {
@@ -2873,6 +2881,27 @@ func (x *RedactionSettings) GetMinValueLength() uint32 {
 		return x.MinValueLength
 	}
 	return 0
+}
+
+func (x *RedactionSettings) GetDetectorsOff() bool {
+	if x != nil {
+		return x.DetectorsOff
+	}
+	return false
+}
+
+func (x *RedactionSettings) GetDetectorsDisabled() []string {
+	if x != nil {
+		return x.DetectorsDisabled
+	}
+	return nil
+}
+
+func (x *RedactionSettings) GetDetectorsEnabled() []string {
+	if x != nil {
+		return x.DetectorsEnabled
+	}
+	return nil
 }
 
 type ApplySnapshotResponse struct {
@@ -4855,9 +4884,12 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x124\n" +
 	"\x04kind\x18\x02 \x01(\x0e2 .scrim.dataplane.v1.ListenerKindR\x04kind\x12\x18\n" +
 	"\aaddress\x18\x03 \x01(\tR\aaddress\x12%\n" +
-	"\x0eblock_unrouted\x18\x04 \x01(\bR\rblockUnrouted\"=\n" +
+	"\x0eblock_unrouted\x18\x04 \x01(\bR\rblockUnrouted\"\xbe\x01\n" +
 	"\x11RedactionSettings\x12(\n" +
-	"\x10min_value_length\x18\x01 \x01(\rR\x0eminValueLength\"}\n" +
+	"\x10min_value_length\x18\x01 \x01(\rR\x0eminValueLength\x12#\n" +
+	"\rdetectors_off\x18\x02 \x01(\bR\fdetectorsOff\x12-\n" +
+	"\x12detectors_disabled\x18\x03 \x03(\tR\x11detectorsDisabled\x12+\n" +
+	"\x11detectors_enabled\x18\x04 \x03(\tR\x10detectorsEnabled\"}\n" +
 	"\x15ApplySnapshotResponse\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12'\n" +
 	"\x0fapplied_version\x18\x02 \x01(\x04R\x0eappliedVersion\x12\x1f\n" +

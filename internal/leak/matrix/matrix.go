@@ -97,6 +97,10 @@ type Row struct {
 	Placement Placement
 	Expect    Expect
 	Note      string
+	// Unknown, when set, makes this an unknown-secret row: it runs once
+	// with a value of this format generated for the run, in no store,
+	// instead of once per seed.
+	Unknown *UnknownFormat
 }
 
 // Rows returns the whole matrix in a stable order.
@@ -129,6 +133,12 @@ func Rows() []Row {
 				t, _ := TransformByID(id)
 				add(api, t, p)
 			}
+		}
+		raw, _ := TransformByID("raw")
+		for i := range UnknownFormats {
+			u := &UnknownFormats[i]
+			rows = append(rows, Row{ID: fmt.Sprintf("%s/unknown-secret/%s", api, u.ID), API: api, Transform: raw,
+				Placement: primary, Expect: u.Expect, Note: u.Note, Unknown: u})
 		}
 	}
 	return rows
@@ -179,6 +189,7 @@ func Markdown() string {
 		sort.Strings(apis)
 		b = append(b, fmt.Sprintf("| `%s` | %s (%v) | %s | %s |\n", p.ID, escapePipe(p.Desc), apis, p.Expect, escapePipe(p.Note))...)
 	}
+	b = append(b, unknownMarkdown()...)
 	// An empty note is one space between the pipes, as markdownlint's compact
 	// table style (MD060) wants.
 	return strings.ReplaceAll(string(b), "|  |", "| |")

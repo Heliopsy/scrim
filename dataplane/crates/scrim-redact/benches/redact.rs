@@ -240,6 +240,42 @@ fn latency(_c: &mut Criterion) {
     }
 }
 
+/// The fallback detectors alone (no known values): agent request bodies and source code with no
+/// secret in them, the cost every request pays for the pattern rules.
+fn detect(c: &mut Criterion) {
+    let kr = Arc::new(Keyring::new(PlaceholderKey::new(1, &[0x5a; 32]).unwrap()));
+    let snap = Snapshot::build(vec![], kr, &Config::default()).unwrap();
+    let src = [
+        include_str!("../src/redactor.rs"),
+        include_str!("../src/guard.rs"),
+        include_str!("../src/detect.rs"),
+        include_str!("../src/matcher.rs"),
+        include_str!("../README.md"),
+    ]
+    .concat();
+    let mut code = String::with_capacity(1 << 20);
+    while code.len() < 1_000_000 {
+        code.push_str(&src);
+    }
+    let mut g = c.benchmark_group("detect");
+    g.warm_up_time(Duration::from_millis(300))
+        .measurement_time(Duration::from_secs(2))
+        .sample_size(20);
+    let inputs = [
+        ("body-1m", body(SIZES[1], &[], false, 0)),
+        ("body-4m", body(SIZES[2], &[], false, 0)),
+        ("code-1m", code.into_bytes()),
+    ];
+    for (name, b) in &inputs {
+        let mut out = Vec::with_capacity(b.len() * 2);
+        g.throughput(Throughput::Bytes(b.len() as u64));
+        g.bench_function(BenchmarkId::from_parameter(name), |bn| {
+            bn.iter(|| black_box(snap.redactor().redact(black_box(b), &mut out).unwrap()));
+        });
+    }
+    g.finish();
+}
+
 /// Snapshot build time per set size.
 fn build(c: &mut Criterion) {
     let mut g = c.benchmark_group("build");
@@ -333,6 +369,7 @@ criterion_group!(
     bench_redact,
     bench_protect,
     restore,
-    build
+    build,
+    detect
 );
 criterion_main!(benches);

@@ -108,7 +108,9 @@ mod secret;
 mod shape;
 mod variants;
 
-pub use detect::{DetectorConfig, ENTROPY_RULE, EntropyConfig, builtin_rule_names};
+pub use detect::{
+    DetectorConfig, ENTROPY_RULE, EntropyConfig, builtin_rule_names, default_off_rule_names,
+};
 pub use error::{BuildError, Error, WithholdReason};
 pub use guard::{Guard, GuardFinding, GuardScratch, GuardView, Verdict};
 pub use matcher::{EngineChoice, EngineKind};

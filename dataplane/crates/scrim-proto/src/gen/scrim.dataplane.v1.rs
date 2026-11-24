@@ -586,12 +586,23 @@ pub struct Listener {
     #[prost(bool, tag = "4")]
     pub block_unrouted: bool,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RedactionSettings {
     /// min_value_length is the shortest value matched in free text; shorter
     /// values are matched only in exact and encoded forms.
     #[prost(uint32, tag = "1")]
     pub min_value_length: u32,
+    /// detectors_off switches every fallback pattern rule off
+    /// (redaction.detectors.enabled false). The zero value keeps the defaults.
+    #[prost(bool, tag = "2")]
+    pub detectors_off: bool,
+    /// detectors_disabled names pattern rules switched off.
+    #[prost(string, repeated, tag = "3")]
+    pub detectors_disabled: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// detectors_enabled names pattern rules that are off by default and
+    /// switched on.
+    #[prost(string, repeated, tag = "4")]
+    pub detectors_enabled: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ApplySnapshotResponse {

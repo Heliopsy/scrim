@@ -604,6 +604,14 @@ message RedactionSettings {
   // min_value_length is the shortest value matched in free text; shorter
   // values are matched only in exact and encoded forms.
   uint32 min_value_length = 1;
+  // detectors_off switches every fallback pattern rule off
+  // (redaction.detectors.enabled false). The zero value keeps the defaults.
+  bool detectors_off = 2;
+  // detectors_disabled names pattern rules switched off.
+  repeated string detectors_disabled = 3;
+  // detectors_enabled names pattern rules that are off by default and
+  // switched on.
+  repeated string detectors_enabled = 4;
 }
 
 message ApplySnapshotResponse {

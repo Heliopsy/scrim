@@ -199,6 +199,9 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 		Policy:       &pb.Policy{DefaultEffect: pb.Effect_EFFECT_DENY},
 		Restore:      restoreSettings(cfg),
 	}
+	if err := detectorSettings(cfg, snap.Redaction); err != nil {
+		return nil, err
+	}
 	if b.Policy != nil {
 		if p := b.Policy(); p != nil {
 			snap.Policy = p
