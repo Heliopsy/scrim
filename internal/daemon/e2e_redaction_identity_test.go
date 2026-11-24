@@ -24,6 +24,7 @@ import (
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/testing/fakeprovider"
+	"github.com/heliopsy/scrim/internal/testing/pgtest"
 	"github.com/heliopsy/scrim/internal/testing/podtest"
 )
 
@@ -230,6 +231,54 @@ catalog:
 			if w.Setting.Key == redactscope.LimitKey {
 				t.Fatal("the weakening setting is on by default")
 			}
+		}
+	})
+
+	// The same narrowing with the session minted on replica A and the
+	// request sent through replica B (state-and-scaling "Every replica
+	// redacts scrim's own tokens", agent-identity "Stricter per-agent
+	// redaction is weakening"), then the session revoked on A: B gives its
+	// requests the whole redaction set again.
+	t.Run("limit-to-agent-identity across replicas", func(t *testing.T) {
+		dsn := pgtest.FreshDSN(t)
+		env := append(replicaEnv(dsn), "SCRIM_REDACTION_LIMIT_TO_AGENT_IDENTITY=true")
+		_, a, _ := start(t, env...)
+		hb, b, fake := start(t, env...)
+		within(t, "both events subscriptions", 15*time.Second, func() bool {
+			return a.App().Events.Listening() && b.App().Events.Listening()
+		})
+		sid, tok := mint(t, a)
+		eventually(t, "agent-a's exemption on B", func() bool {
+			return strings.Contains(hb.logs.String(), "values this agent's own store identity cannot read are not redacted")
+		})
+		hdr := map[string]string{run.SessionHeader: tok}
+		var got string
+		for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+			got = send(t, b, fake, hdr)
+			if leaked(got)["payments"] || time.Now().After(deadline) {
+				break
+			}
+		}
+		if l := leaked(got); !l["payments"] || l["own"] {
+			t.Fatalf("agent-a's session minted on A, through B: leaked %v, want payments only", l)
+		}
+		if l := leaked(send(t, b, fake, nil)); len(l) > 0 {
+			t.Fatalf("no session, through B: leaked %v", l)
+		}
+		if err := a.runtime.Sessions.Revoke(t.Context(), sid, "test"); err != nil {
+			t.Fatal(err)
+		}
+		for deadline := time.Now().Add(fast); ; time.Sleep(50 * time.Millisecond) {
+			got = send(t, b, fake, hdr)
+			if len(leaked(got)) == 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("B still narrows a session revoked on A: leaked %v", leaked(got))
+			}
+		}
+		if l := leaked(hb.logs.String()); len(l) > 0 {
+			t.Fatalf("leaked to the log: %v", l)
 		}
 	})
 

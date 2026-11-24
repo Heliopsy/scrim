@@ -52,12 +52,14 @@ import (
 	"github.com/heliopsy/scrim/internal/dataplane"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
 	"github.com/heliopsy/scrim/internal/identity/issuer"
+	"github.com/heliopsy/scrim/internal/identity/sessionstate"
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/placeholder"
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/redactscope"
 	"github.com/heliopsy/scrim/internal/secret"
+	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/status"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/refresh"
@@ -195,8 +197,11 @@ type Daemon struct {
 	scopes *redactscope.Checker
 	// issued are the identity tokens scrim signed for agents, redacted
 	// until they expire; issuer signs them (nil when it is off).
-	issued   *sessionTokens
-	issuer   *issuer.Issuer
+	issued *sessionTokens
+	issuer *issuer.Issuer
+	// shared distributes the three token sets between replicas; nil
+	// without shared state and placeholder keys.
+	shared   *sharedTokens
 	pusher   *pusher
 	log      *slog.Logger
 	started  time.Time
@@ -295,7 +300,8 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		return nil, err
 	}
 	if len(placeholder.Keys.Get(cfg)) == 0 && a.State.Backend() == "postgres" {
-		d.log.Warn("redaction.placeholder-keys is not set: each replica generates its own key and placeholders do not match across replicas")
+		d.log.Warn("redaction.placeholder-keys is not set: each replica generates its own key, placeholders do not match across replicas, " +
+			"and each replica redacts only the session and service account tokens it minted or verified")
 	}
 
 	d.catalog, err = catalog.NewManager(ctx, a.Config, a.Stores, obs.WithComponent(a.Log, "catalog"))
@@ -326,6 +332,18 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	d.cleanup = append(d.cleanup, d.kubeTokens.close)
 	d.issued = newSessionTokens(issuedTokenStore, func() { d.pusher.Trigger() })
 	d.cleanup = append(d.cleanup, d.issued.close)
+	if a.State.Backend() == "postgres" && len(placeholder.Keys.Get(cfg)) > 0 {
+		d.shared, err = newSharedTokens(a.State, ring, obs.WithComponent(a.Log, "shared-tokens"), d.tokens, d.kubeTokens, d.issued)
+		if err != nil {
+			ring.Wipe()
+			return nil, err
+		}
+		d.cleanup = append(d.cleanup, d.shared.close)
+		a.Events.Subscribe(eventRedactionToken, d.shared.delivered)
+	}
+	// A session revoked on any replica leaves the narrowed redaction scopes;
+	// its token stays redacted until it expires.
+	a.Events.Subscribe(sessionstate.ActionRevoked, func(e state.Event) { d.tokens.end(e.Subject) })
 	d.issuer, err = issuer.FromConfig(cfg, nil, obs.WithComponent(a.Log, "issuer"), d.issued.addValue)
 	if err != nil {
 		return nil, err
@@ -472,6 +490,15 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		return nil, err
 	}
 	d.setDataPlaneAddrs(nil)
+	if d.shared != nil {
+		// Before the data plane's first snapshot: a replica serves with the
+		// tokens the others shared or not at all.
+		if err := d.shared.load(ctx); err != nil {
+			d.runtime.Close()
+			return nil, err
+		}
+		d.goRun("shared tokens", func() error { d.shared.run(runCtx); return nil })
+	}
 
 	// Everything is bound: start the loops. The catalog's secrets are part
 	// of each store's first load; warmCatalog logs those that cannot be
@@ -589,6 +616,11 @@ func (d *Daemon) reloadKeys(ctx context.Context, old, cur *config.Config) {
 	if err != nil {
 		d.log.Error("placeholder key reload rejected; previous keys stay in force", "err", err)
 		return
+	}
+	if d.shared != nil {
+		if err := d.shared.setKeys(ring); err != nil {
+			d.log.Error("shared token keys not reloaded; previous keys stay in force for sharing", "err", err)
+		}
 	}
 	d.builder.SetKeys(ring)
 	d.log.Info("placeholder keys reloaded", "current_version", ring.Current().Version, "keys", len(ring.Keys))
@@ -917,6 +949,9 @@ func (d *Daemon) sweepSessions(ctx context.Context) {
 		}
 		if a, b, c, e := d.tokens.prune(), d.kubeTokens.prune(), d.issued.prune(), d.project.prune(active); a || b || c || e {
 			d.pusher.Trigger()
+		}
+		if d.shared != nil {
+			d.shared.deleteExpired(ctx)
 		}
 		if gone, err := d.runtime.Sessions.Sweep(ctx); err != nil {
 			d.log.Warn("session sweep failed", "err", err)

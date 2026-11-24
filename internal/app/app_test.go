@@ -95,21 +95,25 @@ func TestDataPlaneNeedsABinary(t *testing.T) {
 }
 
 // TestReplicasNeedSharedBackends: more than one replica refuses to start on
-// local events or unshared state (specs/state-and-scaling "Multiple
-// replicas with local events").
+// local events, unshared state or without shared placeholder keys
+// (specs/state-and-scaling "Replica count is declared").
 func TestReplicasNeedSharedBackends(t *testing.T) {
-	for env, want := range map[string]string{
-		"SCRIM_EVENTS_BACKEND=local":    "events.backend",
-		"SCRIM_EVENTS_BACKEND=postgres": "state.backend",
+	for _, tc := range []struct {
+		env  []string
+		want string
+	}{
+		{[]string{"SCRIM_EVENTS_BACKEND=local"}, "events.backend"},
+		{[]string{"SCRIM_EVENTS_BACKEND=postgres"}, "state.backend"},
+		{[]string{"SCRIM_EVENTS_BACKEND=postgres", "SCRIM_STATE_BACKEND=postgres"}, "redaction.placeholder-keys"},
 	} {
 		var logs bytes.Buffer
-		a, err := app.New(context.Background(), isolated(t, "SCRIM_DEPLOYMENT_REPLICAS=2", env), &logs)
+		a, err := app.New(context.Background(), isolated(t, append([]string{"SCRIM_DEPLOYMENT_REPLICAS=2"}, tc.env...)...), &logs)
 		if err == nil {
 			_ = a.Close()
-			t.Fatalf("%s: started with two replicas", env)
+			t.Fatalf("%v: started with two replicas", tc.env)
 		}
-		if !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "deployment.replicas") {
-			t.Fatalf("%s: error %q does not name %s", env, err, want)
+		if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "deployment.replicas") {
+			t.Fatalf("%v: error %q does not name %s", tc.env, err, tc.want)
 		}
 	}
 }
