@@ -182,6 +182,16 @@ const STRIP_HANDSHAKE: &[&str] = &[
 /// How long closing a connection may take before scrim drops it.
 const CLOSE_GRACE: Duration = Duration::from_secs(5);
 
+/// After refusing a message, how long scrim waits for the agent's close frame before it drops
+/// the connection. Dropping a socket with unread data from the agent (the rest of an oversized
+/// message) resets it, and on Windows a reset discards the error event and close frame the
+/// agent has not read yet.
+const LINGER: Duration = Duration::from_secs(1);
+
+/// When the agent's stream fails instead (it stopped at an oversized frame's header), how long
+/// scrim keeps the socket open so the agent can read the error event and the close frame.
+const LINGER_AFTER_ERROR: Duration = Duration::from_millis(250);
+
 fn token_in(h: &HeaderMap, name: HeaderName, token: &str) -> bool {
     h.get_all(name).iter().any(|v| {
         v.to_str()
@@ -335,6 +345,7 @@ impl Proxy {
             rm,
             limits: self.cfg.limits,
             seen: Vec::new(),
+            refused: false,
         };
         tokio::spawn(relay.start(on_upgrade, *upstream));
         switching_protocols(&up_parts.headers, &client_key)
@@ -542,6 +553,8 @@ struct Relay {
     limits: Limits,
     /// Unscanned media types already audited on this connection.
     seen: Vec<String>,
+    /// A message was refused: the connection ends with the agent's close, see [`LINGER`].
+    refused: bool,
 }
 
 /// Restore state for provider messages, kept out of [`Relay`] so no `Cell` is held across an
@@ -591,6 +604,9 @@ impl Relay {
                     }
                 }
             }
+        }
+        if self.refused {
+            linger(&mut from_client).await;
         }
         let (resolved, kept) = (restore.stats.resolved.get(), restore.stats.kept.get());
         if let Some(m) = &self.rm {
@@ -868,7 +884,8 @@ impl Relay {
         messages(&out)
     }
 
-    async fn refuse(&self, r: &Refusal, to_client: &mut Sink, to_up: &mut Sink) {
+    async fn refuse(&mut self, r: &Refusal, to_client: &mut Sink, to_up: &mut Sink) {
+        self.refused = true;
         tracing::info!(route = %self.route.name, reason = r.reason.code(), "websocket message refused");
         if let Some(m) = &self.rm {
             m.refused(r.reason);
@@ -900,6 +917,30 @@ fn messages(out: &[u8]) -> Vec<Message> {
         }
     });
     msgs
+}
+
+/// Reads and drops what the agent still sends after a refusal, until its close frame, the end
+/// of its stream or [`LINGER`], so the socket is not reset under the error event and close
+/// frame scrim sent. Nothing read here is forwarded.
+async fn linger<S>(from_client: &mut S)
+where
+    S: futures_util::Stream<Item = Result<Message, WsError>> + Unpin,
+{
+    let deadline = tokio::time::Instant::now() + LINGER;
+    loop {
+        match tokio::time::timeout_at(deadline, from_client.next()).await {
+            Ok(Some(Ok(Message::Close(_))) | None) | Err(_) => return,
+            Ok(Some(Ok(_))) => {}
+            Ok(Some(Err(_))) => {
+                tokio::time::sleep(
+                    LINGER_AFTER_ERROR
+                        .min(deadline.saturating_duration_since(tokio::time::Instant::now())),
+                )
+                .await;
+                return;
+            }
+        }
+    }
 }
 
 async fn close(s: &mut Sink, code: CloseCode, reason: &'static str) {
