@@ -2,12 +2,9 @@
 
 ### Requirement: Protocol upgrades are refused
 
-The LLM proxy SHALL refuse a request asking for a protocol upgrade (an `Upgrade` header or
-`Connection: upgrade`) that is not a WebSocket handshake it can serve, with status 501 and
-`upgrade_unsupported`, before reading the body, loading values or asking the request gate, because
-the upgraded stream cannot be redacted. A WebSocket handshake it can serve is a `GET` over HTTP/1.1
-with `Upgrade: websocket`, `Sec-WebSocket-Version: 13` and a key, on a listener that serves
-upgrades. Nothing SHALL be sent upstream for a refused upgrade.
+The LLM proxy SHALL refuse a protocol upgrade other than a WebSocket handshake it serves (a `GET`
+over HTTP/1.1 with `Upgrade: websocket`, version 13 and a key) with 501 and `upgrade_unsupported`,
+before reading the body, loading values or asking the gate, and SHALL send nothing upstream.
 
 #### Scenario: Other upgrade
 
