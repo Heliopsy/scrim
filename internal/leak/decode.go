@@ -94,6 +94,7 @@ func keep(out []decoded, enc string, b []byte) []decoded {
 		}
 		off += i + 1
 	}
+	out = append(out, containerTexts(enc, b)...)
 	head := b[:min(len(b), 64)]
 	for i := 0; i+1 < len(head); i++ {
 		if b[i] == 0x78 && (b[i+1] == 0x01 || b[i+1] == 0x5e || b[i+1] == 0x9c || b[i+1] == 0xda) {
@@ -635,3 +636,71 @@ var confusables = func() map[rune]rune {
 	}
 	return m
 }()
+
+// maxContainerStreams bounds how many compressed streams of one PNG or PDF
+// the checker inflates.
+const maxContainerStreams = 256
+
+// containerTexts inflates the compressed parts of a PNG (zTXt, iTXt and iCCP
+// chunks, and the image data) and of a PDF (every stream), so a value an
+// attachment carries compressed counts as a leak. The checker's own reading,
+// independent of scrim's.
+func containerTexts(enc string, b []byte) []decoded {
+	var out []decoded
+	inflate := func(name string, z []byte) {
+		zr, err := zlib.NewReader(bytes.NewReader(z))
+		if err != nil {
+			return
+		}
+		if u, _ := io.ReadAll(io.LimitReader(zr, 1<<20)); len(u) >= minDecoded {
+			out = append(out, decoded{enc: enc + ">" + name, text: string(u)})
+		}
+	}
+	switch {
+	case bytes.HasPrefix(b, []byte("\x89PNG\r\n\x1a\n")):
+		var idat []byte
+		for p, n := 8, 0; p+12 <= len(b) && n < maxContainerStreams; n++ {
+			size := int(uint32(b[p])<<24 | uint32(b[p+1])<<16 | uint32(b[p+2])<<8 | uint32(b[p+3]))
+			typ := string(b[p+4 : p+8])
+			if size < 0 || p+12+size > len(b) {
+				break
+			}
+			data := b[p+8 : p+8+size]
+			p += 12 + size
+			_, rest, found := bytes.Cut(data, []byte{0})
+			switch {
+			case typ == "IDAT":
+				idat = append(idat, data...)
+			case (typ == "zTXt" || typ == "iCCP") && found && len(rest) > 1:
+				inflate("png-"+typ, rest[1:])
+			case typ == "iTXt" && found && len(rest) > 2 && rest[0] == 1:
+				// keyword NUL flag method language NUL translated NUL text
+				if _, t, ok := bytes.Cut(rest[2:], []byte{0}); ok {
+					if _, t, ok := bytes.Cut(t, []byte{0}); ok {
+						inflate("png-iTXt", t)
+					}
+				}
+			}
+		}
+		if len(idat) > 0 {
+			inflate("png-IDAT", idat)
+		}
+	case bytes.Contains(b[:min(len(b), 1024)], []byte("%PDF-")):
+		rest := b
+		for n := 0; n < maxContainerStreams; n++ {
+			i := bytes.Index(rest, []byte("stream"))
+			if i < 0 {
+				break
+			}
+			rest = rest[i+len("stream"):]
+			rest = bytes.TrimPrefix(bytes.TrimPrefix(rest, []byte("\r")), []byte("\n"))
+			end := bytes.Index(rest, []byte("endstream"))
+			if end < 0 {
+				break
+			}
+			inflate("pdf-stream", rest[:end])
+			rest = rest[end+len("endstream"):]
+		}
+	}
+	return out
+}

@@ -18,8 +18,10 @@
 // would misread bumps PROTOCOL_VERSION; both sides and their tests change in
 // the same commit.
 //
-// Secrets: ValueEntry.value, PlaceholderKey.key, CaptureRequest.value and
-// CaCertificate.key_pem are the only fields that hold secret material.
+// Secrets: ValueEntry.value, PlaceholderKey.key, CaptureRequest.value,
+// CaCertificate.key_pem and UpstreamProxy.password are the only fields that
+// hold secret material (with AskCaller.kubernetes_token and
+// RedactRequest.text, see AGENTS.md).
 // Generated debug printers for those messages are replaced by redacting ones
 // on both sides; neither may be logged, echoed in an error or copied into an
 // event.

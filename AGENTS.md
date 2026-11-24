@@ -144,10 +144,10 @@ an emulator in podman. State backends follow the same shape with `state.Register
   adding a call an older peer would get wrong, bumps `PROTOCOL_VERSION_CURRENT`, and both sides
   and their tests change in the same commit.
 - `ValueEntry.value`, `PlaceholderKey.key`, `CaptureRequest.value`, `CaCertificate.key_pem`,
-  `AskCaller.kubernetes_token` and `RedactRequest.text` are the only secret fields. Keep it that
-  way: a new secret field needs a redacting `Debug` in `scrim-proto` and a wipe in
-  `internal/dataplane` (the control plane wipes `kubernetes_token` in `gate.Answer`, and
-  `Supervisor.Redact` wipes `RedactRequest.text`).
+  `AskCaller.kubernetes_token`, `RedactRequest.text` and `UpstreamProxy.password` are the only
+  secret fields. Keep it that way: a new secret field needs a redacting `Debug` in `scrim-proto`
+  and a wipe in `internal/dataplane` (the control plane wipes `kubernetes_token` in
+  `gate.Answer`, and `Supervisor.Redact` wipes `RedactRequest.text`).
 
 ## Configuration
 

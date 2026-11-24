@@ -38,6 +38,9 @@ import (
 
 // App is the running control plane's components.
 type App struct {
+	// uninstallProxy reverts the upstream proxy this App installed.
+	uninstallProxy func()
+	proxyDesc      string
 	// Config owns the effective configuration and its hot reload.
 	Config   *config.Manager
 	Log      *slog.Logger
@@ -149,6 +152,10 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 	if a.Log, err = obs.LoggerFromConfig(logw, boot, a.Scrubber); err != nil {
 		return nil, err
 	}
+	// The stores opened below may already need the upstream proxy.
+	if err := a.installProxy(boot); err != nil {
+		return nil, err
+	}
 	// Store references in settings (admin.token: bao://...) are read from
 	// the stores when the configuration is built, at start and on every
 	// reload. Until the running stores below are open, they are read
@@ -167,6 +174,17 @@ func New(ctx context.Context, opts config.Options, logw io.Writer) (*App, error)
 		return nil, err
 	}
 	cfg := a.Config.Current()
+	// Again with store references resolved (a password in a store), and on
+	// every reload; a reload whose proxy cannot be used keeps the last one.
+	if err := a.installProxy(cfg); err != nil {
+		a.uninstallProxy()
+		return nil, err
+	}
+	a.Config.Subscribe(func(_, cur *config.Config) {
+		if err := a.installProxy(cur); err != nil {
+			a.Log.Error("upstream proxy not changed", "err", err)
+		}
+	})
 	if obs.MetricsEnabled.Get(cfg) {
 		a.Instruments = obs.NewInstruments(a.Metrics, a.Scrubber)
 	} else {
@@ -293,6 +311,9 @@ func (a *App) Start(ctx context.Context) {
 func (a *App) Close() error {
 	if a.stop != nil {
 		a.stop()
+	}
+	if a.uninstallProxy != nil {
+		a.uninstallProxy()
 	}
 	var errs []error
 	if a.Tracing != nil {

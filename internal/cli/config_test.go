@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -91,9 +92,13 @@ func TestEveryWeakeningSettingIsReported(t *testing.T) {
 	}
 }
 
-// weakValue returns a value different from the safe default.
+// weakValue returns a value that weakens the setting: its first listed
+// weakening value, or one different from the safe default.
 func weakValue(t *testing.T, s *config.Setting) string {
 	t.Helper()
+	if len(s.WeakeningValues) > 0 {
+		return fmt.Sprint(s.WeakeningValues[0])
+	}
 	switch s.Kind {
 	case config.KindBool:
 		return "true"

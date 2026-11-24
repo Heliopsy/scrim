@@ -36,6 +36,12 @@ Spec: `openspec/specs/llm-proxy`, plus the base-URL and forward-proxy parts of
   thinking text and signatures, redacted thinking, `encrypted_content`, reasoning items, and base64
   or `data:` binary parts. The redactor runs over every other byte, so unknown fields are redacted
   by default. The guard then scans the complete outgoing bytes, spans included.
+- **Binary parts.** Under the snapshot's `BinaryPolicy::Scan` (the default) each binary part is
+  decoded and the redactor and the guard run over its bytes and the text it carries (the `binary`
+  module: image metadata, PDF streams and strings, SVG, gzip and ZIP entries). A match refuses the
+  request with `secret_in_binary`; a part that cannot be decoded within the bounds refuses it with
+  `unscannable_content`. Text documents (`text/plain` file parts and the like) are redacted and
+  encoded again. `Block` refuses any binary part, `Pass` forwards them unscanned.
 - **Response side.** SSE events are framed without copying, and each content block keeps at most
   `max_len - 1` held bytes for a placeholder split across events. Text resolves under the display
   policy, tool arguments under the per-tool policy (`ToolMode::Buffered` hands the policy complete
@@ -98,7 +104,7 @@ OpenAI). 422 is the redaction-failed status.
 
 | Code | Status |
 | --- | --- |
-| `malformed_body`, `redactor_failed`, `guard_failed`, `guard_refused`, `unscannable_content` | 422 |
+| `malformed_body`, `redactor_failed`, `guard_failed`, `guard_refused`, `unscannable_content`, `secret_in_binary` | 422 |
 | `not_ready` (with `Retry-After: 1`) | 503 |
 | `no_route` | 404 |
 | `body_too_large` | 413 |
@@ -143,10 +149,13 @@ fake upstream: recorded Claude Code, Chat Completions and Codex-style Responses 
 through a compression stand-in, h2c, Unix socket, upstream TLS with a private CA and connection
 reuse, and the forward proxy with `curl` and `HTTPS_PROXY`.
 
-`cargo bench -p scrim-llm --bench latency_gate` measures proxy overhead, engine-inclusive request
-latency for 10, 1,000 and 10,000 secrets and per-chunk restore time on a 20,000-event stream, and
-exits non-zero when a p99 exceeds `benches/budget.json`. Engine budgets are reported but enforced
-only once `scrim-redact` is wired in (`engine.enforce`).
+`cargo bench -p scrim-llm --bench latency_gate` measures proxy overhead (with a pass-through engine
+and with the production engine), added request latency with the production engine for 10, 1,000
+and 10,000 secrets, the `scrim-redact` core on its own, and per-chunk restore time on a
+20,000-event stream, and exits non-zero when a gated value misses `benches/budget.json`.
+`SCRIM_PERF_JSON` writes the results as JSON for the regression check against the previous
+release. [docs/performance.md](../../../docs/performance.md) describes the method and how to read
+the report.
 
 ## Limitations
 

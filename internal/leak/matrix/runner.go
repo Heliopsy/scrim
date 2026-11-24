@@ -5,6 +5,7 @@ package matrix
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -281,8 +282,17 @@ func ContentFor(t Transform, value string) Content {
 	}
 }
 
-// RunRow runs one row for one seed.
+// RunRow runs one row for one seed. An unknown-secret row ignores the seed
+// and runs with a value it generates.
 func (r *Runner) RunRow(ctx context.Context, row Row, seed leak.Seed) Result {
+	content := ContentFor(row.Transform, seed.Value())
+	if row.Unknown != nil {
+		seed, content = unknownSeed(row.Unknown)
+	}
+	return r.run(ctx, row, seed, content)
+}
+
+func (r *Runner) run(ctx context.Context, row Row, seed leak.Seed, content Content) Result {
 	res := Result{Row: row.ID, API: row.API, Placement: row.Placement.ID, Transform: row.Transform.ID, Seed: seed.Ref(), Expect: row.Expect, Note: row.Note}
 	ph := r.Placeholder
 	if ph == nil {
@@ -292,7 +302,7 @@ func (r *Runner) RunRow(ctx context.Context, row Row, seed leak.Seed) Result {
 		res.Outcome, res.Error = OutcomeError, "reset upstream: "+err.Error()
 		return res
 	}
-	reqs := row.Placement.Build(row.API, ContentFor(row.Transform, seed.Value()), row.Transform.Body)
+	reqs := row.Placement.Build(row.API, content, row.Transform.Body)
 	allFailed, settle := true, false
 	for _, q := range reqs {
 		status, _, err := r.Target.Send(ctx, q)
@@ -328,7 +338,7 @@ func (r *Runner) RunRow(ctx context.Context, row Row, seed leak.Seed) Result {
 	placeholder := false
 	for _, e := range ex {
 		res.Findings = append(res.Findings, checker.Check(e.Capture)...)
-		if ph.Match(e.Body) || ph.MatchString(e.RawQuery) || headerMatch(ph, e.Header) {
+		if ph.Match(e.Body) || base64Match(ph, e.Body) || ph.MatchString(e.RawQuery) || headerMatch(ph, e.Header) {
 			placeholder = true
 		}
 	}
@@ -394,6 +404,21 @@ func merged(ex []fp.Exchange) leak.Capture {
 	return leak.Capture{Seq: 0, Body: b.Bytes()}
 }
 
+// base64Runs finds base64 text long enough to hold a placeholder: a file
+// attachment's data, bare or in a `data:` URL.
+var base64Runs = regexp.MustCompile(`[A-Za-z0-9+/]{24,}={0,2}`)
+
+// base64Match reports whether a placeholder sits inside base64 text of body,
+// as it does in a text document the proxy redacted and encoded again.
+func base64Match(re *regexp.Regexp, body []byte) bool {
+	for _, run := range base64Runs.FindAll(body, -1) {
+		if d, err := base64.StdEncoding.DecodeString(string(run)); err == nil && re.Match(d) {
+			return true
+		}
+	}
+	return false
+}
+
 func headerMatch(re *regexp.Regexp, h http.Header) bool {
 	for _, vs := range h {
 		for _, v := range vs {
@@ -409,6 +434,21 @@ func headerMatch(re *regexp.Regexp, h http.Header) bool {
 func (r *Runner) Run(ctx context.Context, rows []Row, seeds []leak.Seed) ([]Result, error) {
 	var out []Result
 	for _, row := range rows {
+		if row.Unknown != nil {
+			// One run: the value is generated, not taken from the seeds.
+			seeds := seeds[:min(1, len(seeds))]
+			if len(seeds) == 0 {
+				seeds = []leak.Seed{{}}
+			}
+			for _, s := range seeds {
+				res := r.RunRow(ctx, row, s)
+				out = append(out, res)
+				if r.Progress != nil {
+					r.Progress(res)
+				}
+			}
+			continue
+		}
 		for _, s := range seeds {
 			if err := ctx.Err(); err != nil {
 				return out, err

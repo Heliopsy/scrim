@@ -26,18 +26,36 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
 ## Redaction
 
 - **Secrets scrim does not know.** Redaction matches the values your stores hold. A secret in no
-  configured store is caught only if a fallback detector (pattern rules and entropy) recognises
-  it. Point a store at every secret source the agent can reach.
+  configured store is caught only if a fallback detector recognises its format: the detectors
+  cover cloud keys, API tokens of common services, private keys, JWTs and database URL passwords
+  ([configuration.md](configuration.md#redactiondetectorsdisable) lists them), match the value as
+  written (not base64 or another encoding of it), and leave passwords and random keys with no
+  known prefix or key name alone. The generic `password = ...` rule is off by default
+  (`redaction.detectors.enable`), and entropy matching has no setting. Point a store at every
+  secret source the agent can reach.
 - **Transforms outside the bypass matrix.** Look-alike Unicode, values spelled out in words,
   compressed content, the base85 family, and values the agent splits across fields, tool results
   or requests (including server-side state such as `previous_response_id`) are not matched. The
   guard's fragment rules catch long halves of a split value; short ones pass.
 - **Short values.** Values shorter than the minimum length (8 bytes by default) are matched only
   whole and in their encoded forms, never as fragments. `scrim status` lists them.
-- **Images, PDFs and other binary parts pass unscanned**, including text in image metadata. In the
-  Gemini API that is every `inlineData` part, a `text/plain` document included. The spec describes
-  a `block` policy for binary parts; scrim 1.0 has no setting for it, and the data plane always
-  passes them. Keep secrets out of images and documents the agent attaches.
+- **Text in image pixels is not read.** Under the default `redaction.binary: scan`, scrim decodes
+  images, PDFs and other attachments and scans their bytes, metadata and document text, and refuses
+  a request whose attachment holds a secret. It does not recognise text rendered into pixels (no
+  OCR), audio or video content, or PDF text drawn with fonts whose encoding needs a ToUnicode map to
+  read. A screenshot of a terminal showing a secret reaches the provider. Keep secrets off screen
+  when the agent takes screenshots.
+- **Attachments referenced by URL are not fetched.** An `image_url` with an `https:` URL, an
+  uploaded file ID or a Gemini `fileData` URI is passed on as text; the provider fetches the content
+  and scrim never sees it.
+- **Attachments scrim cannot decode are refused.** Encrypted PDFs, archives other than gzip and
+  ZIP with deflate, and parts past the scan bounds (64 MiB decoded or inflated, 100,000 objects,
+  nesting depth 4, 2 seconds plus 250 ms per MiB) are refused under `scan` with
+  `unscannable_content`. Set `redaction.binary: pass` to forward them unscanned; that is weakening
+  and reported by `scrim status` and `scrim doctor`.
+- **Large attachments add latency under `scan`.** Each part is decoded and every view of it goes
+  through the redactor and the guard: about 55 ms per MiB for an image and 250 ms per MiB for a
+  text-heavy PDF on the reference machine (design.md of the `binary-parts-policy` change).
 - **Clients that pin certificates** fail to connect under TLS interception. That fails closed, but
   such a client cannot be used through the forward proxy, transparent or DNS modes.
 
@@ -57,9 +75,15 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   messages are not written by capture mode. Base64 audio in Realtime events is a binary part like
   an image ([Redaction](#redaction)). Other upgrades than WebSocket are refused
   (`501 upgrade_unsupported`).
-- **`scrim run` replaces an inherited `HTTPS_PROXY`** instead of chaining to it, and runtimes with
-  their own trust store (Java, for one) do not trust scrim's CA inside the session
-  ([run.md](run.md#limitations)).
+- **A running scrim keeps its own upstream proxy.** `scrim run` chains an inherited `HTTPS_PROXY`
+  behind scrim only when it starts scrim itself; a scrim already running as a service uses the
+  upstream proxy it was configured with for every session, and `scrim run` only warns when yours
+  differs ([run.md](run.md#corporate-proxies)). Runtimes with their own trust store (Java, for one)
+  do not trust scrim's CA inside the session ([run.md](run.md#limitations)).
+- **Not every outbound connection uses the upstream proxy.** PostgreSQL, Valkey and NATS
+  connections, plugins and Kubernetes TokenReview connect directly
+  ([configuration.md](configuration.md#upstream-proxy)). Connections already open when the proxy
+  changes keep their route until they close.
 
 ## Implementation
 
@@ -70,7 +94,9 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
 - **Credentials that SDKs and HTTP clients take as strings are copied out of scrim's secret
   type.** The AWS SDK takes access keys as Go strings, so every signature copies them, and the
   copies live as long as the SDK's own. Store tokens sent in an HTTP `Authorization` header (for
-  example Infisical's access token) are strings for the length of the request. None of these can
+  example Infisical's access token) are strings for the length of the request, and the control
+  plane's HTTP clients take the upstream proxy password as a string in the proxy URL for each
+  connection. None of these can
   be wiped; they are freed and eventually overwritten.
 - **Short credentials of scrim's own are not redacted.** scrim's own credentials (notifier
   tokens, the admin and metrics tokens, audit sink, Valkey, NATS and Postgres passwords, signing
@@ -85,13 +111,19 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   constrained one with `edge.ca.existingSecret` ([edge-forwarder.md](edge-forwarder.md#the-edge-ca)).
   While `edge.legacy-interception-certificate` is on during an upgrade, forwarders from 1.0 still
   trust the interception CA for the edge listener.
-- **The latency gate measures a stand-in engine for added request latency.** Its proxy overhead and
-  per-chunk budgets are enforced, but the redactor and guard in it are a simple Aho-Corasick
-  implementation, and `budget.json` reports their numbers without enforcing them. The production
-  engine's latency is measured by the `scrim-redact` benchmarks, published with each release, but
-  no gate fails on it.
-- **Performance is checked against fixed budgets, not against the previous release.** A
-  regression that stays under budget does not stop a release.
+- **Added request latency is above the performance spec's targets for large bodies.** The spec
+  aims for 5 ms on a 1 MB body with 1,000 secrets and 10 ms with 10,000; the guard takes about
+  25 ms per 1 MB at the median and up to about 40 ms at p99 on the reference runner, and 2 to 4 ms
+  per 100 KB. The latency gate holds the production engine to budgets set from what it does today,
+  and the regression check fails a release that got slower than the previous one, but neither
+  makes it meet the spec's targets ([performance.md](performance.md#budgets)).
+- **The performance gate measures on a shared runner.** The latency gate drops samples during which
+  the measuring thread waited for a CPU, but not those where one of the guard's worker threads did;
+  those measurements rely on the median over rounds. The runner's clock speed varies between runs
+  (up to about two times), so the budgets are wide and the regression check compares measurements
+  relative to a calibration workload, which tracks clock speed better than memory or cache
+  contention. It only compares runs on the same runner class and CPU, so a change of the reference
+  runner's hardware skips a comparison instead of failing it.
 
 ## Identity and per-agent settings
 

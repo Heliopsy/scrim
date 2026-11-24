@@ -1,4 +1,5 @@
-//! The client side: connections from scrim to upstream servers.
+//! The client side: connections from scrim to upstream servers, through the upstream proxy in
+//! force when one is set ([`scrim_upstream_proxy`]).
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -16,6 +17,7 @@ use rustls::RootCertStore;
 use rustls::pki_types::CertificateDer;
 use tower_service::Service;
 
+use scrim_upstream_proxy::{ProxyConnector, ProxyHandle};
 use sha2::{Digest, Sha256};
 
 use crate::body::ProxyBody;
@@ -35,6 +37,10 @@ pub struct UpstreamSettings {
     pub connect_timeout: Duration,
     /// Idle pooled connections are closed after this long.
     pub pool_idle_timeout: Duration,
+    /// The upstream proxy connections go through (empty: direct), shared with the LLM proxy and
+    /// swapped by the data plane on each snapshot. Destinations it applies to are resolved by the
+    /// proxy, so `resolve_overrides` do not apply to them.
+    pub upstream_proxy: ProxyHandle,
 }
 
 impl Default for UpstreamSettings {
@@ -45,6 +51,7 @@ impl Default for UpstreamSettings {
             resolve_overrides: HashMap::new(),
             connect_timeout: Duration::from_secs(10),
             pool_idle_timeout: Duration::from_secs(90),
+            upstream_proxy: ProxyHandle::default(),
         }
     }
 }
@@ -77,8 +84,10 @@ impl Service<Name> for OverrideResolver {
     }
 }
 
-pub(crate) type HttpsClient =
-    Client<hyper_rustls::HttpsConnector<HttpConnector<OverrideResolver>>, ProxyBody>;
+pub(crate) type HttpsClient = Client<
+    hyper_rustls::HttpsConnector<ProxyConnector<HttpConnector<OverrideResolver>>>,
+    ProxyBody,
+>;
 
 /// Upstream client errors.
 #[derive(Debug, thiserror::Error)]
@@ -104,9 +113,22 @@ fn roots(s: &UpstreamSettings) -> Result<RootCertStore, UpstreamSetupError> {
     Ok(roots)
 }
 
+/// TLS to an `https://` upstream proxy: the upstream roots, no client certificate.
+fn proxy_tls(roots: Arc<RootCertStore>) -> Result<Arc<rustls::ClientConfig>, UpstreamSetupError> {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    Ok(Arc::new(
+        rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .map_err(|e| UpstreamSetupError(e.to_string()))?
+            .with_root_certificates(roots)
+            .with_no_client_auth(),
+    ))
+}
+
 fn client_with(
     s: &UpstreamSettings,
     roots: Arc<RootCertStore>,
+    proxy_tls: Arc<rustls::ClientConfig>,
     identity: Option<ClientIdentity>,
 ) -> Result<HttpsClient, UpstreamSetupError> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
@@ -129,6 +151,8 @@ fn client_with(
     http.enforce_http(false);
     http.set_connect_timeout(Some(s.connect_timeout));
     http.set_nodelay(true);
+    // A client certificate is presented to the destination inside the tunnel, never to the proxy.
+    let http = ProxyConnector::new(http, s.upstream_proxy.clone(), proxy_tls, s.connect_timeout);
     let https = hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(tls)
         .https_or_http()
@@ -147,6 +171,7 @@ const MAX_IDENTITIES: usize = 64;
 pub(crate) struct Upstreams {
     settings: UpstreamSettings,
     roots: Arc<RootCertStore>,
+    proxy_tls: Arc<rustls::ClientConfig>,
     default: HttpsClient,
     identities: Mutex<HashMap<[u8; 32], HttpsClient>>,
 }
@@ -154,10 +179,12 @@ pub(crate) struct Upstreams {
 impl Upstreams {
     pub(crate) fn new(s: &UpstreamSettings) -> Result<Self, UpstreamSetupError> {
         let roots = Arc::new(roots(s)?);
-        let default = client_with(s, Arc::clone(&roots), None)?;
+        let proxy_tls = proxy_tls(Arc::clone(&roots))?;
+        let default = client_with(s, Arc::clone(&roots), Arc::clone(&proxy_tls), None)?;
         Ok(Self {
             settings: s.clone(),
             roots,
+            proxy_tls,
             default,
             identities: Mutex::new(HashMap::new()),
         })
@@ -165,6 +192,27 @@ impl Upstreams {
 
     pub(crate) fn default_client(&self) -> &HttpsClient {
         &self.default
+    }
+
+    /// The upstream proxy in force, if any, for `host:port`, with the TLS settings for an
+    /// `https://` proxy and the connect timeout: for connections made without the HTTP client
+    /// (transparent pass-through).
+    pub(crate) fn proxy_for(
+        &self,
+        host: &str,
+        port: u16,
+    ) -> Option<(
+        Arc<scrim_upstream_proxy::UpstreamProxy>,
+        Arc<rustls::ClientConfig>,
+        Duration,
+    )> {
+        self.settings.upstream_proxy.route(host, port).map(|p| {
+            (
+                p,
+                Arc::clone(&self.proxy_tls),
+                self.settings.connect_timeout,
+            )
+        })
     }
 
     /// The client that presents the certificate in `value` (PEM chain and key).
@@ -178,8 +226,13 @@ impl Upstreams {
             return Ok(c.clone());
         }
         let identity = parse_identity(value.expose())?;
-        let c = client_with(&self.settings, Arc::clone(&self.roots), Some(identity))
-            .map_err(|e| e.0)?;
+        let c = client_with(
+            &self.settings,
+            Arc::clone(&self.roots),
+            Arc::clone(&self.proxy_tls),
+            Some(identity),
+        )
+        .map_err(|e| e.0)?;
         if map.len() >= MAX_IDENTITIES {
             map.clear();
         }

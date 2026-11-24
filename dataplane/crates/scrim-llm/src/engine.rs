@@ -378,15 +378,20 @@ impl RestorePolicy for KeepAll {
     }
 }
 
-/// What to do with content parts that cannot be scanned (images, documents, audio).
+/// What to do with binary content parts (images, documents, audio) (`redaction.binary`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BinaryPolicy {
-    /// Forward unscanned and mark the request as containing unscanned content in the audit log.
+    /// Decode each part and scan it and the text it carries (metadata, document text) with the
+    /// redactor and the guard. A secret found there, or a part that cannot be decoded within the
+    /// bounds, refuses the request: a binary part cannot be redacted in place.
     #[default]
-    Pass,
-    /// Refuse the request, naming the content type.
+    Scan,
+    /// Refuse every request that carries a binary part, naming the content type.
     Block,
+    /// Forward unscanned and mark the request as containing unscanned content in the audit log.
+    /// Weakening.
+    Pass,
 }
 
 /// Everything a request needs from the control plane, swapped atomically.

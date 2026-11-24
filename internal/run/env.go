@@ -5,6 +5,7 @@ package run
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"path/filepath"
 	"runtime"
@@ -295,6 +296,62 @@ func (b *builder) override(name, value, why string) {
 	b.setVar(name, value, why)
 }
 
+// chainInherited checks the proxy the user's environment names against the
+// upstream proxy of the scrim serving the session. The agent's proxy
+// variables point at scrim's forward proxy either way; the inherited proxy
+// is where scrim's own outbound connections go (specs/interception
+// "Wrapper chains an inherited proxy"). A scrim that `scrim run` starts
+// takes it from this environment; a running one may have been started
+// without it, and then the session's traffic would leave without the proxy
+// the user expects, so that is said before the agent starts. Credentials in
+// the inherited URL are never shown.
+func (b *builder) chainInherited() {
+	ep := b.in.Endpoints
+	name, raw := "", ""
+	for _, v := range proxyVars {
+		if old := b.env[v]; old != "" && old != ep.ForwardProxy {
+			name, raw = v, old
+			break
+		}
+	}
+	if raw == "" {
+		return
+	}
+	want := proxyName(raw)
+	switch ep.UpstreamProxy {
+	case want:
+	case "":
+		b.warn("%s from your environment (%s) is replaced for the agent by scrim's forward proxy; the running scrim does not report its upstream proxy, so it may connect to providers and tools without it", name, want)
+	case "direct":
+		b.warn("%s from your environment (%s) is not used: the running scrim connects directly. Set network.upstream-proxy.url in scrim's configuration, or start scrim with that variable set (docs/configuration.md#upstream-proxy)", name, want)
+	default:
+		b.warn("%s from your environment (%s) is replaced for the agent by scrim's forward proxy; scrim's own connections go through %s, its configured upstream proxy", name, want, ep.UpstreamProxy)
+	}
+}
+
+// proxyName normalises a proxy variable the way scrim reads it (an http or
+// https URL, host:port meaning http, the scheme's port when none is given)
+// and drops any user info, so it compares with a daemon's upstream proxy
+// and can be shown.
+func proxyName(raw string) string {
+	v := strings.TrimSpace(raw)
+	if !strings.Contains(v, "://") {
+		v = "http://" + v
+	}
+	u, err := url.Parse(v)
+	if err != nil || u.Hostname() == "" {
+		return "an unparsable value"
+	}
+	port := u.Port()
+	if port == "" {
+		port = "80"
+		if u.Scheme == "https" {
+			port = "443"
+		}
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: net.JoinHostPort(u.Hostname(), port)}).String()
+}
+
 func (b *builder) proxy() {
 	ep := b.in.Endpoints
 	noProxy := slices.Clone(loopback)
@@ -318,12 +375,7 @@ func (b *builder) proxy() {
 		}
 		return
 	}
-	for _, v := range proxyVars {
-		if old := b.env[v]; old != "" && old != ep.ForwardProxy {
-			b.warn("%s from your environment is replaced by scrim's forward proxy; scrim does not chain to another forward proxy yet", v)
-			break
-		}
-	}
+	b.chainInherited()
 	if tmpl, ok := b.sessionProxyURL(); ok {
 		for _, v := range proxyVars {
 			b.setWithToken(v, tmpl, tmpl, "tool traffic through scrim's forward proxy, identified by the session")
@@ -343,7 +395,8 @@ func (b *builder) proxy() {
 	}
 	for _, v := range noProxyVars {
 		if old := b.env[v]; old != "" && old != strings.Join(noProxy, ",") {
-			b.warn("%s from your environment is replaced: only loopback and chained local upstreams skip scrim's forward proxy", v)
+			b.warn("%s from your environment is replaced for the agent: only loopback and chained local upstreams skip scrim's forward proxy. "+
+				"scrim applies its own no-proxy list to its outbound connections (network.upstream-proxy.no-proxy, plus your NO_PROXY when scrim took its upstream proxy from your environment)", v)
 			break
 		}
 	}

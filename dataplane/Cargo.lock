@@ -1399,6 +1399,7 @@ dependencies = [
  "scrim-proto",
  "scrim-redact",
  "scrim-toolproxy",
+ "scrim-upstream-proxy",
  "serde_json",
  "sha2",
  "tokio",
@@ -1432,6 +1433,7 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "crc32fast",
+ "flate2",
  "futures-util",
  "getrandom 0.4.3",
  "hmac",
@@ -1453,6 +1455,7 @@ dependencies = [
  "scrim-metrics",
  "scrim-redact",
  "scrim-toolproxy",
+ "scrim-upstream-proxy",
  "serde",
  "serde_json",
  "sha2",
@@ -1544,6 +1547,7 @@ dependencies = [
  "scrim-dns",
  "scrim-proto",
  "scrim-redact",
+ "scrim-upstream-proxy",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -1558,6 +1562,29 @@ dependencies = [
  "x509-parser",
  "zeroize",
  "zstd",
+]
+
+[[package]]
+name = "scrim-upstream-proxy"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "base64 0.23.1",
+ "getrandom 0.4.3",
+ "http",
+ "hyper",
+ "hyper-util",
+ "rcgen",
+ "rustls",
+ "scrim-upstream-proxy",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
+ "tracing",
+ "zeroize",
 ]
 
 [[package]]

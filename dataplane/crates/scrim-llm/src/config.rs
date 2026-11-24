@@ -256,6 +256,10 @@ pub struct ProxyConfig {
     pub connect_timeout_ms: u64,
     /// Idle upstream connections kept per host.
     pub pool_max_idle_per_host: usize,
+    /// The upstream proxy every upstream connection goes through, swapped by the data plane on
+    /// each snapshot. Empty (the default) connects directly.
+    #[serde(skip)]
+    pub upstream_proxy: scrim_upstream_proxy::ProxyHandle,
 }
 
 impl Default for ProxyConfig {
@@ -267,6 +271,7 @@ impl Default for ProxyConfig {
             tls: TlsConfig::default(),
             connect_timeout_ms: 10_000,
             pool_max_idle_per_host: 32,
+            upstream_proxy: scrim_upstream_proxy::ProxyHandle::default(),
         }
     }
 }

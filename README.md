@@ -153,8 +153,9 @@ read on your machine (see [What scrim does not protect](#what-scrim-does-not-pro
   authenticates after redaction ([docs/providers](docs/providers/README.md)).
 - Capture mode, which writes each request exactly as it left for the provider.
 - Chaining through a context-compression proxy, with redaction first.
-- Images, PDFs and other binary parts pass unscanned
-  ([docs/limitations.md](docs/limitations.md#redaction)).
+- Images, PDFs and other attachments are decoded and scanned, metadata and document text included,
+  and a request whose attachment holds a secret is refused (`redaction.binary`; text in pixels is
+  not read, see [docs/limitations.md](docs/limitations.md#redaction)).
 
 ### Credential injection
 
@@ -425,7 +426,8 @@ The model, the agent, the agent's tools and anything they fetch from the network
 
 - The agent's local transcript, memory and history files. scrim protects the wire, not the agent's
   disk.
-- Images, PDFs and other binary parts, which pass unscanned.
+- Text rendered into image pixels (no OCR), and attachments referenced by URL, which scrim does
+  not fetch.
 - Transforms outside the bypass matrix, such as look-alike Unicode, spelled-out values, compressed
   or base85 content, and values the agent splits across fields or requests.
 - Secrets that no configured store holds and the fallback detectors miss.
@@ -441,16 +443,21 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 ## Performance
 
 The shipping matcher hashes each 8-byte window, so throughput stays near constant as the secret set
-grows (design D13). The budget in the
-[performance spec](openspec/specs/performance/spec.md) is p99 added latency under
-5 ms for a 1 MB body with 1,000 secrets and under 10 ms with 10,000, and under 50 µs per streamed
-chunk; the latency gate (`crates/scrim-llm/benches/budget.json`) fails CI and the release when a
-build exceeds it.
+grows (design D13). The [performance spec](openspec/specs/performance/spec.md) targets p99 added
+latency under 5 ms for a 1 MB body with 1,000 secrets and under 10 ms with 10,000, and under 50 µs
+per streamed chunk. The latency gate measures the production engine and fails CI and the release
+when a value misses its budget in `dataplane/crates/scrim-llm/benches/budget.json`, or when it
+regressed against the previous release's published results. The proxy's own overhead and the
+per-chunk time meet the spec's targets; the guard does not yet meet the 5 ms and 10 ms request
+targets (about 25 ms per 1 MB at the median and 40 ms at p99 on the reference runner), so those
+budgets are set from what it does today ([docs/performance.md](docs/performance.md),
+[docs/limitations.md](docs/limitations.md#implementation)).
 
-Each release attaches the numbers measured for it: `scrim_<version>_results_latency-gate.md` (proxy
-overhead and per-chunk p99 against the budget, with the machine they ran on) and
-`scrim_<version>_results_redact-bench.txt` (redaction throughput and latency for 10, 1,000 and
-10,000 secrets at 100 KB, 1 MB and 4 MB). The multi-replica load test at 1,000 concurrent streams
+Each release attaches the numbers measured for it: `scrim_<version>_results_latency-gate.md` and
+`.json` (every measurement against its budget, with the machine it ran on),
+`scrim_<version>_results_latency-regression.md` (the comparison with the previous release) and
+`scrim_<version>_results_redact-bench.txt` (redaction throughput for 10, 1,000 and 10,000 secrets
+at 100 KB, 1 MB and 4 MB). The multi-replica load test at 1,000 concurrent streams
 is described in [docs/state-and-observability.md](docs/state-and-observability.md#load-test).
 
 The data plane language was picked by [`bench/redact-bench`](bench/redact-bench/), which ran the
@@ -498,6 +505,7 @@ veil's per-tool policy.
 | [docs/kubernetes.md](docs/kubernetes.md) | The Helm chart, injection, identity and scaling |
 | [docs/leak-assurance.md](docs/leak-assurance.md) | The leak suite, the bypass matrix, the end-to-end matrix and published results |
 | [docs/limitations.md](docs/limitations.md) | What scrim does not protect against |
+| [docs/performance.md](docs/performance.md) | The latency gate, its budgets, the regression check and how to reproduce the numbers |
 
 The behaviour contract is one OpenSpec spec per capability in [`openspec/specs`](openspec/specs/).
 The 1.0 [proposal](openspec/changes/archive/2026-11-24-scrim-v1/proposal.md) and

@@ -263,3 +263,7 @@ func ReadSeedFile(path string) ([]Seed, error) {
 	}
 	return out, nil
 }
+
+// RandString returns n characters drawn from alphabet with crypto/rand, for
+// fake values built outside the seed kinds (the matrix's unknown-secret rows).
+func RandString(alphabet string, n int) string { return randString(alphabet, n) }

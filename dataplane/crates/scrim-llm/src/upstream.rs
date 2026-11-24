@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Upstream HTTP client: pooled connections, HTTP/1.1 and HTTP/2 (ALPN), rustls with webpki
-//! and/or native roots.
+//! and/or native roots, through the upstream proxy in force when one is set
+//! ([`scrim_upstream_proxy`]).
 
 use std::sync::Arc;
 
@@ -12,14 +13,18 @@ use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 
+use scrim_upstream_proxy::ProxyConnector;
+
 use crate::config::{ProxyConfig, Roots};
 
 /// The client type used for every upstream.
 ///
 /// Names resolve through [`scrim_dns::LoopSafeResolver`], which never answers with scrim's own SNI
-/// listener (DNS override mode points provider names at it).
+/// listener (DNS override mode points provider names at it). Destinations the upstream proxy in
+/// force applies to are tunnelled through it instead and resolved by the proxy; TLS to the
+/// destination runs inside the tunnel and is verified against the destination's name.
 pub type UpstreamClient =
-    Client<HttpsConnector<HttpConnector<scrim_dns::LoopSafeResolver>>, Full<Bytes>>;
+    Client<HttpsConnector<ProxyConnector<HttpConnector<scrim_dns::LoopSafeResolver>>>, Full<Bytes>>;
 
 /// Upstream TLS setup failed.
 #[derive(Debug, thiserror::Error)]
@@ -96,6 +101,13 @@ fn build(cfg: &ProxyConfig, h2: bool, idle: usize) -> Result<UpstreamClient, Tls
     http.enforce_http(false);
     http.set_connect_timeout(Some(cfg.connect_timeout()));
     http.set_nodelay(true);
+    // An https:// upstream proxy is verified with the same roots as the providers.
+    let http = ProxyConnector::new(
+        http,
+        cfg.upstream_proxy.clone(),
+        Arc::new(tls.clone()),
+        cfg.connect_timeout(),
+    );
     let https = hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(tls)
         .https_or_http()

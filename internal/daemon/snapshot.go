@@ -18,6 +18,7 @@ import (
 	"github.com/heliopsy/scrim/internal/catalog"
 	"github.com/heliopsy/scrim/internal/config"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
+	"github.com/heliopsy/scrim/internal/netproxy"
 	"github.com/heliopsy/scrim/internal/placeholder"
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/secret"
@@ -196,12 +197,18 @@ func SlugFor(bd catalog.Binding, ref stores.Ref) string {
 func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 	cfg := b.Config()
 	snap := &pb.Snapshot{
-		Listeners:    cloneListeners(b.Listeners),
-		Routes:       routes(cfg),
-		Redaction:    &pb.RedactionSettings{MinValueLength: uint32(MinValueLength.Get(cfg))}, //nolint:gosec // validated to 1..1024
+		Listeners: cloneListeners(b.Listeners),
+		Routes:    routes(cfg),
+		Redaction: &pb.RedactionSettings{
+			MinValueLength: uint32(MinValueLength.Get(cfg)), //nolint:gosec // validated to 1..1024
+			Binary:         binaryPolicy(BinaryPolicy.Get(cfg)),
+		},
 		CaptureRules: captureRulesPB(cfg),
 		Policy:       &pb.Policy{DefaultEffect: pb.Effect_EFFECT_DENY},
 		Restore:      restoreSettings(cfg),
+	}
+	if err := detectorSettings(cfg, snap.Redaction); err != nil {
+		return nil, err
 	}
 	if b.Policy != nil {
 		if p := b.Policy(); p != nil {
@@ -254,6 +261,17 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 			u.Labels = b.labels(keys, r, nil)
 		}
 	}
+
+	// The data plane's outbound connections use the same upstream proxy as
+	// the control plane's (specs/interception "Outbound connections through
+	// an upstream proxy"). One it cannot be told about fails the build:
+	// connecting directly instead would go around the operator's proxy.
+	proxy, err := netproxy.Resolve(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot: %w", err)
+	}
+	snap.UpstreamProxy = proxy.Proto()
+	proxy.Wipe()
 
 	if b.CA != nil {
 		gens := b.CA()
@@ -604,6 +622,7 @@ func cloneListeners(in []*pb.Listener) []*pb.Listener {
 
 // wipeSnapshot clears the secret bytes of a snapshot that is not sent.
 func wipeSnapshot(s *pb.Snapshot) {
+	clear(s.GetUpstreamProxy().GetPassword())
 	for _, v := range s.GetValues() {
 		clear(v.Value)
 	}
@@ -641,4 +660,17 @@ func ProviderHosts(cfg *config.Config) []string {
 		}
 	}
 	return out
+}
+
+// binaryPolicy maps `redaction.binary` to the snapshot's enum. An unknown value
+// (the registry's enum rules it out) maps to scan, the safe default.
+func binaryPolicy(v string) pb.BinaryPolicy {
+	switch v {
+	case "block":
+		return pb.BinaryPolicy_BINARY_POLICY_BLOCK
+	case "pass":
+		return pb.BinaryPolicy_BINARY_POLICY_PASS
+	default:
+		return pb.BinaryPolicy_BINARY_POLICY_SCAN
+	}
 }

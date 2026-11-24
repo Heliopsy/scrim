@@ -432,3 +432,64 @@ func TestCredentialHelperLinks(t *testing.T) {
 		t.Fatalf("a profile without helpers changed PATH or links: %v", p.Links)
 	}
 }
+
+// TestBuildChainsInheritedProxy: an inherited HTTPS_PROXY still points the
+// agent at scrim's forward proxy; the user is warned only when the scrim
+// serving the session does not send its own connections through that proxy,
+// and the proxy's credentials never appear in the plan.
+func TestBuildChainsInheritedProxy(t *testing.T) {
+	const pw = "inherited-proxy-pw-4b7e"
+	cases := []struct {
+		name, env, daemon string
+		warn              string // substring of the warning; empty means none
+	}{
+		{"same proxy", "http://alice:" + pw + "@proxy.corp.test:3128", "http://proxy.corp.test:3128", ""},
+		{"host:port form", "proxy.corp.test:3128", "http://proxy.corp.test:3128", ""},
+		{"default port", "https://proxy.corp.test", "https://proxy.corp.test:443", ""},
+		{"daemon direct", "http://alice:" + pw + "@proxy.corp.test:3128", "direct", "network.upstream-proxy.url"},
+		{"daemon elsewhere", "http://proxy.corp.test:3128", "http://other.corp.test:8080", "http://other.corp.test:8080"},
+		{"daemon silent", "http://proxy.corp.test:3128", "", "does not report its upstream proxy"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			in := input("myagent")
+			in.Endpoints.UpstreamProxy = c.daemon
+			in.Environ = append(in.Environ, "HTTPS_PROXY="+c.env, "https_proxy="+c.env)
+			p := mustBuild(t, in)
+			if got := vars(p)["HTTPS_PROXY"].Value; got != "http://s1:<session-token>@127.0.0.1:9791" {
+				t.Errorf("agent HTTPS_PROXY = %q, want scrim's forward proxy", got)
+			}
+			var proxyWarnings []string
+			for _, w := range p.Warnings {
+				if strings.Contains(w, "HTTPS_PROXY") {
+					proxyWarnings = append(proxyWarnings, w)
+				}
+			}
+			switch {
+			case c.warn == "" && len(proxyWarnings) > 0:
+				t.Errorf("unexpected warning: %v", proxyWarnings)
+			case c.warn != "" && (len(proxyWarnings) != 1 || !strings.Contains(proxyWarnings[0], c.warn)):
+				t.Errorf("warnings %v, want one mentioning %q", proxyWarnings, c.warn)
+			}
+			out, _ := json.Marshal(p)
+			if strings.Contains(string(out), pw) || strings.Contains(strings.Join(p.Warnings, " "), "alice") {
+				t.Errorf("the inherited proxy credentials reached the plan: %s", out)
+			}
+		})
+	}
+}
+
+func TestProxyName(t *testing.T) {
+	for in, want := range map[string]string{
+		"http://u:p@proxy:3128/": "http://proxy:3128",
+		"proxy:3128":             "http://proxy:3128",
+		"https://proxy":          "https://proxy:443",
+		"http://[fd00::1]:8080":  "http://[fd00::1]:8080",
+		"  http://proxy.test  ":  "http://proxy.test:80",
+		"http://%zz":             "an unparsable value",
+	} {
+		if got := proxyName(in); got != want {
+			t.Errorf("proxyName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

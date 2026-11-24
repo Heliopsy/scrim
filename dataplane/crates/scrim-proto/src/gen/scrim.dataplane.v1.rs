@@ -104,6 +104,13 @@ pub struct Snapshot {
     /// a listener refuses every connection.
     #[prost(message, optional, tag = "15")]
     pub client_certificates: ::core::option::Option<ClientCertificateTrust>,
+    /// upstream_proxy is the HTTP proxy every outbound connection of the data
+    /// plane goes through (provider routes, chained upstreams, tool hosts,
+    /// transparent pass-through), as an HTTP CONNECT tunnel. Absent, the data
+    /// plane connects directly, as a data plane that does not know the field
+    /// does.
+    #[prost(message, optional, tag = "16")]
+    pub upstream_proxy: ::core::option::Option<UpstreamProxy>,
 }
 /// ClientCertificateTrust says which client certificates a TLS listener
 /// accepts. Everything in it is public.
@@ -124,6 +131,29 @@ pub struct ClientCertificateTrust {
     /// or one not in the list, gets the first.
     #[prost(string, repeated, tag = "3")]
     pub server_names: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// UpstreamProxy is the outbound HTTP proxy (interception spec, "Outbound
+/// connections through an upstream proxy"). TLS to the destination runs
+/// inside the tunnel and is verified against the destination's name; the
+/// proxy sees only the CONNECT line and ciphertext.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[prost(skip_debug)]
+pub struct UpstreamProxy {
+    /// url is `<http://host:port`> or `<https://host:port`,> without user info.
+    #[prost(string, tag = "1")]
+    pub url: ::prost::alloc::string::String,
+    /// no_proxy lists destinations reached directly: `*`, a host name (which
+    /// also matches its subdomains), `.domain` (subdomains only), an IP address
+    /// or a CIDR range, each optionally with `:port`. The control plane always
+    /// includes loopback.
+    #[prost(string, repeated, tag = "2")]
+    pub no_proxy: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// username and password are sent as Basic `Proxy-Authorization` on every
+    /// CONNECT. password is secret; both are empty without authentication.
+    #[prost(string, tag = "3")]
+    pub username: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "4")]
+    pub password: ::prost::alloc::vec::Vec<u8>,
 }
 /// RedactionScope is the redaction set of one agent's sessions: the whole
 /// dictionary minus the values whose store refused that agent's own identity.
@@ -620,12 +650,25 @@ pub struct Listener {
     #[prost(bool, tag = "5")]
     pub tls: bool,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RedactionSettings {
     /// min_value_length is the shortest value matched in free text; shorter
     /// values are matched only in exact and encoded forms.
     #[prost(uint32, tag = "1")]
     pub min_value_length: u32,
+    #[prost(enumeration = "BinaryPolicy", tag = "2")]
+    pub binary: i32,
+    /// detectors_off switches every fallback pattern rule off
+    /// (redaction.detectors.enabled false). The zero value keeps the defaults.
+    #[prost(bool, tag = "3")]
+    pub detectors_off: bool,
+    /// detectors_disabled names pattern rules switched off.
+    #[prost(string, repeated, tag = "4")]
+    pub detectors_disabled: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// detectors_enabled names pattern rules that are off by default and
+    /// switched on.
+    #[prost(string, repeated, tag = "5")]
+    pub detectors_enabled: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ApplySnapshotResponse {
@@ -1334,6 +1377,45 @@ impl ListenerKind {
             "LISTENER_KIND_TRANSPARENT" => Some(Self::Transparent),
             "LISTENER_KIND_TOOL_PROXY" => Some(Self::ToolProxy),
             "LISTENER_KIND_SNI" => Some(Self::Sni),
+            _ => None,
+        }
+    }
+}
+/// BinaryPolicy is what the LLM proxy does with binary content parts
+/// (images, documents, audio): `redaction.binary`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum BinaryPolicy {
+    /// treated as SCAN
+    Unspecified = 0,
+    /// SCAN decodes each part and scans it and the text it carries; a secret
+    /// found there, or a part that cannot be decoded, refuses the request.
+    Scan = 1,
+    /// BLOCK refuses every request with a binary part.
+    Block = 2,
+    /// PASS forwards binary parts unscanned (weakening).
+    Pass = 3,
+}
+impl BinaryPolicy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "BINARY_POLICY_UNSPECIFIED",
+            Self::Scan => "BINARY_POLICY_SCAN",
+            Self::Block => "BINARY_POLICY_BLOCK",
+            Self::Pass => "BINARY_POLICY_PASS",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "BINARY_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
+            "BINARY_POLICY_SCAN" => Some(Self::Scan),
+            "BINARY_POLICY_BLOCK" => Some(Self::Block),
+            "BINARY_POLICY_PASS" => Some(Self::Pass),
             _ => None,
         }
     }

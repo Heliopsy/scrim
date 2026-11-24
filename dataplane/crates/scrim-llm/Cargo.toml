@@ -26,6 +26,7 @@ arc-swap = "1.7"
 base64 = "0.23"
 bytes = "1"
 crc32fast = "1.5"
+flate2 = "1"
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 hmac = "0.13"
 http = "1"
@@ -50,6 +51,7 @@ webpki-roots = "1"
 zeroize.workspace = true
 scrim-metrics = { path = "../scrim-metrics" }
 scrim-dns = { path = "../scrim-dns" }
+scrim-upstream-proxy = { path = "../scrim-upstream-proxy" }
 
 scrim-toolproxy = { path = "../scrim-toolproxy", optional = true }
 scrim-redact = { path = "../scrim-redact", optional = true }
@@ -69,7 +71,12 @@ scrim-llm = { path = ".", features = ["test-util", "intercept", "redact"] }
 [[bench]]
 name = "latency_gate"
 harness = false
-required-features = ["test-util"]
+required-features = ["test-util", "redact"]
+
+[[bench]]
+name = "binary_scan"
+harness = false
+required-features = ["test-util", "redact"]
 
 [lints]
 workspace = true

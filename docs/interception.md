@@ -123,7 +123,12 @@ What it sets, in short:
 | Codex: `-c openai_base_url=...`, `-c mcp_servers.scrim...`, `CODEX_CA_CERTIFICATE` | base URL, MCP server and CA for the session |
 
 With the forward proxy on, `ALL_PROXY` and `all_proxy` are removed. An inherited base URL or proxy
-variable is replaced for the session, with a warning.
+variable is replaced for the session. A replaced base URL is always warned about, a proxy
+variable when the scrim serving the session does not use it as its upstream proxy.
+
+An inherited corporate proxy is not lost: scrim sends its own outbound connections through it as
+its upstream proxy, after redaction, with TLS to the destination inside a `CONNECT` tunnel
+([configuration.md](configuration.md#upstream-proxy), [run.md](run.md#corporate-proxies)).
 
 Where the agent settings come from: Claude Code honours `ANTHROPIC_BASE_URL`, `HTTPS_PROXY`,
 `NO_PROXY` and `NODE_EXTRA_CA_CERTS` (Claude Code docs, "Enterprise network configuration" and

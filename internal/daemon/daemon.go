@@ -56,6 +56,7 @@ import (
 	"github.com/heliopsy/scrim/internal/identity/issuer"
 	"github.com/heliopsy/scrim/internal/identity/sessionstate"
 	"github.com/heliopsy/scrim/internal/localapi"
+	"github.com/heliopsy/scrim/internal/netproxy"
 	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/placeholder"
 	"github.com/heliopsy/scrim/internal/policy"
@@ -159,6 +160,10 @@ type Info struct {
 	// AuditSinks is every external audit sink's queue and backpressure
 	// state (audit.sinks beyond db).
 	AuditSinks []status.AuditSink `json:"audit_sinks,omitempty"`
+	// UpstreamProxy is where scrim's own outbound connections go: the
+	// upstream proxy's URL (never its credentials) or "direct". Empty from a
+	// daemon that predates the setting.
+	UpstreamProxy string `json:"upstream_proxy,omitempty"`
 }
 
 // DataPlaneInfo summarises the data plane's status. Counts and references,
@@ -1070,6 +1075,7 @@ func (d *Daemon) Info() Info {
 	in.Runtime = d.runtimeInfo(ctx, in.Ready)
 	in.Stores = d.storeStatus()
 	in.AuditSinks = status.FromFanout(d.app.AuditSinks.Status())
+	in.UpstreamProxy = upstreamProxyName(d.app.Config.Current())
 	for k, v := range rep.Checks {
 		if v != "ok" {
 			if in.Problems == nil {
@@ -1081,13 +1087,24 @@ func (d *Daemon) Info() Info {
 	return in
 }
 
+// upstreamProxyName is the upstream proxy cfg names, without credentials,
+// "direct" without one, or why it cannot be used.
+func upstreamProxyName(cfg *config.Config) string {
+	p, err := netproxy.Resolve(cfg)
+	if err != nil {
+		return "unusable: " + err.Error()
+	}
+	p.Wipe()
+	return p.String()
+}
+
 // agentEndpoints is what the agent API tells callers that did not start
 // this daemon and cannot reach the admin API (agents of other users when
 // scrim runs as a system service). Public material only.
 func (d *Daemon) agentEndpoints() localapi.Endpoints {
 	in := d.Info()
 	ep := localapi.Endpoints{Ready: in.Ready, Problems: in.Problems, BaseURL: in.Addrs.BaseURL,
-		ForwardProxy: in.Addrs.ForwardProxy, Bypass: in.Bypass}
+		ForwardProxy: in.Addrs.ForwardProxy, Bypass: in.Bypass, UpstreamProxy: in.UpstreamProxy}
 	if d.trust != nil {
 		ep.CAPEM = d.trust()
 	}
