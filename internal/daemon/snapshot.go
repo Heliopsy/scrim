@@ -18,6 +18,7 @@ import (
 	"github.com/heliopsy/scrim/internal/catalog"
 	"github.com/heliopsy/scrim/internal/config"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
+	"github.com/heliopsy/scrim/internal/netproxy"
 	"github.com/heliopsy/scrim/internal/placeholder"
 	"github.com/heliopsy/scrim/internal/policy"
 	"github.com/heliopsy/scrim/internal/secret"
@@ -244,6 +245,17 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 			u.Labels = b.labels(keys, r, nil)
 		}
 	}
+
+	// The data plane's outbound connections use the same upstream proxy as
+	// the control plane's (specs/interception "Outbound connections through
+	// an upstream proxy"). One it cannot be told about fails the build:
+	// connecting directly instead would go around the operator's proxy.
+	proxy, err := netproxy.Resolve(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot: %w", err)
+	}
+	snap.UpstreamProxy = proxy.Proto()
+	proxy.Wipe()
 
 	if b.CA != nil {
 		gens := b.CA()
@@ -585,6 +597,7 @@ func cloneListeners(in []*pb.Listener) []*pb.Listener {
 
 // wipeSnapshot clears the secret bytes of a snapshot that is not sent.
 func wipeSnapshot(s *pb.Snapshot) {
+	clear(s.GetUpstreamProxy().GetPassword())
 	for _, v := range s.GetValues() {
 		clear(v.Value)
 	}

@@ -99,6 +99,36 @@ pub struct Snapshot {
     /// which is the safe side.
     #[prost(message, repeated, tag = "14")]
     pub redaction_scopes: ::prost::alloc::vec::Vec<RedactionScope>,
+    /// upstream_proxy is the HTTP proxy every outbound connection of the data
+    /// plane goes through (provider routes, chained upstreams, tool hosts,
+    /// transparent pass-through), as an HTTP CONNECT tunnel. Absent, the data
+    /// plane connects directly, as a data plane that does not know the field
+    /// does.
+    #[prost(message, optional, tag = "15")]
+    pub upstream_proxy: ::core::option::Option<UpstreamProxy>,
+}
+/// UpstreamProxy is the outbound HTTP proxy (interception spec, "Outbound
+/// connections through an upstream proxy"). TLS to the destination runs
+/// inside the tunnel and is verified against the destination's name; the
+/// proxy sees only the CONNECT line and ciphertext.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[prost(skip_debug)]
+pub struct UpstreamProxy {
+    /// url is `<http://host:port`> or `<https://host:port`,> without user info.
+    #[prost(string, tag = "1")]
+    pub url: ::prost::alloc::string::String,
+    /// no_proxy lists destinations reached directly: `*`, a host name (which
+    /// also matches its subdomains), `.domain` (subdomains only), an IP address
+    /// or a CIDR range, each optionally with `:port`. The control plane always
+    /// includes loopback.
+    #[prost(string, repeated, tag = "2")]
+    pub no_proxy: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// username and password are sent as Basic `Proxy-Authorization` on every
+    /// CONNECT. password is secret; both are empty without authentication.
+    #[prost(string, tag = "3")]
+    pub username: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "4")]
+    pub password: ::prost::alloc::vec::Vec<u8>,
 }
 /// RedactionScope is the redaction set of one agent's sessions: the whole
 /// dictionary minus the values whose store refused that agent's own identity.

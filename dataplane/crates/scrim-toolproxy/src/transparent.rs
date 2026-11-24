@@ -237,14 +237,24 @@ impl ToolProxy {
     }
 
     /// Connects to the name the client asked for and relays bytes both ways, untouched.
-    async fn pass_through<IO>(
-        &self,
-        mut io: Prefixed<IO>,
-        dest: &Destination,
-        conn: &TransparentConn,
-    ) where
+    async fn pass_through<IO>(&self, io: Prefixed<IO>, dest: &Destination, conn: &TransparentConn)
+    where
         IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
+        // Through the upstream proxy: the proxy resolves the name (networks that only reach out
+        // through it may have no outside DNS), and it is not this host, so the loop check below
+        // does not apply.
+        if let Some((proxy, tls, timeout)) = self.shared.upstreams.proxy_for(&dest.host, dest.port)
+        {
+            match scrim_upstream_proxy::connect(&proxy, &tls, &dest.host, dest.port, timeout).await
+            {
+                Ok(upstream) => relay(io, upstream, dest).await,
+                Err(e) => {
+                    tracing::debug!(destination = %dest, error = %e, "pass-through: upstream proxy");
+                }
+            }
+            return;
+        }
         let addrs = match tokio::net::lookup_host((dest.host.as_str(), dest.port)).await {
             Ok(a) => a.collect::<Vec<_>>(),
             Err(e) => {
@@ -274,19 +284,12 @@ impl ToolProxy {
                 break;
             }
         }
-        let Some(mut upstream) = upstream else {
+        let Some(upstream) = upstream else {
             tracing::debug!(destination = %dest, "pass-through: cannot connect");
             return;
         };
         let _ = upstream.set_nodelay(true);
-        let prefix = std::mem::take(&mut io.prefix);
-        if upstream.write_all(&prefix).await.is_err() {
-            return;
-        }
-        let mut inner = io.inner;
-        if let Err(e) = tokio::io::copy_bidirectional(&mut inner, &mut upstream).await {
-            tracing::debug!(destination = %dest, error = %e, "pass-through ended with an error");
-        }
+        relay(io, upstream, dest).await;
     }
 
     fn refused(&self, conn: &TransparentConn, dest: Option<&Destination>, reason: &str) {
@@ -296,6 +299,22 @@ impl ToolProxy {
             (None, None) => Destination::new(Scheme::Https, "unknown", conn.port),
         };
         self.interception_refused(&destination, reason.to_owned(), false);
+    }
+}
+
+/// Relays bytes both ways, untouched, starting with what was already read from the client.
+async fn relay<IO, U>(mut io: Prefixed<IO>, mut upstream: U, dest: &Destination)
+where
+    IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    U: AsyncRead + AsyncWrite + Unpin,
+{
+    let prefix = std::mem::take(&mut io.prefix);
+    if upstream.write_all(&prefix).await.is_err() {
+        return;
+    }
+    let mut inner = io.inner;
+    if let Err(e) = tokio::io::copy_bidirectional(&mut inner, &mut upstream).await {
+        tracing::debug!(destination = %dest, error = %e, "pass-through ended with an error");
     }
 }
 

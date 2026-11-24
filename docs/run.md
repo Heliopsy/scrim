@@ -80,8 +80,9 @@ contents of an inherited `NODE_EXTRA_CA_CERTS` file are kept in `scrim-ca.pem`. 
 private key is never copied.
 
 When a variable scrim sets was already set to something else in your environment (a base URL
-pointing at a local proxy, a corporate `HTTPS_PROXY`, `NO_PROXY=*`), `scrim run` replaces it for
-the session and says so before the agent starts.
+pointing at a local proxy, `NO_PROXY=*`), `scrim run` replaces it for the session and says so
+before the agent starts. A corporate `HTTPS_PROXY` is replaced for the agent too, and becomes
+scrim's upstream proxy ([Corporate proxies](#corporate-proxies)).
 
 ### Claude Code (`claude`)
 
@@ -331,6 +332,21 @@ Running `scrim run -- caveman claude` is refused: caveman would set the agent's 
 and see every request before scrim redacts it. If your shell exports `ANTHROPIC_BASE_URL` pointing
 at caveman, `scrim run` replaces it for the session and warns.
 
+## Corporate proxies
+
+An inherited `HTTPS_PROXY` (or `HTTP_PROXY`, lowercase forms included) is not passed to the agent:
+the agent's proxy variables point at scrim's forward proxy, as always. It becomes scrim's own
+upstream proxy instead. A scrim that `scrim run` starts takes it, credentials and `NO_PROXY`
+included, from the same environment, so provider and tool traffic leaves through your proxy after
+redaction ([configuration.md](configuration.md#upstream-proxy)). The agent never sees the proxy's
+credentials.
+
+A scrim that already runs (a user or system service) was started with its own environment and
+serves every session the same way. When its upstream differs from your `HTTPS_PROXY`, or it has
+none, `scrim run` says so before the agent starts, showing the proxy without credentials. Set
+`network.upstream-proxy.url` in that scrim's configuration, or the proxy variables in its service
+environment.
+
 ## Checking a session
 
 Inside the agent (or a shell started with `scrim run -- bash`):
@@ -444,8 +460,6 @@ backend only one of them can hold the state file, so a second concurrent `scrim 
 - Codex tries the Responses API over WebSocket first. scrim cannot redact WebSocket frames, so the
   LLM proxy refuses the handshake at once with `501 upgrade_unsupported` and Codex falls back to
   HTTPS requests without waiting.
-- `scrim run` replaces an inherited corporate `HTTPS_PROXY` instead of chaining scrim's forward
-  proxy to it.
 - Bulk catalog entries (`prefix` with `template`) need a store listing and are not exported as
   placeholders by `scrim run` yet; entries from configuration and catalog files are.
 - The session token is added to the redaction set when it is minted, so an agent that prints its

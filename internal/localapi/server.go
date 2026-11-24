@@ -382,6 +382,10 @@ type Endpoints struct {
 	ForwardProxy string   `json:"forward_proxy,omitempty"`
 	Bypass       []string `json:"bypass,omitempty"`
 	CAPEM        string   `json:"ca_pem,omitempty"`
+	// UpstreamProxy is the upstream proxy scrim's own connections go
+	// through (URL without credentials) or "direct"; empty from an older
+	// daemon.
+	UpstreamProxy string `json:"upstream_proxy,omitempty"`
 }
 
 func (s *Server) endpoints(w http.ResponseWriter, _ *http.Request) {

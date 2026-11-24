@@ -169,7 +169,10 @@ func NewReviewer(o Options) (*Reviewer, error) {
 		}
 		r.client = &http.Client{Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
-			Proxy:           nil,
+			// Direct, not netproxy.Func: the in-cluster API server is
+			// reached with the kubelet's CA (docs/configuration.md,
+			// "Upstream proxy").
+			Proxy: nil,
 		}}
 	}
 	return r, nil

@@ -1,0 +1,58 @@
+{
+  "comment": "NO_PROXY matching shared by internal/netproxy (Go, golang.org/x/net/http/httpproxy) and dataplane/crates/scrim-upstream-proxy (Rust). proxied=false means the destination is reached directly. Loopback is left out: the Go side bypasses it implicitly and sends it to the data plane in the list.",
+  "groups": [
+    {
+      "no_proxy": "",
+      "cases": [
+        {"host": "api.anthropic.com", "port": 443, "proxied": true},
+        {"host": "10.1.2.3", "port": 8200, "proxied": true}
+      ]
+    },
+    {
+      "no_proxy": "*",
+      "cases": [
+        {"host": "api.anthropic.com", "port": 443, "proxied": false},
+        {"host": "10.1.2.3", "port": 443, "proxied": false}
+      ]
+    },
+    {
+      "no_proxy": "corp.example, .internal.test, *.svc.test",
+      "cases": [
+        {"host": "corp.example", "port": 443, "proxied": false},
+        {"host": "vault.corp.example", "port": 8200, "proxied": false},
+        {"host": "VAULT.Corp.Example", "port": 443, "proxied": false},
+        {"host": "notcorp.example", "port": 443, "proxied": true},
+        {"host": "corp.example.org", "port": 443, "proxied": true},
+        {"host": "internal.test", "port": 443, "proxied": true},
+        {"host": "a.internal.test", "port": 443, "proxied": false},
+        {"host": "svc.test", "port": 443, "proxied": true},
+        {"host": "x.svc.test", "port": 443, "proxied": false},
+        {"host": "api.openai.com", "port": 443, "proxied": true}
+      ]
+    },
+    {
+      "no_proxy": "10.0.0.0/8,192.168.1.10,fd00::/16,[fd01::5]:8443",
+      "cases": [
+        {"host": "10.20.30.40", "port": 443, "proxied": false},
+        {"host": "11.0.0.1", "port": 443, "proxied": true},
+        {"host": "192.168.1.10", "port": 80, "proxied": false},
+        {"host": "192.168.1.11", "port": 80, "proxied": true},
+        {"host": "fd00::1", "port": 443, "proxied": false},
+        {"host": "[fd00:0:0:0::2]", "port": 443, "proxied": false},
+        {"host": "fe80::1", "port": 443, "proxied": true},
+        {"host": "fd01::5", "port": 8443, "proxied": false},
+        {"host": "fd01::5", "port": 443, "proxied": true}
+      ]
+    },
+    {
+      "no_proxy": "registry.example:5000,10.9.9.9:8080",
+      "cases": [
+        {"host": "registry.example", "port": 5000, "proxied": false},
+        {"host": "registry.example", "port": 443, "proxied": true},
+        {"host": "mirror.registry.example", "port": 5000, "proxied": false},
+        {"host": "10.9.9.9", "port": 8080, "proxied": false},
+        {"host": "10.9.9.9", "port": 443, "proxied": true}
+      ]
+    }
+  ]
+}

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/netproxy"
 )
 
 // Protection is one safeguard and whether it is active.
@@ -128,6 +129,10 @@ type Report struct {
 	// RunView is the filesystem view `scrim run` gives its sessions on
 	// this host.
 	RunView *RunView `json:"run_fs_view,omitempty"`
+	// UpstreamProxy is where scrim's own outbound connections go: the
+	// upstream proxy as scheme://host:port (never its credentials),
+	// "direct", or why the configured one cannot be used.
+	UpstreamProxy string `json:"upstream_proxy,omitempty"`
 }
 
 // RunView is the session filesystem view of `scrim run` on this host
@@ -321,6 +326,9 @@ func Collect(ctx context.Context, src Sources) Report {
 	if src.Config != nil {
 		cs := src.Config.Status()
 		r.Config = &cs
+		if cur, ok := src.Config.(interface{ Current() *config.Config }); ok && cur.Current() != nil {
+			r.UpstreamProxy = upstreamProxy(cur.Current())
+		}
 		if r.Profile == "" {
 			r.Profile = cs.Profile
 		}
@@ -494,4 +502,14 @@ func orDefault(s, d string) string {
 		return d
 	}
 	return s
+}
+
+// upstreamProxy names cfg's upstream proxy without credentials.
+func upstreamProxy(cfg *config.Config) string {
+	p, err := netproxy.Resolve(cfg)
+	if err != nil {
+		return "unusable: " + err.Error()
+	}
+	p.Wipe()
+	return p.String()
 }

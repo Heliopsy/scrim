@@ -7,7 +7,8 @@ use std::fmt;
 use zeroize::Zeroize;
 
 use crate::v1::{
-    AskCaller, CaCertificate, CaptureRequest, PlaceholderKey, RedactRequest, ValueEntry,
+    AskCaller, CaCertificate, CaptureRequest, PlaceholderKey, RedactRequest, UpstreamProxy,
+    ValueEntry,
 };
 
 /// What `Debug` prints in place of secret bytes.
@@ -101,6 +102,23 @@ impl fmt::Debug for RedactRequest {
     }
 }
 
+impl fmt::Debug for UpstreamProxy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UpstreamProxy")
+            .field("url", &self.url)
+            .field("no_proxy", &self.no_proxy)
+            .field("username", &self.username)
+            .field("password", &Redacted(self.password.len()))
+            .finish()
+    }
+}
+
+impl Drop for UpstreamProxy {
+    fn drop(&mut self) {
+        self.password.zeroize();
+    }
+}
+
 impl Drop for RedactRequest {
     fn drop(&mut self) {
         self.text.zeroize();
@@ -172,6 +190,11 @@ mod tests {
             caller: Some(caller),
             ..Default::default()
         };
+        let mut proxy = crate::v1::UpstreamProxy::default();
+        proxy.url = "http://proxy.example.test:3128".into();
+        proxy.username = "scrim".into();
+        proxy.password.clone_from(&secret);
+        snap.upstream_proxy = Some(proxy);
         let out = format!("{snap:?} {snap:#?} {capture:?} {ask:?} {ask:#?} {redact:?}");
         let as_text = String::from_utf8(secret.clone()).unwrap_or_default();
         assert!(!out.contains(&as_text), "debug output leaks: {out}");
@@ -181,6 +204,7 @@ mod tests {
         );
         assert!(out.contains(super::REDACTED));
         assert!(out.contains("bao://kv/x#token"));
+        assert!(out.contains("proxy.example.test:3128"));
     }
 
     #[test]

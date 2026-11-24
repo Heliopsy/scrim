@@ -216,6 +216,57 @@ anything changes. If any part is invalid, scrim keeps the running configuration,
 reports the rejection in `scrim status`. Settings marked "restart required" keep their running value
 when changed; the reload applies the rest and reports that a restart is needed for them.
 
+## Upstream proxy
+
+On a network where traffic leaves only through a proxy, scrim's own connections go through it:
+the data plane's connections to providers, chained upstreams and tool hosts, transparent
+pass-through, and the control plane's connections to stores, notifiers, audit sinks and identity
+and token endpoints. Spec: `openspec/specs/interception` ("Outbound connections through an upstream
+proxy").
+
+By default scrim uses the proxy it was started with: `HTTPS_PROXY`, then `https_proxy`,
+`HTTP_PROXY` and `http_proxy`, with the hosts in `NO_PROXY` (or `no_proxy`) reached directly. A
+scrim that `scrim run` starts runs in your shell's environment, so a corporate `HTTPS_PROXY` in
+your shell is its upstream without any configuration. A service started by systemd, launchd or
+Kubernetes has its own environment: set the proxy there or in the configuration.
+
+```yaml
+network:
+  upstream-proxy:
+    url: http://proxy.corp.example:3128
+    no-proxy: [corp.example, 10.0.0.0/8]
+    username: scrim
+    password: file:/run/secrets/proxy-password
+```
+
+- `url` is `http://host:port` or `https://host:port` (scrim verifies an `https://` proxy's own
+  certificate). `direct` turns the proxy off even when the environment sets one. Credentials never
+  go in the URL; an environment proxy URL with `user:password@` is accepted and its password is
+  treated as below.
+- `no-proxy` entries are host names (matching their subdomains too), `.domain` (subdomains only),
+  IP addresses and CIDR ranges, each with an optional `:port`, or `*`. Loopback is always reached
+  directly. With the proxy from the environment, `NO_PROXY` is added; an entry scrim cannot apply
+  (`<local>`, for one) is skipped with a warning.
+- `password` is a secret reference. It is one of scrim's own credentials: in the redaction set, so
+  an agent that finds it cannot send it to a provider, and never logged. The same holds for the
+  password of an environment proxy URL. A store reference works only for a store scrim reaches
+  without the proxy (listed in `no-proxy`).
+
+Every proxied connection is an HTTP `CONNECT` tunnel to the destination, opened after the request
+was redacted and checked by the guard. TLS to the provider or tool host runs inside the tunnel and
+is verified against the destination's name, so the proxy relays ciphertext and cannot read or
+change requests. A proxy that inspects TLS by re-signing tunnels needs its CA in
+`dataplane.upstream-ca-file` (data plane) and in the system trust store (control plane);
+otherwise those connections fail. A proxy that refuses a connection, or that scrim cannot use (a
+SOCKS proxy, for one), fails it: scrim never falls back to connecting directly.
+
+The settings follow a reload: new connections use the new proxy or password, connections already
+open keep their route until they close. `scrim status` shows the proxy in use under
+"Interception" (`outbound: ...`), without credentials.
+
+Not proxied: PostgreSQL, Valkey and NATS connections (they are not HTTP), plugins on Unix sockets,
+and Kubernetes TokenReview, which talks to the in-cluster API server directly.
+
 ## Weakening settings
 
 A setting that weakens a security invariant is named for what it weakens (for example
@@ -344,6 +395,10 @@ is out of date.
 | [`nats.tls-ca-file`](#natstls-ca-file) | string | `""` | restart required |
 | [`nats.token`](#natstoken) | secret-ref | empty | restart required |
 | [`nats.username`](#natsusername) | string | `""` | restart required |
+| [`network.upstream-proxy.no-proxy`](#networkupstream-proxyno-proxy) | list | `[]` | hot |
+| [`network.upstream-proxy.password`](#networkupstream-proxypassword) | secret-ref | empty | hot |
+| [`network.upstream-proxy.url`](#networkupstream-proxyurl) | string | `""` | hot |
+| [`network.upstream-proxy.username`](#networkupstream-proxyusername) | string | `""` | hot |
 | [`notify.ntfy.priority`](#notifyntfypriority) | int | `4` | hot |
 | [`notify.ntfy.token`](#notifyntfytoken) | secret-ref | empty | hot |
 | [`notify.ntfy.topic`](#notifyntfytopic) | string | `""` | hot |
@@ -1947,6 +2002,56 @@ NATS user for user and password authentication; empty for none.
 | Environment | `SCRIM_NATS_USERNAME` |
 | Flag | none |
 | Reload | restart required |
+
+### network
+
+#### `network.upstream-proxy.no-proxy`
+
+Destinations reached directly rather than through the upstream proxy: a host name (also matching its subdomains), .domain (subdomains only), an IP address or CIDR range, each optionally with :port, or * for all. Loopback is always direct. With the proxy from the environment, NO_PROXY is added.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_NETWORK_UPSTREAM_PROXY_NO_PROXY` |
+| Flag | none |
+| Reload | hot |
+
+#### `network.upstream-proxy.password`
+
+Reference to the upstream proxy password (env:, file:, cred: or a store reference; a store reference needs that store reachable without the proxy). Redacted from provider traffic like scrim's other credentials.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; a literal is warned about) |
+| Default | empty |
+| Environment | `SCRIM_NETWORK_UPSTREAM_PROXY_PASSWORD` |
+| Flag | none |
+| Reload | hot |
+
+#### `network.upstream-proxy.url`
+
+HTTP proxy scrim's own outbound connections go through (providers, chained upstreams, tool hosts, stores, notifiers, audit sinks, identity endpoints): http://host:port or https://host:port, as an HTTP CONNECT tunnel with TLS to the destination inside it. Empty takes HTTPS_PROXY (then https_proxy, HTTP_PROXY, http_proxy) from scrim's own environment, with its NO_PROXY; `direct` connects directly whatever the environment says. Credentials go in username and password, never in the URL.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_NETWORK_UPSTREAM_PROXY_URL` |
+| Flag | none |
+| Reload | hot |
+
+#### `network.upstream-proxy.username`
+
+User name sent to the upstream proxy (Basic Proxy-Authorization on every CONNECT), with network.upstream-proxy.password. Overrides the user info of an environment proxy URL.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_NETWORK_UPSTREAM_PROXY_USERNAME` |
+| Flag | none |
+| Reload | hot |
 
 ### notify
 

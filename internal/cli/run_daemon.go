@@ -88,7 +88,7 @@ type runInstance struct {
 func (r *runInstance) Endpoints() agentrun.Endpoints {
 	ep := r.l.Endpoints()
 	return agentrun.Endpoints{APISocket: ep.APISocket, LLMBaseURL: ep.LLMBaseURL, Routes: ep.Routes,
-		ForwardProxy: ep.ForwardProxy, CACertPEM: ep.CACertPEM, Bypass: ep.Bypass}
+		ForwardProxy: ep.ForwardProxy, CACertPEM: ep.CACertPEM, Bypass: ep.Bypass, UpstreamProxy: ep.UpstreamProxy}
 }
 
 func (r *runInstance) Ready(ctx context.Context) error { return r.l.Ready(ctx) }
