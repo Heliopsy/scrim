@@ -80,3 +80,33 @@ func policyFrom(cfg *config.Config) (policy, error) {
 	}
 	return p, nil
 }
+
+// Settings of the edge CA, which issues only the edge listener's certificate
+// (specs/credential-injection "Edge channel identifies the pod"). Its
+// rotation policy is the interception CA's (tool-proxy.ca.validity,
+// rotate-before and overlap).
+var (
+	EdgeDirSetting = config.Register(config.Spec[string]{
+		Key:     "edge.ca.dir",
+		Default: "",
+		Description: "Directory of the generated edge CA, which issues only the edge listener's certificate. " +
+			"Empty means $XDG_STATE_HOME/scrim/edge-ca (~/.local/state/scrim/edge-ca). Created with mode 0700. " +
+			"Never the interception CA's directory.",
+		RestartRequired: true,
+	})
+	EdgeCertFileSetting = config.Register(config.Spec[string]{
+		Key:     "edge.ca.cert-file",
+		Default: "",
+		Description: "PEM certificate of an operator-supplied edge CA, used together with edge.ca.key. It must have its own " +
+			"key, not the interception CA's, and its name constraints, if any, must allow edge.server-names. Never rotated by scrim.",
+		RestartRequired: true,
+	})
+	EdgeKeySetting = config.Register(config.Spec[config.SecretRef]{
+		Key:     "edge.ca.key",
+		Default: "",
+		Description: "Reference to the PKCS#8 PEM private key of the operator-supplied edge CA in edge.ca.cert-file " +
+			"(env:, file:, cred: or a store reference). Empty means scrim generates and rotates its own edge CA.",
+		RequireReference: true,
+		RestartRequired:  true,
+	})
+)
