@@ -68,8 +68,7 @@
           "type": "generic",
           "path": "scripts/deploy-examples/cloud-init.py"
         }
-      ],
-      "release-as": "1.0.0"
+      ]
     }
   }
 }
