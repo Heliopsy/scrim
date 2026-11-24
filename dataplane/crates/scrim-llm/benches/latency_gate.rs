@@ -407,9 +407,24 @@ impl Sampler {
 struct Report {
     measurements: Vec<Value>,
     failures: Vec<String>,
+    /// The budget file's `speed`: the calibration time (µs) the budgets were set at and the
+    /// largest factor a slower machine stretches them by. `None` (no `speed`, or a CPU other than
+    /// its `cpu`, whose calibration time says nothing about this one's) compares budgets as
+    /// written.
+    speed: Option<(f64, f64)>,
 }
 
 impl Report {
+    /// How much slower than the budgets' reference the machine ran a measurement, from its
+    /// rounds' calibration times: at least 1 (a faster machine never tightens a budget), at most
+    /// the configured cap (a machine slower than that fails the budget as before).
+    fn slowdown(&self, cal: &[f64]) -> f64 {
+        match self.speed {
+            Some((reference, cap)) if !cal.is_empty() => (median(cal) / reference).clamp(1.0, cap),
+            _ => 1.0,
+        }
+    }
+
     /// Records a latency measurement; `budget` is the p99 limit, when gated.
     fn latency(
         &mut self,
@@ -420,11 +435,14 @@ impl Report {
         conditions: Value,
     ) {
         let p99 = r.p99();
+        let slow = self.slowdown(&r.cal);
         if let Some(b) = budget
-            && p99 > b
+            && p99 > b * slow
         {
-            self.failures
-                .push(format!("{id}: p99 {p99:.3} {unit} > budget {b} {unit}"));
+            self.failures.push(format!(
+                "{id}: p99 {p99:.3} {unit} > budget {b} {unit}{}",
+                stretched(b * slow, slow, unit)
+            ));
         }
         let r3 = |v: &[f64]| v.iter().copied().map(round3).collect::<Vec<_>>();
         self.measurements.push(json!({
@@ -432,7 +450,8 @@ impl Report {
             "unit": unit,
             "better": "lower",
             "gated": budget.is_some(),
-            "budget": budget.map(|b| json!({"p99": {"max": b}})),
+            "budget": budget.map(|b| json!({"p99": {"max": b, "applied": round3(b * slow)}})),
+            "slowdown": round3(slow),
             "p50": round3(r.p50()),
             "p99": round3(p99),
             "rounds": {"p50": r3(&r.p50), "p99": r3(&r.p99), "cal": r3(&r.cal)},
@@ -453,23 +472,36 @@ impl Report {
         conditions: Value,
     ) {
         let v = median(rounds);
+        let slow = self.slowdown(cal);
         if let Some(m) = min
-            && v < m
+            && v < m / slow
         {
-            self.failures
-                .push(format!("{id}: {v:.1} MB/s < minimum {m} MB/s"));
+            self.failures.push(format!(
+                "{id}: {v:.1} MB/s < minimum {m} MB/s{}",
+                stretched(m / slow, slow, "MB/s")
+            ));
         }
         self.measurements.push(json!({
             "id": id,
             "unit": "MB/s",
             "better": "higher",
             "gated": min.is_some(),
-            "budget": min.map(|m| json!({"mbps": {"min": m}})),
+            "budget": min.map(|m| json!({"mbps": {"min": m, "applied": round3(m / slow)}})),
+            "slowdown": round3(slow),
             "mbps": round3(v),
             "rounds": {"mbps": rounds.iter().copied().map(round3).collect::<Vec<_>>(),
                        "cal": cal.iter().copied().map(round3).collect::<Vec<_>>()},
             "conditions": conditions,
         }));
+    }
+}
+
+/// The budget actually applied, when the machine's slowdown stretched it.
+fn stretched(applied: f64, slow: f64, unit: &str) -> String {
+    if slow > 1.0 {
+        format!(" ({applied:.3} {unit} at slowdown {slow:.2})")
+    } else {
+        String::new()
     }
 }
 
@@ -543,9 +575,16 @@ fn main() {
     let sampler = Sampler { rounds, filter };
     let runner = std::env::var("SCRIM_PERF_RUNNER").unwrap_or_else(|_| "local".into());
     let (cpu, cpus) = machine();
+    let speed_cpu = budget
+        .get("speed")
+        .and_then(|s| s.get("cpu"))
+        .and_then(Value::as_str);
     let mut report = Report {
         measurements: Vec::new(),
         failures: Vec::new(),
+        speed: budget_at(&budget, &["speed", "reference_calibration_us"])
+            .zip(budget_at(&budget, &["speed", "max_slowdown"]))
+            .filter(|_| speed_cpu == Some(cpu.as_str())),
     };
     let mut rng = Rng(0x5c41_1d00_c0ff_ee01);
     let ms = 1e3;
@@ -568,6 +607,16 @@ fn main() {
         }
     );
     println!("- budget: {budget_path}");
+    if report.speed.is_none()
+        && let Some(c) = speed_cpu
+    {
+        println!("- speed: budgets are not stretched (calibrated on {c}, not this CPU)");
+    }
+    if let Some((reference, cap)) = report.speed {
+        println!(
+            "- speed: budgets were set at a calibration time of {reference} µs; a measurement whose rounds' median calibration time is longer has its budget stretched by that ratio, up to {cap}x; the tables show the budgets as configured, a failure and the JSON field \"slowdown\" show the stretch"
+        );
+    }
     println!(
         "- method: {rounds} rounds per measurement; each value is the median of the rounds' nearest-rank p50 or p99. {}",
         if filter {

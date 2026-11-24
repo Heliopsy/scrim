@@ -1,5 +1,11 @@
 {
   "comment": "Budgets of the latency gate (performance spec, benches/latency_gate.rs) on the reference runner (ho-z10). Targets are configuration: change them here, with a recorded reason, never in code. Every gated value is the median over the gate's rounds of a per-round p99 (or of the throughput). 4MB proxy overhead set to 16 ms: a loaded shared host showed p99 tails near 12 ms at a 4.6 ms median.",
+  "speed": {
+    "comment": "The machine speed the budgets were set at. Before every round the gate times a fixed workload (SHA-256 over 256 KiB, best of five). A measurement whose rounds took longer than reference_calibration_us at the median has its budget stretched by that ratio (latency budgets multiplied, throughput floors divided), never tightened, and by at most max_slowdown. Reference: ho-z10 runs that met every budget measured 130 to 145 us. Main CI on 2026-11-24 failed request, protect and throughput budgets together while measuring about 2.4 times slower everywhere, including the direct baseline: the runner's 15 W CPU throttles under heat and load, and an unscaled budget then fails on the machine, not on scrim. The calibration time only compares runs on the same CPU model (a CPU without SHA extensions takes several times longer at the same overall speed), so the stretch applies only on cpu; elsewhere budgets are compared as written. The regression check compares relative to the same calibration.",
+    "cpu": "Intel(R) Core(TM) Ultra 7 155U",
+    "reference_calibration_us": 140.0,
+    "max_slowdown": 3.0
+  },
   "proxy_overhead_p99_ms": {
     "100KB": 0.5,
     "1MB": 3.0,
@@ -44,8 +50,18 @@
       "us": 1.0,
       "MB/s": 25.0
     },
-    "stats": ["p50", "p99", "mbps"],
-    "match": ["runner", "machine.cpu", "machine.logical_cpus", "machine.arch", "method.quick"],
+    "stats": [
+      "p50",
+      "p99",
+      "mbps"
+    ],
+    "match": [
+      "runner",
+      "machine.cpu",
+      "machine.logical_cpus",
+      "machine.arch",
+      "method.quick"
+    ],
     "calibrate": true
   }
 }
