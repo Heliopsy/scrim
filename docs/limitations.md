@@ -109,9 +109,13 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   gets that session's narrower redaction. It applies only to agents with a static credential in
   `identity.store-credentials`: Kubernetes passthrough agents and agents that log in by token
   exchange are never narrowed (they keep the whole redaction set). [identity.md](identity.md#redaction-identity)
-- **Client certificates are not an agent identity in 1.0**, although the agent-identity spec
-  describes them. Callers are identified by peer credentials, session tokens and Kubernetes service
-  account tokens.
+- **Client certificates are checked against CRL files only.** OCSP is not supported, and only the
+  end entity certificate is checked against CRLs. Without a CRL, a stolen client certificate and
+  key work until the certificate expires; use short-lived certificates
+  ([identity.md](identity.md#revocation)). The TLS listeners' own certificate comes from the
+  interception CA, so agents have to trust that CA; there is no setting for a certificate and key
+  of your own yet. The Helm chart does not expose `identity.client-certificates.*` or the TLS
+  listener settings yet; set them in the config file or environment.
 - **Per-agent store identity is not available for every store.** Only `openbao`, `vault`, `awssm`,
   `ssm`, `gcpsm`, `azkv` and `infisical` take per-agent credentials; a store configured for one
   that does not refuses every use. Infisical cannot check writes per agent, and Bitwarden Secrets

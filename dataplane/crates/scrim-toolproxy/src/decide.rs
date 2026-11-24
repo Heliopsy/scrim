@@ -36,6 +36,53 @@ pub struct ClientInfo {
     /// A Kubernetes service account token sent as the password of the user [`KUBERNETES_USER`]
     /// (`HTTPS_PROXY=http://k8s:<token>@host:port`), held for the control plane to verify.
     pub kubernetes_token: Option<KubernetesToken>,
+    /// The certificate chain the client presented on a TLS listener that requires client
+    /// certificates, verified in the handshake. When it is set it is the request's identity, and
+    /// the proxy reads no credentials from `Proxy-Authorization`.
+    pub client_certificate: Option<ClientCertificate>,
+}
+
+/// A client certificate chain (leaf first, DER) a TLS listener verified in its handshake: the
+/// chain is public, and the handshake proved the client holds the leaf's private key, which never
+/// reaches scrim. `Debug` shows only a prefix of the leaf's SHA-256.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ClientCertificate(std::sync::Arc<Vec<rustls::pki_types::CertificateDer<'static>>>);
+
+impl ClientCertificate {
+    /// Wraps a verified chain, leaf first. `None` for an empty chain.
+    pub fn new(chain: Vec<rustls::pki_types::CertificateDer<'static>>) -> Option<Self> {
+        (!chain.is_empty()).then(|| Self(std::sync::Arc::new(chain)))
+    }
+
+    /// The chain, leaf first.
+    pub fn chain(&self) -> &[rustls::pki_types::CertificateDer<'static>] {
+        &self.0
+    }
+
+    /// The leaf certificate.
+    pub fn leaf(&self) -> &rustls::pki_types::CertificateDer<'static> {
+        &self.0[0]
+    }
+
+    /// Hex SHA-256 of the leaf's DER.
+    pub fn leaf_sha256(&self) -> String {
+        use sha2::Digest as _;
+        use std::fmt::Write as _;
+        sha2::Sha256::digest(self.leaf().as_ref()).iter().fold(
+            String::with_capacity(64),
+            |mut s, b| {
+                let _ = write!(s, "{b:02x}");
+                s
+            },
+        )
+    }
+}
+
+impl std::fmt::Debug for ClientCertificate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let h = self.leaf_sha256();
+        write!(f, "ClientCertificate(sha256:{}..)", &h[..16])
+    }
 }
 
 impl ClientInfo {

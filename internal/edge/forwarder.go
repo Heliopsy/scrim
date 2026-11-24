@@ -38,7 +38,8 @@ type Forwarder struct {
 	// the name in its certificate.
 	TLS *tls.Config
 	// Token returns the pod's service account token. The forwarder wipes
-	// what it returns.
+	// what it returns. Nil sends none: the pod is identified by the client
+	// certificate TLS presents (ClientCertificateFiles).
 	Token func() ([]byte, error)
 	// DialTimeout bounds connecting and upgrading; zero takes 10 seconds.
 	DialTimeout time.Duration
@@ -59,6 +60,28 @@ func NewTLSConfig(caPEM []byte, serverName string) (*tls.Config, error) {
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool, ServerName: serverName,
 		NextProtos: []string{EdgeCAProto, "http/1.1"}}, nil
+}
+
+// ClientCertificateFiles returns a TLS client certificate source that
+// reads the certificate and key files on every handshake, so a certificate
+// rotated in the pod (a SPIFFE helper writing short-lived SVIDs) is used at
+// once.
+func ClientCertificateFiles(certFile, keyFile string) func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+	return func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+		c, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("edge: reading the client certificate: %w", err)
+		}
+		return &c, nil
+	}
+}
+
+// token returns the pod's token, nil when the forwarder sends none.
+func (f *Forwarder) token() ([]byte, error) {
+	if f.Token == nil {
+		return nil, nil
+	}
+	return f.Token()
 }
 
 // TokenFile returns a token source that reads path on every call.
@@ -122,7 +145,7 @@ func (f *Forwarder) Dial(ctx context.Context, path string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	tok, err := f.Token()
+	tok, err := f.token()
 	if err != nil {
 		_ = c.Close()
 		return nil, err
@@ -131,9 +154,11 @@ func (f *Forwarder) Dial(ctx context.Context, path string) (net.Conn, error) {
 		_ = c.SetDeadline(dl)
 	}
 	req := make([]byte, 0, 256+len(tok))
-	req = append(req, "GET "+path+" HTTP/1.1\r\nHost: "+f.host()+"\r\nConnection: Upgrade\r\nUpgrade: "+Protocol+
-		"\r\nAuthorization: Bearer "...)
-	req = append(req, tok...)
+	req = append(req, "GET "+path+" HTTP/1.1\r\nHost: "+f.host()+"\r\nConnection: Upgrade\r\nUpgrade: "+Protocol...)
+	if tok != nil {
+		req = append(req, "\r\nAuthorization: Bearer "...)
+		req = append(req, tok...)
+	}
 	req = append(req, "\r\n\r\n"...)
 	secret.WipeBytes(tok)
 	_, err = c.Write(req)
@@ -270,7 +295,7 @@ func (f *Forwarder) APIHandler() http.Handler {
 			writeError(w, http.StatusNotFound, agenttools.Errorf(agenttools.CodeNotFound, "this route is not served to agent pods"))
 			return
 		}
-		tok, err := f.Token()
+		tok, err := f.token()
 		if err != nil {
 			f.log().Warn("agent API request refused", "error", err)
 			writeError(w, http.StatusServiceUnavailable,
@@ -278,10 +303,14 @@ func (f *Forwarder) APIHandler() http.Handler {
 			return
 		}
 		r2 := r.Clone(r.Context())
-		// Whatever the local client sent is dropped: the pod's token is the
-		// only credential that leaves.
-		r2.Header.Set("Authorization", "Bearer "+string(tok))
-		secret.WipeBytes(tok)
+		// Whatever the local client sent is dropped: the pod's token (or
+		// its client certificate, in the handshake) is the only credential
+		// that leaves.
+		r2.Header.Del("Authorization")
+		if tok != nil {
+			r2.Header.Set("Authorization", "Bearer "+string(tok))
+			secret.WipeBytes(tok)
+		}
 		f.proxy.ServeHTTP(w, r2)
 	})
 }
@@ -337,7 +366,7 @@ func (f *Forwarder) Check(ctx context.Context) (identity.Identity, error) {
 	if err := json.Unmarshal(rec.body.Bytes(), &id); err != nil {
 		return identity.Identity{}, fmt.Errorf("edge: unexpected whoami answer: %w", err)
 	}
-	if id.Agent == "" || id.Source != identity.SourceKubernetes {
+	if id.Agent == "" || id.Source != identity.SourceKubernetes && id.Source != identity.SourceCertificate {
 		return identity.Identity{}, errors.New("edge: the central scrim does not know this pod as an agent")
 	}
 	return id, nil

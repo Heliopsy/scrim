@@ -18,8 +18,8 @@
 //!   the snapshot in force through [`engine::Engine`].
 //! - [`listeners`]: base-URL listeners (TCP and Unix socket) serve the LLM
 //!   proxy; tool-proxy and forward-proxy listeners serve the HTTPS tool proxy,
-//!   which hands provider hosts to the LLM proxy. Transparent listeners are
-//!   still to come.
+//!   which hands provider hosts to the LLM proxy. Any of them can serve TLS
+//!   only and identify the client by certificate ([`mtls`]).
 //! - [`policy`]: forwarding, injection and restore decisions from the
 //!   snapshot's decision table and restore settings (`scrim-policy`), asking
 //!   the control plane where a rule says so; [`identity`]: who a request is
@@ -42,6 +42,7 @@ pub mod identity;
 pub mod inherit;
 pub mod listeners;
 pub mod metrics;
+pub mod mtls;
 pub mod policy;
 pub mod scopes;
 pub mod server;
