@@ -402,6 +402,8 @@ plane fault cannot let a certificate through.
 | `revocation status unknown` | CRLs are configured but none is from the certificate's issuer |
 | `crl expired` | the issuer's CRL is past its next update |
 | `no certificate` | the client presented none (TLS listeners only) |
+| `invalid` | refused in the handshake for any other reason, such as a malformed certificate (TLS listeners) |
+| `malformed certificate` | the chain carried to the control plane does not parse (edge listener, asks) |
 
 A certificate refused in the handshake is audited as `dataplane.client_certificate_refused` with
 the reason, the listener, the client's address and, when the certificate could be parsed, its

@@ -156,6 +156,9 @@ pub fn refusal_reason(e: &rustls::Error) -> &'static str {
             CertificateError::ExpiredRevocationList
             | CertificateError::ExpiredRevocationListContext { .. } => "crl expired",
             CertificateError::UnknownIssuer | CertificateError::BadSignature => "untrusted",
+            CertificateError::InvalidPurpose | CertificateError::InvalidPurposeContext { .. } => {
+                "not a client certificate"
+            }
             _ => "invalid",
         },
         _ => "invalid",

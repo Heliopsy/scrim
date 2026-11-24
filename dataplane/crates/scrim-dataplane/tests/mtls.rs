@@ -48,6 +48,24 @@ struct Client {
 }
 
 fn client(issuer: &Issuer, cn: &str, serial: u64, from: (i32, u8), until: (i32, u8)) -> Client {
+    with_usage(
+        issuer,
+        cn,
+        serial,
+        from,
+        until,
+        ExtendedKeyUsagePurpose::ClientAuth,
+    )
+}
+
+fn with_usage(
+    issuer: &Issuer,
+    cn: &str,
+    serial: u64,
+    from: (i32, u8),
+    until: (i32, u8),
+    usage: ExtendedKeyUsagePurpose,
+) -> Client {
     let key = KeyPair::generate().unwrap();
     let mut p = CertificateParams::default();
     p.distinguished_name.push(DnType::CommonName, cn);
@@ -56,7 +74,7 @@ fn client(issuer: &Issuer, cn: &str, serial: u64, from: (i32, u8), until: (i32, 
             .try_into()
             .unwrap(),
     )];
-    p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    p.extended_key_usages = vec![usage];
     p.serial_number = Some(SerialNumber::from(serial));
     p.not_before = date_time_ymd(from.0, from.1, 1);
     p.not_after = date_time_ymd(until.0, until.1, 1);
@@ -366,6 +384,17 @@ async fn refused_certificates_are_reported() {
             Some(client(&issuer, "early", 22, (2089, 1), (2090, 1))),
         ),
         ("revoked", Some(valid(&issuer, "revoked", 66))),
+        (
+            "not a client certificate",
+            Some(with_usage(
+                &issuer,
+                "server",
+                23,
+                (2020, 1),
+                (2090, 1),
+                ExtendedKeyUsagePurpose::ServerAuth,
+            )),
+        ),
         ("no certificate", None),
     ];
     for (reason, cert) in cases {

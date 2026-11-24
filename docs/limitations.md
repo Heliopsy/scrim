@@ -110,7 +110,9 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   end entity certificate is checked against CRLs. Without a CRL, a stolen client certificate and
   key work until the certificate expires; use short-lived certificates
   ([identity.md](identity.md#revocation)). The TLS listeners' own certificate comes from the
-  interception CA, as the edge listener's does.
+  interception CA, so agents have to trust that CA; there is no setting for a certificate and key
+  of your own yet. The Helm chart does not expose `identity.client-certificates.*` or the TLS
+  listener settings yet; set them in the config file or environment.
 - **Per-agent store identity is not available for every store.** Only `openbao`, `vault`, `awssm`,
   `ssm`, `gcpsm`, `azkv` and `infisical` take per-agent credentials; a store configured for one
   that does not refuses every use. Infisical cannot check writes per agent, and Bitwarden Secrets

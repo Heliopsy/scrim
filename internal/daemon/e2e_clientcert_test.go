@@ -36,7 +36,10 @@ func certClient(t *testing.T, caPEM string, cert *certtest.Issued, proxy string)
 	}
 	tc := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	if cert != nil {
-		tc.Certificates = []tls.Certificate{cert.TLS}
+		// Present the certificate whatever CAs the server lists: Go's
+		// default sends none when the issuer is not among them, and a
+		// certificate from another CA must reach the server's check.
+		tc.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return &cert.TLS, nil }
 	}
 	tr := &http.Transport{TLSClientConfig: tc, DisableKeepAlives: true, ForceAttemptHTTP2: false}
 	if proxy != "" {
