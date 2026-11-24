@@ -278,6 +278,9 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		}
 	}()
 	cfg := a.Config.Current()
+	if err := checkPlatform(cfg); err != nil {
+		return nil, err
+	}
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	d.cancel = cancel
 	d.cleanup = append(d.cleanup, cancel)

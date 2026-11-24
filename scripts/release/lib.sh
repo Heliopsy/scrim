@@ -47,7 +47,7 @@ fi
 export SCRIM_VERSION SCRIM_COMMIT SOURCE_DATE_EPOCH SCRIM_DATE
 
 # The release platforms, as GOOS-GOARCH with the matching Rust target.
-SCRIM_PLATFORMS="linux-amd64 linux-arm64 darwin-amd64 darwin-arm64"
+SCRIM_PLATFORMS="linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64"
 
 rust_target() {
   case "$1" in
@@ -55,8 +55,28 @@ rust_target() {
     linux-arm64) echo aarch64-unknown-linux-musl ;;
     darwin-amd64) echo x86_64-apple-darwin ;;
     darwin-arm64) echo aarch64-apple-darwin ;;
+    windows-amd64) echo x86_64-pc-windows-msvc ;;
+    windows-arm64) echo aarch64-pc-windows-msvc ;;
     *) die "unsupported platform: $1 (want one of: $SCRIM_PLATFORMS)" ;;
   esac
+}
+
+# exe PLATFORM prints the executable suffix of PLATFORM: .exe on Windows.
+exe() {
+  case "$1" in
+    windows-*) echo .exe ;;
+    *) echo ;;
+  esac
+}
+
+# native_path PATH prints PATH the way native tools on this host spell it:
+# under Git Bash on Windows, rustc sees D:\a\scrim, not /d/a/scrim.
+native_path() {
+  if command -v cygpath >/dev/null; then
+    cygpath -w "$1"
+  else
+    echo "$1"
+  fi
 }
 
 die() {
@@ -90,8 +110,9 @@ sha256() {
 }
 
 # Refuses a binary for the wrong platform or one that would need anything from
-# the host beyond the kernel (Linux) or libSystem (macOS). The architecture is
-# read from the file header, never from what the build was asked for.
+# the host beyond the kernel (Linux), libSystem (macOS) or the system DLLs
+# (Windows). The architecture is read from the file header, never from what
+# the build was asked for.
 check_binary() {
   local file=$1 platform=$2 got want
   case "$platform" in
@@ -124,6 +145,27 @@ check_binary() {
         if otool -L "$file" | tail -n +2 | grep -v -e '/usr/lib/libSystem' -e '/usr/lib/libresolv' -e '/usr/lib/libiconv' -e '/System/Library/Frameworks/' | grep -q .; then
           otool -L "$file" >&2
           die "$file links libraries outside the base system"
+        fi
+      fi
+      ;;
+    windows-*)
+      # PE: "MZ", the PE header offset at 0x3c, "PE\0\0", then the machine:
+      # AMD64 0x8664, ARM64 0xaa64.
+      [ "$(head -c 2 "$file" | od -An -t x1 | tr -d ' ')" = 4d5a ] || die "$file is not a PE file"
+      local pe
+      pe=$(od -An -t u4 -j 60 -N 4 "$file" | tr -d ' ')
+      [ "$(od -An -t x1 -j "$pe" -N 4 "$file" | tr -d ' ')" = 50450000 ] || die "$file has no PE header"
+      want=$([ "$platform" = windows-amd64 ] && echo 34404 || echo 43620)
+      got=$(od -An -t u2 -j $((pe + 4)) -N 2 "$file" | tr -d ' ')
+      [ "$got" = "$want" ] || die "$file has PE machine $got, want $want for $platform"
+      # Rust builds with +crt-static, so no Visual C++ runtime DLL is
+      # needed; Go links none. What remains are DLLs every Windows has.
+      if command -v objdump >/dev/null && objdump -p "$file" >/dev/null 2>&1; then
+        if objdump -p "$file" | sed -n 's/^\s*DLL Name: //p' | tr 'A-Z' 'a-z' \
+          | grep -E -v '^(api-ms-win-[a-z0-9-]+|kernel32|ntdll|ws2_32|advapi32|bcrypt|bcryptprimitives|userenv|crypt32|secur32|ncrypt|iphlpapi|dnsapi|ole32|oleaut32|shell32|user32|powrprof|winmm|synchronization|mswsock|ntdsapi|netapi32|rpcrt4|msvcrt)\.dll$' \
+          | grep -q .; then
+          objdump -p "$file" | sed -n 's/^\s*DLL Name: //p' >&2
+          die "$file needs DLLs outside the base system"
         fi
       fi
       ;;

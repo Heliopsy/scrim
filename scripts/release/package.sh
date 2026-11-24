@@ -5,8 +5,8 @@
 #
 # Turns the built binaries into the release assets:
 #
-#   BIN_DIR/<platform>/scrim
-#   BIN_DIR/<platform>/scrim-dataplane
+#   BIN_DIR/<platform>/scrim[.exe]
+#   BIN_DIR/<platform>/scrim-dataplane[.exe]
 #
 # becomes, in OUT_DIR,
 #
@@ -17,6 +17,9 @@
 #
 # scripts/release/results.sh assemble later adds the release's leak and
 # performance results and rewrites checksums.txt to include them.
+#
+# Windows archives are tar.gz too: tar is part of Windows 10 and later, and
+# one archive format keeps one reproducible recipe and one checksum pattern.
 #
 # Archives are byte-reproducible: fixed order, owner, modes and mtime
 # (SOURCE_DATE_EPOCH), and gzip without a name or timestamp. SBOMs carry a
@@ -64,14 +67,14 @@ for platform in $SCRIM_PLATFORMS; do
     continue
   fi
   found=1
-  os=${platform%-*} arch=${platform#*-}
+  os=${platform%-*} arch=${platform#*-} x=$(exe "$platform")
   for binary in scrim "$SCRIM_DATAPLANE_BIN"; do
-    [ -f "$src/$binary" ] || die "missing $src/$binary"
-    check_binary "$src/$binary" "$platform"
+    [ -f "$src/$binary$x" ] || die "missing $src/$binary$x"
+    check_binary "$src/$binary$x" "$platform"
     dir="$stage/$binary-$platform"
     mkdir -p "$dir"
     chmod 0755 "$dir"
-    install -m 0755 "$src/$binary" "$dir/$binary"
+    install -m 0755 "$src/$binary$x" "$dir/$binary$x"
     install -m 0644 "$ROOT/LICENSE" "$ROOT/README.md" "$dir/"
     name="${binary}_${SCRIM_VERSION}_${os}_${arch}.tar.gz"
     log "$name"
@@ -79,7 +82,7 @@ for platform in $SCRIM_PLATFORMS; do
     if [ "$binary" = scrim ]; then
       # The data plane inside scrim is an opaque blob to syft. The same bytes
       # are scanned beside it so the SBOM lists the Rust dependencies too.
-      install -m 0755 "$src/$SCRIM_DATAPLANE_BIN" "$dir/embedded-$SCRIM_DATAPLANE_BIN"
+      install -m 0755 "$src/$SCRIM_DATAPLANE_BIN$x" "$dir/embedded-$SCRIM_DATAPLANE_BIN$x"
     fi
     sbom "$name" "$dir"
   done
