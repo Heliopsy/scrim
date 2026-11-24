@@ -49,8 +49,14 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   agent settings enforce; DNS override is bypassed by connecting to an address; hooks see tool
   results and prompts, never the model traffic. [interception.md](interception.md) has the table.
 - **MCP-only use intercepts nothing.** The agent's model requests go straight to the provider.
-- **WebSocket traffic to a provider is not redacted.** The LLM proxy refuses the upgrade
-  (`501 upgrade_unsupported`); Codex falls back to HTTPS, a client that cannot fall back fails.
+- **WebSocket restore is limited to OpenAI's protocols.** Client messages on every provider route
+  are redacted and guarded like request bodies, but placeholders in provider messages are restored
+  only for the OpenAI Realtime API (`/v1/realtime`) and the Responses API WebSocket mode
+  (`/v1/responses`). Elsewhere (for example the Gemini Live API) the agent sees placeholders. The
+  model speaks a placeholder aloud in Realtime audio, since audio is not restored, and server
+  messages are not written by capture mode. Base64 audio in Realtime events is a binary part like
+  an image ([Redaction](#redaction)). Other upgrades than WebSocket are refused
+  (`501 upgrade_unsupported`).
 - **`scrim run` replaces an inherited `HTTPS_PROXY`** instead of chaining to it, and runtimes with
   their own trust store (Java, for one) do not trust scrim's CA inside the session
   ([run.md](run.md#limitations)).
