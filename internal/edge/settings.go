@@ -97,6 +97,24 @@ var (
 		Flag:            true,
 	})
 
+	// ClientCertFile is the pod's client certificate, presented instead of
+	// the token.
+	ClientCertFile = config.Register(config.Spec[string]{
+		Key:             "edge-forwarder.client-cert-file",
+		RestartRequired: true,
+		Description: "PEM client certificate (chain) the forwarder presents to the central scrim instead of a service account " +
+			"token, for a central scrim with identity.client-certificates. Read again for every connection, so a rotated " +
+			"certificate is used at once. Needs edge-forwarder.client-key-file.",
+		Flag: true,
+	})
+	// ClientKeyFile is the key of ClientCertFile.
+	ClientKeyFile = config.Register(config.Spec[string]{
+		Key:             "edge-forwarder.client-key-file",
+		RestartRequired: true,
+		Description:     "PEM private key of edge-forwarder.client-cert-file. It stays in the pod: the TLS handshake proves the forwarder holds it.",
+		Flag:            true,
+	})
+
 	// SSHAgentSocket is the local ssh-agent socket.
 	SSHAgentSocket = config.Register(config.Spec[string]{
 		Key:             "edge-forwarder.ssh-agent-socket",

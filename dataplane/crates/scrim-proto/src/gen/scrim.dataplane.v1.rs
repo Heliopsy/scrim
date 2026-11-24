@@ -99,6 +99,31 @@ pub struct Snapshot {
     /// which is the safe side.
     #[prost(message, repeated, tag = "14")]
     pub redaction_scopes: ::prost::alloc::vec::Vec<RedactionScope>,
+    /// client_certificates is the trust for client certificates on listeners
+    /// with `tls` set (agent-identity spec, "Mutual TLS identity"). Absent, such
+    /// a listener refuses every connection.
+    #[prost(message, optional, tag = "15")]
+    pub client_certificates: ::core::option::Option<ClientCertificateTrust>,
+}
+/// ClientCertificateTrust says which client certificates a TLS listener
+/// accepts. Everything in it is public.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClientCertificateTrust {
+    /// trust_anchors_pem are the CA certificates a client certificate must chain
+    /// to, PEM. No system roots are used.
+    #[prost(string, tag = "1")]
+    pub trust_anchors_pem: ::prost::alloc::string::String,
+    /// crls_der are certificate revocation lists, DER. Empty means revocation is
+    /// not checked (short-lived certificates). When any is present, the end
+    /// entity's issuer must have one that is current: a certificate whose issuer
+    /// has none, or whose CRL is past its next update, is refused.
+    #[prost(bytes = "vec", repeated, tag = "2")]
+    pub crls_der: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    /// server_names are the names the listener's own certificate carries,
+    /// signed by the current tool-proxy CA. A client that sends no server name,
+    /// or one not in the list, gets the first.
+    #[prost(string, repeated, tag = "3")]
+    pub server_names: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 /// RedactionScope is the redaction set of one agent's sessions: the whole
 /// dictionary minus the values whose store refused that agent's own identity.
@@ -585,6 +610,15 @@ pub struct Listener {
     /// rule is bound to, instead of passing them through untouched.
     #[prost(bool, tag = "4")]
     pub block_unrouted: bool,
+    /// tls, for BASE_URL, FORWARD_PROXY and TOOL_PROXY listeners: accept TLS
+    /// only, with a certificate for Snapshot.client_certificates.server_names,
+    /// and require a client certificate that chains to its trust anchors, is
+    /// within its validity period and is not revoked. A connection whose
+    /// certificate fails is closed in the handshake and reported as
+    /// EVENT_KIND_CLIENT_CERTIFICATE_REFUSED. Every request on the connection
+    /// carries the chain in AskCaller.client_certificate_chain.
+    #[prost(bool, tag = "5")]
+    pub tls: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RedactionSettings {
@@ -592,16 +626,18 @@ pub struct RedactionSettings {
     /// values are matched only in exact and encoded forms.
     #[prost(uint32, tag = "1")]
     pub min_value_length: u32,
+    #[prost(enumeration = "BinaryPolicy", tag = "2")]
+    pub binary: i32,
     /// detectors_off switches every fallback pattern rule off
     /// (redaction.detectors.enabled false). The zero value keeps the defaults.
-    #[prost(bool, tag = "2")]
+    #[prost(bool, tag = "3")]
     pub detectors_off: bool,
     /// detectors_disabled names pattern rules switched off.
-    #[prost(string, repeated, tag = "3")]
+    #[prost(string, repeated, tag = "4")]
     pub detectors_disabled: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// detectors_enabled names pattern rules that are off by default and
     /// switched on.
-    #[prost(string, repeated, tag = "4")]
+    #[prost(string, repeated, tag = "5")]
     pub detectors_enabled: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -788,6 +824,15 @@ pub struct AskCaller {
     /// forwarded. Empty when the request carried no such token.
     #[prost(bytes = "vec", tag = "7")]
     pub kubernetes_token: ::prost::alloc::vec::Vec<u8>,
+    /// client_certificate_chain is the certificate chain the client presented
+    /// on a listener with `tls` set, leaf first, DER. The data plane verified it
+    /// in the handshake, which also proved the client holds the leaf's private
+    /// key; the control plane verifies the chain again against its own trust
+    /// anchors and revocation lists and maps the leaf to an agent. Public. When
+    /// it is present, session_id, session_proof and kubernetes_token are empty:
+    /// the certificate is the request's only identity.
+    #[prost(bytes = "vec", repeated, tag = "8")]
+    pub client_certificate_chain: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AskAnswer {
@@ -1306,6 +1351,45 @@ impl ListenerKind {
         }
     }
 }
+/// BinaryPolicy is what the LLM proxy does with binary content parts
+/// (images, documents, audio): `redaction.binary`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum BinaryPolicy {
+    /// treated as SCAN
+    Unspecified = 0,
+    /// SCAN decodes each part and scans it and the text it carries; a secret
+    /// found there, or a part that cannot be decoded, refuses the request.
+    Scan = 1,
+    /// BLOCK refuses every request with a binary part.
+    Block = 2,
+    /// PASS forwards binary parts unscanned (weakening).
+    Pass = 3,
+}
+impl BinaryPolicy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "BINARY_POLICY_UNSPECIFIED",
+            Self::Scan => "BINARY_POLICY_SCAN",
+            Self::Block => "BINARY_POLICY_BLOCK",
+            Self::Pass => "BINARY_POLICY_PASS",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "BINARY_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
+            "BINARY_POLICY_SCAN" => Some(Self::Scan),
+            "BINARY_POLICY_BLOCK" => Some(Self::Block),
+            "BINARY_POLICY_PASS" => Some(Self::Pass),
+            _ => None,
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum EventKind {
@@ -1330,6 +1414,8 @@ pub enum EventKind {
     Capture = 9,
     /// a client refused scrim's certificate
     InterceptionRefused = 10,
+    /// a TLS listener refused a client's certificate
+    ClientCertificateRefused = 11,
 }
 impl EventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1349,6 +1435,7 @@ impl EventKind {
             Self::Error => "EVENT_KIND_ERROR",
             Self::Capture => "EVENT_KIND_CAPTURE",
             Self::InterceptionRefused => "EVENT_KIND_INTERCEPTION_REFUSED",
+            Self::ClientCertificateRefused => "EVENT_KIND_CLIENT_CERTIFICATE_REFUSED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1365,6 +1452,9 @@ impl EventKind {
             "EVENT_KIND_ERROR" => Some(Self::Error),
             "EVENT_KIND_CAPTURE" => Some(Self::Capture),
             "EVENT_KIND_INTERCEPTION_REFUSED" => Some(Self::InterceptionRefused),
+            "EVENT_KIND_CLIENT_CERTIFICATE_REFUSED" => {
+                Some(Self::ClientCertificateRefused)
+            }
             _ => None,
         }
     }

@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -30,10 +31,10 @@ func (d *Daemon) startEdge(ctx context.Context, cfg *config.Config, caFn func() 
 	if addr == "" {
 		return nil
 	}
-	kr := d.runtime.Resolver.Kubernetes
-	if kr == nil {
-		return fmt.Errorf("%s needs identity.kubernetes.enabled: the edge listener identifies agent pods by their service account token",
-			edge.ListenAddr.Name())
+	kr, cr := d.runtime.Resolver.Kubernetes, d.runtime.Resolver.Certificates
+	if kr == nil && cr == nil {
+		return fmt.Errorf("%s needs identity.kubernetes.enabled or identity.client-certificates.enabled: the edge listener identifies "+
+			"agent pods by their service account token or client certificate", edge.ListenAddr.Name())
 	}
 	names := edge.ServerNames.Get(cfg)
 	if len(names) == 0 {
@@ -72,18 +73,27 @@ func (d *Daemon) startEdge(ctx context.Context, cfg *config.Config, caFn func() 
 		return fmt.Errorf("%s: %w", edge.ListenAddr.Name(), err)
 	}
 	srv := &edge.Server{
-		Identify: kr.Resolve,
-		API:      d.runtime.Handler(),
-		SSH:      d.runtime.SSHAgent(),
-		Database: d.edgeDatabase,
-		Auditor:  agentapi.Audit{State: d.app.State},
-		Log:      obs.WithComponent(d.app.Log, "edge"),
+		Certificates: cr,
+		API:          d.runtime.Handler(),
+		SSH:          d.runtime.SSHAgent(),
+		Database:     d.edgeDatabase,
+		Auditor:      agentapi.Audit{State: d.app.State},
+		Log:          obs.WithComponent(d.app.Log, "edge"),
+	}
+	if kr != nil {
+		srv.Identify = kr.Resolve
+	}
+	tcfg := edge.TLSConfig(certs.GetCertificate)
+	if cr != nil {
+		// Verified per request against the trust in force (CRLs included),
+		// so a refusal is audited instead of failing the handshake.
+		tcfg.ClientAuth = tls.RequestClientCert
 	}
 	d.addrs.Edge = ln.Addr().String()
 	// Rotations of a generated edge CA; the next handshake issues from the
 	// new generation.
 	d.goRun("edge CA", func() error { m.Run(ctx, nil); return nil })
-	d.goRun("edge", func() error { return ignoreCanceled(srv.Serve(ctx, ln, edge.TLSConfig(certs.GetCertificate))) })
+	d.goRun("edge", func() error { return ignoreCanceled(srv.Serve(ctx, ln, tcfg)) })
 	d.log.Info("edge listener started", "listen", d.addrs.Edge, "names", names)
 	return nil
 }

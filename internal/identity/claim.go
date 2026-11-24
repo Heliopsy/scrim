@@ -58,6 +58,9 @@ type TransportClaim struct {
 	// instead of a session (`AskCaller.kubernetes_token`). The caller owns
 	// and wipes it.
 	KubernetesToken []byte
+	// ClientCertificateChain is the chain the client presented on a TLS
+	// listener, leaf first, DER (`AskCaller.client_certificate_chain`).
+	ClientCertificateChain [][]byte
 }
 
 // ResolveClaim turns a transport claim into an identity.
@@ -72,11 +75,17 @@ type TransportClaim struct {
 //   - A Kubernetes service account token, when no session is named, is the
 //     service account the cluster verifies it as, or nothing: a refused
 //     token never falls back to the peer identity either.
+//   - A client certificate chain is the agent the certificate maps to, or
+//     nothing: it is the request's only identity, and a certificate that
+//     fails verification is refused, never retried as anything else.
 //   - Nothing at all is unknown.
 func (r Resolver) ResolveClaim(ctx context.Context, c TransportClaim) (Identity, error) {
 	peer := Peer{}
 	if c.UnixPeer {
 		peer = c.Peer
+	}
+	if len(c.ClientCertificateChain) > 0 {
+		return r.Certificates.Resolve(c.ClientCertificateChain)
 	}
 	if c.SessionID != "" {
 		return r.verifyClaim(ctx, c, peer)

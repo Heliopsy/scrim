@@ -173,6 +173,8 @@ type harness struct {
 	other    string
 	dir      string
 	dbCalled chan identity.Identity
+	// certs, when set, makes the listener take client certificates.
+	certs *identity.CertResolver
 }
 
 func newHarness(t *testing.T) *harness {
@@ -211,7 +213,7 @@ func (h *harness) start() {
 	}
 	h.addr = ln.Addr().String()
 	api := &localapi.Server{Logger: h.logger("api")}
-	srv := &Server{Identify: h.kube.identify, API: api.Handler(), SSH: h.keyring, Auditor: h.audit, Log: h.logger("edge"),
+	srv := &Server{Identify: h.kube.identify, Certificates: h.certs, API: api.Handler(), SSH: h.keyring, Auditor: h.audit, Log: h.logger("edge"),
 		Database: func(name string) (func(context.Context, net.Conn), bool) {
 			if name != "app" {
 				return nil, false
@@ -232,7 +234,11 @@ func (h *harness) start() {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = srv.Serve(ctx, ln, TLSConfig(certs.GetCertificate))
+		cfg := TLSConfig(certs.GetCertificate)
+		if h.certs != nil {
+			cfg.ClientAuth = tls.RequestClientCert
+		}
+		_ = srv.Serve(ctx, ln, cfg)
 	}()
 	h.stop = func() { cancel(); <-done }
 	t.Cleanup(h.stop)

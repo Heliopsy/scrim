@@ -432,11 +432,15 @@ func (i *Issuer) ClaimsFor(id identity.Identity, audience string) (Claims, error
 	a := id.PolicyAgent()
 	c := Claims{Issuer: i.url, Subject: Subject(id), Audience: audience, Agent: id.Agent, AgentKind: string(a.Kind),
 		Session: id.SessionID, SessionName: id.SessionName, Profile: i.profile}
-	if id.Source == identity.SourceKubernetes {
+	switch id.Source {
+	case identity.SourceKubernetes:
 		c.Namespace = id.Labels[identity.LabelNamespace]
 		c.ServiceAccount = id.Labels[identity.LabelServiceAccount]
 		c.Pod = id.Labels[identity.LabelPod]
-	} else {
+	case identity.SourceCertificate:
+		// A certificate's holder runs anywhere; the machine scrim runs on
+		// says nothing about it.
+	default:
 		c.Host = i.host
 	}
 	return c, nil
@@ -446,12 +450,17 @@ func (i *Issuer) ClaimsFor(id identity.Identity, audience string) (Claims, error
 // sessions, so a store's trust policy can name it exactly (Entra ID
 // federated credentials match the subject verbatim). `agent:<name>` for
 // local agents, `k8s:<name>` for Kubernetes ones, whose derived names are
-// <namespace>/<service account>.
+// <namespace>/<service account>, and `mtls:<name>` for agents identified by
+// a client certificate.
 func Subject(id identity.Identity) string {
-	if id.Source == identity.SourceKubernetes {
+	switch id.Source {
+	case identity.SourceKubernetes:
 		return "k8s:" + id.Agent
+	case identity.SourceCertificate:
+		return "mtls:" + id.Agent
+	default:
+		return "agent:" + id.Agent
 	}
-	return "agent:" + id.Agent
 }
 
 // Mint returns a token for id toward audience and its expiry; the caller

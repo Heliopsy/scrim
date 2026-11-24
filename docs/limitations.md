@@ -39,10 +39,23 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   guard's fragment rules catch long halves of a split value; short ones pass.
 - **Short values.** Values shorter than the minimum length (8 bytes by default) are matched only
   whole and in their encoded forms, never as fragments. `scrim status` lists them.
-- **Images, PDFs and other binary parts pass unscanned**, including text in image metadata. In the
-  Gemini API that is every `inlineData` part, a `text/plain` document included. The spec describes
-  a `block` policy for binary parts; scrim 1.0 has no setting for it, and the data plane always
-  passes them. Keep secrets out of images and documents the agent attaches.
+- **Text in image pixels is not read.** Under the default `redaction.binary: scan`, scrim decodes
+  images, PDFs and other attachments and scans their bytes, metadata and document text, and refuses
+  a request whose attachment holds a secret. It does not recognise text rendered into pixels (no
+  OCR), audio or video content, or PDF text drawn with fonts whose encoding needs a ToUnicode map to
+  read. A screenshot of a terminal showing a secret reaches the provider. Keep secrets off screen
+  when the agent takes screenshots.
+- **Attachments referenced by URL are not fetched.** An `image_url` with an `https:` URL, an
+  uploaded file ID or a Gemini `fileData` URI is passed on as text; the provider fetches the content
+  and scrim never sees it.
+- **Attachments scrim cannot decode are refused.** Encrypted PDFs, archives other than gzip and
+  ZIP with deflate, and parts past the scan bounds (64 MiB decoded or inflated, 100,000 objects,
+  nesting depth 4, 2 seconds plus 250 ms per MiB) are refused under `scan` with
+  `unscannable_content`. Set `redaction.binary: pass` to forward them unscanned; that is weakening
+  and reported by `scrim status` and `scrim doctor`.
+- **Large attachments add latency under `scan`.** Each part is decoded and every view of it goes
+  through the redactor and the guard: about 55 ms per MiB for an image and 250 ms per MiB for a
+  text-heavy PDF on the reference machine (design.md of the `binary-parts-policy` change).
 - **Clients that pin certificates** fail to connect under TLS interception. That fails closed, but
   such a client cannot be used through the forward proxy, transparent or DNS modes.
 
@@ -54,8 +67,14 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   agent settings enforce; DNS override is bypassed by connecting to an address; hooks see tool
   results and prompts, never the model traffic. [interception.md](interception.md) has the table.
 - **MCP-only use intercepts nothing.** The agent's model requests go straight to the provider.
-- **WebSocket traffic to a provider is not redacted.** The LLM proxy refuses the upgrade
-  (`501 upgrade_unsupported`); Codex falls back to HTTPS, a client that cannot fall back fails.
+- **WebSocket restore is limited to OpenAI's protocols.** Client messages on every provider route
+  are redacted and guarded like request bodies, but placeholders in provider messages are restored
+  only for the OpenAI Realtime API (`/v1/realtime`) and the Responses API WebSocket mode
+  (`/v1/responses`). Elsewhere (for example the Gemini Live API) the agent sees placeholders. The
+  model speaks a placeholder aloud in Realtime audio, since audio is not restored, and server
+  messages are not written by capture mode. Base64 audio in Realtime events is a binary part like
+  an image ([Redaction](#redaction)). Other upgrades than WebSocket are refused
+  (`501 upgrade_unsupported`).
 - **`scrim run` replaces an inherited `HTTPS_PROXY`** instead of chaining to it, and runtimes with
   their own trust store (Java, for one) do not trust scrim's CA inside the session
   ([run.md](run.md#limitations)).
@@ -114,9 +133,13 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   gets that session's narrower redaction. It applies only to agents with a static credential in
   `identity.store-credentials`: Kubernetes passthrough agents and agents that log in by token
   exchange are never narrowed (they keep the whole redaction set). [identity.md](identity.md#redaction-identity)
-- **Client certificates are not an agent identity in 1.0**, although the agent-identity spec
-  describes them. Callers are identified by peer credentials, session tokens and Kubernetes service
-  account tokens.
+- **Client certificates are checked against CRL files only.** OCSP is not supported, and only the
+  end entity certificate is checked against CRLs. Without a CRL, a stolen client certificate and
+  key work until the certificate expires; use short-lived certificates
+  ([identity.md](identity.md#revocation)). The TLS listeners' own certificate comes from the
+  interception CA, so agents have to trust that CA; there is no setting for a certificate and key
+  of your own yet. The Helm chart does not expose `identity.client-certificates.*` or the TLS
+  listener settings yet; set them in the config file or environment.
 - **Per-agent store identity is not available for every store.** Only `openbao`, `vault`, `awssm`,
   `ssm`, `gcpsm`, `azkv` and `infisical` take per-agent credentials; a store configured for one
   that does not refuses every use. Infisical cannot check writes per agent, and Bitwarden Secrets
@@ -124,15 +147,12 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
 
 ## Several replicas
 
-- **Session tokens are redacted only by the replica that minted them.** Each scrim keeps the
-  session tokens it minted in its own redaction set; the shared state holds only their hashes. A
-  token minted through one replica is accepted by the others, but if the agent prints it and the
-  request goes through another replica, that replica does not redact it. Where agents use `scrim
-  run` sessions against several replicas, keep each agent's connections on one replica (session
-  affinity on the load balancer).
-- **Narrowed redaction follows the same rule.** `redaction.limit-to-agent-identity` narrows only on
-  the replica whose data plane holds the session's token; elsewhere the session gets the whole
-  redaction set, which is safe but inconsistent.
+- **The state database and the placeholder key together reveal every live scrim token.** Replicas
+  share session, service account and identity tokens through PostgreSQL, sealed under a key derived
+  from the placeholder key, so every replica redacts them. Whoever holds both the database (or a
+  backup of it) and the placeholder key can open them until they expire. Someone who can write the
+  database can delete the rows, and a token is then redacted only by the replica that minted or
+  verified it.
 - **Decision links need a shared key.** Without `approvals.signing-key`, each process signs with a
   random key, and links stop working on restart and on other replicas
   ([approvals.md](approvals.md)).

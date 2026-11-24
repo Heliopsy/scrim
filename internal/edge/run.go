@@ -4,6 +4,7 @@ package edge
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -39,8 +40,22 @@ func FromConfig(cfg *config.Config, log *slog.Logger) (*Forwarder, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", CAFile.Name(), err)
 	}
-	return &Forwarder{Central: central, TLS: tc, Token: TokenFile(TokenPath.Get(cfg)),
-		DialTimeout: ConnectTimeout.Get(cfg), Log: log}, nil
+	f := &Forwarder{Central: central, TLS: tc, Token: TokenFile(TokenPath.Get(cfg)),
+		DialTimeout: ConnectTimeout.Get(cfg), Log: log}
+	certFile, keyFile := ClientCertFile.Get(cfg), ClientKeyFile.Get(cfg)
+	switch {
+	case certFile == "" && keyFile == "":
+	case certFile == "" || keyFile == "":
+		return nil, fmt.Errorf("%s and %s are set together", ClientCertFile.Name(), ClientKeyFile.Name())
+	default:
+		if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
+			return nil, fmt.Errorf("%s: %w", ClientCertFile.Name(), err)
+		}
+		// The certificate is the pod's identity: no token is sent.
+		tc.GetClientCertificate = ClientCertificateFiles(certFile, keyFile)
+		f.Token = nil
+	}
+	return f, nil
 }
 
 // Endpoint is one local listener the forwarder serves.

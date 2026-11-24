@@ -36,12 +36,28 @@ Spec: `openspec/specs/llm-proxy`, plus the base-URL and forward-proxy parts of
   thinking text and signatures, redacted thinking, `encrypted_content`, reasoning items, and base64
   or `data:` binary parts. The redactor runs over every other byte, so unknown fields are redacted
   by default. The guard then scans the complete outgoing bytes, spans included.
+- **Binary parts.** Under the snapshot's `BinaryPolicy::Scan` (the default) each binary part is
+  decoded and the redactor and the guard run over its bytes and the text it carries (the `binary`
+  module: image metadata, PDF streams and strings, SVG, gzip and ZIP entries). A match refuses the
+  request with `secret_in_binary`; a part that cannot be decoded within the bounds refuses it with
+  `unscannable_content`. Text documents (`text/plain` file parts and the like) are redacted and
+  encoded again. `Block` refuses any binary part, `Pass` forwards them unscanned.
 - **Response side.** SSE events are framed without copying, and each content block keeps at most
   `max_len - 1` held bytes for a placeholder split across events. Text resolves under the display
   policy, tool arguments under the per-tool policy (`ToolMode::Buffered` hands the policy complete
   arguments). Thinking, reasoning, signatures and encrypted content pass byte-identical.
   Credential-class values are never restored, whatever the policy says. `*.done` events and final
   snapshots get the same resolution as their deltas.
+- **WebSocket** (`websocket`). A WebSocket handshake on a route is served by terminating the
+  socket on both sides: the handshake passes the gate, route credentials and head checks, scrim
+  opens its own HTTP/1.1 WebSocket to the provider (no extensions, its own key, the agent's or
+  the route's credentials) and answers `101` only after the provider did. Each client message is
+  reassembled (bounded by `max-request-body`), planned per protocol (`WsApi`: OpenAI Realtime,
+  Responses WebSocket mode, or generic), redacted and guarded; a message that cannot be made safe
+  is never forwarded and closes the connection. Each message uses the snapshot in force, with the
+  gate asked again when it changed. Provider messages go through the API's stream codec as one
+  SSE event each. The forward proxy and transparent listeners hand WebSocket handshakes to
+  provider hosts through with their upgrade intact.
 - **Capture mode.** `<ms>-<seq>-<route>.request.{json,body}` and `.response.{json,body}` in a
   directory that must be mode 0700. Bodies are post-redaction and byte-identical to what left;
   header values outside a short allowlist are `[masked]`. Retention sweep included.
@@ -88,7 +104,7 @@ OpenAI). 422 is the redaction-failed status.
 
 | Code | Status |
 | --- | --- |
-| `malformed_body`, `redactor_failed`, `guard_failed`, `guard_refused`, `unscannable_content` | 422 |
+| `malformed_body`, `redactor_failed`, `guard_failed`, `guard_refused`, `unscannable_content`, `secret_in_binary` | 422 |
 | `not_ready` (with `Retry-After: 1`) | 503 |
 | `no_route` | 404 |
 | `body_too_large` | 413 |
@@ -96,7 +112,12 @@ OpenAI). 422 is the redaction-failed status.
 | `chain_unavailable`, `upstream_unavailable` | 502 |
 | `capture_failed` | 500 |
 | `policy_denied` (the request gate refused it) | 403 |
-| `upgrade_unsupported` (WebSocket or other protocol upgrade, refused before anything else) | 501 |
+| `upgrade_unsupported` (a protocol upgrade other than a WebSocket handshake, refused before anything else) | 501 |
+
+On an open WebSocket a refusal is an `error` event (`{"type":"error","error":{"type":"scrim_error",
+"code":...}}`) and a close frame: 1008 for every redaction, guard, binary policy and gate failure,
+1009 for a message over `max-request-body`, 1013 when values are not loaded, 1014 when the
+provider failed, 1011 when capture failed.
 
 ## Use
 
@@ -138,5 +159,6 @@ only once `scrim-redact` is wired in (`engine.enforce`).
 - Compressed request bodies are refused, not decompressed.
 - A placeholder written with JSON `\u` escapes inside streamed tool arguments is left unresolved.
 - Synthesised flush events in Responses streams reuse the template's `sequence_number`.
-- WebSocket transports (Responses over WebSocket) are not supported.
+- WebSocket provider messages are restored for OpenAI Realtime and Responses WebSocket mode only,
+  and capture records client messages, not provider messages.
 - Gemini, Bedrock, Vertex and Foundry routes are later tasks (11.3, 11.4).

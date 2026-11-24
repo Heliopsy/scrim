@@ -51,6 +51,34 @@ var (
 		RestartRequired: true,
 		Validate:        optionalHostPort,
 	})
+	// TLSListen is the LLM proxy base URL over TLS, for callers identified
+	// by client certificates.
+	TLSListen = config.Register(config.Spec[string]{
+		Key: "proxy.tls-listen",
+		Description: "TCP address of the LLM proxy base URL over TLS (https://<address>/anthropic and so on). Callers must " +
+			"present a client certificate (identity.client-certificates). Empty disables it.",
+		Flag:            true,
+		RestartRequired: true,
+		Validate:        optionalHostPort,
+	})
+	// ForwardTLSListen is the forward proxy over TLS (an HTTPS proxy).
+	ForwardTLSListen = config.Register(config.Spec[string]{
+		Key: "proxy.forward-tls-listen",
+		Description: "TCP address of the forward proxy over TLS (HTTPS_PROXY=https://<address>). Callers must present a " +
+			"client certificate to the proxy (identity.client-certificates). Empty disables it.",
+		Flag:            true,
+		RestartRequired: true,
+		Validate:        optionalHostPort,
+	})
+	// ToolProxyTLSListen is the HTTPS tool proxy over TLS.
+	ToolProxyTLSListen = config.Register(config.Spec[string]{
+		Key: "tool-proxy.tls-listen",
+		Description: "TCP address of the HTTPS tool proxy over TLS. Callers must present a client certificate to the proxy " +
+			"(identity.client-certificates). Empty disables it.",
+		Flag:            true,
+		RestartRequired: true,
+		Validate:        optionalHostPort,
+	})
 	// TransparentListen are the transparent listeners nftables redirects
 	// covered users' connections to (scrim install --transparent).
 	TransparentListen = config.Register(config.Spec[[]string]{
@@ -163,6 +191,19 @@ var (
 			}
 			return nil
 		},
+	})
+	// BinaryPolicy is what the LLM proxy does with binary content parts.
+	BinaryPolicy = config.Register(config.Spec[string]{
+		Key:     "redaction.binary",
+		Default: "scan",
+		Enum:    []string{"scan", "block", "pass"},
+		Description: "Images, PDFs and other binary parts of provider requests. scan decodes each part and scans it and the text it carries " +
+			"(image metadata, PDF text, SVG) with the redactor and the guard, and refuses the request when it finds a secret value " +
+			"or cannot decode the part within its bounds; block refuses every request with a binary part; " +
+			"pass forwards them unscanned and audits it. Parts referenced by URL are not fetched or scanned.",
+		Flag:            true,
+		Weakening:       true,
+		WeakeningValues: []string{"pass"},
 	})
 	// PushDebounce batches snapshot pushes.
 	PushDebounce = config.Register(config.Spec[time.Duration]{

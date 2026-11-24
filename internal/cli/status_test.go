@@ -44,13 +44,37 @@ func TestStatusJSONShowsWeakenedAndState(t *testing.T) {
 	if len(r.Weakened) != 1 || r.Weakened[0].Key != "state.sqlite.allow-network-filesystem" {
 		t.Fatalf("weakened = %+v", r.Weakened)
 	}
-	if r.State.Backend != "sqlite" || !r.State.Healthy || r.State.SchemaVersion != 2 || r.Config == nil {
+	if r.State.Backend != "sqlite" || !r.State.Healthy || r.State.SchemaVersion != 3 || r.Config == nil {
 		t.Fatalf("state = %+v config = %+v", r.State, r.Config)
 	}
 	// The data plane is not reported by this process, so it is degraded,
 	// never claimed healthy.
 	if r.DataPlane.Running || r.OK() {
 		t.Fatalf("status claims health it could not check: %+v", r)
+	}
+}
+
+// TestBinaryPassIsWeakened: redaction.binary pass is reported as weakened by
+// status and doctor; block, also a value other than the default, is not.
+func TestBinaryPassIsWeakened(t *testing.T) {
+	for v, want := range map[string]bool{"pass": true, "block": false, "scan": false} {
+		e, out, errb := newEnv(isolatedEnv(t, "SCRIM_REDACTION_BINARY="+v)...)
+		if code := Run(context.Background(), e, []string{"status", "-o", "json"}); code != 0 {
+			t.Fatalf("%s: exit %d: %s", v, code, errb.String())
+		}
+		var r status.Report
+		if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		got := len(r.Weakened) == 1 && r.Weakened[0].Key == "redaction.binary"
+		if got != want || (!want && len(r.Weakened) != 0) {
+			t.Errorf("%s: status weakened = %+v", v, r.Weakened)
+		}
+		e, out, _ = newEnv(isolatedEnv(t, "SCRIM_REDACTION_BINARY="+v)...)
+		_ = Run(context.Background(), e, []string{"doctor"})
+		if got := strings.Contains(out.String(), "redaction.binary"); got != want {
+			t.Errorf("%s: doctor names redaction.binary = %v:\n%s", v, got, out.String())
+		}
 	}
 }
 
@@ -210,7 +234,7 @@ func TestStatusDoesNotBlockStartingDaemon(t *testing.T) {
 		t.Fatalf("daemon migrate while status has the state open: %v", err)
 	}
 	got := st.StateStatus(t.Context())
-	if !got.Healthy || got.SchemaVersion != 2 || got.Location != path {
+	if !got.Healthy || got.SchemaVersion != 3 || got.Location != path {
 		t.Fatalf("status state = %+v", got)
 	}
 }

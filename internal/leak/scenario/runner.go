@@ -89,11 +89,23 @@ func (r *Runner) Run(ctx context.Context, sc Scenario, api fp.API, stream bool, 
 	return res
 }
 
-// RunAll runs every scenario on every API, streaming and not.
+// Supports reports whether the synthetic agent speaks an API. It speaks the
+// HTTP APIs only: the WebSocket APIs (Realtime, the Responses WebSocket mode)
+// are gated by the bypass matrix, which sends every placement over a socket,
+// but have no scenario sessions. A session over a socket keeps its
+// history on the server, so the replay and prompt-cache checks the scenarios
+// exist for do not apply in the same form.
+func Supports(api fp.API) bool { return !api.WebSocket() }
+
+// RunAll runs every scenario on every API the synthetic agent speaks,
+// streaming and not. APIs it does not speak ([Supports]) are skipped.
 func (r *Runner) RunAll(ctx context.Context, scs []Scenario, apis []fp.API, seeds []leak.Seed, progress func(Result)) []Result {
 	var out []Result
 	for _, sc := range scs {
 		for _, api := range apis {
+			if !Supports(api) {
+				continue
+			}
 			for _, stream := range []bool{false, true} {
 				if ctx.Err() != nil {
 					return out

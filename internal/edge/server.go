@@ -33,6 +33,11 @@ const ToolEdge = "edge"
 type Server struct {
 	// Identify verifies the token every request and tunnel carries.
 	Identify Identifier
+	// Certificates verifies the client certificate a forwarder presents
+	// instead of a token; nil ignores client certificates. The listener
+	// must request them (tls.RequestClientCert): the chain is verified
+	// here, against the trust anchors and CRLs in force.
+	Certificates *identity.CertResolver
 	// API serves the agent API routes (localapi.Server.Handler). Requests
 	// reach it with the verified caller in their context
 	// (localapi.WithCaller); only the routes in [APIRoutes] are passed on.
@@ -156,14 +161,19 @@ func (s *Server) closeAll() {
 	}
 }
 
-// identify verifies the request's token. Only a Kubernetes service account
-// token that maps to a known agent is accepted: session tokens are bound to
-// a local process tree and mean nothing here, and there are no peer
-// credentials to fall back to.
+// identify verifies the request's client certificate or token. A client
+// certificate, when the listener takes them and the forwarder presented
+// one, is the caller and the token is ignored. Otherwise only a Kubernetes
+// service account token that maps to a known agent is accepted: session
+// tokens are bound to a local process tree and mean nothing here, and there
+// are no peer credentials to fall back to.
 func (s *Server) identify(r *http.Request) (identity.Identity, int, error) {
 	tok := bearer(r)
 	defer secret.WipeBytes(tok)
 	r.Header.Del("Authorization")
+	if s.Certificates != nil && r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		return s.identifyCertificate(r)
+	}
 	if len(tok) == 0 {
 		return identity.Identity{}, http.StatusUnauthorized,
 			agenttools.Errorf(agenttools.CodeUnauthenticated, "the edge listener needs the pod's service account token")
@@ -196,12 +206,36 @@ func (s *Server) identify(r *http.Request) (identity.Identity, int, error) {
 	return id, 0, nil
 }
 
+func (s *Server) identifyCertificate(r *http.Request) (identity.Identity, int, error) {
+	id, err := s.Certificates.ResolveCertificates(r.TLS.PeerCertificates)
+	if re, refused := identity.IsRefused(err); refused {
+		s.refusedAs(r.Context(), identity.SourceCertificate, "client certificate "+string(re.Reason))
+		return identity.Identity{}, http.StatusUnauthorized,
+			agenttools.Errorf(agenttools.CodeUnauthenticated, "the client certificate was refused")
+	}
+	if err != nil {
+		s.log().Error("verifying an edge caller failed", "error", err)
+		return identity.Identity{}, http.StatusServiceUnavailable,
+			agenttools.Errorf(agenttools.CodeUnavailable, "the caller's identity could not be checked")
+	}
+	if !id.Known() {
+		s.refusedAs(r.Context(), identity.SourceCertificate, "client certificate not mapped to an agent")
+		return identity.Identity{}, http.StatusUnauthorized,
+			agenttools.Errorf(agenttools.CodeUnauthenticated, "this client certificate is not mapped to an agent")
+	}
+	return id, 0, nil
+}
+
 func (s *Server) refused(ctx context.Context, reason string) {
+	s.refusedAs(ctx, identity.SourceKubernetes, reason)
+}
+
+func (s *Server) refusedAs(ctx context.Context, src identity.Source, reason string) {
 	s.log().Warn("edge connection refused", "reason", reason)
 	if s.Auditor == nil {
 		return
 	}
-	e := agenttools.AuditEntry{Time: s.now().UTC(), Source: string(identity.SourceKubernetes), Tool: ToolEdge,
+	e := agenttools.AuditEntry{Time: s.now().UTC(), Source: string(src), Tool: ToolEdge,
 		Outcome: agenttools.OutcomeRefused, Detail: reason}
 	if err := s.Auditor.Record(ctx, e); err != nil {
 		s.log().Error("audit write failed", "tool", ToolEdge, "error", err)
