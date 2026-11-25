@@ -85,7 +85,7 @@ measured from a few runs on it.
 The production engine does not meet the spec's initial targets for added request latency (5 ms for
 1 MB with 1,000 secrets, 10 ms with 10,000): the request takes about 25 ms per 1 MB at the median on
 ho-z10. Its budgets hold it to what it does today with room for the runner's spread, so a large
-slowdown fails at once and a smaller one fails the regression check below.
+slowdown fails at once; the regression check below reports a smaller one.
 [limitations.md](limitations.md#implementation) lists this.
 
 ## Regression check
@@ -107,12 +107,19 @@ previous release. `scripts/perfgate` compares two runs of the gate:
 - Runs are compared only on the same reference conditions: runner class, CPU model, CPU count,
   architecture and full (not quick) mode must match. Otherwise the report says what differs and
   nothing is compared.
+- `enforce` decides whether a regression fails the run. It is `false` (report only): on the shared
+  ho-z10 runner set, runs of the same code on the same CPU spread 2.5 to 4 times per measurement,
+  calibration included, so a comparison with one baseline run fails at random beyond any threshold
+  that would still catch a regression. The report is still written and published, and the absolute
+  budgets remain the hard gate. Set it to `true` once the gate runs on a dedicated runner whose runs
+  agree within the threshold.
 
 Where it runs:
 
 - Release workflow: `results-bench` runs the gate on ho-z10 and writes the JSON;
   `results-regression` downloads the results of the newest published release older than the one
-  being built, checks them, and fails the release on a regression. Its report is published as
+  being built, checks them, and fails the release on a regression when `enforce` is on. Its report
+  is published as
   `scrim_<version>_results_latency-regression.md`.
 - CI: `llm-latency-gate` runs the gate on ho-z10 on every change; `latency-regression` compares it
   with the newest release's results.
