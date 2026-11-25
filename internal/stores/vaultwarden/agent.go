@@ -4,7 +4,6 @@ package vaultwarden
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -99,18 +98,17 @@ func (a *Adapter) AgentCan(ctx context.Context, cred stores.AgentCredential, op 
 }
 
 // agentAPIKey decodes the agent's personal API key. The cache key holds
-// the agent principal and a hash of the credential, so a rotated key logs
-// in again. The caller wipes cs.
+// the agent principal and the key's client_id, which is not secret; nothing
+// derived from the client secret is kept. A key rotated under the same
+// client_id reuses the cached login, which the server keeps accepting until
+// it expires, as it would for any client of that account. The caller wipes
+// cs.
 func (a *Adapter) agentAPIKey(op stores.Op, ref stores.Ref, cred stores.AgentCredential) (clientID string, cs secret.Value, cacheKey string, err error) {
 	bad := func() error {
 		return a.fail(op, ref, stores.ErrPermission, "the agent credential is not "+agentKeyFormat, nil)
 	}
 	var m map[string]wire.Raw
-	h := sha256.New()
-	perr := cred.Token.Expose(func(b []byte) error {
-		h.Write(b)
-		return json.Unmarshal(b, &m)
-	})
+	perr := cred.Token.Expose(func(b []byte) error { return json.Unmarshal(b, &m) })
 	defer func() {
 		for _, v := range m {
 			v.Wipe()
@@ -130,7 +128,7 @@ func (a *Adapter) agentAPIKey(op stores.Op, ref stores.Ref, cred stores.AgentCre
 		cs.Wipe()
 		return "", secret.Value{}, "", bad()
 	}
-	return string(idb), cs, "api-key\x00" + cred.Agent + "\x00" + string(h.Sum(nil)), nil
+	return string(idb), cs, "api-key\x00" + cred.Agent + "\x00" + string(idb), nil
 }
 
 // agentTarget resolves ref with scrim's own vault the way Read (OpRead) or

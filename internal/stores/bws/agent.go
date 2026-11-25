@@ -4,7 +4,6 @@ package bws
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -122,7 +121,10 @@ func (a *Adapter) AgentCan(ctx context.Context, cred stores.AgentCredential, op 
 // a 404 (the server's answer when the machine account may not read an
 // object scrim's own account sees) is a permission refusal.
 func (a *Adapter) agentGet(ctx context.Context, cred stores.AgentCredential, org string, op stores.Op, ref stores.Ref, path string) (accessFlags, error) {
-	key := agentKey(cred)
+	key, err := a.agentKey(op, ref, cred)
+	if err != nil {
+		return accessFlags{}, err
+	}
 	for attempt := 0; ; attempt++ {
 		bearer, cached, err := a.agentBearer(ctx, cred, key, org, op, ref, attempt > 0)
 		if err != nil {
@@ -191,12 +193,16 @@ func (a *Adapter) agentBearer(ctx context.Context, cred stores.AgentCredential, 
 }
 
 // agentKey is the cache key of an agent's login: its principal and the
-// SHA-256 of its access token, so a rotated token logs in again and the
-// token itself is never kept.
-func agentKey(cred stores.AgentCredential) string {
-	h := sha256.New()
-	_ = cred.Token.Expose(func(b []byte) error { h.Write(b); return nil })
-	return "static\x00" + cred.Agent + "\x00" + string(h.Sum(nil))
+// access token's ID, which is not secret and differs for every access token
+// Bitwarden issues, so a rotated token logs in again. Nothing derived from
+// the client secret or the key is kept.
+func (a *Adapter) agentKey(op stores.Op, ref stores.Ref, cred stores.AgentCredential) (string, error) {
+	tok, err := parseAccessToken(cred.Token)
+	if err != nil {
+		return "", a.errorf(op, ref, stores.ErrPermission, "the agent's credential is not a machine account access token: %v", err)
+	}
+	defer tok.wipe()
+	return "static\x00" + cred.Agent + "\x00" + tok.id, nil
 }
 
 func copyValue(v secret.Value) secret.Value {

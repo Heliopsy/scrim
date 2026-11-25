@@ -300,15 +300,15 @@ func TestAgentCan(t *testing.T) {
 	f.reject = false
 	f.mu.Unlock()
 
-	// A rotated key is a new login.
+	// A key rotated under the same client_id reuses the cached login.
 	f.mu.Lock()
 	oldSecretA := f.agents[idA].secret
 	f.agents[idA].secret = "cs-" + randHex(t, 16)
 	rotated := agentCred(idA, f.agents[idA].secret)
 	f.mu.Unlock()
 	want(a.AgentCan(ctx, ag("a", rotated), stores.OpRead, team), nil, "a reads with a rotated key")
-	if n := f.loginCount(idA); n != 4 {
-		t.Fatalf("logins after rotation: %d, want 4", n)
+	if n := f.loginCount(idA); n != 3 {
+		t.Fatalf("logins after rotation: %d, want 3 (the cached login)", n)
 	}
 	// The old key is now refused by the server; its error must not echo it.
 	want(a.AgentCan(ctx, ag("a2", credA), stores.OpRead, team), stores.ErrPermission, "a with the revoked key")
@@ -337,7 +337,7 @@ func TestAgentCan(t *testing.T) {
 		}
 		errs = append(errs, err)
 	}
-	if n := f.loginCount(idA); n != 4 {
+	if n := f.loginCount(idA); n != 3 {
 		t.Fatalf("a malformed credential logged in (%d logins)", n)
 	}
 

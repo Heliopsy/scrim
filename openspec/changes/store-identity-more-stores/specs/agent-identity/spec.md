@@ -99,9 +99,10 @@ refused for it.
 ### Requirement: Logins from static agent credentials are cached
 
 Where a static agent credential has to be traded for a session (Bitwarden Secrets Manager machine
-accounts, Vaultwarden API keys), the session SHALL be cached per agent and credential until two thirds
-of its lifetime has passed, keyed by a hash of the credential, never the credential. A cached session
-the store refuses SHALL be dropped and the login repeated once.
+accounts, Vaultwarden API keys), the session SHALL be cached until two thirds of its lifetime has
+passed, keyed by the agent and the credential's public ID (access token ID, `client_id`), never by
+anything derived from its secret. A cached session the store refuses SHALL be dropped and the login
+repeated once.
 
 #### Scenario: Revoked agent session
 
@@ -111,7 +112,8 @@ the store refuses SHALL be dropped and the login repeated once.
 
 #### Scenario: Rotated agent credential
 
-- **WHEN** the reference for an agent's access token resolves to a new token
+- **WHEN** the reference for an agent's Bitwarden Secrets Manager access token resolves to a new
+  token
 - **THEN** the next check logs in with the new token instead of using the cached session
 
 ### Requirement: Write checks only where the store can answer them
