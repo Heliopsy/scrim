@@ -283,6 +283,9 @@ func TestTokenExchangeSettings(t *testing.T) {
 		"azure without client":    "azure-federated tenant:t",
 		"azure http authority":    "azure-federated tenant:t client-id:c authority:http://login.example",
 		"infisical no audience":   "infisical-oidc identity-id:abc",
+		"doppler no audience":     "doppler-oidc identity:abc",
+		"doppler no identity":     "doppler-oidc audience:doppler",
+		"doppler bad template":    "doppler-oidc identity:{user} audience:doppler",
 		"placeholder in audience": "jwt role:x audience:{agent}",
 		"unknown method":          "oidc role:x",
 		"option twice":            "jwt role:x role:y audience:a",
@@ -311,6 +314,7 @@ func TestTokenExchangeSettings(t *testing.T) {
 		"aws": "aws-web-identity role-arn:arn:aws:iam::000000000000:role/agent-{agent}",
 		"gsm": "gcp-workload-identity provider://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/scrim",
 		"akv": "azure-federated tenant:t client-id:{agent}",
+		"dop": "doppler-oidc identity:agent-{agent_slug} audience:https://api.doppler.com",
 	}, Issuer: iss})
 	if err != nil {
 		t.Fatal(err)
@@ -319,6 +323,7 @@ func TestTokenExchangeSettings(t *testing.T) {
 		"aws": "aws-web-identity audience:sts.amazonaws.com duration:15m role-arn:arn:aws:iam::000000000000:role/agent-{agent}",
 		"gsm": "audience:https://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/scrim",
 		"akv": "audience:api://AzureADTokenExchange authority:https://login.microsoftonline.com client-id:{agent} tenant:t",
+		"dop": "doppler-oidc audience:https://api.doppler.com identity:agent-{agent_slug}",
 	} {
 		if got := c.logins[store].describe(); !strings.Contains(got, want) {
 			t.Errorf("%s: %q lacks %q", store, got, want)

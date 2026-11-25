@@ -88,6 +88,18 @@ func (c *Cache[T]) Put(key, session string, v T, ttl time.Duration) {
 	c.m[h] = entry[T]{v: v, until: until, session: session}
 }
 
+// Forget drops the credential for key, for one the store no longer
+// accepts.
+func (c *Cache[T]) Forget(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	h := hash(key)
+	if e, ok := c.m[h]; ok {
+		c.wipe(e.v)
+		delete(c.m, h)
+	}
+}
+
 // ForgetSession drops every credential tagged with session.
 func (c *Cache[T]) ForgetSession(session string) {
 	if session == "" {
