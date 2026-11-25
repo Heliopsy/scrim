@@ -87,17 +87,40 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
 
 ## Implementation
 
-- **The gRPC transport between the control plane and the data plane does not zero its buffers.**
-  The snapshot that carries the values crosses the boundary over gRPC on an inherited socket. scrim
-  wipes its own copies on both sides, but the buffers gRPC and protobuf allocate while encoding,
-  sending and decoding are returned to the allocator with the bytes still in them.
+- **A few copies on the boundary between the control plane and the data plane are not zeroed.**
+  The snapshot carries every value to the data plane over gRPC, and asks and captures carry
+  Kubernetes tokens and captured values back. Both sides zero the buffers they encode a message
+  into, the buffers they receive DATA frames into and the bytes they decode from (design.md of the
+  `transport-copy-zeroing` change). These copies are not:
+  - In the data plane, h2's read buffer when it is reallocated while it holds part of a frame: the
+    part already read stays in the old buffer, which is freed without zeroing.
+  - In the data plane, DATA frames shorter than 256 bytes (1 KiB under `--stdio`), which h2 copies
+    into its reused write buffer: a small ask or capture, or the tail of a longer message.
+  - Under `--stdio` (Windows), tokio's stdin and stdout buffers, which every byte passes through.
+  - The kernel's socket or pipe buffers.
+
+  Plugin connections do not zero gRPC's transport buffers ([plugins.md](plugins.md#secret-handling)).
 - **Credentials that SDKs and HTTP clients take as strings are copied out of scrim's secret
-  type.** The AWS SDK takes access keys as Go strings, so every signature copies them, and the
-  copies live as long as the SDK's own. Store tokens sent in an HTTP `Authorization` header (for
-  example Infisical's access token) are strings for the length of the request, and the control
-  plane's HTTP clients take the upstream proxy password as a string in the proxy URL for each
-  connection. None of these can
-  be wiped; they are freed and eventually overwritten.
+  type.** Go strings cannot be wiped; scrim builds them as late as it can and keeps none for
+  longer than one request, except where a library keeps its own:
+  - Bearer tokens of stores, notifiers and audit sinks are one header string per request. Go's
+    HTTP client copies them into its reused per-connection write and TLS buffers, where they stay
+    until later writes overwrite them. HTTP/2 header compression is off, so no header stays in a
+    connection's compression table.
+  - The upstream proxy password is one `Proxy-Authorization` string per CONNECT. For a plain
+    `http://` destination reached through an authenticating proxy, Go only authenticates from the
+    proxy URL's user info, so the password is in that URL as a string, and Go keeps it with the
+    pooled connection while the connection stays open (90 seconds when idle).
+  - AWS static keys are new strings for each signature. The SDK's SigV4 signer builds
+    `AWS4` plus the secret key once a day per region and service and keeps the derived signing key
+    until the next day; the session token is a header string per request. Credentials from the
+    default chain (environment, shared files, instance metadata, web identity) and assumed roles
+    are kept as strings in the SDK's cache until they expire, which for environment and file
+    credentials is the adapter's lifetime.
+  - Google's x/oauth2 keeps the current access token as a string until it expires (about an hour)
+    and a service account's parsed private key for the adapter's lifetime. Azure's azidentity keeps
+    the client secret for the adapter's lifetime and access tokens until they expire.
+  - Vaultwarden's login form values are strings for the length of the login.
 - **Short credentials of scrim's own are not redacted.** scrim's own credentials (notifier
   tokens, the admin and metrics tokens, audit sink, Valkey, NATS and Postgres passwords, signing
   keys, store credentials) are in the redaction set, but a value shorter than 8 bytes is left out

@@ -450,8 +450,9 @@ var retireAfter = time.Minute
 
 func init() {
 	// Every transport cloned from the default one, and every client that
-	// uses it, asks Func, and ConnectHeader for each CONNECT. Done at init, before any request, so the field is
-	// never written while a request reads it.
+	// uses it, asks Func, and ConnectHeader for each CONNECT. Done at init,
+	// before any request, so the fields are never written while a request
+	// reads them.
 	if t, ok := http.DefaultTransport.(*http.Transport); ok {
 		t.Proxy = Func
 		t.GetProxyConnectHeader = ConnectHeader
