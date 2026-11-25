@@ -476,8 +476,18 @@ identity:
     refresh: 1m
     # -- Names the TLS listeners' certificate is issued for besides the Service's in-cluster
     # names: the DNS names and addresses agents outside the cluster connect to. The certificate
-    # comes from the interception CA, which agents already trust.
+    # comes from the interception CA, which agents already trust. Not used with
+    # listenerCertificate.existingSecret.
     serverNames: []
+    # -- A certificate of your own for the TLS listeners
+    # (identity.client-certificates.listener-cert-file and listener-key), so agents verify them
+    # against your PKI instead of trusting scrim's CA.
+    # @default -- See the keys below.
+    listenerCertificate:
+      # -- kubernetes.io/tls Secret with `tls.crt` (end entity first, then intermediates) and
+      # `tls.key`, such as one cert-manager keeps renewed. scrim reads both again every `refresh`
+      # and presents a renewal on new connections without a restart. Empty: scrim's CA issues it.
+      existingSecret: ""
     # -- Port of the TLS LLM base URL (proxy.tls-listen), on the container and the Service.
     llmPort: 9796
     # -- Port of the TLS forward proxy (proxy.forward-tls-listen), on the container and the

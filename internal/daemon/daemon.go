@@ -207,6 +207,9 @@ type Daemon struct {
 	// certTrust is the trust of client certificate identity, nil when it is
 	// off.
 	certTrust *identity.CertTrustSource
+	// listenerCert is the operator's certificate for the TLS listeners,
+	// nil when scrim's CA issues theirs.
+	listenerCert *identity.ListenerCertSource
 	// scopes checks what each agent's own store identity can read, only
 	// with redaction.limit-to-agent-identity on.
 	scopes *redactscope.Checker
@@ -417,11 +420,16 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	if err != nil {
 		return nil, err
 	}
+	listenerCert, err := agentapi.ListenerCertSource(runCtx, cfg)
+	if err != nil {
+		return nil, err
+	}
 	listeners := ListenersFrom(cfg)
 	if err := checkTLSListeners(listeners, certTrust); err != nil {
 		return nil, err
 	}
 	d.certTrust = certTrust
+	d.listenerCert = listenerCert
 	d.builder = &SnapshotBuilder{
 		Config:    a.Config.Current,
 		Values:    values,
@@ -443,7 +451,7 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	}
 	if certTrust != nil {
 		d.builder.ClientCertificates = func() *pb.ClientCertificateTrust {
-			return clientCertificatesPB(certTrust.Current(), agentapi.CertServerNames.Get(a.Config.Current()))
+			return clientCertificatesPB(certTrust.Current(), agentapi.CertServerNames.Get(a.Config.Current()), listenerCert.Current())
 		}
 	}
 	d.builder.SetKeys(ring)

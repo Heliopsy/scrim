@@ -9,6 +9,8 @@ import (
 	"time"
 
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
+	"github.com/heliopsy/scrim/internal/identity"
+	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/testing/certtest"
 )
 
@@ -41,6 +43,22 @@ func TestCheckSnapshotTLS(t *testing.T) {
 			return c
 		}()}, "does not parse"},
 		{"no server names", &pb.Snapshot{ClientCertificates: func() *pb.ClientCertificateTrust { c := trust(); c.ServerNames = []string{" "}; return c }()}, "server-names is empty"},
+		{"listener certificate without key", &pb.Snapshot{ClientCertificates: func() *pb.ClientCertificateTrust {
+			c := trust()
+			c.ListenerChainPem = "x"
+			return c
+		}()}, "go together"},
+		{"listener key without certificate", &pb.Snapshot{ClientCertificates: func() *pb.ClientCertificateTrust {
+			c := trust()
+			c.ListenerKeyPem = []byte("x")
+			return c
+		}()}, "go together"},
+		{"listener certificate needs no server names", &pb.Snapshot{ClientCertificates: func() *pb.ClientCertificateTrust {
+			c := trust()
+			c.ServerNames = nil
+			c.ListenerChainPem, c.ListenerKeyPem = "x", []byte("x")
+			return c
+		}()}, ""},
 		{"malformed CRL", &pb.Snapshot{ClientCertificates: func() *pb.ClientCertificateTrust { c := trust(); c.CrlsDer = [][]byte{[]byte("nope")}; return c }()}, "CRL 1 does not parse"},
 	}
 	for _, c := range cases {
@@ -53,5 +71,33 @@ func TestCheckSnapshotTLS(t *testing.T) {
 				t.Fatalf("error %v, want one containing %q", err, c.want)
 			}
 		})
+	}
+}
+
+func TestClientCertificatesPBCarriesTheListenerCertificate(t *testing.T) {
+	ca := certtest.NewCA(t, "operator")
+	server := ca.Issue(t, certtest.Leaf{CN: "scrim.example.test", ServerOnly: true})
+	trust, err := identity.ParseCertTrust(ca.PEM, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := clientCertificatesPB(trust, []string{"localhost"}, nil); got.GetListenerChainPem() != "" || got.GetListenerKeyPem() != nil {
+		t.Fatalf("without an operator certificate: %v", got)
+	}
+	lc, err := identity.ParseListenerCert(server.CertPEM, secret.New(server.KeyPEM), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := clientCertificatesPB(trust, []string{"localhost"}, lc)
+	if got.GetListenerChainPem() != string(server.CertPEM) || string(got.GetListenerKeyPem()) != string(server.KeyPEM) {
+		t.Fatal("the snapshot lacks the operator certificate")
+	}
+	if err := checkSnapshotTLS(&pb.Snapshot{ClientCertificates: got}); err != nil {
+		t.Fatal(err)
+	}
+	// The snapshot has a copy: wiping it leaves the source's key intact.
+	wipeSnapshot(&pb.Snapshot{ClientCertificates: got})
+	if len(got.GetListenerKeyPem()) == 0 || got.GetListenerKeyPem()[0] != 0 || lc.Key.Wiped() {
+		t.Fatal("wipe")
 	}
 }

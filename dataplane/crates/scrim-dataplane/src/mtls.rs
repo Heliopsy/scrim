@@ -4,7 +4,8 @@
 //! identity").
 //!
 //! A `BASE_URL`, `FORWARD_PROXY` or `TOOL_PROXY` listener with `tls` set accepts TLS only. Its own
-//! certificate is issued by the current tool-proxy CA for one of
+//! certificate is the operator's (`ClientCertificateTrust.listener_chain_pem` and its key) when
+//! one is set, else issued by the current tool-proxy CA for one of
 //! `ClientCertificateTrust.server_names`, and it requires a client certificate that chains to the
 //! snapshot's trust anchors (no system roots), is valid now, carries the client-auth key usage
 //! and, when revocation lists are configured, is not revoked by a current list of its issuer
@@ -27,7 +28,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, CertificateRevocationListDer, UnixTime};
+use rustls::pki_types::{CertificateDer, CertificateRevocationListDer, PrivateKeyDer, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::server::{ClientHello, ResolvesServerCert, WebPkiClientVerifier};
 use rustls::sign::CertifiedKey;
@@ -47,6 +48,8 @@ pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct ClientTrust {
     verifier: Arc<dyn ClientCertVerifier>,
     server_names: Vec<String>,
+    /// The operator's listener certificate and key, served on every handshake when set.
+    listener: Option<Arc<CertifiedKey>>,
     anchors: usize,
     crls: usize,
 }
@@ -57,6 +60,7 @@ impl std::fmt::Debug for ClientTrust {
             .field("anchors", &self.anchors)
             .field("crls", &self.crls)
             .field("server_names", &self.server_names)
+            .field("operator_certificate", &self.listener.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -64,7 +68,8 @@ impl std::fmt::Debug for ClientTrust {
 impl ClientTrust {
     /// Builds the verifier: the trust anchors (at least one), the revocation lists (when any,
     /// the end entity's issuer must have a current one; a list past its next update refuses),
-    /// and the listener names (at least one).
+    /// the operator's listener certificate and key when set (both or neither, the key matching
+    /// the end entity), and the listener names (at least one without an operator certificate).
     pub fn from_proto(t: &v1::ClientCertificateTrust) -> Result<Self, String> {
         let mut roots = rustls::RootCertStore::empty();
         for c in CertificateDer::pem_slice_iter(t.trust_anchors_pem.as_bytes()) {
@@ -82,7 +87,8 @@ impl ClientTrust {
             .map(|n| n.trim().trim_end_matches('.').to_ascii_lowercase())
             .filter(|n| !n.is_empty())
             .collect();
-        if server_names.is_empty() {
+        let listener = listener_key(t)?;
+        if server_names.is_empty() && listener.is_none() {
             return Err("client_certificates: no server names".into());
         }
         let anchors = roots.len();
@@ -104,9 +110,15 @@ impl ClientTrust {
         Ok(Self {
             verifier,
             server_names,
+            listener,
             anchors,
             crls: n_crls,
         })
+    }
+
+    /// Whether the listeners present the operator's certificate.
+    pub fn operator_certificate(&self) -> bool {
+        self.listener.is_some()
     }
 
     /// The names the listener's certificate is issued for.
@@ -132,6 +144,41 @@ impl ClientTrust {
         }
         &self.server_names[0]
     }
+}
+
+/// The operator's listener certificate: the chain (end entity first) and the key of its end
+/// entity, checked to match. `None` when neither is set. Errors never quote the key.
+fn listener_key(t: &v1::ClientCertificateTrust) -> Result<Option<Arc<CertifiedKey>>, String> {
+    match (
+        t.listener_chain_pem.is_empty(),
+        t.listener_key_pem.is_empty(),
+    ) {
+        (true, true) => return Ok(None),
+        (false, true) => {
+            return Err("client_certificates: listener certificate without a key".into());
+        }
+        (true, false) => {
+            return Err("client_certificates: listener key without a certificate".into());
+        }
+        (false, false) => {}
+    }
+    let chain: Vec<CertificateDer<'static>> =
+        CertificateDer::pem_slice_iter(t.listener_chain_pem.as_bytes())
+            .collect::<Result<_, _>>()
+            .map_err(|e| format!("client_certificates: listener certificate: {e}"))?;
+    if chain.is_empty() {
+        return Err("client_certificates: listener certificate: no certificate".into());
+    }
+    let key = PrivateKeyDer::from_pem_slice(&t.listener_key_pem)
+        .map_err(|_| "client_certificates: listener key: no usable private key".to_owned())?;
+    let provider = rustls::crypto::ring::default_provider();
+    let ck = CertifiedKey::from_der(chain, key, &provider).map_err(|e| match e {
+        rustls::Error::InconsistentKeys(_) => {
+            "client_certificates: listener key does not match the certificate".to_owned()
+        }
+        _ => format!("client_certificates: listener key: {e}"),
+    })?;
+    Ok(Some(Arc::new(ck)))
 }
 
 /// An IPv4-mapped IPv6 address as IPv4.
@@ -223,8 +270,8 @@ impl ClientCertVerifier for Recording {
     }
 }
 
-/// The listener's own certificate, issued by the tool-proxy CA for the name the client asked
-/// for when it is one of the trust's server names.
+/// The listener's own certificate: the operator's when set, else issued by the tool-proxy CA for
+/// the name the client asked for when it is one of the trust's server names.
 #[derive(Debug)]
 struct ListenerCert {
     trust: Arc<ClientTrust>,
@@ -234,6 +281,9 @@ struct ListenerCert {
 
 impl ResolvesServerCert for ListenerCert {
     fn resolve(&self, hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        if let Some(k) = &self.trust.listener {
+            return Some(Arc::clone(k));
+        }
         let name = self.trust.name_for(hello.server_name(), self.local);
         match self.proxy.ca().leaf_for(name) {
             Ok(k) => Some(k),

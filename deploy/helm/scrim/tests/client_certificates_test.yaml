@@ -97,3 +97,23 @@ tests:
       - contains:
           path: spec.ingress
           content: {from: [{ipBlock: {cidr: 192.0.2.0/24}}], ports: [{port: 9796, protocol: TCP}, {port: 9797, protocol: TCP}]}
+  - it: presents an operator certificate from a TLS Secret
+    set:
+      identity.clientCertificates.listenerCertificate.existingSecret: scrim-listener-tls
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "refresh: 1m\n    listener-cert-file: /etc/scrim/listener/tls.crt\n    listener-key: file:/etc/scrim/listener/tls.key\n"}
+        template: config.yaml
+      - contains:
+          path: spec.template.spec.volumes
+          content: {name: listener-cert, secret: {secretName: scrim-listener-tls, defaultMode: 0440, items: [{key: tls.crt, path: tls.crt}, {key: tls.key, path: tls.key}]}}
+        template: deployment.yaml
+        documentSelector: {path: kind, value: Deployment}
+      - contains:
+          path: 'spec.template.spec.containers[0].volumeMounts'
+          content: {name: listener-cert, mountPath: /etc/scrim/listener, readOnly: true}
+        template: deployment.yaml
+        documentSelector: {path: kind, value: Deployment}
+  - it: leaves the listener certificate to scrim's CA by default
+    template: config.yaml
+    asserts:
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: "listener-cert-file|listener-key"}

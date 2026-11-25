@@ -384,6 +384,25 @@ Their certificate is issued by scrim's CA (the one agents already trust for TLS 
 the client connected to when that is listed, else for the first name. Starting scrim with a TLS
 listener but without `identity.client-certificates.enabled` is an error.
 
+To present a certificate of your own instead, from your PKI, cert-manager or an ACME client, so
+agents verify the listeners against a CA they already trust and need not trust scrim's:
+
+```yaml
+identity:
+  client-certificates:
+    listener-cert-file: /etc/scrim/listener/tls.crt   # end entity first, then intermediates
+    listener-key: file:/etc/scrim/listener/tls.key     # or env:, cred: or a store reference
+```
+
+scrim refuses to start when the key does not match the certificate, or the certificate is a CA,
+does not allow server authentication or is outside its validity period. `server-names` is not used
+then: the certificate names what it names. Both files are read again every
+`identity.client-certificates.refresh`, so a certificate renewed in place is presented on new
+connections without a restart; a pair that fails the same checks (a renewal written halfway, a
+certificate that expired) is logged and the one in force stays. The key is one of scrim's own
+credentials: redacted from provider traffic and never logged. The edge listener keeps its own CA
+(`edge.ca.*`).
+
 On a TLS listener the certificate is the request's only identity. An `x-scrim-session` header or
 proxy credentials on such a connection are ignored (and still stripped before forwarding).
 

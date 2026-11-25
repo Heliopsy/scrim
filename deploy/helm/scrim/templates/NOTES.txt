@@ -33,7 +33,11 @@ Signing keys are generated in an emptyDir: every new pod signs with new keys.
 {{- $cc := .Values.identity.clientCertificates }}
 {{- $svc := include "scrim.mtlsServiceName" . }}
 
+{{- if $cc.listenerCertificate.existingSecret }}
+Client certificates (Service {{ $svc }}, TLS passthrough only; certificate from the Secret {{ $cc.listenerCertificate.existingSecret }}):
+{{- else }}
 Client certificates (Service {{ $svc }}, TLS passthrough only; trust the {{ .Values.ca.configMapName }} CA):
+{{- end }}
   LLM base URL   https://{{ $svc }}.{{ include "scrim.namespace" . }}.svc:{{ $cc.llmPort }}/anthropic and /openai/v1
 {{- if $cc.forwardPort }}
   Forward proxy  https://{{ $svc }}.{{ include "scrim.namespace" . }}.svc:{{ $cc.forwardPort }}

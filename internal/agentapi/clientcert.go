@@ -13,6 +13,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/identity"
+	"github.com/heliopsy/scrim/internal/secret"
 )
 
 // Client certificate identity (specs/agent-identity "Optional mutual TLS
@@ -77,8 +78,23 @@ var (
 		Key: "identity.client-certificates.server-names",
 		Description: "Host names and IP addresses the certificate of scrim's TLS proxy listeners carries, signed by scrim's " +
 			"CA. A client that sends no server name, or one not in the list, gets the address it connected to when that is " +
-			"listed, else the first name.",
+			"listed, else the first name. Not used with identity.client-certificates.listener-cert-file.",
 		Default:         []string{"localhost", "127.0.0.1", "::1"},
+		RestartRequired: true,
+	})
+	CertListenerCertFile = config.Register(config.Spec[string]{
+		Key: "identity.client-certificates.listener-cert-file",
+		Description: "PEM certificate (end entity first, then intermediates) scrim's TLS proxy listeners present instead of one " +
+			"its CA issues, so agents need not trust scrim's CA for them. Needs identity.client-certificates.listener-key. " +
+			"Read again every identity.client-certificates.refresh: a certificate renewed in place is used for new " +
+			"connections; one that does not parse, does not match the key or has expired is not, and the one in force stays.",
+		RestartRequired: true,
+	})
+	CertListenerKey = config.Register(config.Spec[config.SecretRef]{
+		Key: "identity.client-certificates.listener-key",
+		Description: "Reference to the PEM private key of identity.client-certificates.listener-cert-file (file:, env:, cred: " +
+			"or a store reference), resolved again every identity.client-certificates.refresh. One of scrim's own " +
+			"credentials: redacted from provider traffic and never logged.",
 		RestartRequired: true,
 	})
 )
@@ -145,6 +161,47 @@ func readBounded(path string, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("%s is larger than %d bytes", path, limit)
 	}
 	return b, nil
+}
+
+// listenerCertFileMax bounds the listener certificate file.
+const listenerCertFileMax = 1 << 20
+
+// ListenerCertSource builds the source of the operator's listener
+// certificate and loads it once, nil when
+// identity.client-certificates.listener-cert-file is not set. Both settings
+// are needed, and only with client certificate identity on.
+func ListenerCertSource(ctx context.Context, cfg *config.Config) (*identity.ListenerCertSource, error) {
+	file := CertListenerCertFile.Get(cfg)
+	ref := CertListenerKey.Get(cfg)
+	switch {
+	case file == "" && ref == "":
+		return nil, nil
+	case file == "":
+		return nil, fmt.Errorf("%s needs %s", CertListenerKey.Name(), CertListenerCertFile.Name())
+	case ref == "":
+		return nil, fmt.Errorf("%s needs %s", CertListenerCertFile.Name(), CertListenerKey.Name())
+	case !CertEnabled.Get(cfg):
+		return nil, fmt.Errorf("%s needs %s: only the client certificate listeners present it", CertListenerCertFile.Name(), CertEnabled.Name())
+	}
+	src := &identity.ListenerCertSource{
+		Read: func() ([]byte, secret.Value, error) {
+			chain, err := readBounded(file, listenerCertFileMax)
+			if err != nil {
+				return nil, secret.Value{}, err
+			}
+			rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			key, err := cfg.ResolveRef(rctx, ref)
+			if err != nil {
+				return nil, secret.Value{}, fmt.Errorf("%s: %w", CertListenerKey.Name(), err)
+			}
+			return chain, key, nil
+		},
+	}
+	if _, err := src.Reload(); err != nil {
+		return nil, fmt.Errorf("%s: %w", CertListenerCertFile.Name(), err)
+	}
+	return src, nil
 }
 
 // CertResolver builds the client certificate resolver over src, nil when

@@ -623,6 +623,7 @@ func cloneListeners(in []*pb.Listener) []*pb.Listener {
 // wipeSnapshot clears the secret bytes of a snapshot that is not sent.
 func wipeSnapshot(s *pb.Snapshot) {
 	clear(s.GetUpstreamProxy().GetPassword())
+	clear(s.GetClientCertificates().GetListenerKeyPem())
 	for _, v := range s.GetValues() {
 		clear(v.Value)
 	}

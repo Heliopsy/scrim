@@ -3,7 +3,7 @@
 //! TLS listeners that identify agents by client certificate: a valid certificate is served and
 //! its chain reaches the control plane in every ask; untrusted, expired, revoked, stale-CRL and
 //! missing certificates are refused in the handshake and reported; new trust applies without
-//! rebinding.
+//! rebinding; an operator's listener certificate replaces the one scrim's CA issues.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 
@@ -89,6 +89,16 @@ fn valid(issuer: &Issuer, cn: &str, serial: u64) -> Client {
     client(issuer, cn, serial, (2020, 1), (2090, 1))
 }
 
+/// A server certificate for `name` from `issuer` and its key, both PEM.
+fn server_cert(issuer: &Issuer, name: &str) -> (String, String) {
+    let key = KeyPair::generate().unwrap();
+    let mut p = CertificateParams::new(vec![name.to_owned()]).unwrap();
+    p.distinguished_name.push(DnType::CommonName, name);
+    p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    let cert = p.signed_by(&key, issuer).unwrap();
+    (cert.pem(), key.serialize_pem())
+}
+
 fn crl(issuer: &Issuer, revoked: &[u64], next_update: (i32, u8)) -> Vec<u8> {
     CertificateRevocationListParams {
         this_update: date_time_ymd(2000, 1, 1),
@@ -136,6 +146,8 @@ fn snapshot(version: u64, anchors: &[&Issuer], crls: Vec<Vec<u8>>) -> v1::Snapsh
             trust_anchors_pem: anchors.iter().map(|a| a.pem()).collect(),
             crls_der: crls,
             server_names: vec!["localhost".into()],
+            listener_chain_pem: String::new(),
+            listener_key_pem: Vec::new(),
         }),
         policy: Some(v1::Policy {
             version: 1,
@@ -492,4 +504,101 @@ async fn tls_listeners_need_trust_and_an_http_kind() {
         ..Default::default()
     });
     assert!(shared.apply(snap).await.is_err(), "tls on a Unix listener");
+}
+
+#[tokio::test]
+async fn operator_listener_certificate_is_served() {
+    let agents = ca("agents CA");
+    let operator = ca("operator CA");
+    let builder = valid(&agents, "builder", 10);
+    let (chain, key) = server_cert(&operator, "scrim.example.test");
+    let mut snap = snapshot(1, &[&agents], vec![]);
+    {
+        let t = snap.client_certificates.as_mut().unwrap();
+        t.listener_chain_pem = chain;
+        t.listener_key_pem = key.into_bytes();
+    }
+    let plane = Plane::start(snap).await;
+    let mut asks = deny_asks(&plane.shared);
+    let addr = plane.addr("llm-tls");
+
+    // A client that trusts only the operator's CA completes the handshake for the operator's name.
+    let conn = tls(
+        &addr,
+        "scrim.example.test",
+        tls_config(&operator.pem(), Some(&builder)),
+        None,
+    )
+    .await
+    .unwrap();
+    let served = conn.get_ref().1.peer_certificates().unwrap()[0].clone();
+    assert_eq!(
+        leaf_cn(&served),
+        "scrim.example.test",
+        "the operator's certificate"
+    );
+    assert_eq!(post(conn, "/anthropic/v1/messages").await, Some(403));
+    let a = tokio::time::timeout(Duration::from_secs(5), asks.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        a.caller.unwrap().client_certificate_chain,
+        vec![builder.der.to_vec()]
+    );
+
+    // scrim's own CA no longer vouches for the listener.
+    assert!(
+        tls(
+            &addr,
+            "localhost",
+            tls_config(&plane.ca_pem(), Some(&builder)),
+            None
+        )
+        .await
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn operator_listener_certificate_needs_its_own_key() {
+    let agents = ca("agents CA");
+    let operator = ca("operator CA");
+    let (chain, _) = server_cert(&operator, "scrim.example.test");
+    let (_, other_key) = server_cert(&operator, "other.example.test");
+    let shared = Arc::new(Shared::new().unwrap());
+
+    let mut snap = snapshot(1, &[&agents], vec![]);
+    {
+        let t = snap.client_certificates.as_mut().unwrap();
+        t.listener_chain_pem.clone_from(&chain);
+        t.listener_key_pem = other_key.into_bytes();
+    }
+    let err = shared.apply(snap).await.unwrap_err().to_string();
+    assert!(err.contains("does not match"), "{err}");
+    assert!(
+        !err.contains("PRIVATE KEY"),
+        "the error quotes the key: {err}"
+    );
+
+    let mut snap = snapshot(1, &[&agents], vec![]);
+    snap.client_certificates
+        .as_mut()
+        .unwrap()
+        .listener_chain_pem = chain;
+    assert!(
+        shared.apply(snap).await.is_err(),
+        "certificate without a key"
+    );
+}
+
+fn leaf_cn(der: &CertificateDer<'_>) -> String {
+    let (_, cert) = x509_parser::parse_x509_certificate(der.as_ref()).unwrap();
+    cert.subject()
+        .iter_common_name()
+        .next()
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned()
 }

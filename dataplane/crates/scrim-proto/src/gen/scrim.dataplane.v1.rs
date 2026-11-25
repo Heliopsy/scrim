@@ -113,8 +113,10 @@ pub struct Snapshot {
     pub upstream_proxy: ::core::option::Option<UpstreamProxy>,
 }
 /// ClientCertificateTrust says which client certificates a TLS listener
-/// accepts. Everything in it is public.
+/// accepts, and which certificate the listener presents. Everything in it is
+/// public except listener_key_pem.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[prost(skip_debug)]
 pub struct ClientCertificateTrust {
     /// trust_anchors_pem are the CA certificates a client certificate must chain
     /// to, PEM. No system roots are used.
@@ -128,9 +130,19 @@ pub struct ClientCertificateTrust {
     pub crls_der: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
     /// server_names are the names the listener's own certificate carries,
     /// signed by the current tool-proxy CA. A client that sends no server name,
-    /// or one not in the list, gets the first.
+    /// or one not in the list, gets the first. Not used with listener_chain_pem.
     #[prost(string, repeated, tag = "3")]
     pub server_names: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// listener_chain_pem is the operator's certificate for the TLS listeners,
+    /// end entity first, then intermediates, PEM. Public. When set, every
+    /// handshake gets it instead of a certificate from the tool-proxy CA.
+    #[prost(string, tag = "4")]
+    pub listener_chain_pem: ::prost::alloc::string::String,
+    /// listener_key_pem is the private key of listener_chain_pem's end entity
+    /// (PKCS#8, PKCS#1 or SEC1), PEM. Secret: never logged, wiped after use.
+    /// Set exactly when listener_chain_pem is.
+    #[prost(bytes = "vec", tag = "5")]
+    pub listener_key_pem: ::prost::alloc::vec::Vec<u8>,
 }
 /// UpstreamProxy is the outbound HTTP proxy (interception spec, "Outbound
 /// connections through an upstream proxy"). TLS to the destination runs
@@ -641,7 +653,8 @@ pub struct Listener {
     #[prost(bool, tag = "4")]
     pub block_unrouted: bool,
     /// tls, for BASE_URL, FORWARD_PROXY and TOOL_PROXY listeners: accept TLS
-    /// only, with a certificate for Snapshot.client_certificates.server_names,
+    /// only, with Snapshot.client_certificates.listener_chain_pem or else a
+    /// certificate for Snapshot.client_certificates.server_names,
     /// and require a client certificate that chains to its trust anchors, is
     /// within its validity period and is not revoked. A connection whose
     /// certificate fails is closed in the handshake and reported as

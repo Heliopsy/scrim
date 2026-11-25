@@ -150,10 +150,9 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
 - **Client certificates are checked against CRL files only.** OCSP is not supported, and only the
   end entity certificate is checked against CRLs. Without a CRL, a stolen client certificate and
   key work until the certificate expires; use short-lived certificates
-  ([identity.md](identity.md#revocation)). The TLS listeners' own certificate comes from the
-  interception CA, so agents have to trust that CA; there is no setting for a certificate and key
-  of your own yet. The Helm chart serves the TLS base URL and forward proxy in central scrim only,
-  not the TLS tool proxy listener ([kubernetes.md](kubernetes.md#client-certificates)).
+  ([identity.md](identity.md#revocation)). The Helm chart serves the TLS base URL and forward proxy
+  in central scrim only, not the TLS tool proxy listener
+  ([kubernetes.md](kubernetes.md#client-certificates)).
 - **Per-agent store identity is not available for every store.** Only `openbao`, `vault`, `awssm`,
   `ssm`, `gcpsm`, `azkv` and `infisical` take per-agent credentials; a store configured for one
   that does not refuses every use. Infisical cannot check writes per agent, and Bitwarden Secrets

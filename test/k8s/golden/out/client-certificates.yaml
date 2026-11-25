@@ -443,6 +443,8 @@ data:
           - /etc/scrim/client-crl/issuing.crl
         unmapped: unknown
         refresh: 1m
+        listener-cert-file: /etc/scrim/listener/tls.crt
+        listener-key: file:/etc/scrim/listener/tls.key
         server-names:
           - scrim-mtls.scrim.svc.cluster.local
           - scrim-mtls.scrim.svc
@@ -617,7 +619,7 @@ spec:
         app.kubernetes.io/name: scrim-proxy
         app.kubernetes.io/component: proxy
       annotations:
-        checksum/config: 831b67f0d785627005a4c6eda2724814ee7389a30a1551158aee4e60a270689c
+        checksum/config: 624cc5269209516caa1c28d216dd2dafd91bb438d71d47f747d1552d4966ea6b
     spec:
       serviceAccountName: scrim-proxy
       automountServiceAccountToken: true
@@ -715,6 +717,9 @@ spec:
           - mountPath: /etc/scrim/client-ca
             name: client-ca
             readOnly: true
+          - mountPath: /etc/scrim/listener
+            name: listener-cert
+            readOnly: true
           - mountPath: /etc/scrim/client-crl
             name: client-crl
             readOnly: true
@@ -759,6 +764,15 @@ spec:
               path: ca.crt
             name: agents-ca
           name: client-ca
+        - name: listener-cert
+          secret:
+            defaultMode: 288
+            items:
+            - key: tls.crt
+              path: tls.crt
+            - key: tls.key
+              path: tls.key
+            secretName: scrim-listener-tls
         - configMap:
             items:
             - key: issuing.crl

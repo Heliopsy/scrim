@@ -177,7 +177,8 @@ message Snapshot {
 }
 
 // ClientCertificateTrust says which client certificates a TLS listener
-// accepts. Everything in it is public.
+// accepts, and which certificate the listener presents. Everything in it is
+// public except listener_key_pem.
 message ClientCertificateTrust {
   // trust_anchors_pem are the CA certificates a client certificate must chain
   // to, PEM. No system roots are used.
@@ -189,8 +190,16 @@ message ClientCertificateTrust {
   repeated bytes crls_der = 2;
   // server_names are the names the listener's own certificate carries,
   // signed by the current tool-proxy CA. A client that sends no server name,
-  // or one not in the list, gets the first.
+  // or one not in the list, gets the first. Not used with listener_chain_pem.
   repeated string server_names = 3;
+  // listener_chain_pem is the operator's certificate for the TLS listeners,
+  // end entity first, then intermediates, PEM. Public. When set, every
+  // handshake gets it instead of a certificate from the tool-proxy CA.
+  string listener_chain_pem = 4;
+  // listener_key_pem is the private key of listener_chain_pem's end entity
+  // (PKCS#8, PKCS#1 or SEC1), PEM. Secret: never logged, wiped after use.
+  // Set exactly when listener_chain_pem is.
+  bytes listener_key_pem = 5;
 }
 
 // UpstreamProxy is the outbound HTTP proxy (interception spec, "Outbound
@@ -646,7 +655,8 @@ message Listener {
   // rule is bound to, instead of passing them through untouched.
   bool block_unrouted = 4;
   // tls, for BASE_URL, FORWARD_PROXY and TOOL_PROXY listeners: accept TLS
-  // only, with a certificate for Snapshot.client_certificates.server_names,
+  // only, with Snapshot.client_certificates.listener_chain_pem or else a
+  // certificate for Snapshot.client_certificates.server_names,
   // and require a client certificate that chains to its trust anchors, is
   // within its validity period and is not revoked. A connection whose
   // certificate fails is closed in the handshake and reported as

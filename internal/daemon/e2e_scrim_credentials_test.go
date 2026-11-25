@@ -22,11 +22,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/agentapi"
 	"github.com/heliopsy/scrim/internal/ca"
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/leak"
 	"github.com/heliopsy/scrim/internal/plugin/plugintest"
 	"github.com/heliopsy/scrim/internal/state/postgres"
+	"github.com/heliopsy/scrim/internal/testing/certtest"
 	"github.com/heliopsy/scrim/internal/testing/fakeprovider"
 )
 
@@ -110,6 +112,20 @@ func TestScrimCredentialsRedactedRealDataPlane(t *testing.T) {
 		case ca.KeySetting.Name():
 			v = caKey
 			env = append(env, "SCRIM_TOOL_PROXY_CA_CERT_FILE="+certFile)
+		case agentapi.CertListenerKey.Name():
+			// A real pair: scrim refuses a listener key that does not match its certificate.
+			agents := certtest.NewCA(t, "agents")
+			server := agents.Issue(t, certtest.Leaf{CN: "scrim.example.test", ServerOnly: true})
+			agentsFile, listenerFile := filepath.Join(h.dir, "agents-ca.pem"), filepath.Join(h.dir, "listener.crt")
+			for f, b := range map[string][]byte{agentsFile: agents.PEM, listenerFile: server.CertPEM} {
+				if err := os.WriteFile(f, b, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			v = string(server.KeyPEM)
+			env = append(env, "SCRIM_IDENTITY_CLIENT_CERTIFICATES_ENABLED=true",
+				"SCRIM_IDENTITY_CLIENT_CERTIFICATES_CA=file:"+agentsFile,
+				"SCRIM_IDENTITY_CLIENT_CERTIFICATES_LISTENER_CERT_FILE="+listenerFile)
 		case postgres.DSNSetting.Name():
 			pw := credValue()
 			creds["state.postgres.dsn password"] = pw

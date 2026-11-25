@@ -372,6 +372,8 @@ is out of date.
 | [`identity.client-certificates.ca`](#identityclient-certificatesca) | string | `""` | restart required |
 | [`identity.client-certificates.crl-files`](#identityclient-certificatescrl-files) | list | `[]` | restart required |
 | [`identity.client-certificates.enabled`](#identityclient-certificatesenabled) | bool | `false` | restart required |
+| [`identity.client-certificates.listener-cert-file`](#identityclient-certificateslistener-cert-file) | string | `""` | restart required |
+| [`identity.client-certificates.listener-key`](#identityclient-certificateslistener-key) | secret-ref | empty | restart required |
 | [`identity.client-certificates.refresh`](#identityclient-certificatesrefresh) | duration | `1m0s` | restart required |
 | [`identity.client-certificates.server-names`](#identityclient-certificatesserver-names) | list | `["localhost","127.0.0.1","::1"]` | restart required |
 | [`identity.client-certificates.unmapped`](#identityclient-certificatesunmapped) | string | `unknown` | restart required |
@@ -1723,6 +1725,30 @@ Identify callers by the client certificate they present on scrim's TLS listeners
 | Flag | none |
 | Reload | restart required |
 
+#### `identity.client-certificates.listener-cert-file`
+
+PEM certificate (end entity first, then intermediates) scrim's TLS proxy listeners present instead of one its CA issues, so agents need not trust scrim's CA for them. Needs identity.client-certificates.listener-key. Read again every identity.client-certificates.refresh: a certificate renewed in place is used for new connections; one that does not parse, does not match the key or has expired is not, and the one in force stays.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_LISTENER_CERT_FILE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.client-certificates.listener-key`
+
+Reference to the PEM private key of identity.client-certificates.listener-cert-file (file:, env:, cred: or a store reference), resolved again every identity.client-certificates.refresh. One of scrim's own credentials: redacted from provider traffic and never logged.
+
+| | |
+|---|---|
+| Type | secret reference (`env:`, `file:`, `cred:` or a store reference; a literal is warned about) |
+| Default | empty |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_LISTENER_KEY` |
+| Flag | none |
+| Reload | restart required |
+
 #### `identity.client-certificates.refresh`
 
 How often the trust anchors and CRL files are read again. A new CRL applies to new connections within this bound.
@@ -1737,7 +1763,7 @@ How often the trust anchors and CRL files are read again. A new CRL applies to n
 
 #### `identity.client-certificates.server-names`
 
-Host names and IP addresses the certificate of scrim's TLS proxy listeners carries, signed by scrim's CA. A client that sends no server name, or one not in the list, gets the address it connected to when that is listed, else the first name.
+Host names and IP addresses the certificate of scrim's TLS proxy listeners carries, signed by scrim's CA. A client that sends no server name, or one not in the list, gets the address it connected to when that is listed, else the first name. Not used with identity.client-certificates.listener-cert-file.
 
 | | |
 |---|---|

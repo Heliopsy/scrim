@@ -1001,7 +1001,8 @@ func (x *Snapshot) GetUpstreamProxy() *UpstreamProxy {
 }
 
 // ClientCertificateTrust says which client certificates a TLS listener
-// accepts. Everything in it is public.
+// accepts, and which certificate the listener presents. Everything in it is
+// public except listener_key_pem.
 type ClientCertificateTrust struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// trust_anchors_pem are the CA certificates a client certificate must chain
@@ -1014,10 +1015,18 @@ type ClientCertificateTrust struct {
 	CrlsDer [][]byte `protobuf:"bytes,2,rep,name=crls_der,json=crlsDer,proto3" json:"crls_der,omitempty"`
 	// server_names are the names the listener's own certificate carries,
 	// signed by the current tool-proxy CA. A client that sends no server name,
-	// or one not in the list, gets the first.
-	ServerNames   []string `protobuf:"bytes,3,rep,name=server_names,json=serverNames,proto3" json:"server_names,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// or one not in the list, gets the first. Not used with listener_chain_pem.
+	ServerNames []string `protobuf:"bytes,3,rep,name=server_names,json=serverNames,proto3" json:"server_names,omitempty"`
+	// listener_chain_pem is the operator's certificate for the TLS listeners,
+	// end entity first, then intermediates, PEM. Public. When set, every
+	// handshake gets it instead of a certificate from the tool-proxy CA.
+	ListenerChainPem string `protobuf:"bytes,4,opt,name=listener_chain_pem,json=listenerChainPem,proto3" json:"listener_chain_pem,omitempty"`
+	// listener_key_pem is the private key of listener_chain_pem's end entity
+	// (PKCS#8, PKCS#1 or SEC1), PEM. Secret: never logged, wiped after use.
+	// Set exactly when listener_chain_pem is.
+	ListenerKeyPem []byte `protobuf:"bytes,5,opt,name=listener_key_pem,json=listenerKeyPem,proto3" json:"listener_key_pem,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ClientCertificateTrust) Reset() {
@@ -1067,6 +1076,20 @@ func (x *ClientCertificateTrust) GetCrlsDer() [][]byte {
 func (x *ClientCertificateTrust) GetServerNames() []string {
 	if x != nil {
 		return x.ServerNames
+	}
+	return nil
+}
+
+func (x *ClientCertificateTrust) GetListenerChainPem() string {
+	if x != nil {
+		return x.ListenerChainPem
+	}
+	return ""
+}
+
+func (x *ClientCertificateTrust) GetListenerKeyPem() []byte {
+	if x != nil {
+		return x.ListenerKeyPem
 	}
 	return nil
 }
@@ -3005,7 +3028,8 @@ type Listener struct {
 	// rule is bound to, instead of passing them through untouched.
 	BlockUnrouted bool `protobuf:"varint,4,opt,name=block_unrouted,json=blockUnrouted,proto3" json:"block_unrouted,omitempty"`
 	// tls, for BASE_URL, FORWARD_PROXY and TOOL_PROXY listeners: accept TLS
-	// only, with a certificate for Snapshot.client_certificates.server_names,
+	// only, with Snapshot.client_certificates.listener_chain_pem or else a
+	// certificate for Snapshot.client_certificates.server_names,
 	// and require a client certificate that chains to its trust anchors, is
 	// within its validity period and is not revoked. A connection whose
 	// certificate fails is closed in the handshake and reported as
@@ -5010,11 +5034,13 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\fvalue_labels\x18\r \x01(\bR\vvalueLabels\x12M\n" +
 	"\x10redaction_scopes\x18\x0e \x03(\v2\".scrim.dataplane.v1.RedactionScopeR\x0fredactionScopes\x12[\n" +
 	"\x13client_certificates\x18\x0f \x01(\v2*.scrim.dataplane.v1.ClientCertificateTrustR\x12clientCertificates\x12H\n" +
-	"\x0eupstream_proxy\x18\x10 \x01(\v2!.scrim.dataplane.v1.UpstreamProxyR\rupstreamProxy\"\x82\x01\n" +
+	"\x0eupstream_proxy\x18\x10 \x01(\v2!.scrim.dataplane.v1.UpstreamProxyR\rupstreamProxy\"\xda\x01\n" +
 	"\x16ClientCertificateTrust\x12*\n" +
 	"\x11trust_anchors_pem\x18\x01 \x01(\tR\x0ftrustAnchorsPem\x12\x19\n" +
 	"\bcrls_der\x18\x02 \x03(\fR\acrlsDer\x12!\n" +
-	"\fserver_names\x18\x03 \x03(\tR\vserverNames\"t\n" +
+	"\fserver_names\x18\x03 \x03(\tR\vserverNames\x12,\n" +
+	"\x12listener_chain_pem\x18\x04 \x01(\tR\x10listenerChainPem\x12(\n" +
+	"\x10listener_key_pem\x18\x05 \x01(\fR\x0elistenerKeyPem\"t\n" +
 	"\rUpstreamProxy\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x19\n" +
 	"\bno_proxy\x18\x02 \x03(\tR\anoProxy\x12\x1a\n" +
