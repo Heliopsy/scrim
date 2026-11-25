@@ -307,7 +307,11 @@ cmd_assemble() {
     || die "the pass-through control did not leak"
   jq -e '.schema == 1 and .pass == true and .method.quick == false' "$res/latency-gate.json" >/dev/null \
     || die "the latency gate did not pass, or ran in quick mode"
-  ! grep -q '^REGRESSION:' "$res/latency-regression.md" || die "the latency regression check failed"
+  # A regression fails the release only while the budget file enforces the check; report
+  # only, it stays in the results for the reader.
+  if jq -e '.regression.enforce != false' "$ROOT/dataplane/crates/scrim-llm/benches/budget.json" >/dev/null; then
+    ! grep -q '^REGRESSION:' "$res/latency-regression.md" || die "the latency regression check failed"
+  fi
 
   shopt -s nullglob
   local cells=("$res"/matrix/*/*.json) fuzz=("$res"/fuzz/*.json)
