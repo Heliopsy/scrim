@@ -159,6 +159,10 @@ func TestRunExitStatus(t *testing.T) {
 	other := results(latency("request/1000/1MB/hits", []float64{30, 30, 30}, []float64{36, 36, 36}))
 	other.Runner = "local"
 	elsewhere := write(t, dir, "elsewhere.json", other)
+	off := false
+	reportOnly := cfg
+	reportOnly.Enforce = &off
+	confReport := write(t, dir, "budget-report-only.json", map[string]any{"regression": reportOnly})
 	report := filepath.Join(dir, "report.md")
 
 	cases := []struct {
@@ -169,6 +173,7 @@ func TestRunExitStatus(t *testing.T) {
 	}{
 		{"no regression", []string{"-current", same, "-baseline", base, "-config", conf}, 0, "No regression."},
 		{"regression", []string{"-current", slow, "-baseline", base, "-config", conf, "-report", report}, 1, "REGRESSION: request/1000/1MB/hits p50"},
+		{"regression, report only", []string{"-current", slow, "-baseline", base, "-config", confReport}, 0, "Report only: regression.enforce is false"},
 		{"other runner", []string{"-current", elsewhere, "-baseline", base, "-config", conf}, 0, "Not compared: runner differs"},
 		{"other runner, strict", []string{"-current", elsewhere, "-baseline", base, "-config", conf, "-require-comparable"}, 1, "Not compared"},
 		{"missing flag", []string{"-current", same}, 2, ""},
