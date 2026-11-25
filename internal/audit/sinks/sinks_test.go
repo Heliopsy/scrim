@@ -131,7 +131,8 @@ func TestOTLPExport(t *testing.T) {
 	c := &capture{}
 	srv := httptest.NewServer(c)
 	defer srv.Close()
-	tok := secret.FromString("tok-" + randHex(8))
+	raw := "tok-" + randHex(8)
+	tok := secret.FromString(raw)
 	s, err := sinks.NewOTLP(t.Context(), sinks.OTLPOptions{Endpoint: srv.URL, Token: tok})
 	if err != nil {
 		t.Fatal(err)
@@ -156,12 +157,24 @@ func TestOTLPExport(t *testing.T) {
 		!strings.Contains(recs[0].GetBody().GetStringValue(), `"subject":"o1"`) {
 		t.Fatalf("service %q, records %v", svc, recs)
 	}
-	if got := c.heads[0].Get("Authorization"); got == "" || !strings.HasPrefix(got, "Bearer ") {
+	if got := c.heads[0].Get("Authorization"); got != "Bearer "+raw {
 		t.Fatal("bearer token not sent")
 	}
 	c.status = http.StatusServiceUnavailable
 	if err := s.Write(t.Context(), []audit.Entry{entry("o3")}); err == nil {
 		t.Fatal("503 accepted")
+	}
+	// The header is built from the value at send time, not kept by the
+	// exporter: once the value is wiped, nothing is sent with it.
+	c.status = http.StatusOK
+	tok.Wipe()
+	n := len(c.heads)
+	err = s.Write(t.Context(), []audit.Entry{entry("o4")})
+	if err == nil || strings.Contains(err.Error(), raw) {
+		t.Fatalf("export after the token was wiped: %v", err)
+	}
+	if len(c.heads) != n {
+		t.Fatal("a request was sent without its token")
 	}
 }
 

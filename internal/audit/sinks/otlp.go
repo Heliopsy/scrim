@@ -6,9 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
@@ -82,6 +84,37 @@ func (collector) OnEmit(ctx context.Context, r *sdklog.Record) error {
 func (collector) Shutdown(context.Context) error   { return nil }
 func (collector) ForceFlush(context.Context) error { return nil }
 
+// otlpTimeout bounds one export, the exporter's own default.
+const otlpTimeout = 10 * time.Second
+
+// bearerTransport sets Authorization from token on a copy of each request
+// and drops it once the request is sent, so the header string exists for
+// one request only.
+type bearerTransport struct {
+	base  http.RoundTripper
+	token secret.Value
+}
+
+func (b bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r := req.Clone(req.Context())
+	err := b.token.Expose(func(t []byte) error {
+		v := make([]byte, 0, len("Bearer ")+len(t))
+		v = append(append(v, "Bearer "...), t...)
+		r.Header["Authorization"] = []string{string(v)}
+		secret.WipeBytes(v)
+		return nil
+	})
+	if err != nil {
+		if req.Body != nil {
+			_ = req.Body.Close()
+		}
+		return nil, errors.New("audit.otlp.token is no longer available")
+	}
+	resp, err := b.base.RoundTrip(r)
+	delete(r.Header, "Authorization")
+	return resp, err
+}
+
 // NewOTLP returns an OTLP sink.
 func NewOTLP(ctx context.Context, o OTLPOptions) (*OTLPSink, error) {
 	u, err := url.Parse(o.Endpoint)
@@ -100,12 +133,14 @@ func NewOTLP(ctx context.Context, o OTLPOptions) (*OTLPSink, error) {
 		otlploghttp.WithRetry(otlploghttp.RetryConfig{Enabled: false}),
 		otlploghttp.WithCompression(otlploghttp.GzipCompression),
 	}
+	// scrim's own transport (it follows network.upstream-proxy), and the
+	// token set on each request from the secret value rather than handed to
+	// the exporter as a header string it would keep for the sink's life.
+	var rt http.RoundTripper = http.DefaultTransport.(*http.Transport).Clone()
 	if !o.Token.IsZero() {
-		_ = o.Token.Expose(func(b []byte) error {
-			opts = append(opts, otlploghttp.WithHeaders(map[string]string{"Authorization": "Bearer " + string(b)}))
-			return nil
-		})
+		rt = bearerTransport{base: rt, token: o.Token}
 	}
+	opts = append(opts, otlploghttp.WithHTTPClient(&http.Client{Transport: rt, Timeout: otlpTimeout}))
 	opts = append(opts, o.Options...)
 	exp, err := otlploghttp.New(ctx, opts...)
 	if err != nil {
