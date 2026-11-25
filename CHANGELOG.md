@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.0](https://github.com/Heliopsy/scrim/compare/v1.1.0...v1.2.0) (2026-11-25)
+
+
+### Features
+
+* **chart:** client certificate identity and upstream proxy values ([#164](https://github.com/Heliopsy/scrim/issues/164)) ([ecaedb9](https://github.com/Heliopsy/scrim/commit/ecaedb93b2a7733310344719a4c1a59af17c24d0))
+* **identity:** present an operator's certificate on the client certificate listeners ([#166](https://github.com/Heliopsy/scrim/issues/166)) ([b07e5b0](https://github.com/Heliopsy/scrim/commit/b07e5b0e12f35c319ff09c3c89bfc69d9915d1f6))
+
+
+### Bug Fixes
+
+* **dataplane:** drain the agent's socket after a failed WebSocket stream ([#170](https://github.com/Heliopsy/scrim/issues/170)) ([2003834](https://github.com/Heliopsy/scrim/commit/2003834f2908dc2a43e0890c3b19801e190124d2))
+* **dataplane:** drain the agent's socket whenever a refusal ends without its close frame ([#171](https://github.com/Heliopsy/scrim/issues/171)) ([a207434](https://github.com/Heliopsy/scrim/commit/a20743463d8cf33e585a62356d1ee153ae798941))
+* **test:** stop leaking test containers into deleted test homes ([#168](https://github.com/Heliopsy/scrim/issues/168)) ([28f90dc](https://github.com/Heliopsy/scrim/commit/28f90dcb0617aab8ee215cb539ea924a9c328651))
+
 ## [1.1.0](https://github.com/Heliopsy/scrim/compare/v1.0.0...v1.1.0) (2026-11-24)
 
 

@@ -12,7 +12,7 @@
 # replaces is kept as scrim.prev, so a rollback is one mv.
 set -euo pipefail
 
-VERSION=${VERSION:-1.1.0} # x-release-please-version
+VERSION=${VERSION:-1.2.0} # x-release-please-version
 PREFIX=${PREFIX:-$HOME/.local}
 OS=${OS:-$(uname -s | tr '[:upper:]' '[:lower:]')}
 case "${ARCH:-$(uname -m)}" in
