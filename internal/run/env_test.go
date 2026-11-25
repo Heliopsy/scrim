@@ -5,6 +5,7 @@ package run
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -333,8 +334,167 @@ func TestCodexPreset(t *testing.T) {
 	}
 }
 
+func TestCodexWarnsAboutCustomProvider(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	conf := "model = \"gpt-5\"\nmodel_provider = \"azure\"\n[model_providers.azure]\nbase_url = \"https://x.example/openai\"\n"
+	if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte(conf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	warned := func(p *Plan) bool {
+		return slices.ContainsFunc(p.Warnings, func(w string) bool { return strings.Contains(w, `model_provider "`) })
+	}
+	in := input("codex", "exec", "x")
+	in.Environ = []string{"PATH=/usr/bin", "HOME=" + home}
+	if p := mustBuild(t, in); !warned(p) || !strings.Contains(strings.Join(p.Warnings, ""), `"azure"`) {
+		t.Errorf("no warning for model_provider in config.toml: %v", p.Warnings)
+	}
+	// A provider table that is not selected at the top level is not.
+	conf = "[model_providers.azure]\nmodel_provider = \"azure\"\n"
+	if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte(conf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if p := mustBuild(t, in); warned(p) {
+		t.Errorf("warned for a key inside a table: %v", p.Warnings)
+	}
+	// -c on the command line.
+	in = input("codex", "-c", "model_provider=ollama", "exec", "x")
+	if p := mustBuild(t, in); !warned(p) {
+		t.Errorf("no warning for -c model_provider: %v", p.Warnings)
+	}
+	in = input("codex", "-c", `model_provider="openai"`, "exec", "x")
+	if p := mustBuild(t, in); warned(p) {
+		t.Errorf("warned for the built-in provider: %v", p.Warnings)
+	}
+}
+
+func TestOpenCodePreset(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the expected values are Unix paths")
+	}
+	in := input("opencode", "run", "fix it")
+	in.Endpoints.Routes = map[string]string{ProviderAnthropic: "/a", ProviderOpenAI: "/o", ProviderGemini: "/g"}
+	p := mustBuild(t, in)
+	if p.Preset != "opencode" || !slices.Equal(p.Args, []string{"opencode", "run", "fix it"}) {
+		t.Fatalf("preset %s args %q", p.Preset, p.Args)
+	}
+	v := vars(p)[EnvOpenCodeConfig]
+	if v.Secret || strings.Contains(v.Value, "scrim_st_") {
+		t.Fatalf("%s holds the token or is secret: %+v", EnvOpenCodeConfig, v)
+	}
+	var cfg struct {
+		Enabled  []string `json:"enabled_providers"`
+		Provider map[string]struct {
+			Options struct {
+				BaseURL string            `json:"baseURL"`
+				Headers map[string]string `json:"headers"`
+			} `json:"options"`
+		} `json:"provider"`
+		MCP map[string]struct {
+			Type        string            `json:"type"`
+			Command     []string          `json:"command"`
+			Enabled     bool              `json:"enabled"`
+			Environment map[string]string `json:"environment"`
+		} `json:"mcp"`
+	}
+	if err := json.Unmarshal([]byte(v.Value), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(cfg.Enabled, []string{"anthropic", "openai", "google"}) {
+		t.Errorf("enabled_providers %q", cfg.Enabled)
+	}
+	for id, want := range map[string]string{
+		"anthropic": "http://127.0.0.1:9790/a/v1", "openai": "http://127.0.0.1:9790/o/v1", "google": "http://127.0.0.1:9790/g/v1beta",
+	} {
+		o := cfg.Provider[id].Options
+		if o.BaseURL != want {
+			t.Errorf("%s baseURL %q, want %q", id, o.BaseURL, want)
+		}
+		if o.Headers[SessionHeader] != "{env:SCRIM_SESSION_TOKEN}" {
+			t.Errorf("%s headers %v", id, o.Headers)
+		}
+	}
+	mcp := cfg.MCP["scrim"]
+	if mcp.Type != "local" || !mcp.Enabled || !slices.Equal(mcp.Command, []string{"/usr/local/bin/scrim", "mcp"}) ||
+		mcp.Environment["SCRIM_SESSION_TOKEN"] != "{env:SCRIM_SESSION_TOKEN}" || mcp.Environment["SCRIM_API_SOCKET"] != "{env:SCRIM_API_SOCKET}" ||
+		mcp.Environment["SCRIM_SESSION_ID"] != "{env:SCRIM_SESSION_ID}" {
+		t.Errorf("mcp %+v", mcp)
+	}
+
+	// Without a session, MCP or forward proxy: no headers, no MCP server.
+	in = input("opencode")
+	in.MCP, in.Token, in.SessionID = false, false, ""
+	in.Endpoints.ForwardProxy, in.Endpoints.CACertPEM = "", nil
+	v = vars(mustBuild(t, in))[EnvOpenCodeConfig]
+	if strings.Contains(v.Value, "headers") || strings.Contains(v.Value, `"mcp"`) || !strings.Contains(v.Value, "/anthropic/v1") {
+		t.Errorf("unidentified config %s", v.Value)
+	}
+}
+
+func TestOpenCodeInheritedConfig(t *testing.T) {
+	in := input("opencode")
+	userKey := "sk-user-own-key-0123456789"
+	in.Environ = append(in.Environ, EnvOpenCodeConfig+`={"theme":"dark","provider":{"anthropic":{"options":{"apiKey":"`+userKey+
+		`","baseURL":"https://direct.example/v1","headers":{"x-team":"a"}}}}}`)
+	p := mustBuild(t, in)
+	v := vars(p)[EnvOpenCodeConfig]
+	if strings.Contains(v.Value, userKey) || !strings.Contains(v.Value, "<inherited "+EnvOpenCodeConfig+">") {
+		t.Errorf("--print-env shows the inherited configuration: %s", v.Value)
+	}
+	env, err := p.Environ(in.Environ, secret.FromString("scrim_st_abc_def"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	for _, kv := range env {
+		if k, val, _ := strings.Cut(kv, "="); k == EnvOpenCodeConfig {
+			if got != "" {
+				t.Fatal("set twice")
+			}
+			got = val
+		}
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(got), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	opts := cfg["provider"].(map[string]any)["anthropic"].(map[string]any)["options"].(map[string]any)
+	headers := opts["headers"].(map[string]any)
+	if cfg["theme"] != "dark" || opts["apiKey"] != userKey || headers["x-team"] != "a" ||
+		opts["baseURL"] != "http://127.0.0.1:9790/anthropic/v1" || headers[SessionHeader] != "{env:SCRIM_SESSION_TOKEN}" {
+		t.Errorf("merged %s", got)
+	}
+	if strings.Contains(got, "scrim_st_") {
+		t.Error("token in the configuration")
+	}
+
+	in = input("opencode")
+	in.Environ = append(in.Environ, EnvOpenCodeConfig+`={ // jsonc
+}`)
+	if _, err := Build(in); err == nil || !strings.Contains(err.Error(), "OPENCODE_CONFIG") {
+		t.Errorf("unparsable inherited configuration: %v", err)
+	}
+}
+
+func TestOpenCodeRefusesUnservedModel(t *testing.T) {
+	for _, args := range [][]string{
+		{"run", "-m", "openrouter/x", "hi"}, {"run", "--model=opencode/big-pickle", "hi"}, {"--model", "github-copilot/gpt-5", "run"},
+	} {
+		if _, err := Build(input(append([]string{"opencode"}, args...)...)); err == nil || !strings.Contains(err.Error(), "does not serve") {
+			t.Errorf("%q: %v", args, err)
+		}
+	}
+	for _, args := range [][]string{{"run", "-m", "anthropic/claude-sonnet-4-6", "hi"}, {"run", "--model=openai/gpt-5"}, {"run", "-m", "google/gemini-2.5-pro"}, {"run", "-m"}} {
+		if _, err := Build(input(append([]string{"opencode"}, args...)...)); err != nil {
+			t.Errorf("%q: %v", args, err)
+		}
+	}
+}
+
 func TestPresetSelection(t *testing.T) {
-	for cmd, want := range map[string]string{"claude": "claude", "/x/codex": "codex", "aider": "generic", "claude-wrapper": "generic"} {
+	for cmd, want := range map[string]string{"claude": "claude", "/x/codex": "codex", "/x/opencode": "opencode", "aider": "generic", "claude-wrapper": "generic"} {
 		if got := PresetFor(cmd).Name; got != want {
 			t.Errorf("%s: %s, want %s", cmd, got, want)
 		}
@@ -342,7 +502,7 @@ func TestPresetSelection(t *testing.T) {
 	if p, err := PresetNamed("codex"); err != nil || p != CodexPreset {
 		t.Errorf("PresetNamed: %v %v", p, err)
 	}
-	if _, err := PresetNamed("nope"); err == nil || !strings.Contains(err.Error(), "claude, codex, generic") {
+	if _, err := PresetNamed("nope"); err == nil || !strings.Contains(err.Error(), "claude, codex, opencode, generic") {
 		t.Errorf("PresetNamed(nope): %v", err)
 	}
 	in := input("my-claude-build")

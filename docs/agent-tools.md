@@ -79,6 +79,30 @@ through by name with `env_vars = ["SCRIM_API_SOCKET", "SCRIM_SESSION_TOKEN", "SC
 (not an `env` table, which would put the token in the file). `scrim run -- codex` does this for the
 session with `-c` options; see [run.md](run.md).
 
+### OpenCode
+
+In `opencode.json`:
+
+```json
+{
+  "mcp": {
+    "scrim": {
+      "type": "local",
+      "command": ["scrim", "mcp"],
+      "environment": {
+        "SCRIM_API_SOCKET": "{env:SCRIM_API_SOCKET}",
+        "SCRIM_SESSION_TOKEN": "{env:SCRIM_SESSION_TOKEN}",
+        "SCRIM_SESSION_ID": "{env:SCRIM_SESSION_ID}"
+      }
+    }
+  }
+}
+```
+
+OpenCode substitutes `{env:...}` when it loads the configuration, so the token stays out of the
+file. Its tools appear to the model as `scrim_secrets_list` and so on. `scrim run -- opencode` adds
+the same server for the session through `OPENCODE_CONFIG_CONTENT`; see [run.md](run.md).
+
 ## Tools
 
 Each section shows the MCP call, the CLI equivalent and a result. Errors have the same shape on

@@ -83,6 +83,14 @@ func newSession(t *testing.T, bin harness.Binaries, responder fp.Responder) *ses
 func newSessionWith(t *testing.T, bin harness.Binaries, responder fp.Responder,
 	extra func(secrets map[string]string, fake *fp.Server) string) *session {
 	t.Helper()
+	return newSessionRules(t, bin, responder, extra, "")
+}
+
+// newSessionRules is newSessionWith with more policy rules (YAML list
+// items) after the session's own.
+func newSessionRules(t *testing.T, bin harness.Binaries, responder fp.Responder,
+	extra func(secrets map[string]string, fake *fp.Server) string, rules string) *session {
+	t.Helper()
 	s := &session{}
 	harness.LookPath(t, "git")
 	harness.LookPath(t, "curl")
@@ -133,7 +141,7 @@ rules:
   - name: session-lists-secrets
     decision: allow
     when: op == "mcp.tool" && tool.name == "secrets_list" && agent.kind == "session"
-`,
+` + rules,
 		Extra: cfgExtra,
 	})
 

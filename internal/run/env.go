@@ -89,7 +89,8 @@ type Var struct {
 	Why string `json:"why"`
 
 	// template is the value with TokenMarker for the token, when it is not
-	// the bare token. Never printed.
+	// the bare token, or for a variable that is not secret but shown
+	// differently (setDisplayed) the value itself. Never printed.
 	template string
 }
 
@@ -180,6 +181,14 @@ func (b *builder) setVar(name, value, why string) {
 func (b *builder) setSecret(name, why string) {
 	b.set[name] = len(b.plan.Set)
 	b.plan.Set = append(b.plan.Set, Var{Name: name, Secret: true, Why: why})
+}
+
+// setDisplayed sets name to value but shows display instead (--print-env),
+// for a value that embeds inherited content which may hold the user's own
+// secrets.
+func (b *builder) setDisplayed(name, value, display, why string) {
+	b.setVar(name, display, why)
+	b.plan.Set[b.set[name]].template = value
 }
 
 // setWithToken sets name to template, with TokenMarker replaced by the
@@ -556,7 +565,11 @@ func (p *Plan) Environ(inherited []string, token secret.Value) ([]string, error)
 	}
 	for _, v := range p.Set {
 		if !v.Secret {
-			out = append(out, v.Name+"="+v.Value)
+			val := v.Value
+			if v.template != "" {
+				val = v.template
+			}
+			out = append(out, v.Name+"="+val)
 			continue
 		}
 		if token.IsZero() {

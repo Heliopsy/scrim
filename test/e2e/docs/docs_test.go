@@ -17,7 +17,7 @@
 // without being run or explained. Runnable blocks run with bash -euo pipefail
 // inside test/e2e/sandbox.sh (loopback only, no route out) with an empty HOME
 // and XDG directories of their own, the scrim binary under test first on PATH,
-// stub `claude` and `codex` agents that send one request to the base URL
+// stub `claude`, `codex` and `opencode` agents that send one request to the base URL
 // scrim gives them, and a fake model provider behind every provider route.
 // The configuration is the README quickstart's, plus a writable `bao` store
 // for the agent-tools examples and the sandbox's sockets and upstreams.
@@ -285,6 +285,19 @@ curl -sS --fail-with-body -H 'content-type: application/json' -H 'authorization:
 echo
 `
 
+const opencodeStub = `#!/bin/sh
+# A stand-in for OpenCode: one Messages request to the anthropic baseURL in the
+# OPENCODE_CONFIG_CONTENT scrim sets, with the session header it names.
+set -eu
+: "${OPENCODE_CONFIG_CONTENT:?OPENCODE_CONFIG_CONTENT is not set}"
+base=$(printf '%s' "$OPENCODE_CONFIG_CONTENT" | sed -n 's/.*"anthropic":{"options":{"baseURL":"\([^"]*\)".*/\1/p')
+: "${base:?no anthropic baseURL in OPENCODE_CONFIG_CONTENT}"
+curl -sS --fail-with-body -H 'content-type: application/json' -H 'anthropic-version: 2023-06-01' \
+  -H 'x-api-key: fake-provider-key-not-a-seed' -H "x-scrim-session: ${SCRIM_SESSION_TOKEN:-}" "$base/messages" \
+  --data "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":64,\"messages\":[{\"role\":\"user\",\"content\":\"the token is ${SCRIM_SECRET_GITHUB_TOKEN:-unset}\"}]}"
+echo
+`
+
 func newEnv(t *testing.T, bin harness.Binaries, upstream string, blocks []Block) *env {
 	t.Helper()
 	// Unix socket paths are short: keep the directory out of t.TempDir().
@@ -304,7 +317,7 @@ func newEnv(t *testing.T, bin harness.Binaries, upstream string, blocks []Block)
 	if err := os.Symlink(bin.Scrim, filepath.Join(dir, "bin", "scrim")); err != nil {
 		t.Fatal(err)
 	}
-	for name, body := range map[string]string{"claude": claudeStub, "codex": codexStub} {
+	for name, body := range map[string]string{"claude": claudeStub, "codex": codexStub, "opencode": opencodeStub} {
 		if err := os.WriteFile(filepath.Join(e.stubs, name), []byte(body), 0o700); err != nil { //nolint:gosec // test stub
 			t.Fatal(err)
 		}

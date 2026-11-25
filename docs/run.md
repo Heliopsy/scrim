@@ -7,6 +7,7 @@ shell, your agent's configuration or the system changes.
 ```sh test
 scrim run -- claude
 scrim run -- codex exec "fix the failing test"
+scrim run -- opencode run "fix the failing test"
 scrim run --print-env -- claude      # show what would be set, start nothing
 ```
 
@@ -36,7 +37,7 @@ name could be read as a flag. `scrim run` flags go before it:
 
 | Flag | Meaning |
 | --- | --- |
-| `--agent claude\|codex\|generic` | Pick the preset instead of deriving it from the command name. |
+| `--agent claude\|codex\|opencode\|generic` | Pick the preset instead of deriving it from the command name. |
 | `--print-env` | Print what would be set and exit. Mints no session and writes no files. `-o json` for JSON. |
 | `--name NAME` | Session name shown in `scrim api whoami` and audit (default: the command name). |
 | `--ttl 2h` | Session token lifetime (default `session.ttl`). The session ends earlier when the agent exits. |
@@ -55,7 +56,7 @@ name could be read as a flag. `scrim run` flags go before it:
 | Variable | Value | Why |
 | --- | --- | --- |
 | `ANTHROPIC_BASE_URL` | `http://127.0.0.1:<port>/anthropic` | Anthropic SDKs and Claude Code send Messages requests to scrim's LLM proxy. |
-| `OPENAI_BASE_URL` | `http://127.0.0.1:<port>/openai/v1` | OpenAI SDKs (and older Codex releases) send requests to scrim's LLM proxy. |
+| `OPENAI_BASE_URL` | `http://127.0.0.1:<port>/openai/v1` | OpenAI SDKs send requests to scrim's LLM proxy. Codex ignores it (see below). |
 | `GOOGLE_GEMINI_BASE_URL` | `http://127.0.0.1:<port>/gemini` | Gemini CLI and the Google Gen AI SDKs send Gemini API requests to scrim's LLM proxy. Their own `x-goog-api-key` (or `key=`) is forwarded untouched. |
 | `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, `http_proxy` | `http://<session id>:<token>@127.0.0.1:<port>`, scrim's forward proxy | Tool traffic (curl, git, SDKs) goes through scrim for credential injection and response redaction. The user info identifies the session: clients send it as `Proxy-Authorization`, which ends at the proxy, so policy and grants apply to this agent. `--print-env` shows `<session-token>` in its place. |
 | `GIT_HTTP_PROXY_AUTHMETHOD` | `basic` | git otherwise sends proxy credentials only after a `407` challenge, which scrim's forward proxy never sends, so its tunnels would carry no session and injection toward bound hosts would be refused. Set only when the proxy URL carries the session. |
@@ -126,8 +127,40 @@ env_http_headers = { "x-scrim-session" = "SCRIM_SESSION_TOKEN" }
 Codex options given at the top level apply to every subcommand, so `scrim run -- codex exec ...`
 works. Codex first tries the Responses API over WebSocket. scrim serves the WebSocket and redacts
 every message like a request body; if the provider refuses the handshake, Codex falls back to HTTPS.
-Both go to scrim's loopback listener, never to the provider. Tested with Codex CLI 0.171 over
-WebSocket, against a fake model.
+Both go to scrim's loopback listener, never to the provider. Codex ignores `OPENAI_BASE_URL`, and a
+project's `.codex/config.toml` cannot set `openai_base_url` or `model_provider`, so a repository
+cannot point it elsewhere. Codex's HTTP clients (rustls) trust `CODEX_CA_CERTIFICATE`, then
+`SSL_CERT_FILE`; both name the session bundle. When `~/.codex/config.toml` (or `$CODEX_HOME`) selects
+a `model_provider` other than `openai` at its top level, or `-c model_provider=...` does, `scrim run`
+warns before the agent starts: that provider's `base_url` is used, not scrim's. Tested with Codex CLI
+0.171 over WebSocket, against a fake model.
+
+### OpenCode (`opencode`)
+
+| Addition | Why |
+| --- | --- |
+| `OPENCODE_CONFIG_CONTENT` | OpenCode's inline configuration, which it merges over its global, `OPENCODE_CONFIG` and project files. It sets `provider.anthropic`, `provider.openai` and `provider.google` `options.baseURL` to scrim's routes (`<llm>/anthropic/v1`, `<llm>/openai/v1`, `<llm>/gemini/v1beta`), `enabled_providers` to those three, and `options.headers` with `x-scrim-session: {env:SCRIM_SESSION_TOKEN}` on each. OpenCode substitutes `{env:...}` when it loads the configuration, so the token is never written into it. |
+| `mcp.scrim` in the same configuration | Registers `scrim mcp` as a local MCP server, with `SCRIM_API_SOCKET`, `SCRIM_SESSION_TOKEN` and `SCRIM_SESSION_ID` passed through `environment` by `{env:...}` reference. Not set with `run.mcp: false`. |
+
+OpenCode builds its providers on the AI SDK, whose base URLs end in the API version
+(`ANTHROPIC_BASE_URL` without `/v1` would miss scrim's Messages route), so the preset sets them in
+OpenCode's configuration instead of relying on the common variables. Its model requests are
+identified by the session header; the base-URL listener strips it before the provider.
+
+`enabled_providers` keeps OpenCode to the providers scrim serves: any other (OpenCode Zen, GitHub
+Copilot, OpenRouter, Bedrock, a custom OpenAI-compatible endpoint) would send its requests to its own
+endpoint, which the LLM proxy never sees. `scrim run` refuses a `-m`/`--model` of another provider
+before the agent starts. Your own `OPENCODE_CONFIG_CONTENT` is kept with scrim's settings merged
+over it (objects key by key, other values replaced); it must be plain JSON, and `--print-env` shows
+it as `<inherited OPENCODE_CONFIG_CONTENT>` because it may hold your keys. Keys come from
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` or `opencode auth login` as
+usual, and are passed through to the provider.
+
+OpenCode is a Bun binary. Its own HTTPS (its `webfetch` tool, for one) goes through `HTTPS_PROXY`
+with the session in the proxy URL and trusts scrim's CA through `NODE_EXTRA_CA_CERTS`. Nobody can
+answer a permission prompt of `opencode run`, so allow the tools it may use unattended with
+`permission` in your configuration or `OPENCODE_PERMISSION`. Tested with OpenCode 1.19.6 on the
+Anthropic, OpenAI (Responses API) and Gemini routes, against a fake model.
 
 ### Other agents (`generic`)
 
@@ -431,9 +464,15 @@ set
     the fake model calls whichever shell tool Codex offers (`exec_command`, `shell_command` or
     `shell`), then `secrets_list` in the `mcp__scrim` namespace tool. `SCRIM_E2E_CODEX` names the
     native `codex` binary (from the `@openai/codex` npm package, installed into a temporary
-    directory), otherwise it is looked up on `PATH` and skipped when missing. CI installs both
-    agents at pinned versions into the runner's temporary directory and runs it with
-    `SCRIM_E2E_REQUIRE_TOOLS=1`.
+    directory), otherwise it is looked up on `PATH` and skipped when missing.
+    `TestOpenCodeSession` runs it with `opencode run` on the anthropic provider: the same `bash`
+    steps, `scrim_secrets_list` over MCP, and a `webfetch` of the tool API (OpenCode's own HTTPS
+    through the forward proxy, trusting the session CA). A policy rule denies every provider request
+    that does not come from the session, so the run only completes when OpenCode sends the session
+    header. `TestOpenCodeSessionProviders` runs it on the openai (Responses API) and google
+    (Gemini) providers too. `SCRIM_E2E_OPENCODE` names the native `opencode` binary (from the `opencode-ai` npm
+    package). CI installs the three agents at pinned versions into the runner's temporary
+    directory and runs it with `SCRIM_E2E_REQUIRE_TOOLS=1`.
 
   Each needs unprivileged user namespaces; on Ubuntu 24.04 with AppArmor's restriction on, run
   `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` first.
@@ -454,7 +493,8 @@ backend only one of them can hold the state file, so a second concurrent `scrim 
 - Claude Code on Bedrock, Mantle, Claude Platform on AWS, Foundry and Vertex needs a
   [provider route](providers/README.md); Claude on Google Cloud operated by Anthropic is refused.
 - Codex with a custom `model_provider` in its configuration talks to that provider's own base URL,
-  which `scrim run` does not change. Codex signed in with a ChatGPT account calls the Responses
+  which `scrim run` does not change; it warns when the top level of the configuration or a `-c`
+  option selects one, not when a `--profile` does. Codex signed in with a ChatGPT account calls the Responses
   API on `chatgpt.com` through the forward proxy, which routes it to the LLM proxy
   (`proxy.upstream.chatgpt`); other ChatGPT backend paths, and everything on `ab.chatgpt.com`
   (`proxy.upstream.chatgpt-ab`), are forwarded with the whole body redacted as generic JSON.
@@ -468,5 +508,10 @@ backend only one of them can hold the state file, so a second concurrent `scrim 
   are not matched by a pattern rule yet.
 - Codex's update checks and plugin downloads (`github.com`) go through the forward proxy as tool
   traffic.
+- OpenCode's managed configuration (`/etc/opencode` on Linux, `/Library/Application Support/opencode`
+  and managed preferences on macOS) ranks above `OPENCODE_CONFIG_CONTENT`. A provider base URL or
+  `enabled_providers` set there is not changed by `scrim run`.
+- OpenCode is limited to its `anthropic`, `openai` and `google` providers in the session. scrim's
+  cloud provider routes (Bedrock, Vertex, Foundry) are not wired to OpenCode's providers for them.
 - Runtimes with their own trust stores that read none of the variables above (Java, for one) do not
   trust scrim's CA inside the session.

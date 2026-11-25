@@ -341,9 +341,10 @@ scrim run -- claude
 
 `scrim run` starts the agent with provider base URLs, MCP registration, CA trust and a session
 identity set for that process only. Running `claude` later without the wrapper finds its
-configuration unchanged. Codex works the same way: `scrim run -- codex`. If scrim cannot redact
-the session, the agent is not started. `scrim run --print-env -- claude` shows what would be set;
-[docs/run.md](docs/run.md) has the details per agent.
+configuration unchanged. Codex and OpenCode work the same way: `scrim run -- codex`,
+`scrim run -- opencode`. If scrim cannot redact the session, the agent is not started.
+`scrim run --print-env -- claude` shows what would be set; [docs/run.md](docs/run.md) has the
+details per agent.
 
 ### 4. Check what the provider saw
 
@@ -492,7 +493,7 @@ veil's per-tool policy.
 | --- | --- |
 | [docs/install.md](docs/install.md) | Release archives, signature and provenance checks, published results, images, reproducible builds |
 | [docs/deploy/README.md](docs/deploy/README.md) | Deployment examples for every target: workstation, systemd, cloud-init, Ansible, podman, Kubernetes, Helm, Flux, Argo CD |
-| [docs/run.md](docs/run.md) | `scrim run` for Claude Code, Codex and other agents |
+| [docs/run.md](docs/run.md) | `scrim run` for Claude Code, Codex, OpenCode and other agents |
 | [docs/interception.md](docs/interception.md) | Every way agent traffic reaches scrim, and how to choose |
 | [docs/configuration.md](docs/configuration.md) | Config files, environment, flags, precedence, reload and every setting |
 | [docs/stores/README.md](docs/stores/README.md) | Store adapters, capabilities, freshness and outages |

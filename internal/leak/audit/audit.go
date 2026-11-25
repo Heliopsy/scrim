@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -85,9 +86,10 @@ type Options struct {
 	PartialFraction float64
 	MaxPartial      int
 	// Driver selects the agent for the scenarios: "synthetic" (default), a
-	// built-in agent for every API, or "claude", which runs Claude Code
-	// with an empty HOME against the proxy. The matrix always sends its
-	// requests directly.
+	// built-in agent for every API, or a real agent CLI run with an empty
+	// HOME against the proxy: "claude" (Claude Code, Anthropic Messages),
+	// "codex" (Codex, Responses API over WebSocket) or "opencode" (OpenCode,
+	// Anthropic Messages). The matrix always sends its requests directly.
 	Driver string
 	// AgentBin overrides the agent CLI binary.
 	AgentBin string
@@ -107,12 +109,8 @@ var ErrGate = errors.New("leak gate failed")
 // report) when leaks or unexpected outcomes were found, and another error
 // when the run could not complete.
 func Run(ctx context.Context, o Options) (*Report, error) {
-	switch o.Driver {
-	case "", "synthetic", "claude":
-	case "codex":
-		return nil, errors.New("driver codex is not implemented yet; use synthetic or claude")
-	default:
-		return nil, fmt.Errorf("unknown driver %q (synthetic, claude)", o.Driver)
+	if o.Driver != "" && o.Driver != "synthetic" && !slices.Contains(scenario.Agents, o.Driver) {
+		return nil, fmt.Errorf("unknown driver %q (synthetic, %s)", o.Driver, strings.Join(scenario.Agents, ", "))
 	}
 	if o.Driver == "" {
 		o.Driver = "synthetic"
@@ -243,8 +241,8 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 				}
 			}
 			var results []scenario.Result
-			if o.Driver == "claude" {
-				d := scenario.ClaudeDriver{Bin: o.AgentBin}
+			if o.Driver != "synthetic" {
+				d := scenario.AgentDriver{Agent: o.Driver, Bin: o.AgentBin}
 				for _, s := range scenario.AgentSessions {
 					r := d.Run(ctx, target, fake, checker, s, seeds)
 					report(r)

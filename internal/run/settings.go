@@ -25,7 +25,7 @@ var (
 	MCP = config.Register(config.Spec[bool]{
 		Key:         "run.mcp",
 		Default:     true,
-		Description: "Register scrim mcp with the agent for this session (Claude Code --mcp-config, Codex -c mcp_servers.scrim). Nothing is written to the agent's own configuration.",
+		Description: "Register scrim mcp with the agent for this session (Claude Code --mcp-config, Codex -c mcp_servers.scrim, OpenCode OPENCODE_CONFIG_CONTENT). Nothing is written to the agent's own configuration.",
 		Flag:        true,
 	})
 
