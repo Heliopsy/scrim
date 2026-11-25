@@ -603,8 +603,9 @@ impl Relay {
         }
         if self.refused {
             let deadline = tokio::time::Instant::now() + LINGER;
-            // A failed stream (it stopped at an oversized frame's header) yields nothing more,
-            // so the rest of the agent's message is read off the socket itself.
+            // Without the agent's close frame the stream may have stopped at an oversized
+            // frame (tungstenite then ends it, as if the agent had), so the rest of the
+            // agent's message is read off the socket itself.
             if !linger(&mut from_client, deadline).await
                 && let Ok(mut s) = to_client.reunite(from_client)
             {
@@ -924,17 +925,18 @@ fn messages(out: &[u8]) -> Vec<Message> {
 
 /// Reads and drops what the agent still sends after a refusal, until its close frame, the end
 /// of its stream or `deadline`, so the socket is not reset under the error event and close
-/// frame scrim sent. Nothing read here is forwarded. `false` when the stream failed instead,
-/// with the agent's data possibly still unread on the socket.
+/// frame scrim sent. Nothing read here is forwarded. `true` only for the agent's close frame:
+/// after an oversized message the stream ends or fails with the rest of it still unread on
+/// the socket.
 async fn linger<S>(from_client: &mut S, deadline: tokio::time::Instant) -> bool
 where
     S: futures_util::Stream<Item = Result<Message, WsError>> + Unpin,
 {
     loop {
         match tokio::time::timeout_at(deadline, from_client.next()).await {
-            Ok(Some(Ok(Message::Close(_))) | None) | Err(_) => return true,
+            Ok(Some(Ok(Message::Close(_)))) => return true,
             Ok(Some(Ok(_))) => {}
-            Ok(Some(Err(_))) => return false,
+            Ok(Some(Err(_)) | None) | Err(_) => return false,
         }
     }
 }
@@ -971,6 +973,19 @@ async fn close_with(s: &mut Sink, code: CloseCode, reason: Utf8Bytes) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn only_the_agents_close_frame_ends_the_linger_cleanly() {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let mut closed =
+            futures_util::stream::iter([Ok(Message::text("late")), Ok(Message::Close(None))]);
+        assert!(linger(&mut closed, deadline).await);
+        // What tungstenite yields after an oversized message: the stream ends, or fails.
+        let mut ended = futures_util::stream::iter(Vec::<Result<Message, WsError>>::new());
+        assert!(!linger(&mut ended, deadline).await);
+        let mut failed = futures_util::stream::iter([Err(WsError::AlreadyClosed)]);
+        assert!(!linger(&mut failed, deadline).await);
+    }
 
     #[tokio::test]
     async fn drain_reads_until_the_agent_ends_its_stream() {
