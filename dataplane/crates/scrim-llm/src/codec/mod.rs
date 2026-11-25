@@ -14,6 +14,7 @@
 pub(crate) mod anthropic;
 pub(crate) mod converse;
 pub mod gemini;
+pub(crate) mod gemini_live;
 pub(crate) mod openai_chat;
 pub(crate) mod openai_realtime;
 pub(crate) mod openai_responses;

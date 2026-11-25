@@ -39,12 +39,19 @@ See [README.md](README.md#minted-tokens).
 | `.../publishers/anthropic/models/{model}:rawPredict`, `:streamRawPredict` | Anthropic Messages (`anthropic_version` stays byte-identical); the stream is SSE, restored as on the Anthropic API |
 | `.../publishers/anthropic/models/count-tokens:rawPredict` | Anthropic Messages |
 | `.../publishers/google/models/{model}:generateContent`, `:streamGenerateContent`, `:countTokens` | Gemini, with the Gemini codec |
+| `/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent` (WebSocket) | Gemini Live API, with the Live codec: each client message redacted, model text, transcriptions and tool call arguments restored |
 | anything else | Redacted as generic JSON, response passed through |
 
 The project, location and model in the path are redacted and guarded like the rest of the
 request target. The route serves one location: an agent that sends a request for another
 location in the path reaches the configured host, which refuses it. Configure one route per
 location.
+
+The Live API handshake gets the route's access token like any request. The client's `setup`
+message names the model as `projects/{project}/locations/{location}/publishers/google/models/{model}`;
+the `model` stays byte-identical, the system instruction and every turn are redacted. Audio the
+client sends is a binary part. Placeholders the model speaks stay in the audio; the transcripts are
+restored ([limitations](../limitations.md#how-traffic-reaches-scrim)).
 
 ## Claude Code
 

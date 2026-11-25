@@ -19,8 +19,8 @@ provider.
 | `bedrock` | Amazon Bedrock runtime | InvokeModel (Anthropic body), Converse, event stream | SigV4 (`bedrock`) or Bedrock API key | [bedrock.md](bedrock.md) |
 | `bedrock-mantle` | Bedrock Mantle endpoint | Anthropic Messages | SigV4 (`bedrock-mantle`) or Bedrock API key | [bedrock.md](bedrock.md#mantle) |
 | `anthropic-aws` | Claude Platform on AWS | Anthropic Messages | SigV4 (`aws-external-anthropic`) or workspace API key | [claude-platform-aws.md](claude-platform-aws.md) |
-| `foundry` | Microsoft Foundry | Anthropic Messages under `/anthropic` | `api-key` header or Entra ID token | [foundry.md](foundry.md) |
-| `vertex` | Google Vertex AI | Anthropic Messages on `rawPredict`/`streamRawPredict`, Gemini `generateContent` | Google access token (service account key or metadata server) | [vertex.md](vertex.md) |
+| `foundry` | Microsoft Foundry | Anthropic Messages under `/anthropic`, Voice Live (Realtime) over WebSocket | `api-key` header or Entra ID token | [foundry.md](foundry.md) |
+| `vertex` | Google Vertex AI | Anthropic Messages on `rawPredict`/`streamRawPredict`, Gemini `generateContent`, Gemini Live over WebSocket | Google access token (service account key or metadata server) | [vertex.md](vertex.md) |
 
 Claude on Google Cloud operated by Anthropic (`CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD`) is not
 served; `scrim run` refuses Claude Code in that mode.

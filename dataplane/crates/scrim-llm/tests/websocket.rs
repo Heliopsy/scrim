@@ -763,3 +763,272 @@ async fn added_latency_per_message_is_small() {
     );
     assert!(added50 < Duration::from_millis(5), "p50 added {added50:?}");
 }
+
+/// Reads until `until` matches a message, the connection closes or 10 s pass. Returns every
+/// text and binary message (binary flag and text) and the close frame, if one came.
+async fn read_frames(
+    c: &mut Client,
+    until: &dyn Fn(&str) -> bool,
+) -> (Vec<(bool, String)>, Option<CloseFrame>) {
+    let mut got = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let (binary, s) = match tokio::time::timeout(left, c.next()).await {
+            Ok(Some(Ok(Message::Text(t)))) => (false, t.to_string()),
+            Ok(Some(Ok(Message::Binary(b)))) => (true, String::from_utf8(b.to_vec()).unwrap()),
+            Ok(Some(Ok(Message::Close(f)))) => return (got, f),
+            Ok(Some(Ok(_))) => continue,
+            Ok(Some(Err(_)) | None) | Err(_) => return (got, None),
+        };
+        let done = until(&s);
+        got.push((binary, s));
+        if done {
+            return (got, None);
+        }
+    }
+}
+
+const LIVE_PATH: &str =
+    "/gemini/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
+
+/// A fake Gemini Live provider, in the message shapes of the Live API reference: binary frames,
+/// `setupComplete` after `setup`, and for a finished client turn the model's text in small
+/// pieces, its output transcription, a tool call with `args`, then `turnComplete`.
+async fn gemini_live(text: String, args: serde_json::Value) -> FakeWsUpstream {
+    FakeWsUpstream::start_binary(Vec::new(), move |m| {
+        let v: serde_json::Value = serde_json::from_str(m).unwrap();
+        if v.get("setup").is_some() {
+            return vec![r#"{"setupComplete":{}}"#.to_string()];
+        }
+        if v["clientContent"]["turnComplete"] != true {
+            return vec![];
+        }
+        let mut out = Vec::new();
+        for p in pieces(&text, 5) {
+            out.push(serde_json::json!({"serverContent":{"modelTurn":{"parts":[{"text":p}]}}}).to_string());
+        }
+        for p in pieces(&text, 7) {
+            out.push(serde_json::json!({"serverContent":{"outputTranscription":{"text":p}}}).to_string());
+        }
+        out.push(r#"{"serverContent":{"generationComplete":true}}"#.to_string());
+        out.push(serde_json::json!({"toolCall":{"functionCalls":[{"id":"function-call-1","name":"run","args":args}]}}).to_string());
+        // Pretty-printed, as the Gemini API writes it.
+        out.push("{\n  \"serverContent\": {\n    \"turnComplete\": true\n  },\n  \"usageMetadata\": {\n    \"promptTokenCount\": 9\n  }\n}\n".to_string());
+        out
+    })
+    .await
+}
+
+fn live_text(got: &[(bool, String)], f: impl Fn(&serde_json::Value) -> Option<String>) -> String {
+    got.iter()
+        .filter_map(|(_, s)| serde_json::from_str::<serde_json::Value>(s).ok())
+        .filter_map(|v| f(&v))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn gemini_live_is_planned_redacted_and_restored_in_binary_frames() {
+    let mut fx = fixture();
+    // A detector hit inside the audio must not touch it: the blob is a binary part.
+    fx.detector = Some("QVZFZm10IBAA".into());
+    let (p0, p1) = (fx.placeholder("s0"), fx.placeholder("s1"));
+    let text = format!("The password is {p0}, the key {p1}.");
+    let up = gemini_live(
+        text.clone(),
+        serde_json::json!({"cmd": format!("psql -p '{p0}'")}),
+    )
+    .await;
+    let ws = start(Some(&fx), &up, |_| {}).await;
+    let mut c = connect(&ws, &format!("{LIVE_PATH}?key=agent-own-key"), &[])
+        .await
+        .unwrap();
+    let audio = "UklGRiQAAABXQVZFZm10IBAAAAAB";
+    let messages = [
+        serde_json::json!({"setup":{"model":"models/gemini-live-2.5-flash-preview","generationConfig":{"responseModalities":["TEXT"]},"systemInstruction":{"parts":[{"text":format!("user is {}", fx.value("s2"))}]},"outputAudioTranscription":{}}}).to_string(),
+        serde_json::json!({"realtimeInput":{"audio":{"mimeType":"audio/pcm;rate=16000","data":audio}}}).to_string(),
+        serde_json::json!({"clientContent":{"turns":[{"role":"user","parts":[{"text":format!("the db password is {}", fx.value("s0"))}]}],"turnComplete":true}}).to_string(),
+    ];
+    c.send(Message::text(messages[0].clone())).await.unwrap();
+    let (hello, _) = read_frames(&mut c, &|s| s.contains("setupComplete")).await;
+    assert_eq!(hello, [(true, r#"{"setupComplete":{}}"#.to_string())]);
+    // A client may send its JSON in binary frames too: planned the same way.
+    c.send(Message::binary(messages[1].clone().into_bytes()))
+        .await
+        .unwrap();
+    c.send(Message::text(messages[2].clone())).await.unwrap();
+    let (got, close) = read_frames(&mut c, &|s| s.contains("turnComplete")).await;
+    assert!(close.is_none(), "closed: {close:?}");
+
+    // What the provider received: placeholders, no value, the audio untouched.
+    let sent: Vec<String> = data(&up)
+        .into_iter()
+        .map(|m| match m {
+            WsReceived::Text(t) => t,
+            WsReceived::Binary(b) => String::from_utf8(b.to_vec()).unwrap(),
+            _ => unreachable!(),
+        })
+        .collect();
+    assert_eq!(sent.len(), 3);
+    for m in &sent {
+        assert!(fx.leaks(m.as_bytes()).is_empty(), "leak in {m}");
+    }
+    assert!(sent[0].contains(&fx.placeholder("s2")));
+    assert_eq!(sent[1], messages[1]);
+    assert!(sent[2].contains(&p0));
+    assert!(matches!(data(&up)[1], WsReceived::Binary(_)));
+    assert_eq!(
+        up.handshakes()[0].uri,
+        format!("{}?key=agent-own-key", &LIVE_PATH[7..])
+    );
+
+    // What the agent received: every message in a binary frame, as the provider sent it, the
+    // display value restored in the model text, the transcription and the tool call; the
+    // credential stays a placeholder.
+    assert!(got.iter().all(|(binary, _)| *binary), "{got:?}");
+    let v0 = fx.value("s0");
+    let want = format!("The password is {v0}, the key {p1}.");
+    assert_eq!(
+        live_text(&got, |v| {
+            v["serverContent"]["modelTurn"]["parts"][0]["text"]
+                .as_str()
+                .map(str::to_string)
+        }),
+        want
+    );
+    assert_eq!(
+        live_text(&got, |v| v["serverContent"]["outputTranscription"]["text"]
+            .as_str()
+            .map(str::to_string)),
+        want
+    );
+    let call = got
+        .iter()
+        .find(|(_, s)| s.contains("toolCall"))
+        .map(|(_, s)| serde_json::from_str::<serde_json::Value>(s).unwrap())
+        .unwrap();
+    assert_eq!(
+        call["toolCall"]["functionCalls"][0]["args"]["cmd"],
+        format!("psql -p '{v0}'")
+    );
+    // An unchanged message leaves byte for byte, line breaks and all.
+    assert!(got.last().unwrap().1.starts_with("{\n  \"serverContent\""));
+    assert!(got.iter().all(|(_, s)| !s.contains(&p0)));
+    assert!(got.iter().all(|(_, s)| !s.contains(&fx.value("s1"))));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn gemini_live_refusal_is_a_close_frame_without_an_error_event() {
+    let mut fx = fixture();
+    fx.redactor_misses = vec!["s0".into()];
+    fx.guard_mode = GuardMode::Refuse;
+    let up = gemini_live("ok".into(), serde_json::json!({})).await;
+    let ws = start(Some(&fx), &up, |_| {}).await;
+    let mut c = connect(&ws, LIVE_PATH, &[]).await.unwrap();
+    let turn = serde_json::json!({"clientContent":{"turns":[{"role":"user","parts":[{"text":fx.value("s0")}]}],"turnComplete":true}}).to_string();
+    c.send(Message::text(turn)).await.unwrap();
+    let (got, close) = read_frames(&mut c, &|_| false).await;
+    assert!(got.is_empty(), "{got:?}");
+    let close = close.expect("a close frame");
+    assert_eq!(u16::from(close.code), 1008);
+    assert_eq!(close.reason.as_str(), "guard_refused");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(data(&up).is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn azure_openai_realtime_on_a_foundry_route_is_restored() {
+    // A Foundry route is an `anthropic` provider route that forwards every path to the
+    // resource, which serves Azure OpenAI's Realtime API under `/openai/`.
+    let fx = fixture();
+    let p0 = fx.placeholder("s0");
+    let (head, tail) = p0.split_at(p0.char_indices().nth(5).unwrap().0);
+    let (h, t) = (head.to_string(), tail.to_string());
+    let up = FakeWsUpstream::start(
+        vec![r#"{"type":"session.created","event_id":"ev0","session":{"id":"sess_1"}}"#.to_string()],
+        move |m| {
+            let v: serde_json::Value = serde_json::from_str(m).unwrap();
+            if v["type"] != "input_audio_buffer.commit" {
+                return vec![];
+            }
+            let ty = "conversation.item.input_audio_transcription";
+            vec![
+                serde_json::json!({"type":"input_audio_buffer.committed","item_id":"item_in","previous_item_id":null}).to_string(),
+                serde_json::json!({"type":format!("{ty}.delta"),"item_id":"item_in","content_index":0,"delta":format!("my password is {h}")}).to_string(),
+                serde_json::json!({"type":format!("{ty}.delta"),"item_id":"item_in","content_index":0,"delta":format!("{t}.")}).to_string(),
+                serde_json::json!({"type":format!("{ty}.completed"),"item_id":"item_in","content_index":0,"transcript":format!("my password is {h}{t}.")}).to_string(),
+                serde_json::json!({"type":"response.output_audio_transcript.delta","response_id":"r1","item_id":"item_out","output_index":0,"content_index":0,"delta":format!("Noted: {h}{t}")}).to_string(),
+                serde_json::json!({"type":"response.output_audio_transcript.done","response_id":"r1","item_id":"item_out","output_index":0,"content_index":0,"transcript":format!("Noted: {h}{t}")}).to_string(),
+            ]
+        },
+    )
+    .await;
+    let ws = start(Some(&fx), &up, |_| {}).await;
+    let mut c = connect(
+        &ws,
+        "/anthropic/openai/realtime?api-version=2025-04-01-preview&deployment=gpt-realtime",
+        &[],
+    )
+    .await
+    .unwrap();
+    read_until(&mut c, &|t| ty(t) == "session.created").await;
+    c.send(Message::text(r#"{"type":"input_audio_buffer.commit"}"#))
+        .await
+        .unwrap();
+    let (texts, close) = read_until(&mut c, &|t| {
+        ty(t) == "response.output_audio_transcript.done"
+    })
+    .await;
+    assert!(close.is_none());
+    let v0 = fx.value("s0");
+    assert_eq!(
+        deltas(&texts, "conversation.item.input_audio_transcription.delta"),
+        format!("my password is {v0}.")
+    );
+    assert_eq!(
+        deltas(&texts, "response.output_audio_transcript.delta"),
+        format!("Noted: {v0}")
+    );
+    assert!(texts.iter().all(|m| !m.contains(&p0)), "{texts:?}");
+    assert_eq!(
+        up.handshakes()[0].uri,
+        "/openai/realtime?api-version=2025-04-01-preview&deployment=gpt-realtime"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn gemini_live_ephemeral_token_passes_untouched() {
+    // An ephemeral token is the agent's own credential in the `access_token` query parameter of
+    // `BidiGenerateContentConstrained`. Even when scrim knows the value it leaves as sent, while
+    // every other query parameter is redacted.
+    let mut fx = fixture();
+    let token = scrim_llm::testing::random_value("auth_tokens/");
+    fx.add("live-token", &token, scrim_llm::ValueClass::Credential);
+    let up = gemini_live("ok".into(), serde_json::json!({})).await;
+    let ws = start(Some(&fx), &up, |_| {}).await;
+    let path =
+        "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained";
+    let mut c = connect(
+        &ws,
+        &format!(
+            "/gemini{path}?access_token={token}&trace={}",
+            fx.value("s0")
+        ),
+        &[],
+    )
+    .await
+    .unwrap();
+    c.send(Message::text(
+        r#"{"setup":{"model":"models/gemini-live-2.5-flash-preview"}}"#,
+    ))
+    .await
+    .unwrap();
+    let (got, _) = read_frames(&mut c, &|s| s.contains("setupComplete")).await;
+    assert_eq!(got.len(), 1);
+    let uri = &up.handshakes()[0].uri;
+    assert!(
+        uri.starts_with(&format!("{path}?access_token={token}&trace=")),
+        "{uri}"
+    );
+    assert!(!uri.contains(&fx.value("s0")), "{uri}");
+}
