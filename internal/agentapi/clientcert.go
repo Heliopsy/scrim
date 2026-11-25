@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -46,10 +48,81 @@ var (
 	CertCRLFiles = config.Register(config.Spec[[]string]{
 		Key: "identity.client-certificates.crl-files",
 		Description: "Certificate revocation lists (PEM or DER files) checked for every client certificate. With any set, a " +
-			"certificate whose issuer has no current CRL among them is refused, and so is every certificate of an issuer " +
-			"whose CRL is past its next update. Empty checks no revocation: use short-lived certificates.",
+			"certificate whose issuer has no current CRL among them is refused unless OCSP answers for it, and so is every " +
+			"certificate of an issuer whose CRL is past its next update. Empty, without OCSP, checks no revocation: use " +
+			"short-lived certificates.",
 		Default:         []string{},
 		RestartRequired: true,
+	})
+	CertRevocationScope = config.Register(config.Spec[string]{
+		Key:     "identity.client-certificates.revocation-scope",
+		Default: identity.RevocationEndEntity,
+		Enum:    []string{identity.RevocationEndEntity, identity.RevocationChain},
+		Description: "Which certificates of a client's chain are checked for revocation (CRLs and OCSP): end-entity checks " +
+			"the client certificate only, chain checks every certificate below the trust anchor as well, so a revoked " +
+			"intermediate CA refuses the certificates it issued.",
+		RestartRequired: true,
+	})
+	CertOCSP = config.Register(config.Spec[bool]{
+		Key: "identity.client-certificates.ocsp.enabled",
+		Description: "Ask the issuer's OCSP responder whether each client certificate is revoked before its connection is " +
+			"served. The control plane fetches and verifies the responses, through network.upstream-proxy, and keeps each " +
+			"until its next update. Off: only CRLs are checked.",
+		RestartRequired: true,
+	})
+	CertOCSPResponder = config.Register(config.Spec[string]{
+		Key: "identity.client-certificates.ocsp.responder",
+		Description: "OCSP responder URL used for every certificate instead of the one in its authority information access " +
+			"extension. Empty uses the certificate's own; a certificate without one is checked by CRL only. Responses must " +
+			"still be signed by the issuer or a responder it delegated to.",
+		RestartRequired: true,
+		Validate: func(s string) error {
+			if s == "" {
+				return nil
+			}
+			u, err := url.Parse(s)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				return errors.New("must be an http:// or https:// URL")
+			}
+			if u.User != nil {
+				return errors.New("must not carry credentials")
+			}
+			return nil
+		},
+	})
+	CertOCSPUnreachable = config.Register(config.Spec[string]{
+		Key:     "identity.client-certificates.ocsp.unreachable",
+		Default: identity.OCSPFailClosed,
+		Enum:    []string{identity.OCSPFailClosed, identity.OCSPSoftFail},
+		Description: "What happens when no valid OCSP answer can be had (responder unreachable, error status, bad signature, " +
+			"stale response): fail-closed refuses the certificate, soft-fail accepts it as if OCSP were off. A revoked or " +
+			"unknown answer always refuses.",
+		RestartRequired: true,
+	})
+	CertOCSPTimeout = config.Register(config.Spec[time.Duration]{
+		Key:             "identity.client-certificates.ocsp.timeout",
+		Default:         5 * time.Second,
+		Description:     "How long one OCSP request may take. Requests for one chain run in parallel. At most 10s.",
+		RestartRequired: true,
+		Validate: func(d time.Duration) error {
+			if d <= 0 || d > identity.MaxOCSPTimeout {
+				return fmt.Errorf("must be positive and at most %s", identity.MaxOCSPTimeout)
+			}
+			return nil
+		},
+	})
+	CertOCSPCacheSize = config.Register(config.Spec[int]{
+		Key:     "identity.client-certificates.ocsp.cache-size",
+		Default: 10000,
+		Description: "How many OCSP responses are kept, each until its next update. When full, expired responses go first, " +
+			"then the ones that expire soonest.",
+		RestartRequired: true,
+		Validate: func(n int) error {
+			if n < 1 {
+				return errors.New("must be at least 1")
+			}
+			return nil
+		},
 	})
 	CertRefresh = config.Register(config.Spec[time.Duration]{
 		Key:             "identity.client-certificates.refresh",
@@ -205,8 +278,9 @@ func ListenerCertSource(ctx context.Context, cfg *config.Config) (*identity.List
 }
 
 // CertResolver builds the client certificate resolver over src, nil when
-// src is nil.
-func CertResolver(cfg *config.Config, src *identity.CertTrustSource) (*identity.CertResolver, error) {
+// src is nil, with the OCSP checker when identity.client-certificates.ocsp
+// is on. log receives the OCSP checks that got no valid answer.
+func CertResolver(cfg *config.Config, src *identity.CertTrustSource, log *slog.Logger) (*identity.CertResolver, error) {
 	if src == nil {
 		return nil, nil
 	}
@@ -214,5 +288,23 @@ func CertResolver(cfg *config.Config, src *identity.CertTrustSource) (*identity.
 	if err != nil {
 		return nil, err
 	}
-	return &identity.CertResolver{Trust: src.Current, Rules: rules, Unmapped: CertUnmapped.Get(cfg)}, nil
+	r := &identity.CertResolver{Trust: src.Current, Rules: rules, Unmapped: CertUnmapped.Get(cfg),
+		Chain: CertRevocationScope.Get(cfg) == identity.RevocationChain, OCSP: OCSPChecker(cfg, log)}
+	return r, nil
+}
+
+// OCSPChecker is the OCSP checker of client certificate identity, nil when
+// identity.client-certificates.ocsp.enabled is off. Its requests follow
+// network.upstream-proxy.
+func OCSPChecker(cfg *config.Config, log *slog.Logger) *identity.OCSPChecker {
+	if !CertEnabled.Get(cfg) || !CertOCSP.Get(cfg) {
+		return nil
+	}
+	return &identity.OCSPChecker{
+		Responder: CertOCSPResponder.Get(cfg),
+		SoftFail:  CertOCSPUnreachable.Get(cfg) == identity.OCSPSoftFail,
+		Timeout:   CertOCSPTimeout.Get(cfg),
+		CacheSize: CertOCSPCacheSize.Get(cfg),
+		Log:       log,
+	}
 }

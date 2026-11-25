@@ -112,6 +112,9 @@ http://<fullname>.<namespace>.svc); the ServiceAccount is "<fullname>-proxy".
   {{- if $cc.forwardPort -}}
     {{- $ports = append $ports (dict "name" "mtls-forward" "containerPort" (int $cc.forwardPort) "protocol" "TCP") -}}
   {{- end -}}
+  {{- if $cc.toolProxyPort -}}
+    {{- $ports = append $ports (dict "name" "mtls-tool" "containerPort" (int $cc.toolProxyPort) "protocol" "TCP") -}}
+  {{- end -}}
 {{- end -}}
 {{- if $iss.enabled -}}
   {{- /* Exposed by the issuer's own Service (issuer.yaml), not the central one. */ -}}

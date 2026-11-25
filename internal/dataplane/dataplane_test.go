@@ -189,6 +189,7 @@ func TestSupervisorRestartsAndAnswersAsks(t *testing.T) {
 	var batches atomic.Int32
 	asked := make(chan *pb.AskRequest, 4)
 	captured := make(chan string, 4)
+	checked := make(chan string, 4)
 	s := &Supervisor{
 		Binary:   fakeBinary(t),
 		Options:  fakeOpts(),
@@ -202,6 +203,16 @@ func TestSupervisorRestartsAndAnswersAsks(t *testing.T) {
 			captured <- r.GetRule() + "=" + string(r.GetValue())
 			return "SCRIM_NEW_TOKEN", nil
 		},
+		OnCertificateCheck: func(_ context.Context, chain [][]byte) string {
+			select {
+			case checked <- string(chain[0]):
+			default: // later sessions repeat the exchange
+			}
+			if string(chain[0]) == "revoked-leaf" {
+				return "revoked"
+			}
+			return ""
+		},
 		MinBackoff: 10 * time.Millisecond,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -209,6 +220,12 @@ func TestSupervisorRestartsAndAnswersAsks(t *testing.T) {
 	go func() { done <- s.Run(ctx) }()
 
 	waitFor(t, "ready", s.Ready)
+	if got := <-checked; got != "revoked-leaf" {
+		t.Fatalf("certificate check got %q", got)
+	}
+	if got := <-checked; got != "refused:revoked" {
+		t.Fatalf("the refusal did not reach the data plane: %q", got)
+	}
 	if got := <-captured; got != "issued=captured-in-test" {
 		t.Fatalf("capture handler got %q", got)
 	}

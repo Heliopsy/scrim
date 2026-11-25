@@ -22,6 +22,7 @@ import (
 	"github.com/heliopsy/scrim/internal/identity"
 	"github.com/heliopsy/scrim/internal/identity/sessionstate"
 	"github.com/heliopsy/scrim/internal/localapi"
+	"github.com/heliopsy/scrim/internal/obs"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/version"
 )
@@ -162,7 +163,7 @@ func New(a *app.App, o Options) (*Runtime, error) {
 	if kr != nil {
 		kr.OnVerified = o.OnKubeToken
 	}
-	cr, err := CertResolver(cfg, o.CertTrust)
+	cr, err := CertResolver(cfg, o.CertTrust, obs.WithComponent(a.Log, "client-certificates"))
 	if err != nil {
 		_ = entryLn.Close()
 		_ = sockLn.Close()

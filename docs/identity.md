@@ -355,6 +355,7 @@ identity:
     enabled: true
     ca: file:/etc/scrim/agents-ca.pem          # or env:NAME, cred:NAME, bao://kv/pki#ca
     crl-files: [/etc/scrim/agents-ca.crl]      # optional, see Revocation
+    ocsp: {enabled: true}                      # optional, see Revocation
     agents:
       builder: "spiffe:spiffe://example.org/agents/builder label:team=platform"
       ci: "cn:ci-runner-* scope:secrets:list"
@@ -414,17 +415,18 @@ helper rotates in the pod is used at once. The key stays in the pod.
 ### Checks
 
 Each certificate is checked twice. The data plane checks it in the handshake; the control plane
-checks the chain again with its own copy of the trust anchors and CRLs before it maps it, so a data
-plane fault cannot let a certificate through.
+checks the chain again with its own copy of the trust anchors and CRLs (and OCSP, when it is on)
+before it maps it, so a data plane fault cannot let a certificate through.
 
 | Refusal reason | Meaning |
 | --- | --- |
 | `untrusted` | does not chain to `identity.client-certificates.ca` (no system roots are used) |
 | `expired`, `not yet valid` | outside its validity period |
 | `not a client certificate` | its extended key usage does not allow client authentication |
-| `revoked` | the issuer's CRL lists it |
-| `revocation status unknown` | CRLs are configured but none is from the certificate's issuer |
+| `revoked` | the issuer's CRL lists it, or its OCSP responder says it is revoked |
+| `revocation status unknown` | CRLs or OCSP are configured but neither covers it: no CRL from its issuer and no OCSP answer, or the responder answered "unknown" |
 | `crl expired` | the issuer's CRL is past its next update |
+| `ocsp unavailable` | OCSP is on, no current CRL covers it, and no valid OCSP answer could be had (`unreachable: fail-closed`) |
 | `no certificate` | the client presented none (TLS listeners only) |
 | `invalid` | refused in the handshake for any other reason, such as a malformed certificate (TLS listeners) |
 | `malformed certificate` | the chain carried to the control plane does not parse (edge listener, asks) |
@@ -484,16 +486,55 @@ token exchange work for these agents; Kubernetes passthrough does not.
   them, and the trust anchors, again every `identity.client-certificates.refresh` (one minute) and
   applies a change to new connections without a restart; connections already open keep the
   identity they were accepted with. Once any CRL is configured, a certificate whose issuer has no
-  CRL among them is refused, and a CRL past its next update refuses every certificate of its
-  issuer until a current one is in place, so a broken CRL distribution fails closed. Only the end
-  entity certificate is checked against CRLs. A file that cannot be read on a refresh keeps the
-  lists in force and logs a warning.
-- **Short-lived certificates.** With no CRL, revocation is not checked. Use certificates that live
-  for hours, not years (SPIFFE SVIDs default to one hour): a stolen certificate and key are useless
-  once they expire.
-- **No OCSP.** Asking a responder during the handshake would add a network round trip and a
-  dependency on the responder to every new connection and tell it which agent connected, and a
-  check that passes when the responder is down checks nothing.
+  CRL among them is refused unless OCSP answers for it, and a CRL past its next update refuses every
+  certificate of its issuer until a current one is in place, so a broken CRL distribution fails
+  closed. A file that cannot be read on a refresh keeps the lists in force and logs a warning.
+- **OCSP.** With `identity.client-certificates.ocsp.enabled`, scrim asks the issuer's OCSP responder
+  about each certificate before its connection is served. The responder is the one in the
+  certificate's authority information access extension, or `ocsp.responder` for every certificate.
+  Requests go from the control plane, through `network.upstream-proxy` when one is set. A response
+  counts only when it is signed by the issuer or by a responder certificate the issuer issued for OCSP
+  signing, names the certificate's serial number and is current; it is kept until its next update (an
+  hour after it was produced when it has none), in a cache of `ocsp.cache-size` answers (10000).
+  Stapled responses are not used.
+- **Revocation scope.** `identity.client-certificates.revocation-scope: end-entity` (the default)
+  checks the client certificate only. `chain` checks every certificate below the trust anchor as
+  well, each against its own issuer's CRL or responder, so revoking an intermediate CA refuses every
+  certificate it issued. With CRLs and no OCSP, `chain` needs a CRL from every issuer in the chain,
+  the root's included.
+- **Short-lived certificates.** With no CRL and OCSP off, revocation is not checked. Use
+  certificates that live for hours, not years (SPIFFE SVIDs default to one hour): a stolen
+  certificate and key are useless once they expire.
+
+With CRLs and OCSP both configured, a certificate is accepted when a current CRL or an OCSP answer
+covers it and neither says it is revoked:
+
+| CRL of its issuer | OCSP answer | Result |
+| --- | --- | --- |
+| lists it | any | `revoked` |
+| past its next update | any | `crl expired` |
+| any | revoked | `revoked` |
+| current, does not list it | good, unknown or none | accepted |
+| none | good | accepted |
+| none | unknown, or no responder | `revocation status unknown` |
+| none | no valid answer | `ocsp unavailable`, or accepted with `soft-fail` |
+
+`identity.client-certificates.ocsp.unreachable` decides the last row. `fail-closed` (the default)
+refuses: a check that passes whenever the responder is down checks nothing against an attacker who
+can block it. `soft-fail` accepts and logs a warning, for responders you do not trust to stay up.
+Revoked and unknown answers refuse either way. `ocsp.timeout` (5s, at most 10s) bounds each request;
+the requests for one chain run in parallel.
+
+Where the check runs: the data plane terminates TLS and checks CRLs in the handshake as before. With
+OCSP on it lets a certificate whose issuer has no CRL through the handshake, then hands the verified
+chain to the control plane, which fetches and verifies the OCSP responses and applies the CRLs, and
+serves the connection only once the control plane accepts it. A refusal closes the connection before
+any request is read and is audited like a handshake refusal. The first connection of a certificate
+waits for its responder; later ones use the cached answer.
+
+OCSP has costs. A new certificate's first connection waits for a network round trip, the responder
+learns which certificates connect and when, and a responder outage refuses agents under
+`fail-closed`. Short-lived certificates avoid all three.
 
 In Kubernetes the Helm chart sets these settings and the TLS listeners from its
 `identity.clientCertificates` values ([kubernetes.md](kubernetes.md#client-certificates)).
@@ -658,6 +699,6 @@ off.
   Any process in the pod that can read the projected token file is that agent. Keep one agent per
   service account, and do not mount the token into pods that are not agents.
 - A client certificate is only as private as its key. Any process that can read the key file is
-  that agent, and a certificate keeps working until it expires unless a CRL revokes it. Keep keys
+  that agent, and a certificate keeps working until it expires unless a CRL or OCSP revokes it. Keep keys
   readable by the agent only and certificates short-lived, and map certificates explicitly rather
   than with `unmapped: derive` when the CA issues to more than your agents.

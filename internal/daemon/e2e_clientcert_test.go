@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/ocsp"
+
 	"github.com/heliopsy/scrim/internal/gate"
 	"github.com/heliopsy/scrim/internal/leak"
 	"github.com/heliopsy/scrim/internal/run"
@@ -333,5 +335,116 @@ catalog:
 	eventually(t, "the renewed certificate served", func() bool { cn, err := served(); return err == nil && cn == "scrim-2" })
 	if strings.Contains(h.logs.String(), "PRIVATE KEY") {
 		t.Fatal("the listener key reached the log")
+	}
+}
+
+// TestEndToEndClientCertificateOCSP runs the daemon with the real data plane
+// and OCSP checking on, with a local OCSP responder named in each agent
+// certificate, and an intermediate CA so the whole chain is checked:
+//
+//   - a certificate the responder calls good is served, and its answer is
+//     cached (one request for several connections);
+//   - revoked and unknown answers, an unreachable responder and a revoked
+//     intermediate get no connection; each refusal is audited with its
+//     reason, and nothing reaches the provider.
+func TestEndToEndClientCertificateOCSP(t *testing.T) {
+	bin := realDataPlane(t)
+	fake := fakeprovider.New(fakeprovider.Options{})
+	up := httptest.NewServer(fake)
+	defer up.Close()
+
+	h := newHarness(t, seed(t, "sk-e2e-"))
+	if err := os.WriteFile(filepath.Join(h.dir, "rules.yaml"), []byte("default: allow\nrules: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := certtest.NewCA(t, "agents root")
+	rootResp := root.Responder(t)
+	inter := root.Sub(t, "agents intermediate", rootResp.URL)
+	resp := inter.Responder(t)
+	revokedInter := root.Sub(t, "revoked intermediate", rootResp.URL)
+	revokedInterResp := revokedInter.Responder(t)
+	rootResp.Set(revokedInter.Cert, ocsp.Revoked)
+	down := inter.Responder(t)
+	down.Close()
+
+	leaf := func(ca *certtest.CA, cn, responder string) *certtest.Issued {
+		i := ca.Issue(t, certtest.Leaf{CN: cn, SPIFFE: "spiffe://example.org/agents/" + cn, OCSP: []string{responder}})
+		i.TLS.Certificate = append(i.TLS.Certificate, ca.Cert.Raw)
+		return &i
+	}
+	good := leaf(inter, "builder", resp.URL)
+	revoked := leaf(inter, "revoked", resp.URL)
+	unknown := leaf(inter, "unknown", resp.URL)
+	unreachable := leaf(inter, "unreachable", down.URL)
+	underRevoked := leaf(revokedInter, "orphan", revokedInterResp.URL)
+	resp.Set(revoked.Cert, ocsp.Revoked)
+	resp.Set(unknown.Cert, ocsp.Unknown)
+
+	caFile := filepath.Join(h.dir, "agents-ca.pem")
+	if err := os.WriteFile(caFile, root.PEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.editConfig(t, "  forward-listen: 127.0.0.1:0\n", "  forward-listen: 127.0.0.1:0\n  tls-listen: 127.0.0.1:0\n")
+	h.editConfig(t, "catalog:\n", `identity:
+  client-certificates:
+    enabled: true
+    ca: file:`+caFile+`
+    revocation-scope: chain
+    ocsp:
+      enabled: true
+      timeout: 2s
+    agents:
+      builder: "spiffe:spiffe://example.org/agents/*"
+catalog:
+`)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	d := h.startReal(t, ctx, bin, up.URL)
+	addrs := d.Addrs()
+	scrimCA := d.TrustBundlePEM()
+	direct := func(c *certtest.Issued) *http.Client { return certClient(t, scrimCA, c, "") }
+
+	for range 3 {
+		if code, err := certMessages(ctx, direct(good), addrs.BaseURLTLS, nil, "hello"); err != nil || code != http.StatusOK {
+			t.Fatalf("good certificate: %d %v\n%s", code, err, h.logs.String())
+		}
+	}
+	// One answer per certificate of the chain, kept until its next update.
+	if resp.Hits() != 1 || rootResp.Hits() != 1 {
+		t.Fatalf("responder requests: leaf CA %d, root %d", resp.Hits(), rootResp.Hits())
+	}
+
+	before := len(fake.Exchanges())
+	cases := map[string]*certtest.Issued{"revoked": revoked, "revocation status unknown": unknown,
+		"ocsp unavailable": unreachable, "revoked intermediate": underRevoked}
+	for name, c := range cases {
+		if code, err := certMessages(ctx, direct(c), addrs.BaseURLTLS, nil, "hello"); err == nil {
+			t.Errorf("%s: provider request answered %d", name, code)
+		}
+	}
+	if n := len(fake.Exchanges()) - before; n != 0 {
+		t.Fatalf("the provider saw %d requests from refused certificates", n)
+	}
+
+	refusals := map[string]map[string]bool{}
+	eventually(t, "the refusals audited", func() bool {
+		refusals = map[string]map[string]bool{}
+		_ = d.App().State.View(ctx, func(tx state.Tx) error {
+			es, err := tx.QueryAudit(ctx, state.AuditQuery{})
+			for _, e := range es {
+				if e.Action == "dataplane.client_certificate_refused" {
+					if refusals[e.Reason] == nil {
+						refusals[e.Reason] = map[string]bool{}
+					}
+					refusals[e.Reason][e.Attrs["cert_cn"]] = true
+				}
+			}
+			return err
+		})
+		return refusals["revoked"]["revoked"] && refusals["revoked"]["orphan"] &&
+			refusals["revocation status unknown"]["unknown"] && refusals["ocsp unavailable"]["unreachable"]
+	})
+	if refusals["revoked"]["builder"] || refusals["ocsp unavailable"]["builder"] {
+		t.Fatalf("the good certificate was refused: %v", refusals)
 	}
 }

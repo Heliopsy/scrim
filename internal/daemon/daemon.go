@@ -451,7 +451,13 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	}
 	if certTrust != nil {
 		d.builder.ClientCertificates = func() *pb.ClientCertificateTrust {
-			return clientCertificatesPB(certTrust.Current(), agentapi.CertServerNames.Get(a.Config.Current()), listenerCert.Current())
+			cfg := a.Config.Current()
+			out := clientCertificatesPB(certTrust.Current(), agentapi.CertServerNames.Get(cfg), listenerCert.Current())
+			if out != nil {
+				out.RevocationChain = agentapi.CertRevocationScope.Get(cfg) == identity.RevocationChain
+				out.Ocsp = agentapi.CertOCSP.Get(cfg)
+			}
+			return out
 		}
 	}
 	d.builder.SetKeys(ring)
@@ -517,6 +523,14 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 	// Asks name their caller by transport; the gate verifies sessions and
 	// maps peers with the agent API's resolver. Set before anything runs.
 	pp.Gate.Callers = d.runtime.Resolver
+	if certs := d.runtime.Resolver.Certificates; certs != nil && certs.OCSP != nil {
+		d.sup.OnCertificateCheck = certificateCheck(certs, d.log)
+		d.log.Info("client certificates are checked with OCSP", "ocsp", certs.OCSP.String(), "chain", certs.Chain)
+		if certs.OCSP.SoftFail {
+			d.log.Warn("client certificate OCSP checks soft-fail: a certificate is accepted when its responder gives no valid answer",
+				"setting", agentapi.CertOCSPUnreachable.Name())
+		}
+	}
 	d.runtime.SetSSHAgent(d.sshKeyring())
 
 	if err := d.listenControl(cfg); err != nil {

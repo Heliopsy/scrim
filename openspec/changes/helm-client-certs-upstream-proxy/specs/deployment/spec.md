@@ -2,8 +2,8 @@
 
 ### Requirement: Client certificates in the chart
 
-With `identity.clientCertificates.enabled` the chart SHALL have central scrim serve the LLM base URL
-and forward proxy on TLS listeners that require a client certificate, trust only the CA bundle and
+With `identity.clientCertificates.enabled` the chart SHALL have central scrim serve the LLM base URL,
+forward proxy and tool proxy on TLS listeners that require a client certificate, trust only the CA bundle and
 CRLs it mounts from ConfigMaps, and expose those listeners on a Service of their own carrying no
 plain listener.
 

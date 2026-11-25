@@ -126,6 +126,8 @@ impl fmt::Debug for ClientCertificateTrust {
             .field("server_names", &self.server_names)
             .field("listener_chain_pem", &self.listener_chain_pem.len())
             .field("listener_key_pem", &Redacted(self.listener_key_pem.len()))
+            .field("revocation_chain", &self.revocation_chain)
+            .field("ocsp", &self.ocsp)
             .finish()
     }
 }

@@ -12,6 +12,12 @@
 //! ([`ClientTrust`]). The client's private key never reaches scrim: rustls checks the handshake
 //! signature made with it.
 //!
+//! Revocation lists cover the end entity, or with `revocation_chain` every certificate below the
+//! anchor. While OCSP is on (`ClientCertificateTrust.ocsp`), a certificate whose issuer has no
+//! list passes the handshake, and the connection is served only once the control plane, which
+//! fetches and verifies OCSP responses, accepted the chain ([`crate::certchecks`]); a refusal
+//! there closes the connection before any request is read and is reported like a handshake one.
+//!
 //! A certificate that fails is refused in the handshake, and the refusal is reported to the
 //! control plane as an `EVENT_KIND_CLIENT_CERTIFICATE_REFUSED` event with a short reason
 //! ([`refusal_reason`]) and the leaf's public details, never anything else. A verified chain goes
@@ -52,6 +58,8 @@ pub struct ClientTrust {
     listener: Option<Arc<CertifiedKey>>,
     anchors: usize,
     crls: usize,
+    /// Every accepted chain goes to the control plane for its OCSP check before it is served.
+    ocsp: bool,
 }
 
 impl std::fmt::Debug for ClientTrust {
@@ -59,6 +67,7 @@ impl std::fmt::Debug for ClientTrust {
         f.debug_struct("ClientTrust")
             .field("anchors", &self.anchors)
             .field("crls", &self.crls)
+            .field("ocsp", &self.ocsp)
             .field("server_names", &self.server_names)
             .field("operator_certificate", &self.listener.is_some())
             .finish_non_exhaustive()
@@ -67,7 +76,8 @@ impl std::fmt::Debug for ClientTrust {
 
 impl ClientTrust {
     /// Builds the verifier: the trust anchors (at least one), the revocation lists (when any,
-    /// the end entity's issuer must have a current one; a list past its next update refuses),
+    /// the end entity's issuer, or with `revocation_chain` every certificate's issuer, must have
+    /// a current one unless `ocsp` is set; a list past its next update refuses),
     /// the operator's listener certificate and key when set (both or neither, the key matching
     /// the end entity), and the listener names (at least one without an operator certificate).
     pub fn from_proto(t: &v1::ClientCertificateTrust) -> Result<Self, String> {
@@ -101,10 +111,14 @@ impl ClientTrust {
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let mut b = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider);
         if !crls.is_empty() {
-            b = b
-                .with_crls(crls)
-                .only_check_end_entity_revocation()
-                .enforce_revocation_expiration();
+            b = b.with_crls(crls).enforce_revocation_expiration();
+            if !t.revocation_chain {
+                b = b.only_check_end_entity_revocation();
+            }
+            if t.ocsp {
+                // The control plane decides for issuers without a list, by OCSP.
+                b = b.allow_unknown_revocation_status();
+            }
         }
         let verifier = b.build().map_err(|e| format!("client_certificates: {e}"))?;
         Ok(Self {
@@ -113,7 +127,13 @@ impl ClientTrust {
             listener,
             anchors,
             crls: n_crls,
+            ocsp: t.ocsp,
         })
+    }
+
+    /// Whether accepted chains go to the control plane for an OCSP check.
+    pub fn ocsp(&self) -> bool {
+        self.ocsp
     }
 
     /// Whether the listeners present the operator's certificate.
@@ -306,6 +326,8 @@ pub struct Acceptor {
     pub events: Arc<Bus>,
     /// The tool proxy, whose CA issues the listener's certificate.
     pub proxy: ToolProxy,
+    /// The control plane's certificate checks, used while OCSP is on.
+    pub checks: Arc<crate::certchecks::Broker>,
     /// ALPN protocols offered.
     pub alpn: Vec<Vec<u8>>,
 }
@@ -339,6 +361,7 @@ impl Acceptor {
             );
             return None;
         };
+        let ocsp = trust.ocsp;
         let recording = Arc::new(Recording {
             inner: Arc::clone(&trust.verifier),
             failure: Mutex::new(None),
@@ -396,6 +419,15 @@ impl Acceptor {
                 c.iter().map(|c| c.clone().into_owned()).collect()
             });
         // A mandatory verifier never lets a handshake finish without a chain; refuse anyway.
+        if ocsp
+            && let Err(reason) = self
+                .checks
+                .check(&self.listener, &chain, crate::certchecks::TIMEOUT)
+                .await
+        {
+            self.report(&reason, chain.first(), peer);
+            return None;
+        }
         let Some(cert) = ClientCertificate::new(chain) else {
             self.refused(&rustls::Error::NoCertificatesPresented, None, peer);
             return None;
@@ -403,9 +435,13 @@ impl Acceptor {
         Some((tls, cert))
     }
 
-    /// Reports a refused client certificate to the control plane.
+    /// Reports a client certificate refused in the handshake to the control plane.
     fn refused(&self, err: &rustls::Error, leaf: Option<&CertificateDer<'_>>, peer: SocketAddr) {
-        let reason = refusal_reason(err);
+        self.report(refusal_reason(err), leaf, peer);
+    }
+
+    /// Reports a refused client certificate to the control plane, with its reason.
+    fn report(&self, reason: &str, leaf: Option<&CertificateDer<'_>>, peer: SocketAddr) {
         let mut attrs = BTreeMap::new();
         attrs.insert("listener".to_owned(), self.listener.clone());
         attrs.insert("peer".to_owned(), peer.to_string());

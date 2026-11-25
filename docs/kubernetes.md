@@ -148,7 +148,7 @@ These settings are written to a second file, `chart.yaml`, read after yours, so 
 | `metrics.enabled`, `metrics.path`, `metrics.auth.token`, `metrics.allow-unauthenticated-remote` | from `metrics` | the same |
 | `identity.kubernetes.*` | from `identity.kubernetes`; scrim's own API token is the pod's mounted service account | the same, with the pod's API token from a projected volume only the scrim container mounts |
 | `identity.issuer.*` | from `identity.issuer` ([Identity issuer](#identity-issuer)); listener on `0.0.0.0:9795` | not set: the issuer runs in central scrim only |
-| `identity.client-certificates.*`, `proxy.tls-listen`, `proxy.forward-tls-listen` | from `identity.clientCertificates` ([Client certificates](#client-certificates)) | not set |
+| `identity.client-certificates.*`, `proxy.tls-listen`, `proxy.forward-tls-listen`, `tool-proxy.tls-listen` | from `identity.clientCertificates` ([Client certificates](#client-certificates)) | not set |
 | `network.upstream-proxy.*` | from `upstreamProxy` ([Upstream proxy](#upstream-proxy)) | the same, the password Secret under the same name in the agent namespace |
 | `api.socket`, `admin.url` | `/run/scrim/api.sock`, `unix:/run/scrim/admin.sock` (or TCP with `admin.tcp`) | the same, Unix only |
 | `state.backend`, `events.backend` | `postgres` and `postgres` with `postgres.enabled` (the DSN from the Secret slot `postgres`), else `memory` and `local` | `memory`, `local` |
@@ -574,7 +574,7 @@ For more than one replica, or to avoid the downtime of `Recreate`, use operator-
 
 Agents outside the cluster, or pods holding a SPIFFE SVID, can identify themselves with a client
 certificate instead of a token ([identity.md](identity.md#client-certificates)).
-`identity.clientCertificates.enabled` serves the LLM base URL and the forward proxy again on TLS
+`identity.clientCertificates.enabled` serves the LLM base URL, the forward proxy and the tool proxy again on TLS
 listeners that require a certificate chaining to the CAs in `identity.clientCertificates.ca`:
 
 ```yaml
@@ -590,17 +590,25 @@ identity:
     service: {type: LoadBalancer}
 ```
 
-- The listeners are on `llmPort` (9796) and `forwardPort` (9797, 0 to leave it off) of the
-  Service `<fullname>-mtls`, which carries nothing else, so it can be a LoadBalancer. Put no TLS
-  terminator in front of it: scrim must see the certificate (TLS passthrough only).
+- The listeners are on `llmPort` (9796), `forwardPort` (9797) and `toolProxyPort` (9798) of the
+  Service `<fullname>-mtls`, which carries nothing else, so it can be a LoadBalancer. Set
+  `forwardPort` or `toolProxyPort` to 0 to leave that listener off. Put no TLS terminator in front
+  of the Service: scrim must see the certificate (TLS passthrough only).
 - Their certificate comes from scrim's CA, which agents already trust, for the Service's in-cluster
   names and `serverNames` (the names and addresses agents outside the cluster connect to). To
   present one from your own PKI instead, set `listenerCertificate.existingSecret` to a
   `kubernetes.io/tls` Secret, such as a cert-manager Certificate's; scrim reads it again every
   `refresh`, so a renewal is presented without restarting the pod.
 - The trust anchors and CRLs are ConfigMaps (public data), read again every `refresh`. List each CRL
-  key in `crls.keys`. Without CRLs revocation is not checked; issue certificates that live for
+  key in `crls.keys`. `revocationScope: chain` checks intermediates as well as the client
+  certificate. Without CRLs or OCSP revocation is not checked; issue certificates that live for
   hours.
+- `ocsp.enabled` asks the issuer's OCSP responder about each certificate (`ocsp.responder`
+  overrides the one the certificate names). The requests go from scrim's pod, through
+  `upstreamProxy` when it is set; with `networkPolicy.enabled` the chart allows them with
+  `networkPolicy.ocspEgress` (port 80 anywhere by default; narrow it, or empty it when the proxy
+  carries them). `ocsp.unreachable: soft-fail` accepts a certificate when no responder answers;
+  the default `fail-closed` refuses it.
 - With `edge.enabled`, forwarders may present a certificate instead of the pod's token.
 - `networkPolicy.clientCertificatesFrom` narrows who may connect; empty allows every source, since
   every connection needs a valid certificate.

@@ -118,8 +118,8 @@ to set those labels.
 
 The system SHALL check client certificates against configured CRL files, read again periodically,
 and SHALL refuse a certificate whose issuer has no current CRL among them, or whose issuer's CRL is
-past its next update, once any CRL is configured. With no CRL configured it SHALL check no
-revocation, for short-lived certificates. It SHALL NOT query OCSP responders.
+past its next update, once any CRL is configured, unless OCSP checking answers for it. With no CRL
+and no OCSP checking configured it SHALL check no revocation, for short-lived certificates.
 
 #### Scenario: Revoked certificate
 

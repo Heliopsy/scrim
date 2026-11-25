@@ -1035,6 +1035,48 @@
               },
               "additionalProperties": false
             },
+            "revocationScope": {
+              "type": "string",
+              "description": "Which certificates of a client's chain are checked for revocation, by CRL and OCSP (identity.client-certificates.revocation-scope): `end-entity` (the client certificate only) or `chain` (every certificate below the trust anchor, so a revoked intermediate CA refuses what it issued).",
+              "enum": [
+                "end-entity",
+                "chain"
+              ]
+            },
+            "ocsp": {
+              "type": "object",
+              "description": "OCSP (identity.client-certificates.ocsp.*): scrim asks the issuer's responder whether each client certificate is revoked before it serves the connection, and keeps each answer until its next update. Requests go from scrim's pod, through upstreamProxy when set; allow them in networkPolicy.ocspEgress.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Check client certificates with OCSP."
+                },
+                "responder": {
+                  "type": "string",
+                  "description": "Responder URL used for every certificate instead of the one the certificate names in its authority information access extension. Empty: the certificate's own.",
+                  "pattern": "^(https?://[^/?#@]+([/?#].*)?)?$"
+                },
+                "unreachable": {
+                  "type": "string",
+                  "description": "When no valid answer can be had (responder down, error, bad signature): `fail-closed` refuses the certificate, `soft-fail` accepts it as if OCSP were off. A revoked or unknown answer always refuses.",
+                  "enum": [
+                    "fail-closed",
+                    "soft-fail"
+                  ]
+                },
+                "timeout": {
+                  "type": "string",
+                  "description": "How long one OCSP request may take, at most 10s.",
+                  "pattern": "^([0-9]+(ms|s))+$"
+                },
+                "cacheSize": {
+                  "type": "integer",
+                  "description": "How many OCSP responses scrim keeps.",
+                  "minimum": 1
+                }
+              },
+              "additionalProperties": false
+            },
             "agents": {
               "type": "object",
               "description": "Agents by certificate (identity.client-certificates.agents): agent name to selectors `spiffe:ID`, `cn:NAME`, `dns:NAME`, `uri:URI`, `email:ADDRESS` (globs allowed), `scope:`, `label:K=V`.",
@@ -1070,6 +1112,12 @@
             "forwardPort": {
               "type": "integer",
               "description": "Port of the TLS forward proxy (proxy.forward-tls-listen), on the container and the Service. 0 leaves it off."
+            },
+            "toolProxyPort": {
+              "type": "integer",
+              "description": "Port of the TLS tool proxy (tool-proxy.tls-listen), for tools pointed at the tool proxy directly, on the container and the Service. 0 leaves it off.",
+              "minimum": 0,
+              "maximum": 65535
             },
             "service": {
               "type": "object",
@@ -2154,6 +2202,13 @@
         "clientCertificatesFrom": {
           "type": "array",
           "description": "Peers allowed to the TLS listeners with identity.clientCertificates.enabled (NetworkPolicy `from` entries). Empty allows every source: each connection must present a client certificate that chains to identity.clientCertificates.ca."
+        },
+        "ocspEgress": {
+          "type": "array",
+          "description": "Egress of central scrim to OCSP responders, added with identity.clientCertificates.ocsp.enabled. Responders mostly serve plain HTTP. Narrow it with `to` where you can; empty it when upstreamProxy carries the requests.",
+          "items": {
+            "type": "object"
+          }
         },
         "labels": {
           "type": "object",

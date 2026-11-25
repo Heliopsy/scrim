@@ -47,14 +47,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	DataPlane_Hello_FullMethodName         = "/scrim.dataplane.v1.DataPlane/Hello"
-	DataPlane_ApplySnapshot_FullMethodName = "/scrim.dataplane.v1.DataPlane/ApplySnapshot"
-	DataPlane_Events_FullMethodName        = "/scrim.dataplane.v1.DataPlane/Events"
-	DataPlane_Asks_FullMethodName          = "/scrim.dataplane.v1.DataPlane/Asks"
-	DataPlane_Status_FullMethodName        = "/scrim.dataplane.v1.DataPlane/Status"
-	DataPlane_Captures_FullMethodName      = "/scrim.dataplane.v1.DataPlane/Captures"
-	DataPlane_Metrics_FullMethodName       = "/scrim.dataplane.v1.DataPlane/Metrics"
-	DataPlane_Redact_FullMethodName        = "/scrim.dataplane.v1.DataPlane/Redact"
+	DataPlane_Hello_FullMethodName             = "/scrim.dataplane.v1.DataPlane/Hello"
+	DataPlane_ApplySnapshot_FullMethodName     = "/scrim.dataplane.v1.DataPlane/ApplySnapshot"
+	DataPlane_Events_FullMethodName            = "/scrim.dataplane.v1.DataPlane/Events"
+	DataPlane_Asks_FullMethodName              = "/scrim.dataplane.v1.DataPlane/Asks"
+	DataPlane_Status_FullMethodName            = "/scrim.dataplane.v1.DataPlane/Status"
+	DataPlane_Captures_FullMethodName          = "/scrim.dataplane.v1.DataPlane/Captures"
+	DataPlane_Metrics_FullMethodName           = "/scrim.dataplane.v1.DataPlane/Metrics"
+	DataPlane_Redact_FullMethodName            = "/scrim.dataplane.v1.DataPlane/Redact"
+	DataPlane_CertificateChecks_FullMethodName = "/scrim.dataplane.v1.DataPlane/CertificateChecks"
 )
 
 // DataPlaneClient is the client API for DataPlane service.
@@ -100,6 +101,17 @@ type DataPlaneClient interface {
 	// back. A data plane older than this call answers UNIMPLEMENTED, which the
 	// control plane reports as redaction unavailable.
 	Redact(ctx context.Context, in *RedactRequest, opts ...grpc.CallOption) (*RedactResponse, error)
+	// CertificateChecks carries the control plane's revocation check of client
+	// certificates while OCSP is on (ClientCertificateTrust.ocsp). The control
+	// plane opens the call once; for every connection a TLS listener accepted,
+	// the data plane sends the verified chain in a CertificateCheckRequest and
+	// serves the connection only after a CertificateCheckResult that accepts
+	// it. No answer by the deadline, a refusal, or no attached control plane
+	// closes the connection. While ocsp is off the call carries nothing. A data
+	// plane older than this call answers UNIMPLEMENTED and ignores ocsp, so its
+	// handshakes check CRLs only; the control plane logs that as an error and
+	// still applies OCSP to every ask and edge request it verifies.
+	CertificateChecks(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CertificateCheckResult, CertificateCheckRequest], error)
 }
 
 type dataPlaneClient struct {
@@ -205,6 +217,19 @@ func (c *dataPlaneClient) Redact(ctx context.Context, in *RedactRequest, opts ..
 	return out, nil
 }
 
+func (c *dataPlaneClient) CertificateChecks(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CertificateCheckResult, CertificateCheckRequest], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &DataPlane_ServiceDesc.Streams[3], DataPlane_CertificateChecks_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[CertificateCheckResult, CertificateCheckRequest]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DataPlane_CertificateChecksClient = grpc.BidiStreamingClient[CertificateCheckResult, CertificateCheckRequest]
+
 // DataPlaneServer is the server API for DataPlane service.
 // All implementations must embed UnimplementedDataPlaneServer
 // for forward compatibility.
@@ -248,6 +273,17 @@ type DataPlaneServer interface {
 	// back. A data plane older than this call answers UNIMPLEMENTED, which the
 	// control plane reports as redaction unavailable.
 	Redact(context.Context, *RedactRequest) (*RedactResponse, error)
+	// CertificateChecks carries the control plane's revocation check of client
+	// certificates while OCSP is on (ClientCertificateTrust.ocsp). The control
+	// plane opens the call once; for every connection a TLS listener accepted,
+	// the data plane sends the verified chain in a CertificateCheckRequest and
+	// serves the connection only after a CertificateCheckResult that accepts
+	// it. No answer by the deadline, a refusal, or no attached control plane
+	// closes the connection. While ocsp is off the call carries nothing. A data
+	// plane older than this call answers UNIMPLEMENTED and ignores ocsp, so its
+	// handshakes check CRLs only; the control plane logs that as an error and
+	// still applies OCSP to every ask and edge request it verifies.
+	CertificateChecks(grpc.BidiStreamingServer[CertificateCheckResult, CertificateCheckRequest]) error
 	mustEmbedUnimplementedDataPlaneServer()
 }
 
@@ -281,6 +317,9 @@ func (UnimplementedDataPlaneServer) Metrics(context.Context, *MetricsRequest) (*
 }
 func (UnimplementedDataPlaneServer) Redact(context.Context, *RedactRequest) (*RedactResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Redact not implemented")
+}
+func (UnimplementedDataPlaneServer) CertificateChecks(grpc.BidiStreamingServer[CertificateCheckResult, CertificateCheckRequest]) error {
+	return status.Error(codes.Unimplemented, "method CertificateChecks not implemented")
 }
 func (UnimplementedDataPlaneServer) mustEmbedUnimplementedDataPlaneServer() {}
 func (UnimplementedDataPlaneServer) testEmbeddedByValue()                   {}
@@ -418,6 +457,13 @@ func _DataPlane_Redact_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DataPlane_CertificateChecks_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(DataPlaneServer).CertificateChecks(&grpc.GenericServerStream[CertificateCheckResult, CertificateCheckRequest]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DataPlane_CertificateChecksServer = grpc.BidiStreamingServer[CertificateCheckResult, CertificateCheckRequest]
+
 // DataPlane_ServiceDesc is the grpc.ServiceDesc for DataPlane service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -461,6 +507,12 @@ var DataPlane_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "Captures",
 			Handler:       _DataPlane_Captures_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "CertificateChecks",
+			Handler:       _DataPlane_CertificateChecks_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

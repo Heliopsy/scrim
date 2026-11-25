@@ -331,6 +331,7 @@ fn acceptor(l: &v1::Listener, shared: &Shared, alpn: Vec<Vec<u8>>) -> crate::mtl
         snapshot: std::sync::Arc::clone(&shared.snapshot),
         events: std::sync::Arc::clone(&shared.events),
         proxy: shared.tool_proxy.clone(),
+        checks: std::sync::Arc::clone(&shared.certchecks),
         alpn,
     }
 }

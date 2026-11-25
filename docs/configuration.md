@@ -374,7 +374,13 @@ is out of date.
 | [`identity.client-certificates.enabled`](#identityclient-certificatesenabled) | bool | `false` | restart required |
 | [`identity.client-certificates.listener-cert-file`](#identityclient-certificateslistener-cert-file) | string | `""` | restart required |
 | [`identity.client-certificates.listener-key`](#identityclient-certificateslistener-key) | secret-ref | empty | restart required |
+| [`identity.client-certificates.ocsp.cache-size`](#identityclient-certificatesocspcache-size) | int | `10000` | restart required |
+| [`identity.client-certificates.ocsp.enabled`](#identityclient-certificatesocspenabled) | bool | `false` | restart required |
+| [`identity.client-certificates.ocsp.responder`](#identityclient-certificatesocspresponder) | string | `""` | restart required |
+| [`identity.client-certificates.ocsp.timeout`](#identityclient-certificatesocsptimeout) | duration | `5s` | restart required |
+| [`identity.client-certificates.ocsp.unreachable`](#identityclient-certificatesocspunreachable) | string | `fail-closed` | restart required |
 | [`identity.client-certificates.refresh`](#identityclient-certificatesrefresh) | duration | `1m0s` | restart required |
+| [`identity.client-certificates.revocation-scope`](#identityclient-certificatesrevocation-scope) | string | `end-entity` | restart required |
 | [`identity.client-certificates.server-names`](#identityclient-certificatesserver-names) | list | `["localhost","127.0.0.1","::1"]` | restart required |
 | [`identity.client-certificates.unmapped`](#identityclient-certificatesunmapped) | string | `unknown` | restart required |
 | [`identity.issuer.insecure-http`](#identityissuerinsecure-http) | bool | `false` | restart required |
@@ -1703,7 +1709,7 @@ Trust anchors client certificates must chain to: a PEM bundle of CA certificates
 
 #### `identity.client-certificates.crl-files`
 
-Certificate revocation lists (PEM or DER files) checked for every client certificate. With any set, a certificate whose issuer has no current CRL among them is refused, and so is every certificate of an issuer whose CRL is past its next update. Empty checks no revocation: use short-lived certificates.
+Certificate revocation lists (PEM or DER files) checked for every client certificate. With any set, a certificate whose issuer has no current CRL among them is refused unless OCSP answers for it, and so is every certificate of an issuer whose CRL is past its next update. Empty, without OCSP, checks no revocation: use short-lived certificates.
 
 | | |
 |---|---|
@@ -1749,6 +1755,67 @@ Reference to the PEM private key of identity.client-certificates.listener-cert-f
 | Flag | none |
 | Reload | restart required |
 
+#### `identity.client-certificates.ocsp.cache-size`
+
+How many OCSP responses are kept, each until its next update. When full, expired responses go first, then the ones that expire soonest.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `10000` |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_OCSP_CACHE_SIZE` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.client-certificates.ocsp.enabled`
+
+Ask the issuer's OCSP responder whether each client certificate is revoked before its connection is served. The control plane fetches and verifies the responses, through network.upstream-proxy, and keeps each until its next update. Off: only CRLs are checked.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_OCSP_ENABLED` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.client-certificates.ocsp.responder`
+
+OCSP responder URL used for every certificate instead of the one in its authority information access extension. Empty uses the certificate's own; a certificate without one is checked by CRL only. Responses must still be signed by the issuer or a responder it delegated to.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `""` |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_OCSP_RESPONDER` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.client-certificates.ocsp.timeout`
+
+How long one OCSP request may take. Requests for one chain run in parallel. At most 10s.
+
+| | |
+|---|---|
+| Type | duration (`90s`, `5m`, `1h30m`) |
+| Default | `5s` |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_OCSP_TIMEOUT` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.client-certificates.ocsp.unreachable`
+
+What happens when no valid OCSP answer can be had (responder unreachable, error status, bad signature, stale response): fail-closed refuses the certificate, soft-fail accepts it as if OCSP were off. A revoked or unknown answer always refuses.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `fail-closed` |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_OCSP_UNREACHABLE` |
+| Flag | none |
+| Reload | restart required |
+| Values | `fail-closed`, `soft-fail` |
+
 #### `identity.client-certificates.refresh`
 
 How often the trust anchors and CRL files are read again. A new CRL applies to new connections within this bound.
@@ -1760,6 +1827,19 @@ How often the trust anchors and CRL files are read again. A new CRL applies to n
 | Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_REFRESH` |
 | Flag | none |
 | Reload | restart required |
+
+#### `identity.client-certificates.revocation-scope`
+
+Which certificates of a client's chain are checked for revocation (CRLs and OCSP): end-entity checks the client certificate only, chain checks every certificate below the trust anchor as well, so a revoked intermediate CA refuses the certificates it issued.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `end-entity` |
+| Environment | `SCRIM_IDENTITY_CLIENT_CERTIFICATES_REVOCATION_SCOPE` |
+| Flag | none |
+| Reload | restart required |
+| Values | `end-entity`, `chain` |
 
 #### `identity.client-certificates.server-names`
 

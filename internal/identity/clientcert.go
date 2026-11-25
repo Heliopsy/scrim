@@ -4,6 +4,7 @@ package identity
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
@@ -14,6 +15,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -50,6 +52,7 @@ const (
 	RefusedCertRevoked           RefusalReason = "revoked"
 	RefusedCertRevocationUnknown RefusalReason = "revocation status unknown"
 	RefusedCertCRLExpired        RefusalReason = "crl expired"
+	RefusedCertOCSPUnavailable   RefusalReason = "ocsp unavailable"
 )
 
 // maxChain bounds the chain a caller may present.
@@ -271,7 +274,12 @@ type CertResolver struct {
 	// Unmapped is UnmappedUnknown (the default) or UnmappedDerive, which
 	// names the agent after the SPIFFE ID without its scheme.
 	Unmapped string
-	Now      func() time.Time
+	// Chain checks every certificate below the trust anchor for revocation,
+	// not only the end entity (revocation-scope chain).
+	Chain bool
+	// OCSP, when set, asks OCSP responders as well as the CRLs.
+	OCSP *OCSPChecker
+	Now  func() time.Time
 }
 
 // Resolve verifies a certificate chain, leaf first, DER, and returns the
@@ -294,15 +302,40 @@ func (r *CertResolver) Resolve(chain [][]byte) (Identity, error) {
 // ResolveCertificates is [CertResolver.Resolve] for parsed certificates, as
 // crypto/tls reports them (tls.ConnectionState.PeerCertificates).
 func (r *CertResolver) ResolveCertificates(certs []*x509.Certificate) (Identity, error) {
+	if why := r.verify(context.Background(), certs); why != "" {
+		return Unknown(Peer{}), &RefusedError{Reason: why}
+	}
+	return r.identityOf(certs[0]), nil
+}
+
+// Check verifies a certificate chain, leaf first, DER, as Resolve does
+// (trust anchors, validity, usage, CRLs and OCSP), without mapping it. It
+// returns why it is refused, "" when it is accepted.
+func (r *CertResolver) Check(ctx context.Context, chain [][]byte) RefusalReason {
+	if len(chain) == 0 || len(chain) > maxChain {
+		return RefusedCertMalformed
+	}
+	certs := make([]*x509.Certificate, 0, len(chain))
+	for _, der := range chain {
+		c, err := x509.ParseCertificate(der)
+		if err != nil {
+			return RefusedCertMalformed
+		}
+		certs = append(certs, c)
+	}
+	return r.verify(ctx, certs)
+}
+
+func (r *CertResolver) verify(ctx context.Context, certs []*x509.Certificate) RefusalReason {
 	if r == nil || r.Trust == nil {
-		return Unknown(Peer{}), &RefusedError{Reason: RefusedCertDisabled}
+		return RefusedCertDisabled
 	}
 	if len(certs) == 0 || len(certs) > maxChain {
-		return Unknown(Peer{}), &RefusedError{Reason: RefusedCertMalformed}
+		return RefusedCertMalformed
 	}
 	t := r.Trust()
 	if t == nil || t.Roots == nil {
-		return Unknown(Peer{}), &RefusedError{Reason: RefusedCertUntrusted}
+		return RefusedCertUntrusted
 	}
 	now := time.Now()
 	if r.Now != nil {
@@ -316,12 +349,9 @@ func (r *CertResolver) ResolveCertificates(certs []*x509.Certificate) (Identity,
 	chains, err := leaf.Verify(x509.VerifyOptions{Roots: t.Roots, Intermediates: inter, CurrentTime: now,
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
 	if err != nil {
-		return Unknown(Peer{}), &RefusedError{Reason: verifyReason(err, leaf, now)}
+		return verifyReason(err, leaf, now)
 	}
-	if why := checkRevocation(t, leaf, chains, now); why != "" {
-		return Unknown(Peer{}), &RefusedError{Reason: why}
-	}
-	return r.identityOf(leaf), nil
+	return r.checkRevocation(ctx, t, chains, now)
 }
 
 func verifyReason(err error, leaf *x509.Certificate, now time.Time) RefusalReason {
@@ -341,47 +371,107 @@ func verifyReason(err error, leaf *x509.Certificate, now time.Time) RefusalReaso
 	return RefusedCertUntrusted
 }
 
-// checkRevocation applies the CRLs: with none configured revocation is not
-// checked (short-lived certificates). Otherwise the leaf's issuer must have a
-// CRL it signed, that CRL must be current, and it must not list the leaf.
-// Only the end entity is checked, as the data plane does.
-func checkRevocation(t *CertTrust, leaf *x509.Certificate, chains [][]*x509.Certificate, now time.Time) RefusalReason {
-	if len(t.CRLs) == 0 {
+// checkRevocation applies the CRLs and OCSP. With neither configured
+// revocation is not checked (short-lived certificates). A certificate is
+// accepted when one of the verified chains passes [CertResolver.checkChain];
+// otherwise the first chain's reason is returned.
+func (r *CertResolver) checkRevocation(ctx context.Context, t *CertTrust, chains [][]*x509.Certificate, now time.Time) RefusalReason {
+	if len(t.CRLs) == 0 && r.OCSP == nil {
 		return ""
 	}
-	var issuers []*x509.Certificate
+	var first RefusalReason
 	for _, ch := range chains {
-		if len(ch) > 1 {
-			issuers = append(issuers, ch[1])
+		why := r.checkChain(ctx, t, ch, now)
+		if why == "" {
+			return ""
+		}
+		if first == "" {
+			first = why
 		}
 	}
-	var crl *x509.RevocationList
-	for _, l := range t.CRLs {
-		if !bytes.Equal(l.RawIssuer, leaf.RawIssuer) {
-			continue
-		}
-		for _, is := range issuers {
-			if l.CheckSignatureFrom(is) == nil {
-				crl = l
-				break
-			}
-		}
-		if crl != nil {
-			break
-		}
+	return first
+}
+
+// checkChain checks the end entity of a verified chain, or with Chain every
+// certificate below the trust anchor, each against its issuer:
+//
+//   - a CRL its issuer signed that is past its next update refuses (crl
+//     expired), and one that lists it refuses (revoked);
+//   - with OCSP on and a responder for it, a revoked answer refuses, an
+//     unknown one refuses unless a current CRL covers it, and no valid
+//     answer refuses (ocsp unavailable) unless a current CRL covers it or
+//     soft-fail is set;
+//   - a certificate neither a current CRL nor an OCSP answer covers is
+//     refused (revocation status unknown).
+//
+// OCSP requests for the chain run in parallel. Revoked wins over every
+// other reason.
+func (r *CertResolver) checkChain(ctx context.Context, t *CertTrust, ch []*x509.Certificate, now time.Time) RefusalReason {
+	n := 1
+	if r.Chain {
+		n = len(ch) - 1
 	}
-	if crl == nil {
+	if len(ch) < 2 {
 		return RefusedCertRevocationUnknown
 	}
-	if !crl.NextUpdate.IsZero() && now.After(crl.NextUpdate) {
-		return RefusedCertCRLExpired
+	n = min(n, len(ch)-1)
+	byCRL := make([]bool, n)
+	for i := range n {
+		crl := issuerCRL(t, ch[i], ch[i+1])
+		if crl == nil {
+			continue
+		}
+		if !crl.NextUpdate.IsZero() && now.After(crl.NextUpdate) {
+			return RefusedCertCRLExpired
+		}
+		for _, e := range crl.RevokedCertificateEntries {
+			if e.SerialNumber != nil && e.SerialNumber.Cmp(ch[i].SerialNumber) == 0 {
+				return RefusedCertRevoked
+			}
+		}
+		byCRL[i] = true
 	}
-	for _, e := range crl.RevokedCertificateEntries {
-		if e.SerialNumber != nil && e.SerialNumber.Cmp(leaf.SerialNumber) == 0 {
+	answers := make([]OCSPStatus, n)
+	asked := make([]bool, n)
+	if r.OCSP != nil {
+		var wg sync.WaitGroup
+		for i := range n {
+			if r.OCSP.ResponderFor(ch[i]) == "" {
+				continue
+			}
+			asked[i] = true
+			wg.Go(func() { answers[i] = r.OCSP.Check(ctx, ch[i], ch[i+1]) })
+		}
+		wg.Wait()
+	}
+	var why RefusalReason
+	for i := range n {
+		switch {
+		case asked[i] && answers[i] == OCSPRevoked:
 			return RefusedCertRevoked
+		case byCRL[i], asked[i] && answers[i] == OCSPGood:
+		case asked[i] && answers[i] == OCSPUnavailable:
+			if !r.OCSP.SoftFail && why == "" {
+				why = RefusedCertOCSPUnavailable
+			}
+		default:
+			if why == "" {
+				why = RefusedCertRevocationUnknown
+			}
 		}
 	}
-	return ""
+	return why
+}
+
+// issuerCRL is the CRL of c's issuer: one for c's issuer name that issuer
+// signed, nil when there is none.
+func issuerCRL(t *CertTrust, c, issuer *x509.Certificate) *x509.RevocationList {
+	for _, l := range t.CRLs {
+		if bytes.Equal(l.RawIssuer, c.RawIssuer) && l.CheckSignatureFrom(issuer) == nil {
+			return l
+		}
+	}
+	return nil
 }
 
 func (r *CertResolver) identityOf(leaf *x509.Certificate) Identity {

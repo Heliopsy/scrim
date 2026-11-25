@@ -317,6 +317,28 @@ impl DataPlane for Service {
         let out = tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok);
         Ok(Response::new(Box::pin(out)))
     }
+
+    type CertificateChecksStream = BoxStream<v1::CertificateCheckRequest>;
+
+    async fn certificate_checks(
+        &self,
+        req: Request<Streaming<v1::CertificateCheckResult>>,
+    ) -> Result<Response<Self::CertificateChecksStream>, Status> {
+        let mut results = req.into_inner();
+        let rx =
+            self.shared.certchecks.attach().ok_or_else(|| {
+                Status::failed_precondition("certificate checks already attached")
+            })?;
+        let shared = Arc::clone(&self.shared);
+        tokio::spawn(async move {
+            while let Some(Ok(r)) = results.next().await {
+                shared.certchecks.result(r);
+            }
+            shared.certchecks.detach();
+        });
+        let out = tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok);
+        Ok(Response::new(Box::pin(out)))
+    }
 }
 
 /// Redacts `text` with the bundle's redactor, then checks the result with its guard, exactly as a

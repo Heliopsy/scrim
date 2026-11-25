@@ -44,6 +44,8 @@ spec:
         protocol: TCP
       - port: 9797
         protocol: TCP
+      - port: 9798
+        protocol: TCP
     - from:
       - podSelector:
           matchLabels:
@@ -72,6 +74,9 @@ spec:
       - port: 443
         protocol: TCP
       - port: 6443
+        protocol: TCP
+    - ports:
+      - port: 80
         protocol: TCP
     - ports:
       - port: 443
@@ -423,6 +428,7 @@ data:
       ca:
         cert-file: /etc/scrim/ca/tls.crt
         key: file:/etc/scrim/ca/tls.key
+      tls-listen: 0.0.0.0:9798
     proxy:
       listen: 0.0.0.0:9790
       forward-listen: 0.0.0.0:9791
@@ -441,6 +447,12 @@ data:
         ca: file:/etc/scrim/client-ca/ca.crt
         crl-files:
           - /etc/scrim/client-crl/issuing.crl
+        revocation-scope: chain
+        ocsp:
+          enabled: true
+          unreachable: soft-fail
+          timeout: 5s
+          cache-size: 10000
         unmapped: unknown
         refresh: 1m
         listener-cert-file: /etc/scrim/listener/tls.crt
@@ -547,6 +559,10 @@ spec:
       port: 9797
       protocol: TCP
       targetPort: mtls-forward
+    - name: mtls-tool
+      port: 9798
+      protocol: TCP
+      targetPort: mtls-tool
 ---
 # Source: scrim/templates/deployment.yaml
 apiVersion: v1
@@ -619,7 +635,7 @@ spec:
         app.kubernetes.io/name: scrim-proxy
         app.kubernetes.io/component: proxy
       annotations:
-        checksum/config: 624cc5269209516caa1c28d216dd2dafd91bb438d71d47f747d1552d4966ea6b
+        checksum/config: 04b9fdd16cdaa5c08f8e72ae8ca40545d5101fbaff6f8ce6d03b1dab0a1a06aa
     spec:
       serviceAccountName: scrim-proxy
       automountServiceAccountToken: true
@@ -668,6 +684,9 @@ spec:
             protocol: TCP
           - containerPort: 9797
             name: mtls-forward
+            protocol: TCP
+          - containerPort: 9798
+            name: mtls-tool
             protocol: TCP
           readinessProbe:
             failureThreshold: 2

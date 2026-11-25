@@ -147,12 +147,12 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   gets that session's narrower redaction. It applies only to agents with a static credential in
   `identity.store-credentials`: Kubernetes passthrough agents and agents that log in by token
   exchange are never narrowed (they keep the whole redaction set). [identity.md](identity.md#redaction-identity)
-- **Client certificates are checked against CRL files only.** OCSP is not supported, and only the
-  end entity certificate is checked against CRLs. Without a CRL, a stolen client certificate and
-  key work until the certificate expires; use short-lived certificates
-  ([identity.md](identity.md#revocation)). The Helm chart serves the TLS base URL and forward proxy
-  in central scrim only, not the TLS tool proxy listener
-  ([kubernetes.md](kubernetes.md#client-certificates)).
+- **OCSP for client certificates is checked by the control plane, not stapled.** With
+  `identity.client-certificates.ocsp.enabled`, the first connection of each certificate waits for
+  its responder, the responder learns which certificates connect, and with the default `fail-closed`
+  a responder outage refuses every certificate no current CRL covers. Without CRLs or OCSP, a stolen
+  client certificate and key work until the certificate expires; use short-lived certificates
+  ([identity.md](identity.md#revocation)).
 - **Per-agent store identity is not available for every store.** Only `openbao`, `vault`, `awssm`,
   `ssm`, `gcpsm`, `azkv` and `infisical` take per-agent credentials; a store configured for one
   that does not refuses every use. Infisical cannot check writes per agent, and Bitwarden Secrets

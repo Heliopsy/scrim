@@ -8,11 +8,13 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/heliopsy/scrim/internal/agentapi"
+	"github.com/heliopsy/scrim/internal/dataplane"
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
 	"github.com/heliopsy/scrim/internal/identity"
 )
@@ -150,5 +152,18 @@ func (d *Daemon) watchCertTrust(ctx context.Context, every time.Duration) {
 			d.log.Info("listener certificate changed", "subject", c.Leaf.Subject.String(), "not_after", c.Leaf.NotAfter)
 			d.pusher.Trigger()
 		}
+	}
+}
+
+// certificateCheck answers the data plane's certificate checks while OCSP
+// is on: the chain is verified again and checked against the CRLs and OCSP,
+// as for an ask.
+func certificateCheck(r *identity.CertResolver, log *slog.Logger) dataplane.CertificateCheckFunc {
+	return func(ctx context.Context, chain [][]byte) string {
+		why := r.Check(ctx, chain)
+		if why != "" {
+			log.Debug("client certificate refused by the revocation check", "reason", string(why))
+		}
+		return string(why)
 	}
 }

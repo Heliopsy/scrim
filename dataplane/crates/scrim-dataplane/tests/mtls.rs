@@ -3,7 +3,9 @@
 //! TLS listeners that identify agents by client certificate: a valid certificate is served and
 //! its chain reaches the control plane in every ask; untrusted, expired, revoked, stale-CRL and
 //! missing certificates are refused in the handshake and reported; new trust applies without
-//! rebinding; an operator's listener certificate replaces the one scrim's CA issues.
+//! rebinding; an operator's listener certificate replaces the one scrim's CA issues; with OCSP on,
+//! every accepted chain waits for the control plane's check; with `revocation_chain`, a revoked
+//! intermediate refuses the certificates it issued.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 
@@ -148,6 +150,8 @@ fn snapshot(version: u64, anchors: &[&Issuer], crls: Vec<Vec<u8>>) -> v1::Snapsh
             server_names: vec!["localhost".into()],
             listener_chain_pem: String::new(),
             listener_key_pem: Vec::new(),
+            revocation_chain: false,
+            ocsp: false,
         }),
         policy: Some(v1::Policy {
             version: 1,
@@ -221,6 +225,15 @@ impl Plane {
 }
 
 fn tls_config(ca_pem: &str, cert: Option<&Client>) -> Arc<rustls::ClientConfig> {
+    tls_config_chain(ca_pem, cert, &[])
+}
+
+/// Like [`tls_config`], presenting `intermediates` after the client certificate.
+fn tls_config_chain(
+    ca_pem: &str,
+    cert: Option<&Client>,
+    intermediates: &[CertificateDer<'static>],
+) -> Arc<rustls::ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
     for c in CertificateDer::pem_slice_iter(ca_pem.as_bytes()) {
         roots.add(c.unwrap()).unwrap();
@@ -234,7 +247,9 @@ fn tls_config(ca_pem: &str, cert: Option<&Client>) -> Arc<rustls::ClientConfig> 
     let mut cfg = match cert {
         Some(c) => b
             .with_client_auth_cert(
-                vec![c.der.clone()],
+                std::iter::once(c.der.clone())
+                    .chain(intermediates.iter().cloned())
+                    .collect(),
                 PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(c.key.serialize_der())),
             )
             .unwrap(),
@@ -601,4 +616,127 @@ fn leaf_cn(der: &CertificateDer<'_>) -> String {
         .as_str()
         .unwrap()
         .to_owned()
+}
+
+/// Answers every certificate check: accepts the chains whose leaf is in `accept`, refuses the
+/// others as revoked, and returns the chains it saw.
+fn answer_checks(
+    shared: &Arc<Shared>,
+    accept: Vec<Vec<u8>>,
+) -> tokio::sync::mpsc::UnboundedReceiver<v1::CertificateCheckRequest> {
+    let mut rx = shared.certchecks.attach().unwrap();
+    let (tx, out) = tokio::sync::mpsc::unbounded_channel();
+    let shared = Arc::clone(shared);
+    tokio::spawn(async move {
+        while let Some(r) = rx.recv().await {
+            let ok = r.chain.first().is_some_and(|l| accept.contains(l));
+            shared.certchecks.result(v1::CertificateCheckResult {
+                protocol: v1::PROTOCOL,
+                id: r.id,
+                accepted: ok,
+                reason: if ok { String::new() } else { "revoked".into() },
+            });
+            let _ = tx.send(r);
+        }
+    });
+    out
+}
+
+async fn served(addr: &str, ca_pem: &str, cert: &Client) -> Option<u16> {
+    match tls(addr, "localhost", tls_config(ca_pem, Some(cert)), None).await {
+        Ok(c) => post(c, "/anthropic/v1/messages").await,
+        Err(_) => None,
+    }
+}
+
+#[tokio::test]
+async fn ocsp_checks_every_connection_with_the_control_plane() {
+    let issuer = ca("agents CA");
+    let other = ca("second agents CA");
+    let good = valid(&issuer, "builder", 40);
+    let bad = valid(&issuer, "revoked-by-ocsp", 41);
+    let listed = valid(&other, "listed", 42);
+    let no_crl = valid(&issuer, "no-crl", 43);
+    // Only the second CA has a CRL: without OCSP the first CA's certificates would be
+    // "revocation status unknown" in the handshake.
+    let mut snap = snapshot(1, &[&issuer, &other], vec![crl(&other, &[42], (2090, 1))]);
+    snap.client_certificates.as_mut().unwrap().ocsp = true;
+    let mut plane = Plane::start(snap).await;
+    let _asks = deny_asks(&plane.shared);
+    let ca_pem = plane.ca_pem();
+    let addr = plane.addr("llm-tls");
+
+    // No control plane attached: nothing is served.
+    assert_eq!(served(&addr, &ca_pem, &good).await, None);
+    assert_eq!(plane.refusal().await.reason, "ocsp unavailable");
+
+    let mut checks = answer_checks(&plane.shared, vec![good.der.to_vec()]);
+    assert_eq!(
+        served(&addr, &ca_pem, &good).await,
+        Some(403),
+        "accepted, then asked"
+    );
+    let r = checks.recv().await.unwrap();
+    assert_eq!(r.chain, vec![good.der.to_vec()]);
+    assert_eq!(r.listener, "llm-tls");
+
+    assert_eq!(served(&addr, &ca_pem, &bad).await, None);
+    let e = plane.refusal().await;
+    assert_eq!(e.reason, "revoked");
+    assert_eq!(
+        e.attrs.get("cert_cn").map(String::as_str),
+        Some("revoked-by-ocsp")
+    );
+    assert_eq!(checks.recv().await.unwrap().chain, vec![bad.der.to_vec()]);
+
+    assert_eq!(served(&addr, &ca_pem, &no_crl).await, None);
+    assert_eq!(plane.refusal().await.reason, "revoked");
+    assert_eq!(
+        checks.recv().await.unwrap().chain,
+        vec![no_crl.der.to_vec()]
+    );
+
+    // A CRL that lists a certificate still refuses it in the handshake, without a check.
+    assert_eq!(served(&addr, &ca_pem, &listed).await, None);
+    assert_eq!(plane.refusal().await.reason, "revoked");
+    assert!(
+        checks.try_recv().is_err(),
+        "a handshake refusal was sent for checking"
+    );
+}
+
+#[tokio::test]
+async fn chain_scope_checks_intermediates_against_crls() {
+    let root = ca("agents root");
+    let mut p = CertificateParams::default();
+    p.distinguished_name
+        .push(DnType::CommonName, "agents intermediate");
+    p.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    p.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    p.serial_number = Some(SerialNumber::from(77u64));
+    let inter = CertifiedIssuer::signed_by(p, KeyPair::generate().unwrap(), &root).unwrap();
+    let leaf = valid(&inter, "builder", 50);
+    let chain = [inter.der().clone()];
+    let crls = || vec![crl(&root, &[77], (2090, 1)), crl(&inter, &[], (2090, 1))];
+    let connect = |plane: &Plane| {
+        let addr = plane.addr("llm-tls");
+        let cfg = tls_config_chain(&plane.ca_pem(), Some(&leaf), &chain);
+        async move {
+            match tls(&addr, "localhost", cfg, None).await {
+                Ok(c) => post(c, "/anthropic/v1/messages").await,
+                Err(_) => None,
+            }
+        }
+    };
+
+    // End entity only: the root's CRL revoking the intermediate is not consulted.
+    let plane = Plane::start(snapshot(1, &[&root], crls())).await;
+    let _asks = deny_asks(&plane.shared);
+    assert_eq!(connect(&plane).await, Some(403));
+
+    let mut snap = snapshot(1, &[&root], crls());
+    snap.client_certificates.as_mut().unwrap().revocation_chain = true;
+    let mut plane = Plane::start(snap).await;
+    assert_eq!(connect(&plane).await, None);
+    assert_eq!(plane.refusal().await.reason, "revoked");
 }

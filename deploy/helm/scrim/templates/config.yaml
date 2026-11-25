@@ -18,7 +18,7 @@ data:
     apiVersion: scrim.dev/v1
     kind: Config
     profile: k8s
-    {{- include "scrim.commonSettings" . | nindent 4 }}
+    {{- include "scrim.commonSettings" (dict "root" . "central" true) | nindent 4 }}
     proxy:
       listen: 0.0.0.0:9790
       forward-listen: 0.0.0.0:9791
