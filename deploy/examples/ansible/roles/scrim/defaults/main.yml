@@ -6,7 +6,7 @@ scrim_purge: false
 
 # The release to install. Rolling back is setting this to the previous
 # version and running the play again.
-scrim_version: 1.1.0 # x-release-please-version
+scrim_version: 1.2.0 # x-release-please-version
 scrim_release_url: "https://github.com/Heliopsy/scrim/releases/download/v{{ scrim_version }}"
 scrim_bin: /usr/local/bin/scrim
 
