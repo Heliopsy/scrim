@@ -505,6 +505,7 @@ veil's per-tool policy.
 | [docs/kubernetes.md](docs/kubernetes.md) | The Helm chart, injection, identity and scaling |
 | [docs/leak-assurance.md](docs/leak-assurance.md) | The leak suite, the bypass matrix, the end-to-end matrix and published results |
 | [docs/limitations.md](docs/limitations.md) | What scrim does not protect against |
+| [ROADMAP.md](ROADMAP.md) | Decided work not yet scheduled: OCR, remote attachments, Windows parity, notarised macOS, live store checks |
 | [docs/performance.md](docs/performance.md) | The latency gate, its budgets, the regression check and how to reproduce the numbers |
 
 The behaviour contract is one OpenSpec spec per capability in [`openspec/specs`](openspec/specs/).
