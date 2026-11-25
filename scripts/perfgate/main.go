@@ -68,7 +68,14 @@ type Config struct {
 	Calibrate   bool               `json:"calibrate"`
 	Stats       []string           `json:"stats"`
 	Match       []string           `json:"match"`
+	// Enforce fails the run on a regression. False reports regressions
+	// without failing, for a runner whose run-to-run spread is wider than
+	// any threshold that would still catch one. Absent means true.
+	Enforce *bool `json:"enforce"`
 }
+
+// Enforced reports whether a regression fails the run.
+func (c Config) Enforced() bool { return c.Enforce == nil || *c.Enforce }
 
 // Verdict of one comparison.
 type Verdict string
@@ -292,6 +299,10 @@ func Markdown(w io.Writer, cur, base Results, cfg Config, c Comparison) {
 		printf("REGRESSION: %s %s %s %s -> %s %s (%+.1f %%, allowed %.1f %%)\n",
 			r.ID, r.Stat, num(r.Base), r.Unit, num(r.Cur), r.Unit, r.Change*100, r.Allowed*100)
 	}
+	if !cfg.Enforced() {
+		printf("\nReport only: regression.enforce is false in the budget file, so these do not fail the run. " +
+			"The latency gate's absolute budgets still do.\n")
+	}
 }
 
 func load(path string, v any) error {
@@ -379,6 +390,10 @@ func finish(cur, base Results, cfg Config, report string, strict bool, stdout, s
 	case len(c.Regressions()) > 0:
 		for _, r := range c.Regressions() {
 			_, _ = fmt.Fprintf(stderr, "perfgate: %s %s regressed %+.1f %% (allowed %.1f %%)\n", r.ID, r.Stat, r.Change*100, r.Allowed*100)
+		}
+		if !cfg.Enforced() {
+			_, _ = fmt.Fprintln(stderr, "perfgate: report only (regression.enforce is false)")
+			return 0
 		}
 		return 1
 	}

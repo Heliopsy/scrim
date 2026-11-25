@@ -41,7 +41,8 @@
 #       Compares CURRENT_JSON (latency-gate.json) with the baseline in
 #       BASELINE_DIR using scripts/perfgate and the "regression" settings of
 #       dataplane/crates/scrim-llm/benches/budget.json; writes the report to
-#       OUT_MD and fails on a regression. Without a baseline the report says
+#       OUT_MD and fails on a regression unless regression.enforce is false.
+#       Without a baseline the report says
 #       why nothing was compared.
 #
 #   assemble RESULTS_DIR RELEASE_DIR
@@ -276,8 +277,9 @@ EOF
   echo "The latency gate with the production engine; the release fails when a gated"
   echo "value misses its budget (\`scrim_${SCRIM_VERSION}_results_latency-gate.md\`, every"
   echo "measurement and its rounds in \`scrim_${SCRIM_VERSION}_results_latency-gate.json\`),"
-  echo "or when one regressed against the previous release beyond the noise-aware threshold"
-  echo "(\`scrim_${SCRIM_VERSION}_results_latency-regression.md\`). Criterion's redaction"
+  echo "and reports the comparison with the previous release"
+  echo "(\`scrim_${SCRIM_VERSION}_results_latency-regression.md\`), which fails it only when"
+  echo "the budget file's regression.enforce is on. Criterion's redaction"
   echo "throughput per secret set and body size is in"
   echo "\`scrim_${SCRIM_VERSION}_results_redact-bench.txt\`. docs/performance.md says how to"
   echo "read and reproduce them."
@@ -305,7 +307,11 @@ cmd_assemble() {
     || die "the pass-through control did not leak"
   jq -e '.schema == 1 and .pass == true and .method.quick == false' "$res/latency-gate.json" >/dev/null \
     || die "the latency gate did not pass, or ran in quick mode"
-  ! grep -q '^REGRESSION:' "$res/latency-regression.md" || die "the latency regression check failed"
+  # A regression fails the release only while the budget file enforces the check; report
+  # only, it stays in the results for the reader.
+  if jq -e '.regression.enforce != false' "$ROOT/dataplane/crates/scrim-llm/benches/budget.json" >/dev/null; then
+    ! grep -q '^REGRESSION:' "$res/latency-regression.md" || die "the latency regression check failed"
+  fi
 
   shopt -s nullglob
   local cells=("$res"/matrix/*/*.json) fuzz=("$res"/fuzz/*.json)

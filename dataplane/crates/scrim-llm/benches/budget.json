@@ -51,7 +51,7 @@
     }
   },
   "regression": {
-    "comment": "The regression check against the previous release (scripts/perfgate). Each gated statistic is compared as the median of its rounds. It regresses when worse than the baseline by more than threshold + noise_factor x the larger relative spread (median absolute deviation) of the two runs' rounds, capped at max_allowed, and by more than the unit's floor. With calibrate, each round's value is taken relative to the time of a fixed workload (SHA-256 over 256 KiB) measured just before it, so a run on a slower clock is not a regression. Only runs on the same reference conditions (the match fields) are compared.",
+    "comment": "The regression check against the previous release (scripts/perfgate). Each gated statistic is compared as the median of its rounds. It regresses when worse than the baseline by more than threshold + noise_factor x the larger relative spread (median absolute deviation) of the two runs' rounds, capped at max_allowed, and by more than the unit's floor. With calibrate, each round's value is taken relative to the time of a fixed workload (SHA-256 over 256 KiB) measured just before it, so a run on a slower clock is not a regression. Only runs on the same reference conditions (the match fields) are compared. enforce false (report only, set 2026-11-25): on the shared ho-z10 runner set, 14 runs of the same code on the same CPU spread 2.5 to 4 times per measurement (passthrough 1 MB p50 0.75 to 2.0 ms, protect p99 and redaction throughput alike), with or without calibration; a single baseline run then fails PRs and releases at random beyond any threshold that still catches a regression. The absolute budgets above remain the hard gate. Set enforce to true once the gate runs on a dedicated runner whose runs agree within the threshold.",
     "threshold": 0.15,
     "noise_factor": 3.0,
     "max_allowed": 0.5,
@@ -72,6 +72,7 @@
       "machine.arch",
       "method.quick"
     ],
-    "calibrate": true
+    "calibrate": true,
+    "enforce": false
   }
 }
