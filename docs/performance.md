@@ -68,6 +68,12 @@ The budgets are configuration, in `dataplane/crates/scrim-llm/benches/budget.jso
 when a gated p99 is above its budget or a gated throughput is below its minimum. A measurement with
 no budget is reported and recorded, never gated.
 
+A miss is confirmed before it fails: the gate prints it as `MISSED (confirming)` and measures
+everything once more in a fresh process, and fails only when that run misses a budget too. A
+slower build misses in both runs; a shared runner that was busy for a few minutes rarely does.
+Both reports stay in the output, and the confirm run's JSON lists the first run's misses in
+`first_run_failures`. `SCRIM_PERF_CONFIRM=0` fails on the first miss, for bisecting.
+
 The budgets are written for the reference runner's CPU at a known speed, the `speed` object of
 `budget.json`. The ho-z10 runner set has nodes with two CPU models, and each is listed in
 `speed.cpus` with its own `reference_calibration_us` (its usual calibration time) and
