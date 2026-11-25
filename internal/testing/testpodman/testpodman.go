@@ -49,7 +49,6 @@ func withRunFlags(args []string) []string {
 	if len(args) == 0 || args[0] != "run" {
 		return args
 	}
-	out := make([]string, 0, len(args)+4)
-	out = append(out, "run", "--label", Label+"=1", "--timeout", strconv.Itoa(int(MaxLifetime/time.Second)))
+	out := []string{"run", "--label", Label + "=1", "--timeout", strconv.Itoa(int(MaxLifetime / time.Second))}
 	return append(out, args[1:]...)
 }
