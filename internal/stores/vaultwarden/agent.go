@@ -88,7 +88,7 @@ func (a *Adapter) AgentCan(ctx context.Context, cred stores.AgentCredential, op 
 		// The server no longer takes the cached token: drop it and log in
 		// once more.
 		tok.Wipe()
-		a.forgetAgent(cacheKey)
+		a.agents.Forget(cacheKey)
 		if tok, _, err = a.agentLogin(ctx, &cl, op, ref, cacheKey, clientID, cs); err != nil {
 			return err
 		}
@@ -210,13 +210,6 @@ func (a *Adapter) agentLogin(ctx context.Context, cl *client, op stores.Op, ref 
 	tok = copyValue(s.token)
 	a.agents.Put(key, "", s.token, time.Until(s.expires))
 	return tok, false, nil
-}
-
-// forgetAgent drops a cached agent login the server no longer accepts:
-// the entry is replaced by an empty one that has already expired, which
-// wipes the token.
-func (a *Adapter) forgetAgent(key string) {
-	a.agents.Put(key, "", secret.Value{}, time.Nanosecond)
 }
 
 // agentCheck asks the server, with the agent's token, whether the agent may
