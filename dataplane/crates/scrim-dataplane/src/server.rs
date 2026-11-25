@@ -10,6 +10,7 @@ use std::task::{Context, Poll};
 
 use scrim_proto::v1;
 use scrim_proto::v1::data_plane_server::{DataPlane, DataPlaneServer};
+use scrim_proto::wipe::WipeBodies;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
@@ -68,7 +69,7 @@ where
         hardening,
     };
     let result = tonic::transport::Server::builder()
-        .add_service(DataPlaneServer::new(svc))
+        .add_service(WipeBodies(DataPlaneServer::new(svc)))
         .serve_with_incoming_shutdown(incoming, async {
             let _ = closed_rx.await;
         })
@@ -114,6 +115,19 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for ParentConn<S> {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+    // h2 copies a DATA frame into its write buffer unless the transport takes
+    // vectored writes and the frame is at least 256 bytes; that copy is not
+    // zeroed, so keep the inner stream's vectored writes visible.
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
+    }
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.inner).poll_flush(cx)

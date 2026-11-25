@@ -106,11 +106,13 @@ func (c *client) setup(ctx context.Context) error {
 	if c.s.profile != "" {
 		opts = append(opts, sdkconfig.WithSharedConfigProfile(c.s.profile))
 	}
+	var static sdkaws.CredentialsProvider
 	if c.s.keyIDRef != "" {
 		p, err := c.staticProvider(ctx)
 		if err != nil {
 			return err
 		}
+		static = p
 		opts = append(opts, sdkconfig.WithCredentialsProvider(p))
 	}
 	cfg, err := sdkconfig.LoadDefaultConfig(ctx, opts...)
@@ -121,8 +123,18 @@ func (c *client) setup(ctx context.Context) error {
 		return &apiError{kind: stores.ErrInvalidRef, msg: "no AWS region: set option region, AWS_REGION or a region in the shared config profile"}
 	}
 	provider := cfg.Credentials
+	if static != nil {
+		// LoadDefaultConfig wraps the static keys in a CredentialsCache,
+		// which would keep them as strings for the adapter's lifetime. Use
+		// the provider itself: it copies the keys out of their secret
+		// values for each signature only.
+		provider = static
+	}
 	if c.s.roleARN != "" {
 		stsClient := sts.NewFromConfig(cfg, func(o *sts.Options) {
+			if static != nil {
+				o.Credentials = static
+			}
 			if c.s.stsEndpoint != "" {
 				o.BaseEndpoint = sdkaws.String(c.s.stsEndpoint)
 			}
@@ -166,9 +178,10 @@ func defaultEndpoint(service, region string, fips bool) string {
 	return "https://" + service + "." + region + "." + suffix
 }
 
-// staticProvider resolves the configured access keys once. The SDK takes
-// credentials as Go strings, so each retrieval copies them out of the
-// secret values; the copies live only as long as the SDK's own.
+// staticProvider resolves the configured access keys once. The SDK's
+// signer takes credentials as Go strings, so each retrieval copies the keys
+// out of the secret values for that one signature; nothing keeps the
+// strings afterwards.
 func (c *client) staticProvider(ctx context.Context) (sdkaws.CredentialsProvider, error) {
 	id, err := c.s.resolve(ctx, c.s.keyIDRef)
 	if err != nil {
@@ -194,22 +207,51 @@ func (c *client) staticProvider(ctx context.Context) (sdkaws.CredentialsProvider
 	}), nil
 }
 
-// recorder remembers the last credentials retrieved, so the adapter can
-// hand the secret key and session token to the redaction set.
+// recorder remembers the secret parts of the last credentials retrieved, as
+// secret values, so the adapter can hand the secret key and session token
+// to the redaction set without keeping the SDK's strings alive after the
+// SDK has replaced them.
 type recorder struct {
 	inner sdkaws.CredentialsProvider
 	mu    sync.Mutex
-	last  sdkaws.Credentials
+	// id and expires tell a new set of credentials from the one recorded.
+	id      string
+	expires time.Time
+	secrets []secret.Value
 }
 
 func (r *recorder) Retrieve(ctx context.Context) (sdkaws.Credentials, error) {
 	cr, err := r.inner.Retrieve(ctx)
 	if err == nil {
-		r.mu.Lock()
-		r.last = cr
-		r.mu.Unlock()
+		r.record(cr)
 	}
 	return cr, err
+}
+
+func (r *recorder) record(cr sdkaws.Credentials) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.secrets != nil && cr.AccessKeyID == r.id && cr.Expires.Equal(r.expires) {
+		return
+	}
+	for _, v := range r.secrets {
+		v.Wipe()
+	}
+	r.id, r.expires, r.secrets = cr.AccessKeyID, cr.Expires, []secret.Value{}
+	for _, s := range []string{cr.SecretAccessKey, cr.SessionToken} {
+		if s != "" {
+			r.secrets = append(r.secrets, secret.FromString(s))
+		}
+	}
+}
+
+func (r *recorder) wipe() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, v := range r.secrets {
+		v.Wipe()
+	}
+	r.secrets = nil
 }
 
 // credentials returns copies of the secret parts of the credentials in use.
@@ -223,11 +265,8 @@ func (c *client) credentials() []secret.Value {
 	c.mu.Unlock()
 	if r != nil {
 		r.mu.Lock()
-		if r.last.SecretAccessKey != "" {
-			out = append(out, secret.FromString(r.last.SecretAccessKey))
-		}
-		if r.last.SessionToken != "" {
-			out = append(out, secret.FromString(r.last.SessionToken))
+		for _, v := range r.secrets {
+			_ = v.Expose(func(b []byte) error { out = append(out, secret.New(b)); return nil })
 		}
 		r.mu.Unlock()
 	}
@@ -241,6 +280,9 @@ func (c *client) close() {
 		v.Wipe()
 	}
 	c.static = nil
+	if c.creds != nil {
+		c.creds.wipe()
+	}
 	c.http.CloseIdleConnections()
 }
 

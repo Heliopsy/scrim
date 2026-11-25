@@ -187,7 +187,8 @@ on the restarted plugin; the refresher's full refreshes cover changes made in be
 - scrim copies a value out of its secret store into the request, and the codec zeroes those copies
   in the message once it is marshalled, and the marshalled bytes when gRPC releases them. A value
   received in a `ReadResponse` is copied into scrim's secret type and the message is zeroed. gRPC's
-  own transport buffers are out of reach; the same limitation applies to the data plane boundary.
+  own transport buffers on a plugin connection are out of reach (the data plane boundary zeroes
+  them, see [limitations.md](limitations.md#implementation)).
 - The Go SDK zeroes credentials when `Configure` returns, written values when `Write` returns, and
   read values once they are sent. Copy what you need to keep.
 - scrim adds a store plugin's credentials to the redaction set, so an agent that finds one cannot

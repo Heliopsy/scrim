@@ -1628,7 +1628,7 @@ pub mod data_plane_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic_prost::ProstCodec::default();
+            let codec = crate::wipe::WipingCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/scrim.dataplane.v1.DataPlane/Hello",
             );
@@ -1655,7 +1655,7 @@ pub mod data_plane_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic_prost::ProstCodec::default();
+            let codec = crate::wipe::WipingCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/scrim.dataplane.v1.DataPlane/ApplySnapshot",
             );
@@ -1683,7 +1683,7 @@ pub mod data_plane_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic_prost::ProstCodec::default();
+            let codec = crate::wipe::WipingCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/scrim.dataplane.v1.DataPlane/Events",
             );
@@ -1711,7 +1711,7 @@ pub mod data_plane_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic_prost::ProstCodec::default();
+            let codec = crate::wipe::WipingCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/scrim.dataplane.v1.DataPlane/Asks",
             );
@@ -1733,7 +1733,7 @@ pub mod data_plane_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic_prost::ProstCodec::default();
+            let codec = crate::wipe::WipingCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/scrim.dataplane.v1.DataPlane/Status",
             );
@@ -1763,7 +1763,7 @@ pub mod data_plane_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic_prost::ProstCodec::default();
+            let codec = crate::wipe::WipingCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/scrim.dataplane.v1.DataPlane/Captures",
             );
@@ -1793,7 +1793,7 @@ pub mod data_plane_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic_prost::ProstCodec::default();
+            let codec = crate::wipe::WipingCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/scrim.dataplane.v1.DataPlane/Metrics",
             );
@@ -1821,7 +1821,7 @@ pub mod data_plane_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic_prost::ProstCodec::default();
+            let codec = crate::wipe::WipingCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/scrim.dataplane.v1.DataPlane/Redact",
             );
@@ -2034,7 +2034,7 @@ pub mod data_plane_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = HelloSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
+                        let codec = crate::wipe::WipingCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -2077,7 +2077,7 @@ pub mod data_plane_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ApplySnapshotSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
+                        let codec = crate::wipe::WipingCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -2123,7 +2123,7 @@ pub mod data_plane_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = EventsSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
+                        let codec = crate::wipe::WipingCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -2167,7 +2167,7 @@ pub mod data_plane_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = AsksSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
+                        let codec = crate::wipe::WipingCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -2210,7 +2210,7 @@ pub mod data_plane_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = StatusSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
+                        let codec = crate::wipe::WipingCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -2258,7 +2258,7 @@ pub mod data_plane_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = CapturesSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
+                        let codec = crate::wipe::WipingCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -2301,7 +2301,7 @@ pub mod data_plane_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = MetricsSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
+                        let codec = crate::wipe::WipingCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -2344,7 +2344,7 @@ pub mod data_plane_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = RedactSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
+                        let codec = crate::wipe::WipingCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,

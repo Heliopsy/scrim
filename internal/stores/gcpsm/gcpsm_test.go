@@ -478,3 +478,19 @@ func TestWatchReportsLabelChanges(t *testing.T) {
 		t.Fatal("no change reported for an annotation update")
 	}
 }
+
+// TestStaticTokenReadPerCall: a configured access token is copied out of its
+// secret value for each call, not kept as one string by a static token
+// source; once the value is wiped there is no token left to send.
+func TestStaticTokenReadPerCall(t *testing.T) {
+	v := secret.FromString(" ya29.static-token \n")
+	ts := valueTokenSource{v}
+	tok, err := ts.Token()
+	if err != nil || tok.AccessToken != "ya29.static-token" || tok.TokenType != "Bearer" {
+		t.Fatalf("token %v %v", tok, err)
+	}
+	v.Wipe()
+	if tok, err := ts.Token(); err == nil || tok != nil {
+		t.Fatalf("token after wipe: %v %v", tok, err)
+	}
+}

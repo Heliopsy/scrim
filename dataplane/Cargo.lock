@@ -1493,9 +1493,10 @@ dependencies = [
 name = "scrim-proto"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "http-body",
  "prost",
  "tonic",
- "tonic-prost",
  "zeroize",
 ]
 
@@ -2009,17 +2010,6 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
-]
-
-[[package]]
-name = "tonic-prost"
-version = "0.14.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eba464054e2226f182a34489b8b079bf4c6e3e7ab5fd7fc30e024f24aa92a484"
-dependencies = [
- "bytes",
- "prost",
- "tonic",
 ]
 
 [[package]]

@@ -26,6 +26,8 @@
 package netproxy
 
 import (
+	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -347,9 +349,12 @@ func (p *Proxy) Password() secret.Value {
 }
 
 // ProxyURL returns the proxy for a request to target, nil for a direct
-// connection. The URL carries the credentials as user info: Go's transport
-// takes them from there for the Proxy-Authorization header, so they are
-// copied into strings for the connection (docs/limitations.md).
+// connection. For an https target the URL has no user info: Go's transport
+// opens a CONNECT tunnel and takes the Proxy-Authorization header from
+// [ConnectHeader], built for that CONNECT from the password. A plain http
+// target is forwarded without a tunnel, and Go only adds Proxy-Authorization
+// to forwarded requests from the URL's user info, so for those the password
+// is copied into the URL (docs/limitations.md).
 func (p *Proxy) ProxyURL(target *url.URL) (*url.URL, error) {
 	if !p.Enabled() || p.match == nil {
 		return nil, nil
@@ -359,12 +364,59 @@ func (p *Proxy) ProxyURL(target *url.URL) (*url.URL, error) {
 		return pu, err
 	}
 	out := *pu
-	if p.Username != "" {
+	if p.Username != "" && target != nil && target.Scheme == "http" {
 		pw := ""
 		_ = p.password.Expose(func(b []byte) error { pw = string(b); return nil })
 		out.User = url.UserPassword(p.Username, pw)
 	}
 	return &out, nil
+}
+
+// connectHeader is the Proxy-Authorization header for one CONNECT to
+// proxyURL, nil when p has no credentials or proxyURL is not p's proxy (a
+// transport whose Proxy function was replaced must not get p's password).
+func (p *Proxy) connectHeader(proxyURL *url.URL) (http.Header, error) {
+	if !p.HasCredentials() || proxyURL == nil || proxyURL.User != nil ||
+		proxyURL.Scheme != p.URL.Scheme || proxyURL.Host != p.URL.Host {
+		return nil, nil
+	}
+	var v string
+	err := p.password.Expose(func(pw []byte) error {
+		v = basicAuth(p.Username, pw)
+		return nil
+	})
+	if err != nil {
+		return nil, errors.New("netproxy: the upstream proxy password is no longer available")
+	}
+	return http.Header{"Proxy-Authorization": {v}}, nil
+}
+
+// basicAuth returns "Basic " and the base64 of user:pw. The intermediate
+// bytes are wiped; the returned string is the one copy left, and lives as
+// long as the request that sends it.
+func basicAuth(user string, pw []byte) string {
+	raw := make([]byte, 0, len(user)+1+len(pw))
+	raw = append(append(append(raw, user...), ':'), pw...)
+	const prefix = "Basic "
+	enc := make([]byte, len(prefix)+base64.StdEncoding.EncodedLen(len(raw)))
+	copy(enc, prefix)
+	base64.StdEncoding.Encode(enc[len(prefix):], raw)
+	secret.WipeBytes(raw)
+	v := string(enc)
+	secret.WipeBytes(enc)
+	return v
+}
+
+// ConnectHeader is the GetProxyConnectHeader of scrim's HTTP transports: the
+// installed Proxy's Proxy-Authorization for each CONNECT, built from the
+// password at that moment. Before Install there is none, and Go's transport
+// takes credentials from the environment proxy URL's user info as before.
+func ConnectHeader(_ context.Context, proxyURL *url.URL, _ string) (http.Header, error) {
+	p := current.Load()
+	if p == nil {
+		return nil, nil
+	}
+	return p.connectHeader(proxyURL)
 }
 
 // Proto is the proxy for the data plane snapshot, nil for direct. The
@@ -398,11 +450,29 @@ var retireAfter = time.Minute
 
 func init() {
 	// Every transport cloned from the default one, and every client that
-	// uses it, asks Func. Done at init, before any request, so the field is
-	// never written while a request reads it.
+	// uses it, asks Func, and ConnectHeader for each CONNECT. Done at init,
+	// before any request, so the fields are never written while a request
+	// reads them.
 	if t, ok := http.DefaultTransport.(*http.Transport); ok {
 		t.Proxy = Func
+		t.GetProxyConnectHeader = ConnectHeader
+		t.HTTP2 = noHeaderIndexing(t.HTTP2)
 	}
+}
+
+// noHeaderIndexing returns c with HTTP/2 header compression limited to a
+// table of one byte, too small for any header to enter. Without it the
+// HPACK encoder keeps every header it sends, a credential in Authorization
+// or X-Vault-Token among them, as a string in the connection's table for as
+// long as the connection lives or until newer headers push it out. Each
+// header is then sent as a literal, which costs a few bytes per request.
+func noHeaderIndexing(c *http.HTTP2Config) *http.HTTP2Config {
+	out := &http.HTTP2Config{}
+	if c != nil {
+		*out = *c
+	}
+	out.MaxEncoderHeaderTableSize = 1
+	return out
 }
 
 // Func is the Proxy function of scrim's HTTP transports: the proxy

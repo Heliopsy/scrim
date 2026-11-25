@@ -26,6 +26,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/net/http2/hpack"
+
 	"github.com/heliopsy/scrim/internal/config"
 )
 
@@ -395,4 +397,176 @@ func TestFuncFallsBackToEnvironment(t *testing.T) {
 	if u != nil || err != nil {
 		t.Errorf("loopback: %v %v", u, err)
 	}
+}
+
+// TestCredentialsLeaveTheURL: the proxy URL for an https target carries no
+// user info; the CONNECT gets Proxy-Authorization from ConnectHeader,
+// built from the installed Proxy's password at the time of the CONNECT, and
+// only for that Proxy's own address.
+func TestCredentialsLeaveTheURL(t *testing.T) {
+	const pw = "connect-header-pw-7731"
+	p := resolve(t, "HTTPS_PROXY=http://scrim:"+pw+"@proxy.example:3128")
+	u, err := p.ProxyURL(&url.URL{Scheme: "https", Host: "example.com:443"})
+	if err != nil || u == nil {
+		t.Fatalf("ProxyURL: %v %v", u, err)
+	}
+	if u.User != nil || strings.Contains(u.String(), pw) {
+		t.Fatalf("https proxy URL carries credentials: %v", u.Redacted())
+	}
+	t.Cleanup(Install(p))
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("scrim:"+pw))
+	h, err := ConnectHeader(context.Background(), u, "example.com:443")
+	if err != nil || h.Get("Proxy-Authorization") != want {
+		t.Fatalf("connect header %q %v", h.Get("Proxy-Authorization"), err)
+	}
+	if len(h) != 1 {
+		t.Errorf("connect header has more than Proxy-Authorization: %v", len(h))
+	}
+	for _, other := range []*url.URL{
+		{Scheme: "http", Host: "elsewhere.example:3128"},
+		{Scheme: "https", Host: "proxy.example:3128"},
+	} {
+		if h, _ := ConnectHeader(context.Background(), other, "example.com:443"); h != nil {
+			t.Errorf("credentials offered to %v", other)
+		}
+	}
+	// Plain http is forwarded without CONNECT; Go only authenticates that
+	// from the URL's user info.
+	hu, _ := p.ProxyURL(&url.URL{Scheme: "http", Host: "example.com:80"})
+	if got, _ := hu.User.Password(); hu.User.Username() != "scrim" || got != pw {
+		t.Errorf("plain http proxy URL lacks credentials")
+	}
+	// The default transport and its clones use ConnectHeader.
+	if http.DefaultTransport.(*http.Transport).Clone().GetProxyConnectHeader == nil {
+		t.Error("cloned default transport has no GetProxyConnectHeader")
+	}
+}
+
+// TestPasswordChangeReachesNextConnect: one long-lived client, the proxy's
+// password replaced: the next CONNECT carries the new password.
+func TestPasswordChangeReachesNextConnect(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer srv.Close()
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	const oldPW, newPW = "old-proxy-pw-1029", "new-proxy-pw-3847"
+	cp := startConnectProxy(t, "Basic "+base64.StdEncoding.EncodeToString([]byte("scrim:"+newPW)), srv.Listener.Addr().String())
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	tr.DisableKeepAlives = true
+	client := &http.Client{Transport: tr}
+	_, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	get := func() error {
+		resp, err := client.Get("https://example.com:" + port + "/")
+		if err != nil {
+			return err
+		}
+		return resp.Body.Close()
+	}
+	t.Cleanup(Install(resolve(t, "HTTPS_PROXY=http://scrim:"+oldPW+"@"+cp.addr)))
+	if err := get(); err == nil {
+		t.Fatal("old password accepted")
+	}
+	Install(resolve(t, "HTTPS_PROXY=http://scrim:"+newPW+"@"+cp.addr))
+	if err := get(); err != nil {
+		t.Fatalf("new password: %v", err)
+	}
+	if targets, denied := cp.seen(); len(targets) != 1 || denied != 1 {
+		t.Errorf("proxy saw %v, denied %d", targets, denied)
+	}
+}
+
+// TestPlainHTTPThroughProxyAuthenticates: a plain http request is
+// forwarded to the proxy with Proxy-Authorization.
+func TestPlainHTTPThroughProxyAuthenticates(t *testing.T) {
+	const pw = "forward-proxy-pw-6610"
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("scrim:"+pw))
+	var got, target string
+	fwd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, target = r.Header.Get("Proxy-Authorization"), r.URL.String()
+		_, _ = io.WriteString(w, "forwarded")
+	}))
+	defer fwd.Close()
+	t.Cleanup(Install(resolve(t, "HTTP_PROXY=http://scrim:"+pw+"@"+fwd.Listener.Addr().String())))
+	client := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+	resp, err := client.Get("http://plain.example/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if got != want || target != "http://plain.example/x" {
+		t.Errorf("forward proxy saw %q for %q", got, target)
+	}
+}
+
+// TestHTTP2HeadersAreNotIndexed: a client cloned from the default
+// transport sends a credential header as a literal on every request instead
+// of entering it in the connection's HPACK table, where it would stay as a
+// string for the connection's lifetime.
+func TestHTTP2HeadersAreNotIndexed(t *testing.T) {
+	var mu sync.Mutex
+	var wire []byte
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	srv.Config.Protocols = new(http.Protocols)
+	srv.Config.Protocols.SetUnencryptedHTTP2(true)
+	srv.Listener = &recordingListener{Listener: srv.Listener, rec: func(b []byte) {
+		mu.Lock()
+		wire = append(wire, b...)
+		mu.Unlock()
+	}}
+	srv.Start()
+	defer srv.Close()
+
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Protocols = new(http.Protocols)
+	tr.Protocols.SetUnencryptedHTTP2(true)
+	client := &http.Client{Transport: tr}
+	token := "Bearer hpack-token-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	for range 3 {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+		req.Header.Set("Authorization", token)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.ProtoMajor != 2 {
+			t.Fatalf("protocol %s", resp.Proto)
+		}
+		_ = resp.Body.Close()
+	}
+	huff := string(hpack.AppendHuffmanString(nil, token))
+	mu.Lock()
+	n := strings.Count(string(wire), huff) + strings.Count(string(wire), token)
+	mu.Unlock()
+	if n != 3 {
+		t.Errorf("credential header sent as a literal %d times in 3 requests (indexed after the first)", n)
+	}
+}
+
+type recordingListener struct {
+	net.Listener
+	rec func([]byte)
+}
+
+func (l *recordingListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &recordingConn{Conn: c, rec: l.rec}, nil
+}
+
+type recordingConn struct {
+	net.Conn
+	rec func([]byte)
+}
+
+func (c *recordingConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	c.rec(b[:n])
+	return n, err
 }

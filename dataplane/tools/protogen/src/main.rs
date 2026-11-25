@@ -35,6 +35,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(true)
         .build_client(true)
         .build_transport(false)
+        // Zeroes the encoded and received bytes once used (scrim-proto's
+        // `wipe` module).
+        .codec_path("crate::wipe::WipingCodec")
         .out_dir(&out_dir)
         .compile_fds_with_config(fds, config)?;
     Ok(())
