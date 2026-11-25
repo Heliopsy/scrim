@@ -1,0 +1,13 @@
+ghp_TeStFuzzSeed0a1b2c3d4e5f6a7b8c9d0e1f2ÿþCheck whether the GitHub token still works.
+{"command":"curl -sv -H \"Authorization: token $GITHUB_TOKEN\" https://api.github.com/user -o /dev/null"}
+* Connected to api.github.com (140.82.121.6) port 443
+> GET /user HTTP/2
+> Host: api.github.com
+> User-Agent: curl/8.5.0
+> Authorization: token ghp_TeStFuzzSeed0a1b2c3d4e5f6a7b8c9d0e1f2
+> Accept: */*
+< HTTP/2 401
+< content-type: application/json
+
+{"command":"curl -s -H 'Authorization: token {{placeholder}}' https://api.github.com/user"}
+{"message":"Bad credentials","status":"401"}

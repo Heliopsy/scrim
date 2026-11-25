@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -146,11 +148,39 @@ func TestSeedFileRoundTrip(t *testing.T) {
 	}
 }
 
+// fixtureBodies are the fuzz seeds from the repository's fixtures: the leak
+// suite's scenarios and the recorded provider requests and streams, each cut
+// to 4 KB.
+func fixtureBodies(f *testing.F) [][]byte {
+	f.Helper()
+	var out [][]byte
+	for _, pattern := range []string{
+		filepath.Join("scenario", "corpus", "*.json"),
+		filepath.Join("..", "..", "dataplane", "crates", "scrim-llm", "tests", "fixtures", "*", "*"),
+	} {
+		files, err := filepath.Glob(pattern)
+		if err != nil || len(files) == 0 {
+			f.Fatalf("no fixtures at %s: %v", pattern, err)
+		}
+		for _, file := range files {
+			b, err := os.ReadFile(file)
+			if err != nil {
+				f.Fatal(err)
+			}
+			out = append(out, b[:min(len(b), 4096)])
+		}
+	}
+	return out
+}
+
 func FuzzChecker(f *testing.F) {
 	s := Generate(KindAPIKey)
 	c := NewChecker([]Seed{s})
 	f.Add([]byte(`{"a":"b"}`))
 	f.Add([]byte("\x1f\x8b\x08 %41%42 \\x41 &#65; 0x41 alfa bravo"))
+	for _, b := range fixtureBodies(f) {
+		f.Add(b)
+	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		_ = c.Check(Capture{Body: b})
 		// Inserting the value anywhere is always found.

@@ -1,0 +1,17 @@
+ghp_TeStFuzzSeed0a1b2c3d4e5f6a7b8c9d0e1f2ÿsk-ant-api03-TeStFuzzSeed-0a1b2c3d4e5f6a7b8c9dAAÿþý%event: message_start
+data: {"type":"message_start","message":{"id":"msg_01XFDUDYJgAACzvnptvVoYEL","type":"message","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":2045,"cache_creation_input_tokens":0,"cache_read_input_tokens":1800,"output_tokens":1}}}
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The password is ghp_TeStFuzzSeed0a1b2c3d4e5f6a7b8c9d0e1f2, which"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" matches the db config."}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EqQBCkgIARABGAIiQKsfY2s0bWVzaWduYXR1cmVieXRlc2Zvcm1hdHRlZ

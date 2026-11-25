@@ -52,7 +52,8 @@
 #       and rewrites checksums.txt over every release file. RESULTS_DIR holds
 #       the output of leak and bench at its top, one directory per store with
 #       the matrix cells under matrix/, and one JSON per target under fuzz/
-#       (written by scripts/fuzz.sh run in the release's fuzzing jobs).
+#       (written by scripts/fuzz.sh run in the release's fuzzing jobs, with
+#       the corpus each target started from).
 #
 # No file written here holds a secret: every seed is generated for the run, and
 # the reports name seeds by kind, length and a short SHA-256 only.
@@ -258,17 +259,29 @@ EOF
 
 ## Fuzzing
 
-Each cargo-fuzz target run from an empty corpus for this release
-(\`scrim_${SCRIM_VERSION}_results_fuzz.json\`); the weekly run adds 15 minutes per
-target.
+Every fuzz target, cargo-fuzz and Go, run for this release
+(\`scrim_${SCRIM_VERSION}_results_fuzz.json\`), starting from the corpus the nightly
+runs keep on the fuzz-corpus branch, the committed seeds and the committed
+findings. Corpus is the number of inputs a target started and ended with,
+Before the hours of nightly fuzzing behind the corpus it started from.
 
 EOF
   jq -r '
-    "| Target | Seconds | Runs | Result |",
-    "| --- | --- | --- | --- |",
-    (.[] | "| `\(.crate)/\(.target)` | \(.seconds) | \(.runs) | \(.result) |"),
+    def hours: . / 3600 * 100 | round / 100;
+    "| Target | Seconds | Runs | Corpus | Seeds | Findings | Before (h) | Result |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    (.[] | "| `\(.crate // .package)/\(.target)` | \(.seconds) | \(.runs) | "
+      + "\(.corpus.files_at_start // "-") to \(.corpus.files_at_end // "-") | \(.corpus.seeds // "-") | "
+      + "\(.corpus.regressions // "-") | \(.corpus.prior_seconds // 0 | hours) | \(.result) |"),
     "",
-    "Total: \(map(.seconds) | add / 3600 * 100 | round / 100) hours."
+    "This release: \(map(.seconds) | add | hours) hours over \(length) targets, starting from "
+      + "\(map(.corpus.files_at_start // 0) | add) corpus inputs that carry "
+      + "\(map(.corpus.prior_seconds // 0) | add | hours) hours of earlier fuzzing.",
+    "",
+    (map(.corpus.commit // "none") | unique
+      | if . == ["none"] then "No corpus could be fetched: every target started from its seeds and findings."
+        else "Corpus commit: \(map(select(. != "none") | "`\(.)`") | join(", "))."
+          + (if index("none") then " Some targets started without it." else "" end) end)
   ' "$res/fuzz.json"
 
   echo
@@ -321,7 +334,7 @@ cmd_assemble() {
   jq -s 'sort_by(.cell)' "${cells[@]}" >"$res/e2e-matrix.json"
   jq -e 'all(.[]; .pass and .gated_leaks == 0)' "$res/e2e-matrix.json" >/dev/null \
     || die "an end-to-end matrix cell failed"
-  jq -s 'sort_by(.crate, .target)' "${fuzz[@]}" >"$res/fuzz.json"
+  jq -s 'sort_by(.kind, (.crate // .package), .target)' "${fuzz[@]}" >"$res/fuzz.json"
   jq -e 'all(.[]; .result == "pass" and .seconds > 0)' "$res/fuzz.json" >/dev/null \
     || die "a fuzz target failed or did not run"
 

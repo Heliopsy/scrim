@@ -47,7 +47,9 @@ name: Release
 #   path from the build it is compared with.
 # - image-check and image: GitHub-hosted, they need podman.
 # - results-leak, results-matrix, results-fuzz: GitHub-hosted. The matrix needs
-#   podman and user namespaces, fuzzing the full address space.
+#   podman and user namespaces, fuzzing the full address space. results-fuzz
+#   starts from the fuzz-corpus branch (fuzz.yaml), which only feeds the
+#   fuzzing results, never a build.
 # - results-bench: ho-z10, the runner the CI latency gate is measured on, so
 #   a release is held to the same budget the pull requests were.
 # - results-regression: GitHub-hosted. It measures nothing: it compares the
@@ -112,6 +114,7 @@ jobs:
       prerelease: ${{ steps.plan.outputs.prerelease }}
       publish: ${{ steps.plan.outputs.publish }}
       mac-runner: ${{ steps.plan.outputs.mac-runner }}
+      fuzz-targets: ${{ steps.plan.outputs.fuzz-targets }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -160,6 +163,7 @@ jobs:
             echo "prerelease=$prerelease"
             echo "publish=$publish"
             echo "mac-runner=$mac_runner"
+            echo "fuzz-targets=$(scripts/fuzz.sh targets)"
           } | tee -a "$GITHUB_OUTPUT"
 
   dataplane:
@@ -705,9 +709,14 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Every cargo-fuzz target from an empty corpus, as in fuzz.yaml (keep the
-  # matrix in step with it), with each target's time, runs and outcome kept
-  # for the published results.
+  # Every fuzz target (cargo-fuzz and Go) for 10 minutes, as fuzz.yaml runs
+  # them, starting from the persistent corpus the nightly runs keep on the
+  # fuzz-corpus branch, with each target's time, runs, outcome, corpus size and
+  # the corpus commit kept for the published results. The corpus is fuzzing
+  # input for this job only: no build job reads it, so the release binaries
+  # still come from the lockfiles and pinned tools alone. When it cannot be
+  # fetched the targets start from their committed seeds and the results say
+  # so (corpus commit "none").
   results-fuzz:
     name: Results (fuzz ${{ matrix.target }})
     needs: plan
@@ -719,21 +728,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {crate: scrim-redact, target: engines}
-          - {crate: scrim-redact, target: variants}
-          - {crate: scrim-redact, target: guard}
-          - {crate: scrim-redact, target: restore}
-          - {crate: scrim-redact, target: shaped}
-          - {crate: scrim-toolproxy, target: sigv4}
+        include: ${{ fromJSON(needs.plan.outputs.fuzz-targets) }}
+    env:
+      KIND: ${{ matrix.kind }}
+      UNIT: ${{ matrix.unit }}
+      TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.commit }}
           persist-credentials: false
       - name: Set up rustup
+        if: matrix.kind == 'rust'
         run: scripts/ci-setup-rust.sh
       - name: Nightly toolchain and cargo-fuzz
+        if: matrix.kind == 'rust'
         run: |
           set -euo pipefail
           scripts/fuzz.sh tools "$RUNNER_TEMP/fuzz-tools"
@@ -741,17 +750,35 @@ jobs:
           # AddressSanitizer's shadow memory does not fit the default 32-bit
           # mmap randomisation of Ubuntu 24.04 runners.
           sudo sysctl -w vm.mmap_rnd_bits=28
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        if: matrix.kind == 'go'
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Fetch the corpus
+        run: |
+          scripts/fuzz.sh corpus-fetch "$RUNNER_TEMP/fuzz-corpus"
+          echo "FUZZ_CORPUS=$RUNNER_TEMP/fuzz-corpus" >> "$GITHUB_ENV"
       - name: Fuzz for 10 minutes
         env:
-          CRATE: ${{ matrix.crate }}
-          TARGET: ${{ matrix.target }}
-        run: scripts/fuzz.sh run "$CRATE" "$TARGET" 600 "dist/results/$TARGET.json"
+          ID: ${{ matrix.id }}
+        run: scripts/fuzz.sh run "$KIND" "$UNIT" "$TARGET" 600 "dist/results/$ID.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: results-fuzz-${{ matrix.target }}
+          name: results-fuzz-${{ matrix.id }}
           path: dist/results/
           if-no-files-found: error
           retention-days: 1
+      - name: Upload the reproducer
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: fuzz-finding-${{ matrix.id }}
+          path: |
+            dataplane/crates/${{ matrix.unit }}/fuzz/artifacts/
+            ${{ matrix.unit }}/testdata/fuzz/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 30
 
   results:
     name: Results

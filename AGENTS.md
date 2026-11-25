@@ -191,7 +191,8 @@ an emulator in podman. State backends follow the same shape with `state.Register
   second `ubuntu-24.04` runner from a different path and fails the release on any byte difference.
   The C parts of the build (ring, zstd) use the image's compiler and musl, so the bytes only match
   on the same image; release builds move to `ho-z10` once it has a pinned toolchain image. No caches
-  in the release workflow.
+  in the release workflow. The fuzzing jobs start from the `fuzz-corpus` branch, which only feeds
+  the fuzzing results and never a build; only the nightly run of `fuzz.yaml` writes it.
 - Images are assembled from the release binaries (`COPY`, no `RUN`), so the image holds the bytes
   the archives hold and a multi-arch build needs no emulation. Rootless podman, distroless static
   base, UID 65532, read-only root filesystem tested on every build.

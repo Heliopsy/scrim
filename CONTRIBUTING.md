@@ -29,6 +29,16 @@ A command that cannot run in the sandbox (it needs the network, a published rele
 why on the line above the block, `<!-- docs-test: skip: downloads a release from GitHub -->`. A
 shell block with neither fails the test. Run it with `just docs-test`.
 
+## Fuzzing
+
+`scripts/fuzz.sh targets` lists every fuzz target, cargo-fuzz and Go; `scripts/fuzz.sh run KIND UNIT
+TARGET SECONDS` runs one as CI does (cargo-fuzz needs `scripts/fuzz.sh tools DIR` first). A pull
+request fuzzes the targets it touches for 5 minutes, the nightly run every target for an hour. When
+a target finds something, the job uploads the input; [docs/leak-assurance.md](docs/leak-assurance.md#fuzzing)
+says how it becomes a regression test. Fuzz seeds are built from the fixtures: after changing a
+fixture, rewrite them with `SCRIM_FUZZ_SEEDS=update cargo test -p scrim-redact -p scrim-toolproxy
+--test fuzz_seeds` in `dataplane/`.
+
 ## Dependencies
 
 Before you add or bump a dependency, Go module or Rust crate, look up its latest stable release in
