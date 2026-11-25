@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/heliopsy/scrim/internal/secret"
+	"github.com/heliopsy/scrim/internal/stores/internal/wire"
 	"github.com/heliopsy/scrim/internal/stores/vaultwarden/bwcrypto"
 )
 
@@ -81,6 +82,8 @@ func (c *client) do(req *http.Request, out any) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	// The body can hold the access token; what is kept is copied out of it.
+	defer secret.WipeBytes(body)
 	if err != nil {
 		return &netError{err: err}
 	}
@@ -195,15 +198,15 @@ func (c *client) prelogin(ctx context.Context, email string) (bwcrypto.KDFParams
 // tokenResponse is the identity endpoint's answer. Key and PrivateKey are
 // ciphertext; AccessToken and RefreshToken are credentials.
 type tokenResponse struct {
-	AccessToken    string `json:"access_token"`
-	ExpiresIn      int    `json:"expires_in"`
-	RefreshToken   string `json:"refresh_token"`
-	Key            string `json:"Key"`
-	PrivateKey     string `json:"PrivateKey"`
-	Kdf            int    `json:"Kdf"`
-	KdfIterations  int    `json:"KdfIterations"`
-	KdfMemory      *int   `json:"KdfMemory"`
-	KdfParallelism *int   `json:"KdfParallelism"`
+	AccessToken    wire.Raw `json:"access_token"`
+	ExpiresIn      int      `json:"expires_in"`
+	RefreshToken   wire.Raw `json:"refresh_token"`
+	Key            string   `json:"Key"`
+	PrivateKey     string   `json:"PrivateKey"`
+	Kdf            int      `json:"Kdf"`
+	KdfIterations  int      `json:"KdfIterations"`
+	KdfMemory      *int     `json:"KdfMemory"`
+	KdfParallelism *int     `json:"KdfParallelism"`
 }
 
 func (t tokenResponse) params() bwcrypto.KDFParams {
@@ -236,11 +239,17 @@ func (c *client) token(ctx context.Context, form url.Values) (session, error) {
 	if err := c.do(req, &out); err != nil {
 		return session{}, err
 	}
-	if out.AccessToken == "" {
+	// The tokens are decoded as raw bytes, never Go strings, and wiped
+	// here; the access token lives on in the session's secret value.
+	defer out.AccessToken.Wipe()
+	defer out.RefreshToken.Wipe()
+	tok, err := out.AccessToken.Value()
+	if err != nil || tok.IsZero() {
+		tok.Wipe()
 		return session{}, errors.New("identity endpoint returned no access token")
 	}
-	s := session{token: secret.FromString(out.AccessToken), resp: out}
-	s.resp.AccessToken, s.resp.RefreshToken = "", ""
+	s := session{token: tok, resp: out}
+	s.resp.AccessToken, s.resp.RefreshToken = nil, nil
 	if out.ExpiresIn > 0 {
 		s.expires = time.Now().Add(time.Duration(out.ExpiresIn) * time.Second)
 	} else {

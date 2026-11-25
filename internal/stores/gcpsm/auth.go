@@ -102,11 +102,9 @@ func (a *authenticator) init(ctx context.Context) error {
 			return &authError{kind: stores.ErrPermission, msg: "option " + optToken + " resolved to an empty value"}
 		}
 		a.held = append(a.held, v)
-		var tok string
-		_ = v.Expose(func(b []byte) error { tok = string(bytes.TrimSpace(b)); return nil })
 		// A static token has no expiry scrim knows of; Google refuses it
 		// once it lapses and every call fails as permission denied.
-		base = oauth2.StaticTokenSource(&oauth2.Token{AccessToken: tok, TokenType: "Bearer"})
+		base = valueTokenSource{v}
 	case methodCredentials:
 		v, err := a.s.resolve(ctx, a.s.credRef)
 		if err != nil {
@@ -160,6 +158,20 @@ func (a *authenticator) init(ctx context.Context) error {
 	p := a.project
 	a.known.Store(&p)
 	return nil
+}
+
+// valueTokenSource is a static access token kept as a secret value: each
+// Token call copies it into the string x/oauth2 needs, where
+// oauth2.StaticTokenSource would keep one string for the adapter's
+// lifetime.
+type valueTokenSource struct{ v secret.Value }
+
+func (s valueTokenSource) Token() (*oauth2.Token, error) {
+	var tok string
+	if err := s.v.Expose(func(b []byte) error { tok = string(bytes.TrimSpace(b)); return nil }); err != nil {
+		return nil, errors.New("the access token is no longer available")
+	}
+	return &oauth2.Token{AccessToken: tok, TokenType: "Bearer"}, nil
 }
 
 // knownProject is the project the credentials named, once they were used.
