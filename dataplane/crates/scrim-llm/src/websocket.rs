@@ -182,15 +182,11 @@ const STRIP_HANDSHAKE: &[&str] = &[
 /// How long closing a connection may take before scrim drops it.
 const CLOSE_GRACE: Duration = Duration::from_secs(5);
 
-/// After refusing a message, how long scrim waits for the agent's close frame before it drops
-/// the connection. Dropping a socket with unread data from the agent (the rest of an oversized
-/// message) resets it, and on Windows a reset discards the error event and close frame the
-/// agent has not read yet.
+/// After refusing a message, how long scrim waits for the agent's close frame, or the end of
+/// its stream, before it drops the connection. Dropping a socket with unread data from the
+/// agent (the rest of an oversized message) resets it, and on Windows a reset discards the
+/// error event and close frame the agent has not read yet.
 const LINGER: Duration = Duration::from_secs(1);
-
-/// When the agent's stream fails instead (it stopped at an oversized frame's header), how long
-/// scrim keeps the socket open so the agent can read the error event and the close frame.
-const LINGER_AFTER_ERROR: Duration = Duration::from_millis(250);
 
 fn token_in(h: &HeaderMap, name: HeaderName, token: &str) -> bool {
     h.get_all(name).iter().any(|v| {
@@ -606,7 +602,14 @@ impl Relay {
             }
         }
         if self.refused {
-            linger(&mut from_client).await;
+            let deadline = tokio::time::Instant::now() + LINGER;
+            // A failed stream (it stopped at an oversized frame's header) yields nothing more,
+            // so the rest of the agent's message is read off the socket itself.
+            if !linger(&mut from_client, deadline).await
+                && let Ok(mut s) = to_client.reunite(from_client)
+            {
+                drain(s.get_mut(), deadline).await;
+            }
         }
         let (resolved, kept) = (restore.stats.resolved.get(), restore.stats.kept.get());
         if let Some(m) = &self.rm {
@@ -920,25 +923,33 @@ fn messages(out: &[u8]) -> Vec<Message> {
 }
 
 /// Reads and drops what the agent still sends after a refusal, until its close frame, the end
-/// of its stream or [`LINGER`], so the socket is not reset under the error event and close
-/// frame scrim sent. Nothing read here is forwarded.
-async fn linger<S>(from_client: &mut S)
+/// of its stream or `deadline`, so the socket is not reset under the error event and close
+/// frame scrim sent. Nothing read here is forwarded. `false` when the stream failed instead,
+/// with the agent's data possibly still unread on the socket.
+async fn linger<S>(from_client: &mut S, deadline: tokio::time::Instant) -> bool
 where
     S: futures_util::Stream<Item = Result<Message, WsError>> + Unpin,
 {
-    let deadline = tokio::time::Instant::now() + LINGER;
     loop {
         match tokio::time::timeout_at(deadline, from_client.next()).await {
-            Ok(Some(Ok(Message::Close(_))) | None) | Err(_) => return,
+            Ok(Some(Ok(Message::Close(_))) | None) | Err(_) => return true,
             Ok(Some(Ok(_))) => {}
-            Ok(Some(Err(_))) => {
-                tokio::time::sleep(
-                    LINGER_AFTER_ERROR
-                        .min(deadline.saturating_duration_since(tokio::time::Instant::now())),
-                )
-                .await;
-                return;
-            }
+            Ok(Some(Err(_))) => return false,
+        }
+    }
+}
+
+/// Reads and drops raw bytes from the agent's socket until it ends its stream, fails or
+/// `deadline` passes: the lingering close for a WebSocket stream that can no longer be read.
+async fn drain<R>(io: &mut R, deadline: tokio::time::Instant)
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let mut buf = [0u8; 8192];
+    while let Ok(Ok(n)) = tokio::time::timeout_at(deadline, io.read(&mut buf)).await {
+        if n == 0 {
+            return;
         }
     }
 }
@@ -960,6 +971,28 @@ async fn close_with(s: &mut Sink, code: CloseCode, reason: Utf8Bytes) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn drain_reads_until_the_agent_ends_its_stream() {
+        use tokio::io::AsyncWriteExt;
+        let (mut agent, mut scrim) = tokio::io::duplex(64);
+        let writer = tokio::spawn(async move {
+            agent.write_all(&[7u8; 4096]).await.unwrap();
+            drop(agent);
+        });
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        drain(&mut scrim, deadline).await;
+        assert!(tokio::time::Instant::now() < deadline);
+        writer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn drain_stops_at_the_deadline() {
+        let (_agent, mut scrim) = tokio::io::duplex(64);
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(50);
+        drain(&mut scrim, deadline).await;
+        assert!(tokio::time::Instant::now() >= deadline);
+    }
 
     #[test]
     fn protocol_from_path() {
