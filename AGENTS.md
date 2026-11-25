@@ -36,6 +36,10 @@ Rules for anyone, human or agent, changing scrim. Terse by design. Read before w
   release gates, not reports.
 - A test you have not watched fail is not evidence. Break the behaviour, watch the guard fail,
   restore against git.
+- CI red is handled when it goes red: anything waiting on a pull request or release stops on a
+  failed check, not only on merge. Rerun a failed check at most once; a check that fails twice for
+  the same reason is a bug, fixed at its cause after instrumenting the failing path (never a longer
+  sleep or a wider budget), on the platform that fails.
 
 ## Layout
 

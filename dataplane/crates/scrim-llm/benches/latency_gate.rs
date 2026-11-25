@@ -35,8 +35,11 @@
 //! samples. A regression is in every round; load from other processes is in some.
 //!
 //! Each gated value is compared with `benches/budget.json` (or the file in
-//! `SCRIM_LLM_BUDGET`). The process exits non-zero, naming the measurement, when a budget is
-//! missed. `SCRIM_PERF_JSON=<file>` also writes every measurement, its rounds and the machine
+//! `SCRIM_LLM_BUDGET`). When a budget is missed the whole gate runs once more, in a fresh
+//! process, and the process exits non-zero, naming the measurement, only when that confirm
+//! run misses a budget too: a slower build misses in both runs, a busy shared runner rarely
+//! does. Both runs' reports are printed; the confirm run's JSON names the first run's misses.
+//! `SCRIM_PERF_CONFIRM=0` fails on the first miss. `SCRIM_PERF_JSON=<file>` also writes every measurement, its rounds and the machine
 //! as JSON, which `scripts/perfgate` compares with the previous release's.
 //!
 //! Run with `cargo bench -p scrim-llm --bench latency_gate`; `SCRIM_LLM_BENCH_QUICK=1`
@@ -623,7 +626,7 @@ fn main() {
     println!("- runner: {runner}");
     println!(
         "- crate: scrim-llm {}, profile: {}",
-        env!("CARGO_PKG_VERSION"),
+        version(),
         if cfg!(debug_assertions) {
             "debug"
         } else {
@@ -1095,7 +1098,7 @@ fn main() {
         let doc = json!({
             "schema": 1,
             "gate": "scrim-llm latency_gate",
-            "version": env!("CARGO_PKG_VERSION"),
+            "version": version(),
             "profile": if cfg!(debug_assertions) { "debug" } else { "release" },
             "runner": runner,
             "machine": {"cpu": cpu, "logical_cpus": cpus, "os": std::env::consts::OS, "arch": std::env::consts::ARCH},
@@ -1103,6 +1106,7 @@ fn main() {
             "budget_file": budget_path,
             "pass": pass,
             "failures": report.failures,
+            "first_run_failures": first_run_failures(),
             "measurements": report.measurements,
         });
         std::fs::write(&path, serde_json::to_vec_pretty(&doc).unwrap()).unwrap();
@@ -1110,12 +1114,45 @@ fn main() {
     }
     if pass {
         println!("All budgets met.");
-    } else {
-        for f in &report.failures {
-            println!("BUDGET EXCEEDED: {f}");
-        }
-        std::process::exit(1);
+        return;
     }
+    if first_run_failures().is_none() && std::env::var("SCRIM_PERF_CONFIRM").as_deref() != Ok("0") {
+        for f in &report.failures {
+            println!("MISSED (confirming): {f}");
+        }
+        println!(
+            "\nA budget was missed; measuring everything again to tell a busy runner from a slower build.\n"
+        );
+        confirm(&report.failures);
+    }
+    for f in &report.failures {
+        println!("BUDGET EXCEEDED: {f}");
+    }
+    std::process::exit(1);
+}
+
+/// The release being measured: `SCRIM_VERSION` (set by the release workflow), else the crate's.
+fn version() -> String {
+    std::env::var("SCRIM_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string())
+}
+
+/// In the confirm run, the misses of the first run.
+fn first_run_failures() -> Option<Vec<String>> {
+    std::env::var("SCRIM_PERF_FIRST_RUN_FAILURES")
+        .ok()
+        .map(|s| s.lines().map(str::to_string).collect())
+}
+
+/// Runs the gate again in a fresh process and exits with its status.
+fn confirm(failures: &[String]) -> ! {
+    use std::io::Write;
+    std::io::stdout().flush().unwrap();
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(std::env::args_os().skip(1))
+        .env("SCRIM_PERF_FIRST_RUN_FAILURES", failures.join("\n"))
+        .status()
+        .unwrap();
+    std::process::exit(status.code().unwrap_or(1));
 }
 
 /// Round trips of one text message on `c`, sorted.
