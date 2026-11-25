@@ -317,6 +317,71 @@ func (a *Account) CreateCollection(t testing.TB, org *Org, name string) string {
 	return out.ID
 }
 
+// Access is a member's access to one collection, as the Bitwarden web
+// vault sets it: can edit (all false), can view (ReadOnly), can view except
+// passwords (ReadOnly and HidePasswords), can edit except passwords
+// (HidePasswords), can manage (Manage).
+type Access struct {
+	CollectionID  string
+	ReadOnly      bool
+	HidePasswords bool
+	Manage        bool
+}
+
+// AddMember makes member a confirmed user of org, owned by a, with access
+// to the given collections only. Vaultwarden with mail disabled accepts the
+// invitation of an existing account on its own; the confirmation carries
+// the organisation key encrypted to the member's public key, which a
+// fetches from the server as a Bitwarden client does.
+func (a *Account) AddMember(t testing.TB, org *Org, member *Account, access ...Access) {
+	t.Helper()
+	colls := []map[string]any{}
+	for _, c := range access {
+		colls = append(colls, map[string]any{"id": c.CollectionID, "readOnly": c.ReadOnly, "hidePasswords": c.HidePasswords, "manage": c.Manage})
+	}
+	post(t, a.server.URL+"/api/organizations/"+org.ID+"/users/invite", a.token, map[string]any{
+		"emails": []string{member.Email}, "groups": []string{}, "type": 2, "collections": colls, "permissions": map[string]any{},
+	}, nil)
+	var users struct {
+		Data []struct {
+			ID     string `json:"id"`
+			UserID string `json:"userId"`
+			Email  string `json:"email"`
+			Status int    `json:"status"`
+		} `json:"data"`
+	}
+	req, _ := http.NewRequest(http.MethodGet, a.server.URL+"/api/organizations/"+org.ID+"/users", nil)
+	req.Header.Set("Authorization", "Bearer "+a.token)
+	do(t, req, &users)
+	memberID := ""
+	for _, u := range users.Data {
+		if strings.EqualFold(u.Email, member.Email) {
+			if u.Status != 1 {
+				t.Fatalf("member %s has status %d after the invitation, want 1 (accepted)", member.Email, u.Status)
+			}
+			memberID = u.ID
+		}
+	}
+	if memberID == "" {
+		t.Fatalf("member %s not listed after the invitation", member.Email)
+	}
+	var pk struct {
+		PublicKey string `json:"publicKey"`
+	}
+	req, _ = http.NewRequest(http.MethodGet, a.server.URL+"/api/users/"+member.UserID+"/public-key", nil)
+	req.Header.Set("Authorization", "Bearer "+a.token)
+	do(t, req, &pk)
+	pub, err := bwcrypto.ParsePublicKey(pk.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped, err := bwcrypto.EncryptRSA(pub, org.Key.Value())
+	if err != nil {
+		t.Fatal(err)
+	}
+	post(t, a.server.URL+"/api/organizations/"+org.ID+"/users/"+memberID+"/confirm", a.token, map[string]string{"key": wrapped.String()}, nil)
+}
+
 // Item is a cipher to create directly through the API, bypassing the adapter.
 type Item struct {
 	Folder     string // personal folder name; created if missing
@@ -332,9 +397,12 @@ type Item struct {
 	// Collections adds the item to these collection ids of Org besides
 	// the organisation's first collection.
 	Collections []string
-	URIs        []string // login URIs
-	Favorite    bool
-	Reprompt    bool
+	// OnlyCollections puts the item into Collections alone, not into the
+	// organisation's first collection.
+	OnlyCollections bool
+	URIs            []string // login URIs
+	Favorite        bool
+	Reprompt        bool
 	// UndecryptablePassword encrypts Password under a random key, so the
 	// password is present but does not decrypt with the item's key.
 	UndecryptablePassword bool
@@ -424,6 +492,9 @@ func (a *Account) CreateItem(t testing.TB, it Item) string {
 	if it.Org != nil {
 		cipher["organizationId"] = it.Org.ID
 		colls := append([]string{it.Org.CollectionID}, it.Collections...)
+		if it.OnlyCollections {
+			colls = it.Collections
+		}
 		post(t, a.server.URL+"/api/ciphers/create", a.token, map[string]any{"cipher": cipher, "collectionIds": colls}, &out)
 	} else {
 		post(t, a.server.URL+"/api/ciphers", a.token, cipher, &out)
