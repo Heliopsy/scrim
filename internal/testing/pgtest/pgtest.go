@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/testing/testpodman"
+
 	_ "github.com/jackc/pgx/v5/stdlib" // the pgx database/sql driver
 )
 
@@ -51,7 +53,7 @@ func setup() {
 	}
 	name := "scrim-test-pg-" + randHex(4)
 	password := randHex(16)
-	out, err := exec.Command("podman", "run", "-d", "--rm", "--name", name,
+	out, err := testpodman.Command("run", "-d", "--rm", "--name", name,
 		"-e", "POSTGRES_PASSWORD="+password, "-e", "POSTGRES_USER=scrim", "-e", "POSTGRES_DB=scrim",
 		"-p", "127.0.0.1::5432", image,
 		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off").CombinedOutput()
@@ -59,8 +61,8 @@ func setup() {
 		skipReason = fmt.Sprintf("podman run %s failed: %v: %s", image, err, strings.TrimSpace(string(out)))
 		return
 	}
-	rm := func() { _ = exec.Command("podman", "rm", "-f", "-v", name).Run() }
-	port, err := exec.Command("podman", "port", name, "5432/tcp").Output()
+	rm := func() { _ = testpodman.Command("rm", "-f", "-v", name).Run() }
+	port, err := testpodman.Command("port", name, "5432/tcp").Output()
 	if err != nil {
 		rm()
 		skipReason = fmt.Sprintf("podman port %s: %v", name, err)

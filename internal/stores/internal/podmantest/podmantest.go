@@ -21,6 +21,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/heliopsy/scrim/internal/testing/testpodman"
 )
 
 // NamePrefix starts the name of every container and pod this package makes.
@@ -46,7 +48,7 @@ func Require(t testing.TB) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if out, err := exec.CommandContext(ctx, "podman", "info", "--format", "{{.Host.Security.Rootless}}").CombinedOutput(); err != nil {
+	if out, err := testpodman.CommandContext(ctx, "info", "--format", "{{.Host.Security.Rootless}}").CombinedOutput(); err != nil {
 		if mode == "1" {
 			t.Fatalf("SCRIM_TEST_PODMAN=1 but podman does not work: %v: %s", err, bytes.TrimSpace(out))
 		}
@@ -58,7 +60,7 @@ func Require(t testing.TB) {
 // included in the error. Arguments must not contain secret values: they show
 // up in the process list.
 func Podman(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "podman", args...)
+	cmd := testpodman.CommandContext(ctx, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -141,7 +143,7 @@ func run(t testing.TB, c *Container, netArgs []string, image string, env map[str
 	cmdArgs = append(cmdArgs, args...)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "podman", cmdArgs...)
+	cmd := testpodman.CommandContext(ctx, cmdArgs...)
 	cmd.Env = procEnv
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

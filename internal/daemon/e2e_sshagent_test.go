@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/testing/testpodman"
+
 	"golang.org/x/crypto/ssh"
 
 	"github.com/heliopsy/scrim/internal/approval"
@@ -80,14 +82,14 @@ git init -q --bare -b main /srv/repo.git
 chown -R git:git /home/git/.ssh /srv/repo.git
 exec /usr/sbin/sshd -D -e -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no
 `
-	out, err := exec.Command("podman", "run", "-d", "--rm", "--name", g.name, "--memory", "256m",
+	out, err := testpodman.Command("run", "-d", "--rm", "--name", g.name, "--memory", "256m",
 		"-p", "127.0.0.1::22", "-e", "AUTHORIZED_KEY="+strings.TrimSpace(string(ssh.MarshalAuthorizedKey(authorized))),
 		image, "sh", "-c", script).CombinedOutput()
 	if err != nil {
 		skip("podman run %s: %v: %s", image, err, strings.TrimSpace(string(out)))
 	}
-	t.Cleanup(func() { _ = exec.Command("podman", "rm", "-f", "-v", g.name).Run() })
-	hp, err := exec.Command("podman", "port", g.name, "22/tcp").Output()
+	t.Cleanup(func() { _ = testpodman.Command("rm", "-f", "-v", g.name).Run() })
+	hp, err := testpodman.Command("port", g.name, "22/tcp").Output()
 	if err != nil {
 		t.Fatalf("podman port: %v", err)
 	}
@@ -96,12 +98,12 @@ exec /usr/sbin/sshd -D -e -o PasswordAuthentication=no -o KbdInteractiveAuthenti
 	deadline := time.Now().Add(120 * time.Second)
 	for !banner(g.addr) {
 		if time.Now().After(deadline) {
-			logs, _ := exec.Command("podman", "logs", "--tail", "30", g.name).CombinedOutput()
+			logs, _ := testpodman.Command("logs", "--tail", "30", g.name).CombinedOutput()
 			skip("sshd in %s never answered:\n%s", g.name, logs)
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
-	pub, err := exec.Command("podman", "exec", g.name, "cat", "/etc/ssh/ssh_host_ed25519_key.pub").Output()
+	pub, err := testpodman.Command("exec", g.name, "cat", "/etc/ssh/ssh_host_ed25519_key.pub").Output()
 	if err != nil {
 		t.Fatalf("reading the host key: %v", err)
 	}
@@ -125,7 +127,7 @@ func banner(addr string) bool {
 func (g *gitServer) log(t *testing.T) string {
 	t.Helper()
 	// Output only: podman warns on standard error on some hosts.
-	out, err := exec.Command("podman", "exec", g.name, "git", "--git-dir=/srv/repo.git", "log", "--format=%s", "main").Output()
+	out, err := testpodman.Command("exec", g.name, "git", "--git-dir=/srv/repo.git", "log", "--format=%s", "main").Output()
 	if err != nil {
 		return ""
 	}

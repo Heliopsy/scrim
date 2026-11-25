@@ -10,13 +10,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/heliopsy/scrim/internal/testing/testpodman"
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
@@ -256,7 +257,7 @@ func TestOTLPCollectorPausedSink(t *testing.T) {
 			if collectorSvc.Container() == "" {
 				t.Skip("reading what the collector received needs the container this test started")
 			}
-			out, err := exec.Command("podman", "logs", collectorSvc.Container()).CombinedOutput()
+			out, err := testpodman.Command("logs", collectorSvc.Container()).CombinedOutput()
 			if err != nil {
 				return nil
 			}
