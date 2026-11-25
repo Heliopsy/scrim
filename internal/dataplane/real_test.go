@@ -51,6 +51,16 @@ func TestRealDataPlane(t *testing.T) {
 	if err := s.Push(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// A message spanning several HTTP/2 frames each way goes through both
+	// sides' zeroing codecs and the data plane's body wrappers intact.
+	text := []byte(strings.Repeat("filler text ", 8<<10) + "generated-in-test" + strings.Repeat(" more", 1<<10))
+	red, err := s.Redact(ctx, text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := string(red.GetText()); strings.Contains(out, "generated-in-test") || !strings.HasPrefix(out, "filler text ") {
+		t.Fatalf("Redact returned %d bytes, value present or text mangled", len(out))
+	}
 	pem, err := s.TrustBundle(ctx)
 	if err != nil || !strings.HasPrefix(pem, "-----BEGIN CERTIFICATE-----") {
 		t.Fatalf("TrustBundle = %q, %v", pem, err)

@@ -18,7 +18,7 @@ import (
 // material: once such a message is marshalled, its values are zeroed in the
 // message and the marshalled bytes are zeroed when gRPC releases them; the
 // contiguous copy made to unmarshal a message is zeroed afterwards. gRPC's
-// own transport buffers stay out of reach, as for the data plane boundary.
+// own transport buffers on a plugin connection stay out of reach.
 func Codec() encoding.CodecV2 { return codec{} }
 
 type codec struct{}

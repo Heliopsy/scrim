@@ -9,7 +9,10 @@
 //!
 //! [`v1::ValueEntry`], [`v1::PlaceholderKey`], [`v1::UpstreamProxy`] and the
 //! other messages listed in `secret_fields` carry secret material. Their
-//! `Debug` output is redacted and their bytes are zeroed on drop.
+//! `Debug` output is redacted and their bytes are zeroed on drop. The
+//! generated clients and servers use [`wipe::WipingCodec`], and the data
+//! plane wraps its service in [`wipe::WipeBodies`], so the encoded copies are
+//! zeroed as well.
 
 /// Protocol version 1 of the boundary.
 pub mod v1 {
@@ -29,5 +32,6 @@ pub mod v1 {
 }
 
 mod secret_fields;
+pub mod wipe;
 
 pub use secret_fields::REDACTED;

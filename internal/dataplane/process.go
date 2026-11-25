@@ -18,6 +18,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/mem"
 
 	pb "github.com/heliopsy/scrim/internal/dataplane/dataplanev1"
 )
@@ -157,7 +158,11 @@ func spawn(exe *executable, o StartOptions, log *slog.Logger) (*Process, error) 
 // clientConn returns a gRPC client over nc. The dialer hands out nc once;
 // after the data plane is gone there is nothing to reconnect to, so later
 // dials fail and calls return Unavailable.
-func clientConn(nc net.Conn) (*grpc.ClientConn, error) {
+func clientConn(nc net.Conn) (*grpc.ClientConn, error) { return clientConnWith(nc, wipingPool{}) }
+
+// clientConnWith is [clientConn] with the buffer pool gRPC reads into. Tests
+// pass one that records what it hands out.
+func clientConnWith(nc net.Conn, pool mem.BufferPool) (*grpc.ClientConn, error) {
 	var once sync.Once
 	dial := func(context.Context, string) (net.Conn, error) {
 		var c net.Conn
@@ -167,10 +172,11 @@ func clientConn(nc net.Conn) (*grpc.ClientConn, error) {
 		}
 		return c, nil
 	}
-	return grpc.NewClient("passthrough:///dataplane",
+	opts := append([]grpc.DialOption{
 		grpc.WithContextDialer(dial),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	}, wipingDialOptions(pool)...)
+	return grpc.NewClient("passthrough:///dataplane", opts...)
 }
 
 // Done is closed when the process has exited.

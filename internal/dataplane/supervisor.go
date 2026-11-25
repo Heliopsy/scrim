@@ -297,8 +297,8 @@ func (s *Supervisor) Metrics(ctx context.Context) (*pb.MetricsResponse, error) {
 
 // Redact runs text through the data plane's redactor and guard (the same
 // pair a provider request passes) and returns the redacted bytes. text may
-// hold secret values: it is wiped once sent, whatever the outcome. The
-// gRPC send buffer is out of reach, as for snapshots.
+// hold secret values: it is wiped once sent, whatever the outcome, and the
+// connection zeroes its own copies (wipingDialOptions).
 func (s *Supervisor) Redact(ctx context.Context, text []byte) (*pb.RedactResponse, error) {
 	req := &pb.RedactRequest{Protocol: Protocol, Text: text}
 	defer func() {
@@ -314,8 +314,8 @@ func (s *Supervisor) Redact(ctx context.Context, text []byte) (*pb.RedactRespons
 	return p.Client.Redact(ctx, req)
 }
 
-// wipe zeroes the secret bytes of a sent snapshot. The gRPC send buffer is
-// out of reach; that copy is a documented limitation.
+// wipe zeroes the secret bytes of a sent snapshot. The marshalled copy is
+// zeroed by the connection's codec once it is written (wipingDialOptions).
 func wipe(snap *pb.Snapshot) {
 	clear(snap.GetUpstreamProxy().GetPassword())
 	clear(snap.GetClientCertificates().GetListenerKeyPem())
