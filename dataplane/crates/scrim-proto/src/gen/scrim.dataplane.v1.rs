@@ -1905,7 +1905,7 @@ pub mod data_plane_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic_prost::ProstCodec::default();
+            let codec = crate::wipe::WipingCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/scrim.dataplane.v1.DataPlane/CertificateChecks",
             );
@@ -2501,7 +2501,7 @@ pub mod data_plane_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = CertificateChecksSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
+                        let codec = crate::wipe::WipingCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
