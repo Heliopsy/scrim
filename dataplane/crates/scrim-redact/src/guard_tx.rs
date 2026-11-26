@@ -153,14 +153,18 @@ impl Transforms {
     /// Decodes `base` (the once-unescaped outgoing bytes) into the transform views, finds values
     /// in them with `scan` (the guard's matcher: `(view, out)` pushes `(start, end, owner)`), and
     /// calls `emit(start, end, owner, view)` with each hit in `base` coordinates, fragments last.
+    ///
+    /// With `parallel`, the decoders and the fragment search over `base` run on three threads;
+    /// the result is the same.
     pub(crate) fn collect(
         &self,
         base: &[u8],
         s: &mut TxScratch,
         scan: &Scan<'_>,
         emit: &mut dyn FnMut(usize, usize, u32, GuardView),
+        parallel: bool,
     ) {
-        self.collect_in(base, s, scan, emit);
+        self.collect_in(base, s, scan, emit, parallel);
         // Text documents sent as base64 data URLs: the guard's base64 view shows their text, and
         // the transform views are taken over that text too.
         let mut doc = std::mem::take(&mut s.doc);
@@ -190,9 +194,15 @@ impl Transforms {
             // Byte k of the document holds bits 8k..8k+8 of the characters.
             let at = |k: usize| st + (8 * k) / 6;
             let to = |k: usize| (st + (8 * k + 7) / 6 + 1).min(st + len);
-            self.collect_in(&doc, &mut sub, scan, &mut |a, b, o, v| {
-                emit(at(a), to(b - 1), o, v);
-            });
+            self.collect_in(
+                &doc,
+                &mut sub,
+                scan,
+                &mut |a, b, o, v| {
+                    emit(at(a), to(b - 1), o, v);
+                },
+                false,
+            );
         }
         s.sub = Some(sub);
         s.doc = doc;
@@ -204,11 +214,47 @@ impl Transforms {
         s: &mut TxScratch,
         scan: &Scan<'_>,
         emit: &mut dyn FnMut(usize, usize, u32, GuardView),
+        parallel: bool,
     ) {
         s.clear();
-        separated(base, s);
-        dumps(base, s);
-        base32(base, s);
+        s.bits.build(base);
+        let mut frag_hits = std::mem::take(&mut s.frag_hits);
+        frag_hits.clear();
+        if parallel {
+            // Dumps and base32 into a second scratch, with the bitmaps they read; separated
+            // units here; the fragment search over `base` on its own. The second scratch's runs
+            // are then appended, so the decoded bytes are what one thread writes.
+            let mut side = s.side.take().unwrap_or_default();
+            side.clear();
+            side.bits.dump_cand = std::mem::take(&mut s.bits.dump_cand);
+            side.bits.b32_join = std::mem::take(&mut s.bits.b32_join);
+            side.bits.lower = std::mem::take(&mut s.bits.lower);
+            std::thread::scope(|sc| {
+                sc.spawn(|| {
+                    dumps(base, &mut side);
+                    base32(base, &mut side);
+                });
+                sc.spawn(|| self.frags.scan(base, &mut frag_hits));
+                separated(base, s);
+            });
+            s.bits.dump_cand = std::mem::take(&mut side.bits.dump_cand);
+            s.bits.b32_join = std::mem::take(&mut side.bits.b32_join);
+            s.bits.lower = std::mem::take(&mut side.bits.lower);
+            let off = s.bytes.len() as u32;
+            s.bytes.extend_from_slice(&side.bytes);
+            s.spans.extend_from_slice(&side.spans);
+            s.segs.extend(side.segs.iter().map(|g| Seg {
+                at: g.at + off,
+                end: g.end + off,
+                view: g.view,
+            }));
+            s.side = Some(side);
+        } else {
+            separated(base, s);
+            dumps(base, s);
+            base32(base, s);
+            self.frags.scan(base, &mut frag_hits);
+        }
         if !s.bytes.is_empty() {
             s.hits.clear();
             scan(&s.bytes, &mut s.hits);
@@ -230,11 +276,10 @@ impl Transforms {
                 emit(s.spans[x].0 as usize, s.spans[y - 1].1 as usize, o, view);
             }
         }
-        s.hits.clear();
-        self.frags.scan(base, &mut s.hits);
-        for &(a, b, o) in &s.hits {
+        for &(a, b, o) in &frag_hits {
             emit(a, b, o, GuardView::Fragment);
         }
+        s.frag_hits = frag_hits;
     }
 }
 
@@ -251,6 +296,12 @@ pub(crate) struct TxScratch {
     /// Positions of a base32 run's characters when it spans line breaks.
     pos: Vec<u32>,
     hits: Vec<(usize, usize, u32)>,
+    /// Class bitmaps of the input, for the decoders' prefilters.
+    bits: TxBits,
+    /// Fragments found in the input itself.
+    frag_hits: Vec<(usize, usize, u32)>,
+    /// The second thread's runs, when decoding in parallel.
+    side: Option<Box<TxScratch>>,
     /// A decoded base64 document and the scratch space for its views.
     doc: Vec<u8>,
     sub: Option<Box<TxScratch>>,
@@ -280,6 +331,9 @@ impl TxScratch {
         if let Some(sub) = &mut self.sub {
             sub.wipe();
         }
+        if let Some(side) = &mut self.side {
+            side.wipe();
+        }
     }
 
     fn push(&mut self, byte: u8, from: usize, to: usize) {
@@ -306,6 +360,284 @@ impl TxScratch {
             self.spans.truncate(at);
             false
         }
+    }
+}
+
+// ---------------------------------------------------------------------------- class bitmaps
+
+/// Per-byte class bitmaps of a decoder input (bit `k % 64` of word `k / 64` for byte `k`, bits
+/// past the end clear, plus one zero word), and the candidate positions derived from them. Each
+/// decoder only looks at positions its bitmap allows; every bitmap is a necessary condition for
+/// the decoder to produce anything there, so the result is what a byte-by-byte pass gives.
+#[derive(Default)]
+pub(crate) struct TxBits {
+    /// `separated`: positions where some unit family can start a run of `MIN_UNITS` units.
+    sep_cand: Vec<u64>,
+    /// `dumps`: hex digits and spaces after a byte a dump can follow (or at 0).
+    dump_cand: Vec<u64>,
+    /// `base32`: characters of either base32 alphabet (ASCII letters and digits), joined across
+    /// the single line breaks a run continues over.
+    b32_join: Vec<u64>,
+    /// `base32`: ASCII lower-case letters.
+    lower: Vec<u64>,
+    tmp: [Vec<u64>; 6],
+}
+
+/// ASCII bytes that cannot be part of a separator (`sep_tok`).
+#[allow(clippy::needless_bitwise_bool)]
+#[inline]
+fn is_word(c: u8) -> u8 {
+    let sep = (c == b' ')
+        | (c == b'\t')
+        | (c == b'\n')
+        | (c == b'\r')
+        | (c == b',')
+        | (c == b'-')
+        | (c == b'.')
+        | (c == b'_')
+        | (c == b':')
+        | (c == b';')
+        | (c == b'|')
+        | (c == b'/');
+    u8::from((c < 0x80) & !sep)
+}
+
+/// First bytes of `Quoted`, `Dec` and `Hex0x` units.
+#[allow(clippy::needless_bitwise_bool)]
+#[inline]
+fn is_unit_lead(c: u8) -> u8 {
+    u8::from((c == b'\'') | (c == b'"') | (c.wrapping_sub(b'0') < 10))
+}
+
+/// First bytes of the self-delimiting units (`CHex`, `Oct`, `Entity`, `Url25`).
+#[allow(clippy::needless_bitwise_bool)]
+#[inline]
+fn is_escape_lead(c: u8) -> u8 {
+    u8::from((c == b'\\') | (c == b'&') | (c == b'%'))
+}
+
+#[allow(clippy::needless_bitwise_bool)]
+#[inline]
+fn is_dump_pred(c: u8) -> u8 {
+    u8::from((c == b'\n') | (c == b'"') | (c == b'=') | (c == b':') | (c == b'\t'))
+}
+
+#[allow(clippy::needless_bitwise_bool)]
+#[inline]
+fn is_dump_lead(c: u8) -> u8 {
+    let lc = c | 0x20;
+    u8::from((c.wrapping_sub(b'0') < 10) | (lc.wrapping_sub(b'a') < 6) | (c == b' '))
+}
+
+#[allow(clippy::needless_bitwise_bool)]
+#[inline]
+fn is_alnum(c: u8) -> u8 {
+    u8::from(((c | 0x20).wrapping_sub(b'a') < 26) | (c.wrapping_sub(b'0') < 10))
+}
+
+/// `m` shifted towards lower positions by `s` (1 to 63): bit `k` of the result is bit `k + s`.
+#[inline]
+fn down(m: &[u64], w: usize, s: u32) -> u64 {
+    (m[w] >> s) | (m.get(w + 1).copied().unwrap_or(0) << (64 - s))
+}
+
+/// `m` shifted towards higher positions by `s` (1 to 63): bit `k` of the result is bit `k - s`.
+#[inline]
+fn up(m: &[u64], w: usize, s: u32) -> u64 {
+    (m[w] << s) | if w == 0 { 0 } else { m[w - 1] >> (64 - s) }
+}
+
+impl TxBits {
+    fn build(&mut self, b: &[u8]) {
+        let words = b.len().div_ceil(64) + 1;
+        let [word, lead, b32, brk, inword, esc] = &mut self.tmp;
+        for v in [
+            &mut self.sep_cand,
+            &mut self.dump_cand,
+            &mut self.b32_join,
+            &mut self.lower,
+            &mut *word,
+            &mut *lead,
+            &mut *b32,
+            &mut *brk,
+            &mut *inword,
+            &mut *esc,
+        ] {
+            v.clear();
+            v.resize(words, 0);
+        }
+        // Classes: word bytes, unit leads, dump predecessors (in dump_cand for now), dump
+        // leads (in sep_cand for now), base32 characters, lower case, '\n' (in b32_join for
+        // now), '\r' (in brk).
+        let mut block = |w: usize, blk: &[u8; 64]| {
+            let mut c = [[0u8; 64]; 9];
+            for k in 0..64 {
+                let x = blk[k];
+                c[0][k] = is_word(x);
+                c[1][k] = is_unit_lead(x);
+                c[2][k] = is_dump_pred(x);
+                c[3][k] = is_dump_lead(x);
+                c[4][k] = is_alnum(x);
+                c[5][k] = u8::from(x.wrapping_sub(b'a') < 26);
+                c[6][k] = u8::from(x == b'\n');
+                c[7][k] = u8::from(x == b'\r');
+                c[8][k] = is_escape_lead(x);
+            }
+            let mut m = [0u64; 9];
+            for (j, cj) in c.iter().enumerate() {
+                for q in 0..8 {
+                    m[j] |= crate::guard::pack8(&cj[8 * q..8 * q + 8]) << (8 * q);
+                }
+            }
+            word[w] = m[0];
+            lead[w] = m[1];
+            self.dump_cand[w] = m[2];
+            self.sep_cand[w] = m[3];
+            b32[w] = m[4];
+            self.lower[w] = m[5];
+            self.b32_join[w] = m[6];
+            brk[w] = m[7];
+            esc[w] = m[8];
+        };
+        let mut blocks = b.chunks_exact(64);
+        let mut w = 0;
+        for blk in &mut blocks {
+            if let Ok(blk) = <&[u8; 64]>::try_from(blk) {
+                block(w, blk);
+            }
+            w += 1;
+        }
+        let rest = blocks.remainder();
+        if !rest.is_empty() {
+            let mut last = [0u8; 64];
+            last[..rest.len()].copy_from_slice(rest);
+            block(w, &last);
+            // Padding is no byte of the input.
+            let keep = (1u64 << rest.len()) - 1;
+            for v in [
+                &mut *word,
+                &mut *lead,
+                &mut self.dump_cand,
+                &mut self.sep_cand,
+                &mut *b32,
+                &mut self.lower,
+                &mut self.b32_join,
+                &mut *brk,
+                &mut *esc,
+            ] {
+                v[w] &= keep;
+            }
+        }
+
+        // Dumps: a lead byte at 0 or after a predecessor.
+        for w in (0..words).rev() {
+            let after = up(&self.dump_cand, w, 1) | u64::from(w == 0);
+            self.dump_cand[w] = self.sep_cand[w] & after;
+        }
+
+        // Base32 runs continue over "\n" and "\r\n" between two characters.
+        for w in 0..words {
+            let (nl, cr, c) = (self.b32_join[w], brk[w], b32[w]);
+            let c_next = down(b32, w, 1);
+            let c_prev = up(b32, w, 1);
+            let nl_j = nl & c_next & (c_prev | (up(brk, w, 1) & up(b32, w, 2)));
+            let cr_j = cr & down(&self.b32_join, w, 1) & down(b32, w, 2) & c_prev;
+            // `b32_join` still holds '\n' for words after `w`, which `down` reads.
+            self.sep_cand[w] = c | nl_j | cr_j;
+        }
+        std::mem::swap(&mut self.b32_join, &mut self.sep_cand);
+        // Keep the letters and digits for the inside-word test below.
+        self.sep_cand.copy_from_slice(b32);
+
+        // Separated runs. Within a run, word bytes (`is_word`) come in short streaks, because
+        // non-empty separators (no word bytes) stand between units: at most two in a `Char`
+        // run (one character or a two-byte escape), at most six in a `Quoted`, `Dec` or `Hex0x`
+        // run (`'\x41'`, `0x41`, `255`). A run spans at least fifteen bytes. So a `Char` run
+        // cannot start within thirteen bytes before three word bytes in a row, nor one of the
+        // others within nine bytes before seven in a row. Self-delimiting units start with an
+        // escape lead byte.
+        let n = b.len();
+        let and_down = |src: &[u64], dst: &mut Vec<u64>, s: u32| {
+            for w in 0..words {
+                dst[w] = src[w] & down(src, w, s);
+            }
+        };
+        let or_down = |src: &[u64], dst: &mut Vec<u64>, s: u32| {
+            for w in 0..words {
+                dst[w] = src[w] | down(src, w, s);
+            }
+        };
+        // Starts of three word bytes in a row, spread back over 0..=12 positions: `Char` bad.
+        and_down(word, b32, 1); // two in a row
+        and_down(b32, brk, 1); // three
+        or_down(brk, b32, 1);
+        or_down(b32, brk, 2);
+        or_down(brk, b32, 4);
+        or_down(b32, brk, 5); // `brk`: no `Char` run starts here
+        // Starts of seven in a row, spread back over 0..=8: no other run starts here.
+        and_down(word, b32, 1); // two
+        and_down(b32, inword, 2); // four
+        and_down(inword, b32, 3); // seven
+        or_down(b32, word, 1);
+        or_down(word, b32, 2);
+        or_down(b32, word, 4);
+        or_down(word, b32, 1); // `b32`: spread over 0..=8
+        // Inside a word (a letter or digit after one) no family starts; `alnum` was saved in
+        // `self.sep_cand` above.
+        for w in 0..words {
+            let mut valid = !0u64;
+            if 64 * w + 64 > n {
+                valid = if 64 * w >= n {
+                    0
+                } else {
+                    (1u64 << (n - 64 * w)) - 1
+                };
+            }
+            let inside = self.sep_cand[w] & up(&self.sep_cand, w, 1);
+            word[w] = (esc[w] | (lead[w] & !b32[w]) | !brk[w]) & !inside & valid;
+        }
+        std::mem::swap(&mut self.sep_cand, word);
+    }
+}
+
+/// Whether `m` has a set bit in `a..b`.
+#[inline]
+fn any_bit(m: &[u64], a: usize, b: usize) -> bool {
+    let mut p = a;
+    while p < b {
+        let (w, o) = (p / 64, p % 64);
+        let take = (64 - o).min(b - p);
+        let mask = if take == 64 {
+            !0
+        } else {
+            ((1u64 << take) - 1) << o
+        };
+        if m[w] & mask != 0 {
+            return true;
+        }
+        p += take;
+    }
+    false
+}
+
+/// First set bit of `m` at or after `from`, below `n`.
+#[inline]
+fn next_bit(m: &[u64], from: usize, n: usize) -> Option<usize> {
+    let mut w = from / 64;
+    if w >= m.len() {
+        return None;
+    }
+    let mut x = m[w] & (!0u64 << (from % 64));
+    loop {
+        if x != 0 {
+            let p = 64 * w + x.trailing_zeros() as usize;
+            return (p < n).then_some(p);
+        }
+        w += 1;
+        if w >= m.len() {
+            return None;
+        }
+        x = m[w];
     }
 }
 
@@ -601,7 +933,9 @@ fn separated(b: &[u8], s: &mut TxScratch) {
     let n = b.len();
     let mut i = 0;
     let mut lens = [0usize; MAX_SEP + 1];
-    while i < n {
+    // Only where a run can start (`TxBits::sep_cand`); the positions skipped decode nothing.
+    while let Some(at) = next_bit(&s.bits.sep_cand, i, n) {
+        i = at;
         let mut next = i + 1;
         // Inside a word no family can start: the cheap common case.
         if i > 0 && b[i].is_ascii_alphanumeric() && b[i - 1].is_ascii_alphanumeric() {
@@ -850,14 +1184,17 @@ static DUMP_PRED: [bool; 256] = dump_pred();
 /// Finds runs of dump lines and appends each run's bytes.
 fn dumps(b: &[u8], s: &mut TxScratch) {
     let mut done = 0;
-    for st in 0..b.len() {
-        let c = b[st];
-        if st < done
-            || !(c.is_ascii_hexdigit() || c == b' ')
-            || (st > 0 && !DUMP_PRED[usize::from(b[st - 1])])
-        {
+    let mut from = 0;
+    // A hex digit or space at the start or after a `DUMP_PRED` byte (`TxBits::dump_cand`).
+    while let Some(st) = next_bit(&s.bits.dump_cand, from, b.len()) {
+        from = st + 1;
+        if st < done {
             continue;
         }
+        debug_assert!(
+            (b[st].is_ascii_hexdigit() || b[st] == b' ')
+                && (st == 0 || DUMP_PRED[usize::from(b[st - 1])])
+        );
         let at = s.mark();
         let mut p = st;
         let mut end = st;
@@ -943,9 +1280,16 @@ fn base32(b: &[u8], s: &mut TxScratch) {
         }
     };
     let mut i = 0;
-    while i < n {
-        if !cls(i) || (i > 0 && cls(i - 1)) {
-            i += 1;
+    // Runs come from `TxBits::b32_join`: maximal runs of characters and the line breaks between
+    // them, at least as long as the shortest run decoded. Runs with a lower-case letter are
+    // never decoded and are skipped without reading them.
+    let join = std::mem::take(&mut s.bits.b32_join);
+    let mut starts = crate::guard::RunStarts::new(&join, MIN_B32_RUN);
+    while let Some(at) = starts.next_from(i) {
+        let run_end = crate::guard::ones_end(&join, at, n);
+        i = at;
+        if any_bit(&s.bits.lower, at, run_end) {
+            i = run_end;
             continue;
         }
         // Extent of the run.
@@ -970,6 +1314,7 @@ fn base32(b: &[u8], s: &mut TxScratch) {
             break;
         }
         let end = i;
+        debug_assert_eq!(end, run_end);
         // As the tools print it: upper-case letters and digits, at least one letter. Words and
         // lower-case hex digests are not decoded.
         let upper = any & B32_UPPER != 0 && any & B32_LOWER == 0;
@@ -1013,6 +1358,7 @@ fn base32(b: &[u8], s: &mut TxScratch) {
             }
         }
     }
+    s.bits.b32_join = join;
 }
 
 // ---------------------------------------------------------------------------- fragments
@@ -1030,9 +1376,14 @@ struct FragValue {
 struct Fragments {
     vals: Vec<FragValue>,
     min_len: usize,
+    /// Blocked Bloom filter over the grams: one word per gram, two bits in it, about sixteen
+    /// bits per gram, so a probe touches one cache line and the filter stays small.
     bits: Vec<u64>,
     shift: u32,
-    grams: HashMap<u64, (u32, u32)>,
+    /// Open addressing: (gram, candidates start, end); `u64::MAX` marks an empty slot (grams
+    /// have 40 bits).
+    slots: Vec<(u64, u32, u32)>,
+    slot_shift: u32,
     cands: Vec<(u32, u32)>,
 }
 
@@ -1131,7 +1482,7 @@ impl Fragments {
             }
         }
         pairs.sort_unstable();
-        let mut grams = HashMap::new();
+        let mut keys = Vec::new();
         let mut cands = Vec::with_capacity(pairs.len());
         let mut i = 0;
         while i < pairs.len() {
@@ -1141,22 +1492,53 @@ impl Fragments {
                 cands.push((pairs[i].1, pairs[i].2));
                 i += 1;
             }
-            grams.insert(g, (lo, cands.len() as u32));
+            keys.push((g, lo, cands.len() as u32));
         }
-        let nbits = (grams.len() * 64).next_power_of_two().max(1 << 12);
-        let shift = 64 - nbits.trailing_zeros();
-        let mut bits = vec![0u64; nbits / 64];
-        for &g in grams.keys() {
-            let h = (hash(g) >> shift) as usize;
-            bits[h >> 6] |= 1 << (h & 63);
-        }
-        Self {
+        let words = (keys.len() / 4).next_power_of_two().max(64);
+        let shift = 64 - words.trailing_zeros();
+        let nslots = (keys.len() * 2).next_power_of_two().max(64);
+        let slot_shift = 64 - nslots.trailing_zeros();
+        let mut f = Self {
             vals,
             min_len,
-            bits,
+            bits: vec![0u64; words],
             shift,
-            grams,
+            slots: vec![(u64::MAX, 0, 0); nslots],
+            slot_shift,
             cands,
+        };
+        for &(g, lo, hi) in &keys {
+            let h = hash(g);
+            f.bits[(h >> f.shift) as usize] |= f.bloom_bits(h);
+            let mask = f.slots.len() - 1;
+            let mut at = (h >> f.slot_shift) as usize;
+            while f.slots[at].0 != u64::MAX {
+                at = (at + 1) & mask;
+            }
+            f.slots[at] = (g, lo, hi);
+        }
+        f
+    }
+
+    /// The two filter bits of hash `h` in its word, from the bits below the word index.
+    #[inline]
+    fn bloom_bits(&self, h: u64) -> u64 {
+        (1u64 << ((h >> (self.shift - 6)) & 63)) | (1u64 << ((h >> (self.shift - 12)) & 63))
+    }
+
+    /// The candidates of gram `g`.
+    fn get(&self, g: u64, h: u64) -> &[(u32, u32)] {
+        let mask = self.slots.len() - 1;
+        let mut at = (h >> self.slot_shift) as usize;
+        loop {
+            let (k, lo, hi) = self.slots[at];
+            if k == g {
+                return &self.cands[lo as usize..hi as usize];
+            }
+            if k == u64::MAX {
+                return &[];
+            }
+            at = (at + 1) & mask;
         }
     }
 
@@ -1185,9 +1567,10 @@ impl Fragments {
             } else {
                 gram(v, p)
             };
-            let h = (hash(g) >> self.shift) as usize;
-            if self.bits[h >> 6] & (1 << (h & 63)) != 0 {
-                self.verify(v, p, g, &mut last, out);
+            let h = hash(g);
+            let m = self.bloom_bits(h);
+            if self.bits[(h >> self.shift) as usize] & m == m {
+                self.verify(v, p, g, h, &mut last, out);
             }
             p += STRIDE;
         }
@@ -1199,13 +1582,11 @@ impl Fragments {
         v: &[u8],
         p: usize,
         g: u64,
+        h: u64,
         last: &mut (u32, usize),
         out: &mut Vec<(usize, usize, u32)>,
     ) {
-        let Some(&(lo, hi)) = self.grams.get(&g) else {
-            return;
-        };
-        for &(vi, off) in &self.cands[lo as usize..hi as usize] {
+        for &(vi, off) in self.get(g, h) {
             let fv = &self.vals[vi as usize];
             if last.0 == fv.owner && p + GRAM <= last.1 {
                 continue;
@@ -1238,6 +1619,7 @@ mod tests {
 
     fn decoded(input: &[u8]) -> Vec<Vec<u8>> {
         let mut s = TxScratch::default();
+        s.bits.build(input);
         separated(input, &mut s);
         dumps(input, &mut s);
         base32(input, &mut s);
@@ -1431,6 +1813,7 @@ mod tests {
         let v = b"0123456789abcdefXYZW";
         let x = xxd(v);
         let mut s = TxScratch::default();
+        s.bits.build(x.as_bytes());
         dumps(x.as_bytes(), &mut s);
         let last = s.spans[s.spans.len() - 1].1 as usize;
         assert_eq!(&x.as_bytes()[last - 4..last], b"XYZW");
@@ -1528,9 +1911,13 @@ mod tests {
                 }
             }
         };
-        tx.collect(body.as_bytes(), &mut s, &scan, &mut |a, b, o, view| {
-            hits.push((a, b, o, view))
-        });
+        tx.collect(
+            body.as_bytes(),
+            &mut s,
+            &scan,
+            &mut |a, b, o, view| hits.push((a, b, o, view)),
+            false,
+        );
         let start = body.find("base64,").unwrap() + 7;
         assert!(
             hits.iter()
@@ -1643,3 +2030,7 @@ mod tests {
         assert_eq!(out.len(), 1);
     }
 }
+
+#[cfg(test)]
+#[path = "guard_tx_ref.rs"]
+mod reference;

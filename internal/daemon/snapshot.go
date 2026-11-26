@@ -202,6 +202,7 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 		Redaction: &pb.RedactionSettings{
 			MinValueLength: uint32(MinValueLength.Get(cfg)), //nolint:gosec // validated to 1..1024
 			Binary:         binaryPolicy(BinaryPolicy.Get(cfg)),
+			GuardCacheOff:  !GuardCache.Get(cfg),
 		},
 		CaptureRules: captureRulesPB(cfg),
 		Policy:       &pb.Policy{DefaultEffect: pb.Effect_EFFECT_DENY},

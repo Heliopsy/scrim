@@ -703,6 +703,10 @@ pub struct RedactionSettings {
     /// or not enabled leaves it off.
     #[prost(message, optional, tag = "7")]
     pub entropy: ::core::option::Option<EntropySettings>,
+    /// guard_cache_off turns the guard's verdict cache off
+    /// (redaction.guard-cache false). The zero value keeps it on.
+    #[prost(bool, tag = "8")]
+    pub guard_cache_off: bool,
 }
 /// EntropySettings tune the entropy detector. Zero fields take the data
 /// plane's defaults.

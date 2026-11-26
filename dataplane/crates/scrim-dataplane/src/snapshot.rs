@@ -219,6 +219,11 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
     let config = rc::Config {
         min_len: usize::try_from(min_value_length).unwrap_or(usize::MAX),
         detectors: detector_config(snap.redaction.as_ref()),
+        guard_cache_entries: if snap.redaction.as_ref().is_some_and(|r| r.guard_cache_off) {
+            0
+        } else {
+            rc::Config::default().guard_cache_entries
+        },
         ..rc::Config::default()
     };
     let core = Arc::new(
@@ -1033,6 +1038,23 @@ mod tests {
             ..Default::default()
         });
         assert!(build(bad, 0, &Hooks::default()).is_err());
+    }
+
+    /// `redaction.guard-cache` reaches the guard: on by default, off when the control plane
+    /// says so.
+    #[test]
+    fn guard_cache_setting_applies() {
+        let caches = |r: Option<v1::RedactionSettings>| {
+            let mut s = snap(1);
+            s.redaction = r;
+            ok(s).applied.redaction.guard().caches()
+        };
+        assert!(caches(None));
+        assert!(caches(Some(v1::RedactionSettings::default())));
+        assert!(!caches(Some(v1::RedactionSettings {
+            guard_cache_off: true,
+            ..Default::default()
+        })));
     }
 
     #[test]

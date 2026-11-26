@@ -2354,6 +2354,14 @@
           },
           "type": "object"
         },
+        "guard-cache": {
+          "default": true,
+          "description": "Remember which parts of a request body the guard found clean (BLAKE3 hashes only, never bytes or values, at most 65,536 per redaction set, cleared when the set changes), so an agent's next turn, which resends the conversation, has only its new parts checked. Verdicts are the same either way; off checks every byte of every request.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_REDACTION_GUARD_CACHE",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
         "limit-to-agent-identity": {
           "default": false,
           "description": "Leave out of the redaction of an agent's provider requests the values that agent's own store identity cannot read. Off (the default), the redaction set is loaded with each store's own credentials and covers every value, whatever each agent may use, so a value an agent reads by accident is still redacted. On, scrim checks each value of a store with per-agent identity (identity.store-credentials) as each such agent, and the provider requests of that agent's `scrim run` sessions are no longer redacted for the values its store refused it. Kubernetes callers, peers, the tool proxy and every value not yet checked keep the whole redaction set.",

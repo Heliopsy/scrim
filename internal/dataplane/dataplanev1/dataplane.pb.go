@@ -3149,7 +3149,10 @@ type RedactionSettings struct {
 	DetectorsEncoded bool `protobuf:"varint,6,opt,name=detectors_encoded,json=detectorsEncoded,proto3" json:"detectors_encoded,omitempty"`
 	// entropy is the entropy detector (redaction.detectors.entropy.*); unset
 	// or not enabled leaves it off.
-	Entropy       *EntropySettings `protobuf:"bytes,7,opt,name=entropy,proto3" json:"entropy,omitempty"`
+	Entropy *EntropySettings `protobuf:"bytes,7,opt,name=entropy,proto3" json:"entropy,omitempty"`
+	// guard_cache_off turns the guard's verdict cache off
+	// (redaction.guard-cache false). The zero value keeps it on.
+	GuardCacheOff bool `protobuf:"varint,8,opt,name=guard_cache_off,json=guardCacheOff,proto3" json:"guard_cache_off,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3231,6 +3234,13 @@ func (x *RedactionSettings) GetEntropy() *EntropySettings {
 		return x.Entropy
 	}
 	return nil
+}
+
+func (x *RedactionSettings) GetGuardCacheOff() bool {
+	if x != nil {
+		return x.GuardCacheOff
+	}
+	return false
 }
 
 // EntropySettings tune the entropy detector. Zero fields take the data
@@ -5491,7 +5501,7 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x04kind\x18\x02 \x01(\x0e2 .scrim.dataplane.v1.ListenerKindR\x04kind\x12\x18\n" +
 	"\aaddress\x18\x03 \x01(\tR\aaddress\x12%\n" +
 	"\x0eblock_unrouted\x18\x04 \x01(\bR\rblockUnrouted\x12\x10\n" +
-	"\x03tls\x18\x05 \x01(\bR\x03tls\"\xe4\x02\n" +
+	"\x03tls\x18\x05 \x01(\bR\x03tls\"\x8c\x03\n" +
 	"\x11RedactionSettings\x12(\n" +
 	"\x10min_value_length\x18\x01 \x01(\rR\x0eminValueLength\x128\n" +
 	"\x06binary\x18\x02 \x01(\x0e2 .scrim.dataplane.v1.BinaryPolicyR\x06binary\x12#\n" +
@@ -5499,7 +5509,8 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x12detectors_disabled\x18\x04 \x03(\tR\x11detectorsDisabled\x12+\n" +
 	"\x11detectors_enabled\x18\x05 \x03(\tR\x10detectorsEnabled\x12+\n" +
 	"\x11detectors_encoded\x18\x06 \x01(\bR\x10detectorsEncoded\x12=\n" +
-	"\aentropy\x18\a \x01(\v2#.scrim.dataplane.v1.EntropySettingsR\aentropy\"\xd2\x01\n" +
+	"\aentropy\x18\a \x01(\v2#.scrim.dataplane.v1.EntropySettingsR\aentropy\x12&\n" +
+	"\x0fguard_cache_off\x18\b \x01(\bR\rguardCacheOff\"\xd2\x01\n" +
 	"\x0fEntropySettings\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12%\n" +
 	"\x0ethreshold_bits\x18\x02 \x01(\x01R\rthresholdBits\x12\x1d\n" +

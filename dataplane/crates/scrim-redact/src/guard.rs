@@ -47,6 +47,7 @@ use std::sync::Arc;
 use zeroize::Zeroizing;
 
 use crate::error::WithholdReason;
+use crate::guard_cache::{self, Key, SegmentCache};
 use crate::guard_tx::{Transforms, TxScratch, derived_forms};
 use crate::restore::Resolver;
 use crate::secret::EntryId;
@@ -179,6 +180,8 @@ pub struct Guard {
     hex_needs_digit_free: bool,
     /// Transform decoders and the fragment index.
     tx: Transforms,
+    /// Segments found clean in earlier checks (`None`: off, or a value contains `,{`).
+    cache: Option<SegmentCache>,
     /// The guard as it was before the single-decode rewrite, built from the same inputs.
     #[cfg(any(test, feature = "oracle"))]
     oracle: crate::guard_oracle::OracleGuard,
@@ -213,6 +216,10 @@ pub struct GuardScratch {
     tx: TxScratch,
     /// Hits of the transform views, before the fragment rule.
     tx_hits: Vec<RawHit>,
+    /// Segment cuts, keys and cache answers of the body being checked.
+    seg_cuts: Vec<usize>,
+    seg_keys: Vec<Key>,
+    seg_known: Vec<bool>,
 }
 
 /// Buffers of one worker, which checks one region of the body.
@@ -259,6 +266,12 @@ impl GuardScratch {
     /// Empty scratch space.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Per segment of the last body checked with the cache, whether it was known clean.
+    #[cfg(test)]
+    pub(crate) fn segments_known(&self) -> &[bool] {
+        &self.seg_known
     }
 
     /// Wipes every buffer that may have held request bytes. Capacity is kept.
@@ -489,6 +502,7 @@ impl Guard {
         max_repairs: usize,
         json_depth: usize,
         (threads, parallel_min): (usize, usize),
+        cache_entries: usize,
         resolver: Arc<Resolver>,
     ) -> Self {
         let mut long = Vec::new();
@@ -626,6 +640,13 @@ impl Guard {
                 starts.insert(a, b);
             }
         }
+        // A value with `,{` could cross a segment cut (see guard_cache).
+        let cache = (cache_entries > 0
+            && !long
+                .iter()
+                .chain(short.iter())
+                .any(|v| memchr::memmem::find(&v.value, b",{").is_some()))
+        .then(|| SegmentCache::new(cache_entries));
         Self {
             #[cfg(any(test, feature = "oracle"))]
             oracle: crate::guard_oracle::OracleGuard::build(
@@ -655,7 +676,75 @@ impl Guard {
             b64_mask_ok: std::array::from_fn(|mask| b64_masks.iter().any(|&m| m & mask as u8 == m)),
             hex_needs_digit_free,
             tx,
+            cache,
         }
+    }
+
+    /// Whether the verdict cache is in use for this guard.
+    pub fn caches(&self) -> bool {
+        self.cache.is_some()
+    }
+
+    /// Forgets every segment found clean, so the next check sees every body for the first time
+    /// (benchmarks of the first request of a conversation).
+    pub fn clear_cache(&self) {
+        if let Some(c) = &self.cache {
+            c.clear();
+        }
+    }
+
+    /// With the verdict cache: whether `bytes` is clean, checking only the segments not found
+    /// clean before, and remembering the new ones when the body is clean. `false` means "not
+    /// shown clean": the caller runs the whole check, which decides.
+    fn clean_by_segments(&self, cache: &SegmentCache, bytes: &[u8], s: &mut GuardScratch) -> bool {
+        let mut cuts = std::mem::take(&mut s.seg_cuts);
+        let mut keys = std::mem::take(&mut s.seg_keys);
+        let mut known = std::mem::take(&mut s.seg_known);
+        cuts.clear();
+        keys.clear();
+        guard_cache::cuts(bytes, &mut cuts);
+        let seg = |i: usize| {
+            let a = if i == 0 { 0 } else { cuts[i - 1] };
+            let b = cuts.get(i).copied().unwrap_or(bytes.len());
+            (a, b)
+        };
+        let n = cuts.len() + 1;
+        keys.extend((0..n).map(|i| {
+            let (a, b) = seg(i);
+            *blake3::hash(&bytes[a..b]).as_bytes()
+        }));
+        cache.lookup(&keys, &mut known);
+        let mut clean = true;
+        let mut hits = std::mem::take(&mut s.recheck);
+        let mut i = 0;
+        while clean && i < n {
+            if known[i] {
+                i += 1;
+                continue;
+            }
+            // A run of segments not seen before, checked as one piece.
+            let a = seg(i).0;
+            while i < n && !known[i] {
+                i += 1;
+            }
+            let b = seg(i - 1).1;
+            hits.clear();
+            self.collect(&bytes[a..b], s, &mut hits);
+            clean = hits.is_empty();
+        }
+        s.recheck = hits;
+        if clean && known.iter().any(|k| !k) {
+            cache.insert(
+                keys.iter()
+                    .zip(&known)
+                    .filter(|(_, k)| !**k)
+                    .map(|(k, _)| *k),
+            );
+        }
+        s.seg_cuts = cuts;
+        s.seg_keys = keys;
+        s.seg_known = known;
+        clean
     }
 
     /// Checks `bytes`, the exact body about to be sent.
@@ -663,6 +752,17 @@ impl Guard {
     /// Returns [`Verdict::Clean`], or [`Verdict::Repaired`] with the repaired body in `scratch`,
     /// or [`Verdict::Withhold`]. Never allocates once `scratch` has grown to the body size.
     pub fn check<'s>(&self, bytes: &[u8], scratch: &'s mut GuardScratch) -> Verdict<'s> {
+        if let Some(cache) = &self.cache
+            && bytes.len() >= guard_cache::MIN_BYTES
+            && self.clean_by_segments(cache, bytes, scratch)
+        {
+            return Verdict::Clean;
+        }
+        self.check_whole(bytes, scratch)
+    }
+
+    /// [`Guard::check`] without the verdict cache: every byte is checked.
+    pub fn check_whole<'s>(&self, bytes: &[u8], scratch: &'s mut GuardScratch) -> Verdict<'s> {
         let mut hits = std::mem::take(&mut scratch.hits);
         hits.clear();
         self.collect(bytes, scratch, &mut hits);
@@ -813,8 +913,10 @@ impl Guard {
         }
         let work =
             |part: &mut Part, r: Region| self.check_region(bytes, base, has_json1, json1, r, part);
-        // The transform views take the whole once-unescaped view on the calling thread, so no
-        // region cut can split a reversed, spaced or dumped value.
+        // The transform views take the whole once-unescaped view on the calling thread (their
+        // decoders on threads of their own when the body is split), so no region cut can split
+        // a reversed, spaced or dumped value.
+        let parallel = regions.len() > 1;
         let transforms = |tx: &mut TxScratch, tx_hits: &mut Vec<RawHit>| {
             tx_hits.clear();
             if self.long.is_empty() {
@@ -833,6 +935,7 @@ impl Guard {
                         view,
                     });
                 },
+                parallel,
             );
         };
         if regions.len() == 1 {
@@ -840,14 +943,14 @@ impl Guard {
             self.second_views(has_json1, base, json1, json2, deeper, url, vh, out);
             transforms(tx, tx_hits);
         } else {
+            // Every region on a worker; the calling thread takes the transform views, the
+            // longest single piece of work.
             std::thread::scope(|sc| {
-                let (first, rest) = parts.split_at_mut(1);
-                for (part, &r) in rest.iter_mut().zip(&regions[1..]) {
+                for (part, &r) in parts.iter_mut().zip(regions.iter()) {
                     sc.spawn(move || work(part, r));
                 }
-                work(&mut first[0], regions[0]);
-                self.second_views(has_json1, base, json1, json2, deeper, url, vh, out);
                 transforms(tx, tx_hits);
+                self.second_views(has_json1, base, json1, json2, deeper, url, vh, out);
             });
         }
 
@@ -1586,7 +1689,7 @@ fn is_hex_char(c: u8) -> u8 {
 
 /// Eight 0/1 bytes to eight bits, byte `k` to bit `k`.
 #[inline]
-fn pack8(b: &[u8]) -> u64 {
+pub(crate) fn pack8(b: &[u8]) -> u64 {
     let x = match b {
         &[a, b, c, d, e, f, g, h] => u64::from_le_bytes([a, b, c, d, e, f, g, h]),
         _ => 0,
@@ -1634,7 +1737,7 @@ fn class_bitmaps(b: &[u8], b64: &mut Vec<u64>, hex: &mut Vec<u64>) {
 /// End of the run of set bits starting at `p`: the first clear bit at or after `p`, at most
 /// `n`. The bitmap must end with a zero word.
 #[inline]
-fn ones_end(m: &[u64], p: usize, n: usize) -> usize {
+pub(crate) fn ones_end(m: &[u64], p: usize, n: usize) -> usize {
     let mut at = p;
     while at < n {
         let sh = at % 64;
@@ -1670,7 +1773,7 @@ fn class_mask(b: &[u8]) -> u8 {
 }
 
 /// Starts of maximal runs of at least `min` set bits in a bitmap, found word by word.
-struct RunStarts<'a> {
+pub(crate) struct RunStarts<'a> {
     m: &'a [u64],
     min: usize,
     /// Word the cached starts belong to, `usize::MAX` before the first.
@@ -1679,7 +1782,7 @@ struct RunStarts<'a> {
 }
 
 impl<'a> RunStarts<'a> {
-    fn new(m: &'a [u64], min: usize) -> Self {
+    pub(crate) fn new(m: &'a [u64], min: usize) -> Self {
         Self {
             m,
             min,
@@ -1710,7 +1813,7 @@ impl<'a> RunStarts<'a> {
     }
 
     /// First maximal run start at or after `from`.
-    fn next_from(&mut self, from: usize) -> Option<usize> {
+    pub(crate) fn next_from(&mut self, from: usize) -> Option<usize> {
         let mut w = from / 64;
         let mut off = from % 64;
         while w + 1 < self.m.len() {
@@ -2134,7 +2237,7 @@ mod tests {
                 placeholder: b"[x]",
             },
         ];
-        let g = Guard::build(&inputs, 8, 64, 3, (1, usize::MAX), empty_resolver());
+        let g = Guard::build(&inputs, 8, 64, 3, (1, usize::MAX), 0, empty_resolver());
         let mut s = GuardScratch::new();
         assert_eq!(
             g.check(b"a first-value-123 b", &mut s),

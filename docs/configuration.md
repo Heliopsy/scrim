@@ -268,32 +268,6 @@ open keep their route until they close. `scrim status` shows the proxy in use un
 Not proxied: PostgreSQL, Valkey and NATS connections (they are not HTTP), plugins on Unix sockets,
 and Kubernetes TokenReview, which talks to the in-cluster API server directly.
 
-## Fallback detectors
-
-The fallback detectors replace secrets no store holds: the pattern rules
-(`redaction.detectors.enabled`, `.disable`, `.enable`) recognise known formats, two opt-in
-settings widen them, and `scrim status` shows what is in force under the `fallback detectors`
-protection (`scrim doctor` repeats it as the `redaction: detectors` check).
-
-| Setting | Default | Cost on one core, 1 MB agent request | False positives |
-| --- | --- | --- | --- |
-| pattern rules | on | 0.8 to 1.0 ms | none on the repository corpus (10 MB) or generated agent bodies beyond the fake credentials it holds on purpose |
-| `redaction.detectors.encoded` | off | +0.5 to 0.65 ms; redactor throughput 810 to 530 MB/s | none on the same corpora |
-| `redaction.detectors.entropy.enabled`, `context: key-name` | off | +2 to 2.5 ms | 0 per MB of generated bodies, 0.39 per MB of the repository (documented example credentials) |
-| `redaction.detectors.entropy.enabled`, `context: any` | off | +1 to 3.5 ms | 892 per MB of generated bodies (hex ids, base64 data), 8 per MB of the repository |
-
-Measured with the `detect` group of the `scrim-redact` benchmarks and its `entropy_false_positive_rates`
-test on an Intel Xeon W-2295. Encoded forms are off because they cost a third of the redactor's
-throughput, below the latency gate's floor. Entropy is off because, even with a key name, values
-that look random but must go back as they are (session ids in tests, signed URLs, nonces under a
-`token` name) would become placeholders that never resolve; the key-name context already skips
-pagination, sync and anti-forgery token names.
-
-With `encoded`, base64 runs of at least 24 characters (up to 16 KiB), hex runs of at least 40
-digits and percent-encoded spans of up to 4 KiB are decoded when their first bytes are text, and
-the characters that encode a match are replaced. Encodings of encodings and base64 wrapped across
-lines are not decoded.
-
 ## Weakening settings
 
 A setting that weakens a security invariant is named for what it weakens (for example
@@ -501,6 +475,7 @@ is out of date.
 | [`redaction.detectors.entropy.min-classes`](#redactiondetectorsentropymin-classes) | int | `0` | hot |
 | [`redaction.detectors.entropy.min-length`](#redactiondetectorsentropymin-length) | int | `0` | hot |
 | [`redaction.detectors.entropy.threshold`](#redactiondetectorsentropythreshold) | float | `0` | hot |
+| [`redaction.guard-cache`](#redactionguard-cache) | bool | `true` | hot |
 | [`redaction.limit-to-agent-identity`](#redactionlimit-to-agent-identity) | bool | `false` | restart required |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
@@ -3038,6 +3013,18 @@ Minimum Shannon entropy of a value, in bits per byte. 0 takes the context's defa
 | Type | float |
 | Default | `0` |
 | Environment | `SCRIM_REDACTION_DETECTORS_ENTROPY_THRESHOLD` |
+| Flag | none |
+| Reload | hot |
+
+#### `redaction.guard-cache`
+
+Remember which parts of a request body the guard found clean (BLAKE3 hashes only, never bytes or values, at most 65,536 per redaction set, cleared when the set changes), so an agent's next turn, which resends the conversation, has only its new parts checked. Verdicts are the same either way; off checks every byte of every request.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `true` |
+| Environment | `SCRIM_REDACTION_GUARD_CACHE` |
 | Flag | none |
 | Reload | hot |
 

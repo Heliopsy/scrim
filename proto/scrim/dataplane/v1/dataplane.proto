@@ -720,6 +720,9 @@ message RedactionSettings {
   // entropy is the entropy detector (redaction.detectors.entropy.*); unset
   // or not enabled leaves it off.
   EntropySettings entropy = 7;
+  // guard_cache_off turns the guard's verdict cache off
+  // (redaction.guard-cache false). The zero value keeps it on.
+  bool guard_cache_off = 8;
 }
 
 // EntropySettings tune the entropy detector. Zero fields take the data

@@ -95,6 +95,9 @@
 mod detect;
 mod error;
 mod guard;
+mod guard_cache;
+#[cfg(test)]
+mod guard_cache_tests;
 #[cfg(any(test, feature = "oracle"))]
 mod guard_oracle;
 #[cfg(test)]
