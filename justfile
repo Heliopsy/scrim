@@ -180,6 +180,12 @@ leak *args: leak-selftest
     if [ -n "${SCRIM_LEAK_PROXY_CMD:-}" ]; then cmd=(--proxy-cmd "$SCRIM_LEAK_PROXY_CMD"); fi
     go run . audit run --proxy "$proxy" "${cmd[@]}" --report "${SCRIM_LEAK_REPORT:-leak-report.json}" {{args}}
 
+# Leak gate with the real agent CLIs (claude, codex, opencode; default all three): the scenario
+# sessions through scrim proxy, inside test/e2e/sandbox.sh. SCRIM_E2E_CLAUDE, SCRIM_E2E_CODEX and
+# SCRIM_E2E_OPENCODE name the binaries, else PATH. A missing agent fails.
+leak-agents *agents:
+    test/leak/agents.sh {{agents}}
+
 # Three replicas on PostgreSQL with Valkey events in memory- and CPU-capped rootless podman
 # containers, the release data plane, a fake provider and a fake tool API. Fails on any leak,
 # unrestored placeholder, failed injection or approval that did not cross replicas, and on the
@@ -207,8 +213,8 @@ e2e-tools *args:
 e2e-chain *args:
     test/e2e/run.sh chain {{args}}
 
-# Realistic Claude Code and Codex sessions under scrim run; each skipped without its agent
-# (SCRIM_E2E_CODEX names the codex binary).
+# Realistic Claude Code, Codex and OpenCode sessions under scrim run; each skipped without its agent
+# (SCRIM_E2E_CODEX and SCRIM_E2E_OPENCODE name the codex and opencode binaries).
 e2e-session *args:
     test/e2e/run.sh session {{args}}
 

@@ -3068,7 +3068,7 @@ Home-relative paths or glob patterns hidden by the session filesystem view in ad
 
 #### `run.mcp`
 
-Register scrim mcp with the agent for this session (Claude Code --mcp-config, Codex -c mcp_servers.scrim). Nothing is written to the agent's own configuration.
+Register scrim mcp with the agent for this session (Claude Code --mcp-config, Codex -c mcp_servers.scrim, OpenCode OPENCODE_CONFIG_CONTENT). Nothing is written to the agent's own configuration.
 
 | | |
 |---|---|

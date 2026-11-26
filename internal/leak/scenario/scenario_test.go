@@ -132,33 +132,75 @@ func TestUnstableProxyBreaksCache(t *testing.T) {
 	}
 }
 
-// Claude Code itself, through the pass-through stand-in: every session leaks
-// and Claude Code's own turns keep the prompt cache. Runs only when
-// SCRIM_LEAK_CLAUDE=1 and claude is installed, because it starts the real CLI.
-func TestClaudeDriverPassThrough(t *testing.T) {
-	if os.Getenv("SCRIM_LEAK_CLAUDE") != "1" {
-		t.Skip("set SCRIM_LEAK_CLAUDE=1 to drive the real Claude Code CLI")
+// agentBin finds an agent CLI for the driver tests: SCRIM_E2E_<AGENT> names
+// the binary (CI installs pinned versions into a temporary directory), else
+// it is looked up on PATH. A missing agent skips the test, or fails it when
+// SCRIM_E2E_REQUIRE_TOOLS=1 (the e2e-agents CI job).
+func agentBin(t *testing.T, agent string) string {
+	t.Helper()
+	if p := os.Getenv("SCRIM_E2E_" + strings.ToUpper(agent)); p != "" {
+		return p
 	}
-	if _, err := exec.LookPath("claude"); err != nil {
-		t.Skip("claude not installed")
+	p, err := exec.LookPath(agent)
+	if err == nil {
+		return p
 	}
-	fake := fp.New(fp.Options{})
-	up := httptest.NewServer(fake)
-	t.Cleanup(up.Close)
-	u, _ := url.Parse(up.URL)
-	px := httptest.NewServer(stub.PassThrough(u))
-	t.Cleanup(px.Close)
-	seeds := leak.GenerateSet()
-	for _, s := range scenario.AgentSessions {
-		res := scenario.ClaudeDriver{}.Run(context.Background(), matrix.Target{BaseURL: px.URL}, fake, leak.NewChecker(nil), s, seeds)
-		if res.Error != "" {
-			t.Fatalf("%s: %s", s.Name, res.Error)
-		}
-		if len(res.Findings) == 0 || res.Pass {
-			t.Errorf("%s: pass-through not reported as a leak", s.Name)
-		}
-		if res.CacheTurns == 0 || res.CacheHits != res.CacheTurns {
-			t.Errorf("%s: cache %d/%d", s.Name, res.CacheHits, res.CacheTurns)
-		}
+	if os.Getenv("SCRIM_E2E_REQUIRE_TOOLS") == "1" {
+		t.Fatalf("%s is not installed and SCRIM_E2E_REQUIRE_TOOLS is set", agent)
+	}
+	t.Skipf("%s is not installed (set SCRIM_E2E_%s)", agent, strings.ToUpper(agent))
+	return ""
+}
+
+// Each real agent CLI, through the pass-through stand-in behind route
+// prefixes: every session completes, runs every command (so the transforms
+// reach the provider) and leaks. The real proxy's gate over the same
+// sessions is `scrim audit run --driver <agent>` in the leak workflow.
+func TestAgentDriversPassThrough(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts the real agent CLIs")
+	}
+	for _, agent := range scenario.Agents {
+		t.Run(agent, func(t *testing.T) {
+			bin := agentBin(t, agent)
+			fake := fp.New(fp.Options{})
+			up := httptest.NewServer(fake)
+			t.Cleanup(up.Close)
+			u, _ := url.Parse(up.URL)
+			px := httptest.NewServer(stub.PassThrough(u))
+			t.Cleanup(px.Close)
+			target := matrix.Target{BaseURL: px.URL, Prefix: map[fp.API]string{
+				fp.Anthropic: "/anthropic", fp.OpenAIResponses: "/openai",
+			}}
+			seeds := leak.GenerateSet()
+			for _, s := range scenario.AgentSessions {
+				var out bytes.Buffer
+				d := scenario.AgentDriver{Agent: agent, Bin: bin, Output: &out}
+				res := d.Run(context.Background(), target, fake, leak.NewChecker(nil), s, seeds)
+				if res.Error != "" {
+					t.Fatalf("%s: %s\n%s", s.Name, res.Error, out.String())
+				}
+				if len(res.Findings) == 0 || res.Pass {
+					t.Errorf("%s: pass-through not reported as a leak", s.Name)
+				}
+				want := map[string]string{"claude": "/anthropic/", "codex": "/openai/", "opencode": "/anthropic/"}[agent]
+				for _, e := range fake.Exchanges() {
+					if !strings.HasPrefix(e.Path, want) {
+						t.Errorf("%s: request to %s, outside the route prefix", s.Name, e.Path)
+					}
+				}
+				t.Logf("%s: api %s, %d requests, %d findings, cache %d/%d", s.Name, res.API, res.Requests, len(res.Findings), res.CacheHits, res.CacheTurns)
+				if agent == "claude" && (res.CacheTurns == 0 || res.CacheHits != res.CacheTurns) {
+					t.Errorf("%s: cache %d/%d", s.Name, res.CacheHits, res.CacheTurns)
+				}
+			}
+		})
+	}
+}
+
+func TestAgentDriverUnknown(t *testing.T) {
+	res := scenario.AgentDriver{Agent: "nope"}.Run(context.Background(), matrix.Target{}, fp.New(fp.Options{}), leak.NewChecker(nil), scenario.AgentSessions[0], nil)
+	if res.Pass || !strings.Contains(res.Error, "unknown agent") {
+		t.Fatalf("unknown agent accepted: %+v", res)
 	}
 }

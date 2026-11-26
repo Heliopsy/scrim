@@ -67,7 +67,7 @@ way fits which situation: [deploy/README.md](deploy/README.md).
 | Page | Covers |
 | --- | --- |
 | [cli-tools.md](cli-tools.md) | Tool profiles: gh, git, kubectl, aws, terraform and other CLIs with placeholder credentials |
-| [run.md](run.md) | `scrim run`: what it sets for Claude Code, Codex and other agents, failing closed, signals |
+| [run.md](run.md) | `scrim run`: what it sets for Claude Code, Codex, OpenCode and other agents, failing closed, signals |
 | [ssh-agent.md](ssh-agent.md) | scrim's ssh-agent: keys from stores, a policy decision and audit entry per signature, approvals, git over SSH |
 | [edge-forwarder.md](edge-forwarder.md) | Agent pods with a central scrim: ssh-agent, database ports and the agent API forwarded over TLS with the pod's token |
 | [providers/README.md](providers/README.md) | Cloud provider routes: Bedrock, Claude Platform on AWS, Foundry and Vertex, authenticated by scrim after redaction |

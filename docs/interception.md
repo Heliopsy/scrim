@@ -1075,6 +1075,7 @@ writes `~/.local/share/scrim/scrim-ca.pem` and `ca-bundle.pem`.
 | OpenSSL, Go, Ruby, curl, git | `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO` pointing at `ca-bundle.pem`. These replace the roots, which is why the bundle includes the system roots |
 | Python | `REQUESTS_CA_BUNDLE` for requests, `SSL_CERT_FILE` for the `ssl` module |
 | Codex | `CODEX_CA_CERTIFICATE`, falling back to `SSL_CERT_FILE` |
+| OpenCode (Bun) | `NODE_EXTRA_CA_CERTS` adds to the roots, as in Node.js; the release binaries also trust the system store (they start with `--use-system-ca`) |
 | Java | import into a truststore: `keytool -importcert -cacerts -alias scrim -file scrim-ca.pem`, or a separate store passed with `-Djavax.net.ssl.trustStore=...` (for example in `JAVA_TOOL_OPTIONS`). Not covered by `scrim ca install` or `scrim run` yet |
 
 A client that pins the provider's certificate or public key will not accept scrim's leaf, whatever

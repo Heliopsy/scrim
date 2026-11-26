@@ -231,9 +231,12 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   the refusals are not, against real IAM.
 - **The Kubernetes cell of the matrix and the multi-replica load test run in CI on every change,
   not in the release workflow**, so their results are not among a release's files.
-- **The leak suite drives the provider APIs directly.** A Codex driver for `scrim audit run` is not
-  implemented; Claude Code and Codex are covered by the scenario corpus and the `scrim run` tests,
-  not by driving the real agents.
+- **The agent drivers of the leak suite cover one provider API each and pinned releases.** `scrim
+  audit run --driver` plays the agent sessions with Claude Code and OpenCode on the Anthropic
+  Messages API and with Codex on the Responses API over WebSocket, at the versions CI pins
+  ([leak-assurance.md](leak-assurance.md#agent-drivers)). OpenCode on OpenAI or Gemini, other
+  agents, and other releases are covered by the built-in synthetic agent and the bypass matrix,
+  not by the real CLIs.
 - **Fuzzing for a release is 10 minutes per target.** It starts from the corpus the nightly runs
   (1 hour per target) keep on the `fuzz-corpus` branch, so its coverage depends on those runs having
   happened; the release results give the hours behind the corpus. Each target fuzzes in one
@@ -246,7 +249,8 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
 
 These pages list their own limits in more detail:
 
-- [run.md](run.md#limitations): `scrim run` with Codex, custom model providers and trust stores.
+- [run.md](run.md#limitations): `scrim run` with Codex and OpenCode, custom model providers and
+  trust stores.
 - [interception.md](interception.md#what-it-does-not-protect): what hooks-only mode leaves uncovered.
 - [ssh-agent.md](ssh-agent.md#limitations): `IdentityAgent` in `~/.ssh/config`, RSA and ECDSA keys
   that cannot be wiped, encrypted and security keys.

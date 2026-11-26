@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -26,7 +28,7 @@ type Preset struct {
 }
 
 // Presets are the built-in agent presets, generic last.
-var Presets = []*Preset{ClaudePreset, CodexPreset, GenericPreset}
+var Presets = []*Preset{ClaudePreset, CodexPreset, OpenCodePreset, GenericPreset}
 
 // GenericPreset sets the common environment only.
 var GenericPreset = &Preset{Name: "generic"}
@@ -155,9 +157,14 @@ var CodexPreset = &Preset{
 		if bundle != "" {
 			b.setVar("CODEX_CA_CERTIFICATE", bundle, "Codex's own CA override, ahead of SSL_CERT_FILE")
 		}
-		// Current Codex reads the OpenAI base URL from its configuration
-		// (openai_base_url), older releases from OPENAI_BASE_URL; -c sets it
-		// for this run only without touching ~/.codex/config.toml.
+		// Codex reads the OpenAI base URL from its configuration
+		// (openai_base_url) and ignores OPENAI_BASE_URL (checked with 0.171);
+		// -c sets it for this run only without touching
+		// ~/.codex/config.toml. A project's .codex/config.toml cannot set it.
+		if p := codexProvider(b.env, b.plan.Args[1:]); p != "" && p != "openai" {
+			b.warn("Codex is configured with model_provider %q: its model requests go to that provider's base_url, not through scrim's LLM proxy "+
+				"(unless that base_url is scrim's); remove model_provider to use the built-in openai provider (docs/run.md#codex-codex)", p)
+		}
 		args := []string{"-c", "openai_base_url=" + tomlString(b.valueOf("OPENAI_BASE_URL"))}
 		// No session header here: the built-in openai provider takes no
 		// extra headers and its id is reserved, and a provider of scrim's own
@@ -179,6 +186,53 @@ var CodexPreset = &Preset{
 		return nil
 	},
 }
+
+// codexProvider returns the model provider Codex is set to use, from a
+// `-c model_provider=...` argument or the top level of
+// $CODEX_HOME/config.toml (default ~/.codex), or "" when neither sets one.
+// Profiles are not read: a profile's provider is not reported.
+func codexProvider(env map[string]string, args []string) string {
+	for i, a := range args {
+		v := ""
+		switch {
+		case (a == "-c" || a == "--config") && i+1 < len(args):
+			v = args[i+1]
+		case strings.HasPrefix(a, "--config="):
+			v = strings.TrimPrefix(a, "--config=")
+		}
+		if k, val, ok := strings.Cut(v, "="); ok && strings.TrimSpace(k) == "model_provider" {
+			return strings.Trim(strings.TrimSpace(val), `"'`)
+		}
+	}
+	home := env["CODEX_HOME"]
+	if home == "" {
+		for _, v := range []string{"HOME", "USERPROFILE"} {
+			if h := envGet(env, v); h != "" {
+				home = filepath.Join(h, ".codex")
+				break
+			}
+		}
+	}
+	if home == "" {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(home, "config.toml")) // #nosec G304 -- the user's own Codex configuration, read for a warning
+	if err != nil {
+		return ""
+	}
+	for line := range strings.SplitSeq(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			break
+		}
+		if m := codexProviderLine.FindStringSubmatch(line); m != nil {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+var codexProviderLine = regexp.MustCompile(`^model_provider\s*=\s*["']([^"']*)["']`)
 
 // PresetFor picks the preset for an executable by its base name.
 func PresetFor(command string) *Preset {

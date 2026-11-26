@@ -2453,7 +2453,7 @@
         },
         "mcp": {
           "default": true,
-          "description": "Register scrim mcp with the agent for this session (Claude Code --mcp-config, Codex -c mcp_servers.scrim). Nothing is written to the agent's own configuration.",
+          "description": "Register scrim mcp with the agent for this session (Claude Code --mcp-config, Codex -c mcp_servers.scrim, OpenCode OPENCODE_CONFIG_CONTENT). Nothing is written to the agent's own configuration.",
           "type": "boolean",
           "x-scrim-env": "SCRIM_RUN_MCP",
           "x-scrim-flag": "--run-mcp",

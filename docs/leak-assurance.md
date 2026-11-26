@@ -42,12 +42,6 @@ scrim audit run --proxy http://127.0.0.1:8484 \
   --upstream-listen 127.0.0.1:18089 --seeds-out ./leak-seeds.json --report leak-report.json
 ```
 
-`--driver claude` plays the scenarios with Claude Code itself instead of the built-in agent: the
-fake model asks it to run `cat`, `rev`, `base64`, `xxd`, `tr` and `od` over a workspace of seeded
-files, and Claude Code runs them for real. Claude Code starts with an empty `HOME` in a scratch
-directory, so it reads none of your settings, hooks, MCP servers or credentials, and it
-authenticates with a fake key. A Codex driver is not implemented yet.
-
 With `--proxy-cmd`, the suite starts the proxy itself and stops it afterwards. The command gets
 `SCRIM_LEAK_UPSTREAM` (the fake provider's URL), `SCRIM_LEAK_SEEDS` (the seed file) and
 `SCRIM_LEAK_LISTEN` (the address from `--proxy`) in its environment and must listen there.
@@ -68,6 +62,7 @@ Useful flags:
 | `--seeds <file>` | use seeds you already loaded instead of generating new ones |
 | `--placeholder <regexp>` | how the proxy's placeholders look, if not `⟦scrim:...⟧` |
 | `--min-partial`, `--partial-fraction`, `--max-partial` | leak checker fragment thresholds |
+| `--driver synthetic\|claude\|codex\|opencode`, `--agent-bin <path>` | who plays the scenarios ([Agent drivers](#agent-drivers)) |
 | `--report <file>` | JSON report (mode 0600), `-` for stdout |
 | `--list-matrix` | print the matrix catalogue below |
 
@@ -76,6 +71,37 @@ The seed file holds the fake values in plain text so a store can load them. It i
 locations, and the fake provider would record it.
 
 The exit status is 0 when the gate passes and 1 when it fails or the run could not complete.
+
+### Agent drivers
+
+`--driver claude`, `--driver codex` and `--driver opencode` play the scenarios with a real agent CLI
+instead of the built-in agent: the fake model asks it to run `cat`, `rev`, `base64`, `xxd`, `tr` and
+`od` over a workspace of seeded files, and the agent runs them for real with its own shell tool, so
+what reaches the proxy is the agent's own request format, tool output framing and history. Each
+agent starts with an empty `HOME` (and XDG directories under it) in a scratch directory, so it reads
+none of your settings, hooks, MCP servers or credentials, and it authenticates with a fake key the
+proxy passes through. `--agent-bin` names the binary; the default is the agent's name on `PATH`.
+
+| Driver | Command | Provider API | Base URL |
+| --- | --- | --- | --- |
+| `claude` | `claude -p`, the commands allowed with `--allowedTools` | Anthropic Messages, streamed | `ANTHROPIC_BASE_URL` |
+| `codex` | `codex exec --dangerously-bypass-approvals-and-sandbox` | Responses API over WebSocket (HTTPS when the proxy refuses the handshake) | `-c openai_base_url=...` |
+| `opencode` | `opencode run --pure`, `bash` allowed | Anthropic Messages, streamed | `OPENCODE_CONFIG_CONTENT` with only the `anthropic` provider enabled |
+
+Codex runs without its own sandbox and approvals because nothing can answer an approval and a CI
+runner may not allow the namespaces its sandbox needs; the commands are the fake model's, in the
+scratch directory. A session fails when the agent exits non-zero or sends fewer model requests than
+it has commands to run (the proxy refused one). The prompt cache is measured for the HTTP drivers;
+Codex's WebSocket messages carry only the new input, chained by `previous_response_id`, so there is
+no prefix to measure and its sessions show `cache=0/0`. Real agents add timestamps and counters, so
+no driver but the synthetic one is replayed for byte-identical requests.
+
+`just leak-agents` (`test/leak/agents.sh`) runs the scenario gate with each driver against `scrim
+proxy` inside `test/e2e/sandbox.sh` (loopback only). `SCRIM_E2E_CLAUDE`, `SCRIM_E2E_CODEX` and
+`SCRIM_E2E_OPENCODE` name the binaries. CI's `e2e-agents` job installs Claude Code, Codex and
+OpenCode at pinned versions (Codex 0.171.0, OpenCode 1.19.6 when this was written), runs
+`TestAgentDriversPassThrough` (each driver through the pass-through stand-in must complete its
+sessions and leak) and then this gate, with `SCRIM_E2E_REQUIRE_TOOLS=1` so a missing agent fails.
 
 ## The fake provider
 
