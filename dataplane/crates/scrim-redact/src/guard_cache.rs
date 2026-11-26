@@ -167,23 +167,43 @@ pub(crate) fn cuts(b: &[u8], out: &mut Vec<usize>) {
 /// to either, so it makes the line not plain; other escapes decode to a quote, a backslash, a
 /// slash or a control character.
 fn line_is_plain(b: &[u8], end: usize) -> bool {
-    // Whether the byte at `i` follows an odd run of backslashes: it ends an escape.
-    let escaped = |i: usize| b[..i].iter().rev().take_while(|&&c| c == b'\\').count() % 2 == 1;
     let from = end.saturating_sub(MAX_LINE);
-    let mut i = end;
-    while i > from {
-        i -= 1;
+    // Back to the nearest line break, `|` or escape, found with `memrchr3` rather than byte by
+    // byte: the lines before cuts can be long (base64 in a tool result).
+    let mut hi = end;
+    let start = loop {
+        let Some(k) = memchr::memrchr3(b'\n', b'|', b'\\', &b[from..hi]) else {
+            // The start of the body is a line start; a longer line is not searched.
+            if from != 0 {
+                return false;
+            }
+            break 0;
+        };
+        let i = from + k;
         match b[i] {
-            b'\n' => return true,
-            b'n' if escaped(i) => return true,
-            b'u' if escaped(i) => return false,
+            b'\n' => break i + 1,
             b'|' => return false,
-            b' ' if i > 0 && b[i - 1] == b':' => return false,
-            _ => {}
+            _ => {
+                // A run of backslashes ending at `i`: when odd, the byte after it is escaped.
+                let run = b[..=i].iter().rev().take_while(|&&c| c == b'\\').count();
+                if run % 2 == 1 {
+                    match b.get(i + 1) {
+                        Some(b'n') => break i + 2,
+                        Some(b'u') => return false,
+                        _ => {}
+                    }
+                }
+                hi = i + 1 - run;
+                if hi <= from {
+                    if from != 0 {
+                        return false;
+                    }
+                    break 0;
+                }
+            }
         }
-    }
-    // The start of the body is a line start; a line longer than MAX_LINE is not searched.
-    from == 0
+    };
+    memchr::memmem::find(&b[start..end], b": ").is_none()
 }
 
 #[cfg(test)]

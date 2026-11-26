@@ -90,12 +90,15 @@ lack, so its time compares one CPU with itself, not with another. A new runner C
 measured from a few runs on it.
 
 The spec's targets for added request latency (5 ms for 1 MB with 1,000 secrets, 10 ms with 10,000)
-are the budgets of the next-turn measurement (`engine.next_turn_p99_ms`), which is what an agent
-sends: every request of a conversation repeats the ones before it. A body seen for the first time
-has its own, looser budgets (`engine.request_p99_ms`, `core.protect_p99_ms`): every byte goes
-through the guard's decoders, about 12 to 18 ms per 1 MB on a shared Xeon W-2295 (it was 25 ms
-at the median on ho-z10 before the decoder prefilters). [limitations.md](limitations.md#implementation)
-lists this.
+apply to the next-turn measurement (`engine.next_turn_p99_ms`), which is what an agent sends: every
+request of a conversation repeats the ones before it. On ho-z10 it takes 5.4 to 8.8 ms at the
+median and 8 to 12 ms at p99, so its budgets are 10 ms (10 and 1,000 secrets) and 12 ms (10,000),
+above the 5 ms target. About 1 ms of it is the guard; the rest is the codec's JSON plan and the
+redactor over the whole body, which are not cached. On a Xeon W-2295 workstation the same
+measurement is 3.7 to 5 ms at the median. A body seen for the first time has its own budgets
+(`engine.request_p99_ms` 40 ms, `core.protect_p99_ms` 30 ms): every byte goes through the guard's
+decoders, 11 to 21 ms at the median on ho-z10 (it was 24 to 29 ms before the decoder prefilters).
+[limitations.md](limitations.md#implementation) lists this.
 
 ## Guard verdict cache
 
@@ -116,8 +119,9 @@ new snapshot push) starts an empty one. A set with a value containing `,{` canno
 occurrences confined to a segment, and its guard does not cache. Bodies under 32 KiB are checked
 whole. `redaction.guard-cache: false` turns it off ([configuration.md](configuration.md#redactionguard-cache)).
 
-On the next-turn measurement the guard takes about 1.2 ms of the 3.7 to 5 ms; the rest is the
-codec plan and the redactor over the whole body, which are not cached.
+On the next-turn measurement the guard takes about 0.7 ms of the 3.7 to 5 ms on the workstation
+(finding the cuts, BLAKE3 over the body, the new segments); the rest is the codec plan and the
+redactor over the whole body.
 
 ## Regression check
 
