@@ -149,6 +149,22 @@ as a test oracle (`guard_oracle.rs`, feature `oracle`), except that it unescapes
 to the depth while escapes remain: property tests and the `guard` fuzz target check that both reach
 the same verdict, repaired bytes and findings.
 
+The transform decoders (`guard_tx.rs`: separated units, byte dumps, base32) only look at
+positions their class bitmaps allow: a `Char` run cannot start within thirteen bytes of three word
+bytes in a row, a quoted, decimal or `0x` run within nine of seven, a dump only at a hex digit or
+space after a line break, quote, `=`, `:` or tab, a base32 run only on a run of thirteen or more
+letters, digits and joined line breaks without a lower-case letter. `guard_tx_ref.rs` keeps the
+byte-by-byte decoders and property tests check that both produce the same runs. On bodies split
+over threads the decoders and the fragment search run on threads of their own.
+
+**Verdict cache (`guard_cache.rs`).** `Guard::check` cuts bodies of 32 KiB and more into segments at
+`X},{Y` (`X` one of `"`, `]`, `}`; `Y` one of `"`, `}`; no `|`, colon and space, or `\u` escape on the line
+before), where no occurrence in any view can cross, keeps the BLAKE3 hash of each segment of a body
+it found clean (at most `guard_cache_entries`, 65,536 by default, least recently used out), and
+checks only runs of segments it has not seen. Any finding runs the whole check, which decides. The
+module documentation gives the argument per view; `guard_cache_tests.rs` checks that cached and
+whole checks agree on next turns. A set with a value containing `,{` does not cache.
+
 **Detectors (`detect.rs`).** Pattern rules for AWS access keys, GitHub (classic and fine-grained),
 Anthropic, OpenAI, GitLab, Slack, Stripe, Google API keys, npm tokens, JWTs and private key blocks
 (including JSON-escaped and truncated), found by literal anchors and validated by anchored regexes
