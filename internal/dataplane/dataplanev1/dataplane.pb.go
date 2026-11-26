@@ -3220,6 +3220,13 @@ type RedactionSettings struct {
 	// guard_cache_off turns the guard's verdict cache off
 	// (redaction.guard-cache false). The zero value keeps it on.
 	GuardCacheOff bool `protobuf:"varint,10,opt,name=guard_cache_off,json=guardCacheOff,proto3" json:"guard_cache_off,omitempty"`
+	// guard_disabled names guard transform decoders switched off
+	// (redaction.guard.disable): confusables, base85, compressed, spelled-out,
+	// split-fragments.
+	GuardDisabled []string `protobuf:"bytes,11,rep,name=guard_disabled,json=guardDisabled,proto3" json:"guard_disabled,omitempty"`
+	// guard_enabled names guard transform decoders that are off by default and
+	// switched on (redaction.guard.enable).
+	GuardEnabled  []string `protobuf:"bytes,12,rep,name=guard_enabled,json=guardEnabled,proto3" json:"guard_enabled,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3322,6 +3329,20 @@ func (x *RedactionSettings) GetGuardCacheOff() bool {
 		return x.GuardCacheOff
 	}
 	return false
+}
+
+func (x *RedactionSettings) GetGuardDisabled() []string {
+	if x != nil {
+		return x.GuardDisabled
+	}
+	return nil
+}
+
+func (x *RedactionSettings) GetGuardEnabled() []string {
+	if x != nil {
+		return x.GuardEnabled
+	}
+	return nil
 }
 
 // EntropySettings tune the entropy detector. Zero fields take the data
@@ -5582,7 +5603,7 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x04kind\x18\x02 \x01(\x0e2 .scrim.dataplane.v1.ListenerKindR\x04kind\x12\x18\n" +
 	"\aaddress\x18\x03 \x01(\tR\aaddress\x12%\n" +
 	"\x0eblock_unrouted\x18\x04 \x01(\bR\rblockUnrouted\x12\x10\n" +
-	"\x03tls\x18\x05 \x01(\bR\x03tls\"\x9a\x04\n" +
+	"\x03tls\x18\x05 \x01(\bR\x03tls\"\xe6\x04\n" +
 	"\x11RedactionSettings\x12(\n" +
 	"\x10min_value_length\x18\x01 \x01(\rR\x0eminValueLength\x128\n" +
 	"\x06binary\x18\x02 \x01(\x0e2 .scrim.dataplane.v1.BinaryPolicyR\x06binary\x12#\n" +
@@ -5594,7 +5615,9 @@ const file_scrim_dataplane_v1_dataplane_proto_rawDesc = "" +
 	"\x12remote_attachments\x18\b \x01(\x0e2%.scrim.dataplane.v1.RemoteAttachmentsR\x11remoteAttachments\x126\n" +
 	"\x17remote_allowed_networks\x18\t \x03(\tR\x15remoteAllowedNetworks\x12&\n" +
 	"\x0fguard_cache_off\x18\n" +
-	" \x01(\bR\rguardCacheOff\"\xd2\x01\n" +
+	" \x01(\bR\rguardCacheOff\x12%\n" +
+	"\x0eguard_disabled\x18\v \x03(\tR\rguardDisabled\x12#\n" +
+	"\rguard_enabled\x18\f \x03(\tR\fguardEnabled\"\xd2\x01\n" +
 	"\x0fEntropySettings\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12%\n" +
 	"\x0ethreshold_bits\x18\x02 \x01(\x01R\rthresholdBits\x12\x1d\n" +

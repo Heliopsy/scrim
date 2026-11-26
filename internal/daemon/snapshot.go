@@ -213,6 +213,9 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 	if err := detectorSettings(cfg, snap.Redaction); err != nil {
 		return nil, err
 	}
+	if err := guardSettings(cfg, snap.Redaction); err != nil {
+		return nil, err
+	}
 	if b.Policy != nil {
 		if p := b.Policy(); p != nil {
 			snap.Policy = p

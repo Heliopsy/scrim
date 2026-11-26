@@ -1,0 +1,10 @@
+{
+  "comment": "Transform decoders of the data plane's guard (dataplane/crates/scrim-redact/src/guard_extra.rs, TransformConfig), and whether each is on by default. Tests on both sides check this list.",
+  "transforms": [
+    {"name": "confusables", "default": true},
+    {"name": "base85", "default": false},
+    {"name": "compressed", "default": false},
+    {"name": "spelled-out", "default": true},
+    {"name": "split-fragments", "default": true}
+  ]
+}

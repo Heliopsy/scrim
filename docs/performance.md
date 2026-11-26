@@ -113,6 +113,12 @@ with the cache off; property tests check that on generated conversations with va
 new turn, split across the boundary to the old one, and in every encoding the guard decodes
 (`guard_cache_tests.rs`).
 
+The split-fragments transform joins short pieces of a value from anywhere in one request, so a
+piece in an old segment can complete pieces in new ones. When the new segments hold any piece too
+short to count alone, the guard checks the whole body instead, and a segment holding one is never
+cached. A conversation that carries such a piece is therefore checked whole on every turn, with or
+without the cache.
+
 The cache holds hashes only, never bytes or values: at most 65,536 per redaction set (about 3 MB),
 least recently used first out. It belongs to the snapshot, so any change to the values (and any
 new snapshot push) starts an empty one. A set with a value containing `,{` cannot have its

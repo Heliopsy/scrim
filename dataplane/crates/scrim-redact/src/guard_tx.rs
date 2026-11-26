@@ -28,14 +28,19 @@
 //! space has grown: clean text costs one table lookup per byte for the unit and base32 scanners, a
 //! check per line start for dumps and one probe every four bytes for fragments.
 //!
-//! What is deliberately not decoded (documented limitations): look-alike Unicode (homoglyphs,
-//! fullwidth forms), spelling alphabets, compression, the base85 family and arbitrary ciphers.
+//! Look-alike Unicode, spelled-out values, compressed documents, the base85 family and short
+//! split fragments are in `guard_extra.rs`, each switched by [`TransformConfig`]. Arbitrary
+//! ciphers are not decoded (a documented limitation).
 
 use std::collections::HashMap;
 
 use zeroize::Zeroizing;
 
 use crate::guard::GuardView;
+
+#[path = "guard_extra.rs"]
+mod extra;
+pub use extra::{TRANSFORM_NAMES, TransformConfig};
 
 /// Fewest units a separated or escaped run needs to be decoded (the guard's long values are at
 /// least eight bytes).
@@ -61,7 +66,11 @@ const MAX_OFFSETS_PER_GRAM: usize = 8;
 /// rot47 and the inner base64 forms at byte offsets 0, 1 and 2 (standard alphabet, and URL-safe
 /// when different). Forms equal to `v` or to each other (ignoring ASCII case) and forms shorter
 /// than eight bytes are skipped.
-pub(crate) fn derived_forms(v: &[u8], mut push: impl FnMut(Zeroizing<Vec<u8>>)) {
+pub(crate) fn derived_forms(
+    v: &[u8],
+    cfg: &TransformConfig,
+    mut push: impl FnMut(Zeroizing<Vec<u8>>),
+) {
     let mut forms: Vec<Zeroizing<Vec<u8>>> = Vec::with_capacity(9);
     let mut add = |f: Zeroizing<Vec<u8>>| {
         if f.len() >= 8
@@ -93,6 +102,15 @@ pub(crate) fn derived_forms(v: &[u8], mut push: impl FnMut(Zeroizing<Vec<u8>>)) 
         } else {
             add(std);
         }
+    }
+    if cfg.base85 {
+        extra::base85_forms(v, &mut add);
+    }
+    if cfg.confusables
+        && let Some(f) = extra::skeleton_form(v)
+    {
+        // Compared as it is, case aside: the skeleton is lower case.
+        forms.push(f);
     }
     forms.into_iter().for_each(&mut push);
 }
@@ -140,13 +158,19 @@ pub(crate) type Scan<'a> = dyn Fn(&[u8], &mut Vec<(usize, usize, u32)>) + 'a;
 /// The transform part of the guard, built with it from the same values.
 pub(crate) struct Transforms {
     frags: Fragments,
+    cfg: TransformConfig,
 }
 
 impl Transforms {
     /// `long` holds the long values (at least `min_len` bytes, at least eight) with their owner.
-    pub(crate) fn build<'a>(long: impl Iterator<Item = (&'a [u8], u32)>, min_len: usize) -> Self {
+    pub(crate) fn build<'a>(
+        long: impl Iterator<Item = (&'a [u8], u32)>,
+        min_len: usize,
+        cfg: &TransformConfig,
+    ) -> Self {
         Self {
-            frags: Fragments::build(long, min_len.max(8)),
+            frags: Fragments::build(long, min_len.max(8), cfg.confusables),
+            cfg: cfg.clone(),
         }
     }
 
@@ -204,8 +228,49 @@ impl Transforms {
                 false,
             );
         }
+        // Compressed documents in base64 runs (`gzip | base64`): the inflated text gets every
+        // view, and a value found there replaces the whole run.
+        if self.cfg.compressed {
+            let mut budget = extra::MAX_INFLATED;
+            let mut raw = std::mem::take(&mut s.raw);
+            let mut hits = std::mem::take(&mut s.hits);
+            extra::compressed(
+                base,
+                &mut raw,
+                &mut doc,
+                &mut budget,
+                &mut |st, en, text| {
+                    hits.clear();
+                    scan(text, &mut hits);
+                    for &(_, _, o) in &hits {
+                        emit(st, en, o, GuardView::Compressed);
+                    }
+                    self.collect_in(
+                        text,
+                        &mut sub,
+                        scan,
+                        &mut |_, _, o, _| {
+                            emit(st, en, o, GuardView::Compressed);
+                        },
+                        false,
+                    );
+                },
+            );
+            s.raw = raw;
+            s.hits = hits;
+        }
         s.sub = Some(sub);
         s.doc = doc;
+    }
+
+    /// The look-alike and spelled-out views, appended after the other decoders' runs.
+    fn extra_views(&self, base: &[u8], s: &mut TxScratch) {
+        if self.cfg.confusables {
+            extra::confusables(base, s);
+        }
+        if self.cfg.spelled {
+            extra::spelled(base, s);
+        }
     }
 
     fn collect_in(
@@ -220,6 +285,9 @@ impl Transforms {
         s.bits.build(base);
         let mut frag_hits = std::mem::take(&mut s.frag_hits);
         frag_hits.clear();
+        let mut short = std::mem::take(&mut s.short);
+        short.clear();
+        let split = self.cfg.split_fragments;
         if parallel {
             // Dumps and base32 into a second scratch, with the bitmaps they read; separated
             // units here; the fragment search over `base` on its own. The second scratch's runs
@@ -234,7 +302,10 @@ impl Transforms {
                     dumps(base, &mut side);
                     base32(base, &mut side);
                 });
-                sc.spawn(|| self.frags.scan(base, &mut frag_hits));
+                sc.spawn(|| {
+                    self.frags
+                        .scan(base, &mut frag_hits, split.then_some(&mut short));
+                });
                 separated(base, s);
             });
             s.bits.dump_cand = std::mem::take(&mut side.bits.dump_cand);
@@ -249,23 +320,30 @@ impl Transforms {
                 view: g.view,
             }));
             s.side = Some(side);
+            self.extra_views(base, s);
         } else {
             separated(base, s);
             dumps(base, s);
             base32(base, s);
-            self.frags.scan(base, &mut frag_hits);
+            self.extra_views(base, s);
+            self.frags
+                .scan(base, &mut frag_hits, split.then_some(&mut short));
         }
         if !s.bytes.is_empty() {
             s.hits.clear();
             scan(&s.bytes, &mut s.hits);
             let whole = s.hits.len();
             // Fragments too: a decoded run may start or end inside the value.
-            self.frags.scan(&s.bytes, &mut s.hits);
+            self.frags.scan(&s.bytes, &mut s.hits, None);
             for (i, &(x, y, o)) in s.hits.iter().enumerate() {
                 let k = s.segs.partition_point(|g| g.at as usize <= x);
                 let g = s.segs[k - 1];
                 if y > g.end as usize {
                     // Straddles two decoded runs: not a real occurrence.
+                    continue;
+                }
+                // A fragment inside a whole occurrence adds nothing (and would hide its view).
+                if i >= whole && s.hits[..whole].iter().any(|&(a, b, _)| a <= x && y <= b) {
                     continue;
                 }
                 let view = if i < whole {
@@ -280,6 +358,15 @@ impl Transforms {
             emit(a, b, o, GuardView::Fragment);
         }
         s.frag_hits = frag_hits;
+        if !short.is_empty() {
+            let frags = &self.frags;
+            extra::assemble(
+                &mut short,
+                &|form| frags.vals[form as usize].value.len(),
+                &mut |a, b, form| emit(a, b, frags.vals[form as usize].owner, GuardView::Fragment),
+            );
+        }
+        s.short = short;
     }
 }
 
@@ -305,6 +392,19 @@ pub(crate) struct TxScratch {
     /// A decoded base64 document and the scratch space for its views.
     doc: Vec<u8>,
     sub: Option<Box<TxScratch>>,
+    /// Fragments too short for the fragment rule, for split assembly.
+    short: Vec<extra::Short>,
+    /// The decoded bytes of a compressed run.
+    raw: Vec<u8>,
+}
+
+impl TxScratch {
+    /// Whether the last check found fragments too short to count alone (the split-fragments
+    /// view). The guard's verdict cache cannot vouch for such a body: a piece in a cached part
+    /// could complete them, so the cached check falls back to the whole check.
+    pub(crate) fn saw_short(&self) -> bool {
+        !self.short.is_empty()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -328,6 +428,7 @@ impl TxScratch {
         use zeroize::Zeroize;
         self.bytes.zeroize();
         self.doc.zeroize();
+        self.raw.zeroize();
         if let Some(sub) = &mut self.sub {
             sub.wipe();
         }
@@ -1442,7 +1543,13 @@ fn public_mask(v: &[u8]) -> Vec<bool> {
 }
 
 impl Fragments {
-    fn build<'a>(long: impl Iterator<Item = (&'a [u8], u32)>, min_len: usize) -> Self {
+    /// `skeletons` also indexes the confusable skeleton of each value that has one, so a
+    /// line of a multi-line value written in look-alikes is a fragment too.
+    fn build<'a>(
+        long: impl Iterator<Item = (&'a [u8], u32)>,
+        min_len: usize,
+        skeletons: bool,
+    ) -> Self {
         let mut vals = Vec::new();
         let mut pairs: Vec<(u64, u32, u32)> = Vec::new();
         for (v, owner) in long {
@@ -1459,7 +1566,14 @@ impl Fragments {
             let mut rv = Zeroizing::new(v.to_vec());
             rv.reverse();
             let rmask: Vec<bool> = mask.iter().rev().copied().collect();
-            for (form, mask) in [(Zeroizing::new(v.to_vec()), mask), (rv, rmask)] {
+            let skeleton = skeletons
+                .then(|| extra::skeleton_form(v))
+                .flatten()
+                .map(|f| (f, mask.clone()));
+            for (form, mask) in [(Zeroizing::new(v.to_vec()), mask), (rv, rmask)]
+                .into_iter()
+                .chain(skeleton)
+            {
                 let mut secret = Vec::with_capacity(len + 1);
                 secret.push(0u32);
                 for &p in &mask {
@@ -1544,8 +1658,14 @@ impl Fragments {
         }
     }
 
-    /// Pushes `(start, end, owner)` for every fragment found in `v`.
-    fn scan(&self, v: &[u8], out: &mut Vec<(usize, usize, u32)>) {
+    /// Pushes `(start, end, owner)` for every fragment found in `v`, and into `short`, when
+    /// given, the fragments of at least the minimum length that are too short to count alone.
+    fn scan(
+        &self,
+        v: &[u8],
+        out: &mut Vec<(usize, usize, u32)>,
+        mut short: Option<&mut Vec<extra::Short>>,
+    ) {
         if self.vals.is_empty() || v.len() < 8 {
             return;
         }
@@ -1572,13 +1692,14 @@ impl Fragments {
             let h = hash(g);
             let m = self.bloom_bits(h);
             if self.bits[(h >> self.shift) as usize] & m == m {
-                self.verify(v, p, g, h, &mut last, out);
+                self.verify(v, p, g, h, &mut last, out, short.as_deref_mut());
             }
             p += STRIDE;
         }
     }
 
     #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
     fn verify(
         &self,
         v: &[u8],
@@ -1587,7 +1708,9 @@ impl Fragments {
         h: u64,
         last: &mut (u32, usize),
         out: &mut Vec<(usize, usize, u32)>,
+        short: Option<&mut Vec<extra::Short>>,
     ) {
+        let mut short = short;
         for &(vi, off) in self.get(g, h) {
             let fv = &self.vals[vi as usize];
             if last.0 == fv.owner && p + GRAM <= last.1 {
@@ -1609,6 +1732,21 @@ impl Fragments {
             if m >= fv.min as usize && (m == val.len() || secret >= self.min_len) {
                 out.push((p - l, p + r, fv.owner));
                 *last = (fv.owner, p + r);
+            } else if m >= self.min_len
+                && secret >= self.min_len
+                && let Some(sh) = short.as_deref_mut()
+                && sh.len() < extra::MAX_SHORT
+            {
+                let f = extra::Short {
+                    form: vi,
+                    off: vo as u32,
+                    len: m as u32,
+                    start: p - l,
+                    end: p + r,
+                };
+                if sh.last() != Some(&f) {
+                    sh.push(f);
+                }
             }
         }
     }
@@ -1908,7 +2046,7 @@ mod tests {
     #[test]
     fn spaced_inside_a_base64_data_url() {
         let v: &[u8] = b"DataUrl-Value-0123456789";
-        let tx = Transforms::build([(v, 0u32)].into_iter(), 8);
+        let tx = Transforms::build([(v, 0u32)].into_iter(), 8, &TransformConfig::none());
         let spaced: Vec<String> = v.iter().map(|&c| (c as char).to_string()).collect();
         let text = format!("# env\nAPI_TOKEN={}\nX=1\n", spaced.join(" "));
         let a = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -1975,13 +2113,13 @@ mod tests {
     #[test]
     fn derived_forms_are_distinct() {
         let mut n = 0;
-        derived_forms(b"abcdefgh12345678", |f| {
+        derived_forms(b"abcdefgh12345678", &TransformConfig::none(), |f| {
             assert!(f.len() >= 8);
             n += 1;
         });
         assert!(n >= 5);
         let mut m = 0;
-        derived_forms(b"aaaaaaaa", |_| m += 1);
+        derived_forms(b"aaaaaaaa", &TransformConfig::none(), |_| m += 1);
         assert!(m < n);
     }
 
@@ -2008,7 +2146,11 @@ mod tests {
     }
 
     fn frag_index(vals: &[&[u8]]) -> Fragments {
-        Fragments::build(vals.iter().enumerate().map(|(i, v)| (*v, i as u32)), 8)
+        Fragments::build(
+            vals.iter().enumerate().map(|(i, v)| (*v, i as u32)),
+            8,
+            false,
+        )
     }
 
     #[test]
@@ -2017,7 +2159,11 @@ mod tests {
         let v: &[u8] = b"kQx-9fT2_w8Lr!m4Zp7e";
         let f = frag_index(&[v]);
         let mut out = vec![];
-        f.scan(&[b"x ".as_slice(), &v[..10], b" y"].concat(), &mut out);
+        f.scan(
+            &[b"x ".as_slice(), &v[..10], b" y"].concat(),
+            &mut out,
+            None,
+        );
         assert_eq!(out, vec![(2, 12, 0)]);
     }
 
@@ -2035,26 +2181,34 @@ mod tests {
         let mut out = vec![];
         // Half the value (20 bytes) is found.
         let body = [b"x ".as_slice(), &v[10..30], b" y"].concat();
-        f.scan(&body, &mut out);
+        f.scan(&body, &mut out, None);
         assert_eq!(out, vec![(2, 22, 0)]);
         // Reversed too.
         out.clear();
         let mut r = v[5..30].to_vec();
         r.reverse();
-        f.scan(&[b"x ".as_slice(), &r, b" y"].concat(), &mut out);
+        f.scan(&[b"x ".as_slice(), &r, b" y"].concat(), &mut out, None);
         assert_eq!(out, vec![(2, 27, 0)]);
         // Shorter is not.
         out.clear();
-        f.scan(&[b"x ".as_slice(), &v[10..28], b" y"].concat(), &mut out);
+        f.scan(
+            &[b"x ".as_slice(), &v[10..28], b" y"].concat(),
+            &mut out,
+            None,
+        );
         assert!(out.is_empty());
         // PEM armour alone is not a fragment.
         let pem: &[u8] = b"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----";
         let f = frag_index(&[pem]);
         out.clear();
-        f.scan(b"see -----BEGIN PRIVATE KEY-----\nMIIE here", &mut out);
+        f.scan(
+            b"see -----BEGIN PRIVATE KEY-----\nMIIE here",
+            &mut out,
+            None,
+        );
         assert!(out.is_empty(), "{out:?}");
         out.clear();
-        f.scan(&pem[20..60], &mut out);
+        f.scan(&pem[20..60], &mut out, None);
         assert_eq!(out.len(), 1);
     }
 }

@@ -184,6 +184,45 @@ fn value_split_across_cached_and_new_segments_is_repaired() {
 }
 
 #[test]
+fn split_pieces_across_cached_and_new_turns_are_assembled() {
+    // Three pieces, each under half the value and so no fragment alone: the first in the old
+    // turn (clean, cached), the other two in separate messages of the new turn. Only all three
+    // together cover the value, so the split-fragments view must see the cached piece too.
+    let s = snapshot(&[VALUE.to_vec()], true);
+    let third = VALUE.len() / 3;
+    let (a, b, c) = (
+        &VALUE[..third],
+        &VALUE[third..2 * third],
+        &VALUE[2 * third..],
+    );
+    // The piece sits in an early message, whose segment is the same bytes in both turns.
+    let mut old = history(5);
+    old[2].extend_from_slice(b" part one is ");
+    old[2].extend_from_slice(a);
+    let mut two = b"then ".to_vec();
+    two.extend_from_slice(b);
+    let mut three = b"and finally ".to_vec();
+    three.extend_from_slice(c);
+    let t = turns(&old, &[two, three]);
+    let whole = outcome(s.guard().check_whole(&t[1], &mut GuardScratch::new()));
+    assert!(
+        whole.is_some(),
+        "the whole check assembles the three pieces"
+    );
+    agree(&s, &t);
+    // Control: without the first piece the same conversation is cached, so the agreement above
+    // comes from the fallback to the whole check, not from a body the cache never took.
+    let plain = turns(&history(5), &[b"then".to_vec(), b"and finally".to_vec()]);
+    let mut sc = GuardScratch::new();
+    s.guard().check(&plain[0], &mut sc);
+    s.guard().check(&plain[1], &mut sc);
+    assert!(
+        sc.segments_known().iter().any(|&k| k),
+        "the plain conversation reuses cached segments"
+    );
+}
+
+#[test]
 fn value_with_a_cut_pattern_turns_the_cache_off() {
     // A value written as JSON that the body carries across two content blocks.
     let v = br#"tok-1234"}]},{"role":"user","content":[{"type":"text","text":"tok-5678"#.to_vec();

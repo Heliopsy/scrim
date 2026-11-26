@@ -616,7 +616,7 @@ var Placements = []Placement{
 			return attachment(api, "image/png", pngWithPixels(c.Text()), mode)
 		}},
 	{ID: "split-blocks", Desc: "the value split across two content blocks of one message", Expect: Limitation,
-		Note: "limitation: a value split by the agent across separate fields is matched only by the guard's fragment rules, if at all",
+		Note: "limitation: a value split across fields of one request is matched by the guard's fragment rules (a piece of at least half the value, or pieces of at least the minimum length that together cover it, split-fragments); the checker cannot tell such a split from no leak, so the row is not gated",
 		Build: func(api fp.API, c Content, mode Escape) []Request {
 			a, b := c.halves()
 			switch api {
@@ -636,7 +636,7 @@ var Placements = []Placement{
 			return nil
 		}},
 	{ID: "split-tool-results", Desc: "the value split across two tool results", Expect: Limitation,
-		Note: "limitation: a value split by the agent across separate tool results is not reassembled",
+		Note: "limitation: a value split across tool results of one request is matched like split-blocks; pieces shorter than the minimum length are not",
 		Build: func(api fp.API, c Content, mode Escape) []Request {
 			a, b := c.halves()
 			switch api {
@@ -666,7 +666,7 @@ var Placements = []Placement{
 			return nil
 		}},
 	{ID: "split-requests", Desc: "the value split across two requests chained by previous_response_id (two events on one socket in the WebSocket mode)", Expect: Limitation,
-		Note: "limitation: server-side conversation state lets halves arrive in separate requests",
+		Note: "limitation: server-side conversation state lets pieces arrive in separate requests; each is checked alone, so only a piece of at least half the value is caught",
 		Build: func(api fp.API, c Content, mode Escape) []Request {
 			if api != fp.OpenAIResponses && api != fp.OpenAIResponsesWS {
 				return nil

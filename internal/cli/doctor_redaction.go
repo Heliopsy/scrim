@@ -26,6 +26,11 @@ func redactionIdentityChecks(cfg *config.Config) []status.Check {
 			f.Check = "redaction: detectors"
 			return []status.Finding{f}
 		}},
+		{Name: "redaction: guard transforms", Run: func(context.Context) []status.Finding {
+			f := daemon.GuardTransformFinding(cfg)
+			f.Check = "redaction: guard transforms"
+			return []status.Finding{f}
+		}},
 	}
 }
 
