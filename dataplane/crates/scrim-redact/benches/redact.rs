@@ -241,10 +241,47 @@ fn latency(_c: &mut Criterion) {
 }
 
 /// The fallback detectors alone (no known values): agent request bodies and source code with no
-/// secret in them, the cost every request pays for the pattern rules.
+/// secret in them, the cost every request pays for the pattern rules, and with each detector
+/// setting changed from its default (`default`: the pattern rules; `encoded`:
+/// `redaction.detectors.encoded`; `entropy-key-name` and `entropy-any`: the entropy detector in
+/// each context).
 fn detect(c: &mut Criterion) {
     let kr = Arc::new(Keyring::new(PlaceholderKey::new(1, &[0x5a; 32]).unwrap()));
-    let snap = Snapshot::build(vec![], kr, &Config::default()).unwrap();
+    let det = |d: DetectorConfig| {
+        Snapshot::build(
+            vec![],
+            kr.clone(),
+            &Config {
+                detectors: d,
+                ..Config::default()
+            },
+        )
+        .unwrap()
+    };
+    let snaps = [
+        ("default", det(DetectorConfig::default())),
+        (
+            "encoded",
+            det(DetectorConfig {
+                encoded: true,
+                ..Default::default()
+            }),
+        ),
+        (
+            "entropy-key-name",
+            det(DetectorConfig {
+                entropy: Some(EntropyConfig::default()),
+                ..Default::default()
+            }),
+        ),
+        (
+            "entropy-any",
+            det(DetectorConfig {
+                entropy: Some(EntropyConfig::any_context()),
+                ..Default::default()
+            }),
+        ),
+    ];
     let src = [
         include_str!("../src/redactor.rs"),
         include_str!("../src/guard.rs"),
@@ -266,12 +303,19 @@ fn detect(c: &mut Criterion) {
         ("body-4m", body(SIZES[2], &[], false, 0)),
         ("code-1m", code.into_bytes()),
     ];
-    for (name, b) in &inputs {
-        let mut out = Vec::with_capacity(b.len() * 2);
-        g.throughput(Throughput::Bytes(b.len() as u64));
-        g.bench_function(BenchmarkId::from_parameter(name), |bn| {
-            bn.iter(|| black_box(snap.redactor().redact(black_box(b), &mut out).unwrap()));
-        });
+    for (cfg, snap) in &snaps {
+        for (name, b) in &inputs {
+            let mut out = Vec::with_capacity(b.len() * 2);
+            g.throughput(Throughput::Bytes(b.len() as u64));
+            let id = if *cfg == "default" {
+                (*name).to_string()
+            } else {
+                format!("{name}/{cfg}")
+            };
+            g.bench_function(BenchmarkId::from_parameter(id), |bn| {
+                bn.iter(|| black_box(snap.redactor().redact(black_box(b), &mut out).unwrap()));
+            });
+        }
     }
     g.finish();
 }

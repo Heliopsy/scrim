@@ -675,7 +675,7 @@ pub struct Listener {
     #[prost(bool, tag = "5")]
     pub tls: bool,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RedactionSettings {
     /// min_value_length is the shortest value matched in free text; shorter
     /// values are matched only in exact and encoded forms.
@@ -694,6 +694,37 @@ pub struct RedactionSettings {
     /// switched on.
     #[prost(string, repeated, tag = "5")]
     pub detectors_enabled: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// detectors_encoded also runs the pattern rules over the decoded form of
+    /// base64 runs, hex runs and percent-encoded text
+    /// (redaction.detectors.encoded).
+    #[prost(bool, tag = "6")]
+    pub detectors_encoded: bool,
+    /// entropy is the entropy detector (redaction.detectors.entropy.\*); unset
+    /// or not enabled leaves it off.
+    #[prost(message, optional, tag = "7")]
+    pub entropy: ::core::option::Option<EntropySettings>,
+}
+/// EntropySettings tune the entropy detector. Zero fields take the data
+/// plane's defaults.
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct EntropySettings {
+    #[prost(bool, tag = "1")]
+    pub enabled: bool,
+    /// threshold_bits is the minimum Shannon entropy in bits per byte.
+    #[prost(double, tag = "2")]
+    pub threshold_bits: f64,
+    #[prost(uint32, tag = "3")]
+    pub min_length: u32,
+    #[prost(uint32, tag = "4")]
+    pub max_length: u32,
+    /// min_classes is how many of lower case, upper case, digits and (with
+    /// the key-name context) symbols a value mixes at least.
+    #[prost(uint32, tag = "5")]
+    pub min_classes: u32,
+    /// any_context looks at every token; false only at values assigned to a
+    /// key name that says secret.
+    #[prost(bool, tag = "6")]
+    pub any_context: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ApplySnapshotResponse {

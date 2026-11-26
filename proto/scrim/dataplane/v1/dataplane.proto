@@ -713,6 +713,29 @@ message RedactionSettings {
   // detectors_enabled names pattern rules that are off by default and
   // switched on.
   repeated string detectors_enabled = 5;
+  // detectors_encoded also runs the pattern rules over the decoded form of
+  // base64 runs, hex runs and percent-encoded text
+  // (redaction.detectors.encoded).
+  bool detectors_encoded = 6;
+  // entropy is the entropy detector (redaction.detectors.entropy.*); unset
+  // or not enabled leaves it off.
+  EntropySettings entropy = 7;
+}
+
+// EntropySettings tune the entropy detector. Zero fields take the data
+// plane's defaults.
+message EntropySettings {
+  bool enabled = 1;
+  // threshold_bits is the minimum Shannon entropy in bits per byte.
+  double threshold_bits = 2;
+  uint32 min_length = 3;
+  uint32 max_length = 4;
+  // min_classes is how many of lower case, upper case, digits and (with
+  // the key-name context) symbols a value mixes at least.
+  uint32 min_classes = 5;
+  // any_context looks at every token; false only at values assigned to a
+  // key name that says secret.
+  bool any_context = 6;
 }
 
 message ApplySnapshotResponse {
