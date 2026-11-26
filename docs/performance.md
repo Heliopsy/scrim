@@ -91,13 +91,13 @@ measured from a few runs on it.
 
 The spec's targets for added request latency (5 ms for 1 MB with 1,000 secrets, 10 ms with 10,000)
 apply to the next-turn measurement (`engine.next_turn_p99_ms`), which is what an agent sends: every
-request of a conversation repeats the ones before it. On ho-z10 it takes 5.4 to 8.8 ms at the
-median and 8 to 12 ms at p99, so its budgets are 10 ms (10 and 1,000 secrets) and 12 ms (10,000),
-above the 5 ms target. About 1 ms of it is the guard; the rest is the codec's JSON plan and the
+request of a conversation repeats the ones before it. On ho-z10 it takes 3.9 to 8.8 ms at the
+median and 4.7 to 12 ms at p99 across runs, so its budgets are 10 ms (10 and 1,000 secrets) and
+12 ms (10,000), above the 5 ms target. About 1 ms of it is the guard; the rest is the codec's JSON plan and the
 redactor over the whole body, which are not cached. On a Xeon W-2295 workstation the same
 measurement is 3.7 to 5 ms at the median. A body seen for the first time has its own budgets
 (`engine.request_p99_ms` 40 ms, `core.protect_p99_ms` 30 ms): every byte goes through the guard's
-decoders, 11 to 21 ms at the median on ho-z10 (it was 24 to 29 ms before the decoder prefilters).
+decoders, 7.6 to 21 ms at the median on ho-z10 (it was 24 to 29 ms before the decoder prefilters).
 [limitations.md](limitations.md#implementation) lists this.
 
 ## Guard verdict cache

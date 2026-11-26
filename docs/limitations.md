@@ -155,10 +155,10 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
 - **Added request latency is above the performance spec's 5 ms target on the reference runner.**
   The target (5 ms on a 1 MB body with 1,000 secrets, 10 ms with 10,000) is measured on an agent's
   next turn, where the guard's verdict cache skips what it checked one request earlier. On ho-z10
-  that takes 8 to 12 ms at p99, mostly the codec's JSON plan and the redactor over the whole body;
-  the budgets are 10 and 12 ms. A 1 MB body seen for the first time, any body with
+  that takes 4.7 to 12 ms at p99 across runs, mostly the codec's JSON plan and the redactor over
+  the whole body; the budgets are 10 and 12 ms. A 1 MB body seen for the first time, any body with
   `redaction.guard-cache` off, and the first request after a snapshot push (which starts an empty
-  cache) go through every decoder: 15 to 27 ms at p99 on ho-z10. The latency gate fails a change
+  cache) go through every decoder: 10 to 27 ms at p99 on ho-z10. The latency gate fails a change
   that misses a budget in two runs; its comparison with the previous release is report only
   ([performance.md](performance.md#budgets)).
 - **The performance gate measures on a shared runner.** The latency gate drops samples during which

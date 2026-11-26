@@ -24,8 +24,9 @@ LLM APIs are stateless: an agent's next request resends the whole conversation, 
   containing `,{`.
 - New setting `redaction.guard-cache` (default true); `guard_cache_off` in `RedactionSettings`.
 - The latency gate measures first-sight requests with the cache cleared, and a new next-turn
-  measurement (`turn/<secrets>/1MB`). On the reference runner the next turn takes 8 to 12 ms at
-  p99, above the 5 ms target, mostly the codec plan and the redactor; its budgets are 10 and 12 ms.
+  measurement (`turn/<secrets>/1MB`). On the reference runner the next turn takes 4.7 to 12 ms at
+  p99 across runs, so the 5 ms target is not met reliably; most of it is the codec plan and the
+  redactor. Its budgets are 10 and 12 ms.
   First-sight budgets tighten from 60 ms to 40 ms (request) and 30 ms (protect).
 
 ## Impact

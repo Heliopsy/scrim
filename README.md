@@ -451,8 +451,9 @@ when a value misses its budget in `dataplane/crates/scrim-llm/benches/budget.jso
 its comparison with the previous release's published results is a report, not a gate. An agent's
 next request resends the whole conversation, and the guard keeps hashes of the parts it found
 clean, so it checks only what is new: the request targets apply to that next-turn measurement. On
-the reference runner it takes 8 to 12 ms at p99, above the 5 ms target, mostly in the codec's JSON
-plan and the redactor; a 1 MB body seen for the first time takes 15 to 27 ms
+the reference runner it takes 4.7 to 12 ms at p99 across runs, so the 5 ms target is not met
+reliably; most of it is the codec's JSON plan and the redactor. A 1 MB body seen for the first
+time takes 10 to 27 ms
 ([docs/performance.md](docs/performance.md), [docs/limitations.md](docs/limitations.md#implementation)).
 
 Each release attaches the numbers measured for it: `scrim_<version>_results_latency-gate.md` and
