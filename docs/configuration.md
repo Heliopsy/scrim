@@ -476,6 +476,8 @@ is out of date.
 | [`redaction.detectors.entropy.min-length`](#redactiondetectorsentropymin-length) | int | `0` | hot |
 | [`redaction.detectors.entropy.threshold`](#redactiondetectorsentropythreshold) | float | `0` | hot |
 | [`redaction.guard-cache`](#redactionguard-cache) | bool | `true` | hot |
+| [`redaction.guard.disable`](#redactionguarddisable) | list | `[]` | hot |
+| [`redaction.guard.enable`](#redactionguardenable) | list | `[]` | hot |
 | [`redaction.limit-to-agent-identity`](#redactionlimit-to-agent-identity) | bool | `false` | restart required |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
@@ -3025,6 +3027,31 @@ Remember which parts of a request body the guard found clean (BLAKE3 hashes only
 | Type | bool |
 | Default | `true` |
 | Environment | `SCRIM_REDACTION_GUARD_CACHE` |
+| Flag | none |
+| Reload | hot |
+
+#### `redaction.guard.disable`
+
+Guard transform decoders to turn off, by name: confusables, spelled-out, split-fragments. confusables reads look-alike Unicode, tag and invisible characters as ASCII, spelled-out reads values written as NATO, digit and symbol words, split-fragments joins short fragments of a value spread over one request. Turning one off lets that form of a value through.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_REDACTION_GUARD_DISABLE` |
+| Flag | none |
+| Reload | hot |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
+#### `redaction.guard.enable`
+
+Guard transform decoders that are off by default to turn on, by name: base85, compressed. base85 indexes the Ascii85, Z85 and RFC 1924 base85 forms of each value; it costs nothing per request with a thousand values and a third more guard time with ten thousand. compressed inflates gzip, zlib, zstd, brotli and raw deflate streams in base64 runs (64 MiB per request at most) and checks their text; it adds about a third to the guard's time on a request with base64 data. A name may not be in both lists.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_REDACTION_GUARD_ENABLE` |
 | Flag | none |
 | Reload | hot |
 

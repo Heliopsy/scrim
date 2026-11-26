@@ -13,7 +13,7 @@ The leak suite has four parts:
 - a **leak checker**, written independently of scrim's redactor and guard, that looks for every
   seeded value in what the fake provider received, under far more encodings than the redactor
   matches, including fragments;
-- the **bypass matrix**: 1189 rows, each a way a secret can sit in a request other than verbatim,
+- the **bypass matrix**: 1201 rows, each a way a secret can sit in a request other than verbatim,
   or a secret in a known format that is in no store, with the outcome scrim must produce, over
   HTTP and over WebSocket;
 - a **scenario corpus** of realistic agent sessions (reading `.env`, printing configs, a diff with
@@ -259,12 +259,14 @@ detector covers expect `redacted` and gate; the others are limitations.
 | `truncated-suffix` | `tail -c 75% of the value` | guard | guard decodes: fragments of at least half the value (8 to 24 bytes) |
 | `truncated-half` | `cut -c1-half` | guard | guard decodes: fragments of at least half the value (8 to 24 bytes) |
 | `sql-substring` | `SELECT SUBSTRING(token, 9, 24) FROM creds` | guard | guard decodes: fragments of at least half the value (8 to 24 bytes) |
-| `homoglyphs` | `substitute Cyrillic look-alike letters` | limitation | limitation: look-alike Unicode substitution is not matched (unbounded confusable tables, no shell tool produces it) |
-| `fullwidth` | `convert to fullwidth forms` | limitation | limitation: look-alike Unicode substitution is not matched (no shell tool produces it) |
-| `nato-spelling` | `spell the value in the NATO alphabet` | limitation | limitation: spelled-out values are not matched (any language or alphabet, unbounded) |
-| `gzip-base64` | `gzip -c .env \| base64 -w0` | limitation | limitation: compressed content is not decompressed (unbounded work per byte) |
-| `ascii85` | `python3 -c 'base64.a85encode(v, adobe=True)'` | limitation | limitation: base85 family encodings are not matched (alphabet covers most printable text, runs cannot be delimited cheaply) |
-| `base85` | `python3 -c 'base64.b85encode(v)'` | limitation | limitation: base85 family encodings are not matched (alphabet covers most printable text, runs cannot be delimited cheaply) |
+| `homoglyphs` | `substitute Cyrillic look-alike letters` | guard | guard decodes: look-alike letters read as their ASCII skeleton (confusables) |
+| `fullwidth` | `convert to fullwidth forms` | guard | guard decodes: NFKC folds fullwidth forms to ASCII (confusables) |
+| `zero-width-scattered` | `insert zero-width characters at random places` | guard | guard decodes: invisible characters are dropped (confusables) |
+| `unicode-tags` | `encode as Unicode tag characters (ASCII smuggling)` | guard | guard decodes: tag characters read as the ASCII they spell (confusables) |
+| `nato-spelling` | `spell the value in the NATO alphabet` | guard | guard decodes: NATO, digit and symbol words (spelled-out); other languages and alphabets are a documented limitation |
+| `ascii85` | `python3 -c 'base64.a85encode(v, adobe=True)'` | limitation | limitation by default: redaction.guard.enable: [base85] indexes the Ascii85, Z85 and RFC 1924 forms of each value (off: a third more guard time with ten thousand values) |
+| `base85` | `python3 -c 'base64.b85encode(v)'` | limitation | limitation by default: redaction.guard.enable: [base85] indexes the Ascii85, Z85 and RFC 1924 forms of each value (off: a third more guard time with ten thousand values) |
+| `gzip-base64` | `gzip -c .env \| base64 -w0` | limitation | limitation by default: redaction.guard.enable: [compressed] inflates gzip, zlib, zstd, brotli and deflate in base64 runs (off: it adds about a third to the guard's time) |
 
 | Placement | Where | Expected | Note |
 | --- | --- | --- | --- |
@@ -289,9 +291,9 @@ detector covers expect `redacted` and gate; the others are limitations.
 | `svg-text` | text drawn by an SVG image ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | withheld | the scan binary policy reads SVG as text, entities decoded |
 | `pdf-text` | text in a PDF page's Flate-compressed content stream ([anthropic-messages gemini openai-chat openai-responses openai-responses-ws]) | withheld | the scan binary policy inflates PDF streams and reads their strings |
 | `image-pixels` | the value as an image's pixel data (rendered text in a screenshot) ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: pixel data is not decoded and text in an image is not recognised (no OCR) |
-| `split-blocks` | the value split across two content blocks of one message ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: a value split by the agent across separate fields is matched only by the guard's fragment rules, if at all |
-| `split-tool-results` | the value split across two tool results ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: a value split by the agent across separate tool results is not reassembled |
-| `split-requests` | the value split across two requests chained by previous_response_id (two events on one socket in the WebSocket mode) ([openai-responses openai-responses-ws]) | limitation | limitation: server-side conversation state lets halves arrive in separate requests |
+| `split-blocks` | the value split across two content blocks of one message ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: a value split across fields of one request is matched by the guard's fragment rules (a piece of at least half the value, or pieces of at least the minimum length that together cover it, split-fragments); the checker cannot tell such a split from no leak, so the row is not gated |
+| `split-tool-results` | the value split across two tool results ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: a value split across tool results of one request is matched like split-blocks; pieces shorter than the minimum length are not |
+| `split-requests` | the value split across two requests chained by previous_response_id (two events on one socket in the WebSocket mode) ([openai-responses openai-responses-ws]) | limitation | limitation: server-side conversation state lets pieces arrive in separate requests; each is checked alone, so only a piece of at least half the value is caught |
 | `ws-binary-frame` | the tool result event sent as a binary WebSocket frame ([openai-realtime openai-responses-ws]) | redacted | |
 | `audio-buffer` | text in base64 audio appended to the Realtime input buffer ([openai-realtime]) | withheld | the scan binary policy decodes base64 audio and refuses the message when its bytes hold a value (speech is not transcribed) |
 
@@ -369,6 +371,11 @@ agent's own tools make of a value, because agents run `cat`, `rev`, `base64`, `b
 | base32 and base32hex | upper-case runs of at least thirteen characters, at every alignment, across line breaks |
 | truncation and substrings | any run of at least half a value (at least the minimum length, at most 24 bytes) outside its format-fixed parts (PEM armour, a JWT header) |
 | the above inside a text document sent as a base64 data URL | the document is decoded and the same views are taken over its text |
+| look-alike Unicode: Cyrillic, Greek and Armenian look-alikes, fullwidth and mathematical letters, ligatures, accents, tag characters, zero-width and other invisible characters (`confusables`) | runs around such a character are read as their ASCII skeleton (NFKC, Unicode's confusables, `0` as `o`, `1` and `I` as `l`); the skeleton of each value is indexed too |
+| NATO, digit and symbol words (`spelled-out`) | runs of at least eight units, at least half of them words, found from a NATO word or a rare digit word |
+| short pieces of a value in separate fields of one request (`split-fragments`) | pieces of at least the minimum length count when together they cover the value but its last 7 bytes at most |
+| Ascii85, Z85 and RFC 1924 base85 (`base85`, off by default) | the inner forms of each value at the four alignments are indexed, as the inner base64 forms are |
+| gzip, zlib, zstd, brotli or raw deflate in base64, wrapped or not (`compressed`, off by default) | streams with a header, and headerless ones in runs that are no known file format, are inflated (64 MiB per request at most) and their text gets every view; a value found replaces the whole run |
 
 A value that lies inside another one (LocalStack's `test` credentials inside an `sk-test-...` key)
 is handled before the guard: in a form only the guard decodes, replacing the shorter value would
@@ -378,9 +385,10 @@ value. The gate's proxy (`test/leak/start-proxy.sh`) redacts `test` next to the 
 covered.
 
 Each decoder is linear in the input and allocates nothing on a clean request once its buffers have
-grown. Lower-case base32, look-alike Unicode, spelling alphabets, compression, the base85 family
-and ciphers beyond rot13 and rot47 are not decoded: none is a common shell tool's output, and each
-is either unbounded work or an alphabet that cannot be delimited in ordinary text.
+grown. Lower-case base32, spelling in other languages and ciphers beyond rot13 and rot47 are not
+decoded: none is a common shell tool's output, and each is either unbounded work or an alphabet
+that cannot be delimited in ordinary text. The names in brackets are the transforms
+`redaction.guard.disable` and `redaction.guard.enable` switch.
 
 ## End-to-end matrix
 
@@ -544,11 +552,9 @@ identity and of test coverage.
 | --- | --- | --- |
 | The agent's local transcripts, memory and history files hold real values: scrim protects the wire, not the agent's disk. | none | Keep agent state on an encrypted disk; restored values only reach tools the tool policy names. |
 | Text rendered into image pixels is not recognised (no OCR); pixel data is not decoded, and speech in audio is not transcribed. Binary parts under the weakening `redaction.binary: pass` are not scanned at all. | `image-pixels` | Keep secrets off screen when the agent takes screenshots; keep the default `scan` policy. |
-| Look-alike Unicode substitution (Cyrillic or fullwidth letters) is not matched: confusable tables are unbounded and no shell tool produces it. | `homoglyphs`, `fullwidth` | none yet |
-| Values spelled out in words (NATO alphabet) are not matched: any language or alphabet would do. | `nato-spelling` | none yet |
-| Compressed content (`gzip`, `zlib`) is not decompressed: decompression is unbounded work per byte. | `gzip-base64` | none yet |
-| The base85 family (ascii85, RFC 1924 base85) is not matched: its alphabet covers most printable text, so runs cannot be delimited cheaply. | `ascii85`, `base85` | none yet |
-| A value the agent splits across fields, tool results or requests (including server-side state such as `previous_response_id`) is not reassembled. | `split-blocks`, `split-tool-results`, `split-requests` | Fragment rules in the guard catch long halves; short values are not protected. |
+| Compressed content is not inflated by default: inflating every base64 run adds about a third to the guard's time on requests with base64 data. | `gzip-base64` | `redaction.guard.enable: [compressed]` |
+| The base85 family is not matched by default: indexing its forms adds a third to the guard's time with ten thousand values. | `ascii85`, `base85` | `redaction.guard.enable: [base85]` |
+| A value split across requests (including server-side state such as `previous_response_id`) arrives in pieces checked alone. Within one request pieces shorter than the minimum length pass, and the checker cannot tell a split it does not see from none, so split rows are not gated. | `split-blocks`, `split-tool-results`, `split-requests` | Pieces of at least half a value are caught alone; within one request, pieces of at least the minimum length that cover the value together (`split-fragments`). |
 | Values shorter than the minimum length (default 8 bytes) are matched only whole and in their encoded forms, never as fragments. Truncations of short values pass as `repaired`. | truncation rows for short seeds | Raise the minimum only with care; `scrim status` lists short values. |
 | JSON text nested in JSON strings more deeply than `redaction.json_depth` (default 3) is not unescaped further. Backslashes written just before an escaped value pair with its own and count as one more level. | none | Set `redaction.json_depth` to 4 for deeper tool chains; the guard's fragment rule still catches a long half left readable at a shallower level. |
 | Transforms not in the matrix, and secrets unknown to every store and missed by the fallback detectors, are not protected. | none | Add stores for every secret source; report new transforms as issues so they become matrix rows. |

@@ -48,7 +48,7 @@ use zeroize::Zeroizing;
 
 use crate::error::WithholdReason;
 use crate::guard_cache::{self, Key, SegmentCache};
-use crate::guard_tx::{Transforms, TxScratch, derived_forms};
+use crate::guard_tx::{TransformConfig, Transforms, TxScratch, derived_forms};
 use crate::restore::Resolver;
 use crate::secret::EntryId;
 
@@ -86,8 +86,15 @@ pub enum GuardView {
     Dump,
     /// Inside a decoded base32 run.
     Base32,
-    /// A fragment of a value or of its reversal: at least half of it, at least the minimum length.
+    /// A fragment of a value or of its reversal: at least half of it, at least the minimum length,
+    /// or shorter fragments that together cover the value.
     Fragment,
+    /// After folding look-alike Unicode to its ASCII skeleton and dropping invisible characters.
+    Confusable,
+    /// Spelled out in words (NATO alphabet, digit and symbol words).
+    Spelled,
+    /// Inside a compressed document in a base64 run.
+    Compressed,
 }
 
 impl GuardView {
@@ -105,6 +112,9 @@ impl GuardView {
             Self::Dump => 8,
             Self::Base32 => 9,
             Self::Fragment => 10,
+            Self::Confusable => 11,
+            Self::Spelled => 12,
+            Self::Compressed => 13,
         }
     }
 }
@@ -496,6 +506,7 @@ fn short_bit(k: u32) -> usize {
 }
 
 impl Guard {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn build(
         inputs: &[GuardInput<'_>],
         min_len: usize,
@@ -504,6 +515,7 @@ impl Guard {
         (threads, parallel_min): (usize, usize),
         cache_entries: usize,
         resolver: Arc<Resolver>,
+        tx_cfg: &TransformConfig,
     ) -> Self {
         let mut long = Vec::new();
         let mut short = Vec::new();
@@ -517,7 +529,7 @@ impl Guard {
             };
             if inp.value.len() >= min_len.max(8) {
                 long.push(gv);
-                derived_forms(inp.value, |f| {
+                derived_forms(inp.value, tx_cfg, |f| {
                     long.push(GValue {
                         value: f,
                         owner: i as u32,
@@ -610,6 +622,7 @@ impl Guard {
                 .filter(|(_, inp)| inp.value.len() >= min_len.max(8))
                 .map(|(i, inp)| (inp.value, i as u32)),
             min_len,
+            tx_cfg,
         );
         let mut byte_width = vec![0u32; 256];
         let mut starts = PairSet::new();
@@ -655,6 +668,7 @@ impl Guard {
                 max_repairs,
                 json_depth,
                 resolver.clone(),
+                tx_cfg,
             ),
             byte_width,
             starts,
@@ -730,7 +744,9 @@ impl Guard {
             let b = seg(i - 1).1;
             hits.clear();
             self.collect(&bytes[a..b], s, &mut hits);
-            clean = hits.is_empty();
+            // Short fragments of a value may be completed by pieces in cached parts: only the
+            // whole check sees them together, and no part holding one is cached.
+            clean = hits.is_empty() && !s.tx.saw_short();
         }
         s.recheck = hits;
         if clean && known.iter().any(|k| !k) {
@@ -2237,7 +2253,16 @@ mod tests {
                 placeholder: b"[x]",
             },
         ];
-        let g = Guard::build(&inputs, 8, 64, 3, (1, usize::MAX), 0, empty_resolver());
+        let g = Guard::build(
+            &inputs,
+            8,
+            64,
+            3,
+            (1, usize::MAX),
+            0,
+            empty_resolver(),
+            &TransformConfig::default(),
+        );
         let mut s = GuardScratch::new();
         assert_eq!(
             g.check(b"a first-value-123 b", &mut s),

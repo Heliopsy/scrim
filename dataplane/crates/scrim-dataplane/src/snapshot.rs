@@ -224,6 +224,7 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
         } else {
             rc::Config::default().guard_cache_entries
         },
+        transforms: transform_config(snap.redaction.as_ref())?,
         ..rc::Config::default()
     };
     let core = Arc::new(
@@ -304,6 +305,22 @@ fn detector_config(r: Option<&v1::RedactionSettings>) -> rc::DetectorConfig {
         d.entropy = r.entropy.as_ref().filter(|e| e.enabled).map(entropy_config);
     }
     d
+}
+
+/// The guard's transform decoders (`redaction.guard.enable` and `.disable`). Unset keeps the
+/// defaults; an unknown name rejects the snapshot.
+fn transform_config(r: Option<&v1::RedactionSettings>) -> Result<rc::TransformConfig, Rejected> {
+    let mut t = rc::TransformConfig::default();
+    if let Some(r) = r {
+        for (names, on) in [(&r.guard_disabled, false), (&r.guard_enabled, true)] {
+            for n in names {
+                if !t.set(n, on) {
+                    return Err(invalid(format!("unknown guard transform {n:?}")));
+                }
+            }
+        }
+    }
+    Ok(t)
 }
 
 /// `redaction.detectors.entropy.*`; zero fields keep the context's defaults.
@@ -999,6 +1016,20 @@ mod tests {
             ..Default::default()
         };
         assert!(detects(Some(generic), assign));
+        // Guard transforms: unknown names reject the snapshot.
+        let mut bad_tx = snap(1);
+        bad_tx.redaction = Some(v1::RedactionSettings {
+            guard_disabled: vec!["no-such-transform".into()],
+            ..Default::default()
+        });
+        assert!(build(bad_tx, 0, &Hooks::default()).is_err());
+        let mut tx = snap(1);
+        tx.redaction = Some(v1::RedactionSettings {
+            guard_disabled: vec!["confusables".into()],
+            guard_enabled: vec!["compressed".into()],
+            ..Default::default()
+        });
+        assert!(build(tx, 0, &Hooks::default()).is_ok());
         // Encoded forms and entropy are opt-in.
         let encoded = format!("token: {}", hex_lower(tok.as_bytes()));
         assert!(!detects(None, &encoded));

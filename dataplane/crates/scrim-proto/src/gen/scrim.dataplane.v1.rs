@@ -707,6 +707,15 @@ pub struct RedactionSettings {
     /// (redaction.guard-cache false). The zero value keeps it on.
     #[prost(bool, tag = "8")]
     pub guard_cache_off: bool,
+    /// guard_disabled names guard transform decoders switched off
+    /// (redaction.guard.disable): confusables, base85, compressed, spelled-out,
+    /// split-fragments.
+    #[prost(string, repeated, tag = "9")]
+    pub guard_disabled: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// guard_enabled names guard transform decoders that are off by default and
+    /// switched on (redaction.guard.enable).
+    #[prost(string, repeated, tag = "10")]
+    pub guard_enabled: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 /// EntropySettings tune the entropy detector. Zero fields take the data
 /// plane's defaults.

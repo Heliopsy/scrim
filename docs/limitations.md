@@ -38,10 +38,21 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   (`redaction.detectors.entropy.enabled`). A random value under a neutral name (`config.json`
   holding `"value": "..."`) is not detected even then. Point a store at every secret source the
   agent can reach.
-- **Transforms outside the bypass matrix.** Look-alike Unicode, values spelled out in words,
-  compressed content, the base85 family, and values the agent splits across fields, tool results
-  or requests (including server-side state such as `previous_response_id`) are not matched. The
-  guard's fragment rules catch long halves of a split value; short ones pass.
+- **Transforms the guard does not read.** By default the guard reads look-alike Unicode
+  (confusables, fullwidth and mathematical letters, tag and invisible characters), values spelled
+  out as NATO, digit and symbol words, and short fragments of a value spread over one request
+  ([configuration.md](configuration.md#guard-transforms)). Not matched: spelling in other
+  languages or alphabets, look-alikes outside Unicode's Cyrillic, Greek, Armenian and Latin
+  confusables, fragments shorter than the minimum length (8 bytes by default), and encodings of
+  encodings beyond those listed in [leak-assurance.md](leak-assurance.md#what-the-guard-decodes).
+  Compressed documents in base64 (gzip, zlib, zstd, brotli, deflate) and the base85 family are
+  read only with `redaction.guard.enable` naming `compressed` or `base85`: they cost a third more
+  guard time on requests with base64 data, and with ten thousand values, respectively.
+- **Values split across requests.** A value the agent splits across requests, including through
+  server-side state such as `previous_response_id` or a WebSocket session, arrives in pieces that
+  are each checked alone: only a piece of at least half the value (at least the minimum length, at
+  most 24 bytes) is caught. Within one request, pieces of at least the minimum length that
+  together cover the value are caught wherever they sit (`split-fragments`).
 - **Short values.** Values shorter than the minimum length (8 bytes by default) are matched only
   whole and in their encoded forms, never as fragments. `scrim status` lists them.
 - **Text in image pixels is not read.** Under the default `redaction.binary: scan`, scrim decodes
