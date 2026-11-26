@@ -37,6 +37,18 @@ replaces it. Managed identities and workload identity federation are not support
 The route forwards the whole path to the resource origin, so the agent's base URL is the route
 plus `/anthropic`: `http://127.0.0.1:9790/azure/anthropic`.
 
+## Voice Live and Realtime
+
+The same resource serves Azure Voice Live at `/voice-live/realtime` over WebSocket, which speaks
+the OpenAI Realtime protocol (with the beta event names). scrim serves it on the route with the
+Realtime codec: the handshake gets the route's key or token, each client message is redacted,
+and assistant text, transcripts and function call arguments are restored. A Realtime path under
+`/openai/` on the route (`/openai/v1/realtime`) is handled the same way. Azure OpenAI's documented
+Realtime host is `<resource>.openai.azure.com`, which has no scrim route. Spoken placeholders
+stay in the audio ([limitations](../limitations.md#how-traffic-reaches-scrim)). A client connects
+to the route, for example
+`ws://127.0.0.1:9790/azure/voice-live/realtime?api-version=2026-04-10&model=gpt-realtime`.
+
 ## Claude Code
 
 <!-- docs-test: skip: needs a configured Foundry route and Claude Code -->

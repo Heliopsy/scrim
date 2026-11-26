@@ -84,12 +84,15 @@ use crate::sse;
 /// Which protocol the messages of a connection speak, from the route's provider and the path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WsApi {
-    /// `OpenAI` Realtime (`.../realtime`, also on Azure `OpenAI`).
+    /// `OpenAI` Realtime (`.../realtime`), also Azure `OpenAI` Realtime under `/openai/` on a
+    /// Microsoft Foundry route.
     OpenAiRealtime,
     /// `OpenAI` Responses API WebSocket mode (`.../responses`).
     OpenAiResponses,
-    /// Anything else on a provider route (for example the Gemini Live API): every client
-    /// message is redacted whole and provider messages pass through without restore.
+    /// Gemini Live API (`...BidiGenerateContent`) on the Gemini API and on Vertex AI.
+    GeminiLive,
+    /// Anything else on a provider route: every client message is redacted whole and provider
+    /// messages pass through without restore.
     Generic,
 }
 
@@ -100,6 +103,18 @@ impl WsApi {
         match provider {
             Provider::Openai if p.ends_with("/realtime") => Self::OpenAiRealtime,
             Provider::Openai if p.ends_with("/responses") => Self::OpenAiResponses,
+            // A Foundry route forwards every path to the resource, which serves Azure OpenAI
+            // Realtime under `/openai/` (`/openai/v1/realtime`, and the retired preview
+            // `/openai/realtime?deployment=`) and Voice Live at `/voice-live/realtime`.
+            Provider::Anthropic
+                if (p.starts_with("/openai/") && p.ends_with("/realtime"))
+                    || p == "/voice-live/realtime" =>
+            {
+                Self::OpenAiRealtime
+            }
+            Provider::Gemini | Provider::Vertex if codec::gemini_live::is_live_path(p) => {
+                Self::GeminiLive
+            }
             _ => Self::Generic,
         }
     }
@@ -109,7 +124,35 @@ impl WsApi {
         match self {
             Self::OpenAiRealtime => "openai-realtime",
             Self::OpenAiResponses => "openai-responses-ws",
+            Self::GeminiLive => "gemini-live",
             Self::Generic => "generic",
+        }
+    }
+
+    /// Whether the protocol carries its JSON messages in binary frames as well: the Gemini API
+    /// sends every Live server message as a binary frame.
+    fn binary_json(self) -> bool {
+        self == Self::GeminiLive
+    }
+
+    /// The error event sent before a refusal's close frame, in the protocol's shape. The Live
+    /// API has no error message (its server reports errors in the close frame), so a Live agent
+    /// gets the close frame alone.
+    fn error_event(self, r: &Refusal) -> Option<String> {
+        match self {
+            Self::GeminiLive => None,
+            _ => Some(r.ws_event()),
+        }
+    }
+
+    /// The error shape for answers before the upgrade.
+    fn error_api(self, p: Provider) -> Api {
+        match (self, p) {
+            (Self::OpenAiRealtime | Self::OpenAiResponses, _) | (_, Provider::Openai) => {
+                Api::OpenAiResponses
+            }
+            (_, Provider::Gemini | Provider::Vertex) => Api::Gemini,
+            (_, Provider::Anthropic | Provider::Bedrock) => Api::Generic,
         }
     }
 
@@ -118,6 +161,7 @@ impl WsApi {
             Self::Generic => return Ok(Plan::default()),
             Self::OpenAiRealtime => codec::openai_realtime::plan(&Doc::parse(body)?)?,
             Self::OpenAiResponses => codec::openai_responses::plan_ws(&Doc::parse(body)?)?,
+            Self::GeminiLive => codec::gemini_live::plan(&Doc::parse(body)?)?,
         };
         Ok(plan.finish())
     }
@@ -129,6 +173,7 @@ impl WsApi {
         match self {
             Self::OpenAiRealtime => Some(Box::new(codec::openai_realtime::Stream::new(l))),
             Self::OpenAiResponses => Some(Box::new(codec::openai_responses::Stream::new(l))),
+            Self::GeminiLive => Some(Box::new(codec::gemini_live::Stream::new(l))),
             Self::Generic => None,
         }
     }
@@ -136,7 +181,7 @@ impl WsApi {
 
 /// Redacts and guards one client message of protocol `api` (what the relay does with every
 /// message), for benchmarks and tests. `text` is false for a binary message, which is redacted
-/// whole.
+/// whole unless the protocol sends JSON in binary frames too.
 pub fn prepare_message(
     snap: &Snapshot,
     api: WsApi,
@@ -159,7 +204,11 @@ fn prepare(
             "binary WebSocket message",
         ));
     }
-    let api = if text { api } else { WsApi::Generic };
+    let api = if text || api.binary_json() {
+        api
+    } else {
+        WsApi::Generic
+    };
     let out = outgoing::prepare_planned(snap, data, timed, |b| api.plan(b))?;
     if std::str::from_utf8(&out.body).is_err() {
         return Err(Refusal::new(
@@ -215,15 +264,6 @@ fn ws_config(max: usize) -> WebSocketConfig {
         .max_frame_size(Some(max))
 }
 
-/// The error shape for answers before the upgrade.
-fn error_api(p: Provider) -> Api {
-    match p {
-        Provider::Openai => Api::OpenAiResponses,
-        Provider::Gemini | Provider::Vertex => Api::Gemini,
-        Provider::Anthropic | Provider::Bedrock => Api::Generic,
-    }
-}
-
 type Socket = WebSocketStream<TokioIo<Upgraded>>;
 
 /// The provider's answer to scrim's handshake.
@@ -257,7 +297,7 @@ impl Proxy {
         B: Body<Data = Bytes> + Send + 'static,
         B::Error: Into<BoxError>,
     {
-        let api = error_api(route.provider);
+        let api = WsApi::for_path(route.provider, rest).error_api(route.provider);
         let Some(base) = snap else {
             let r = Refusal::new(RefusalReason::NotReady, "");
             return self.refuse(Some(route), api, &r);
@@ -558,6 +598,9 @@ struct Relay {
 struct Restore {
     codec: Option<Box<dyn StreamCodec>>,
     stats: RestoreStats,
+    /// The provider's last restored message came in a binary frame, so what the codec still
+    /// holds at the end leaves in one too.
+    binary: bool,
 }
 
 impl Relay {
@@ -586,6 +629,7 @@ impl Relay {
         let mut restore = Restore {
             codec: self.api.codec(&self.limits),
             stats: RestoreStats::default(),
+            binary: false,
         };
         loop {
             tokio::select! {
@@ -689,7 +733,8 @@ impl Relay {
         to_up: &mut Sink,
     ) -> bool {
         let out = match m {
-            Some(Ok(Message::Text(t))) => self.restore(restore, t),
+            Some(Ok(m @ Message::Text(_))) => self.restore(restore, m),
+            Some(Ok(m @ Message::Binary(_))) if self.api.binary_json() => self.restore(restore, m),
             Some(Ok(Message::Binary(b))) => vec![Message::Binary(b)],
             Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => return true,
             Some(Ok(Message::Close(f))) => {
@@ -831,18 +876,27 @@ impl Relay {
         });
     }
 
-    /// Restores one provider text message into the messages the agent receives.
-    fn restore(&self, r: &mut Restore, text: Utf8Bytes) -> Vec<Message> {
+    /// Restores one provider message (text, or binary JSON) into the messages the agent
+    /// receives, in frames of the same kind.
+    fn restore(&self, r: &mut Restore, msg: Message) -> Vec<Message> {
         let Some(codec) = r.codec.as_mut() else {
-            return vec![Message::Text(text)];
+            return vec![msg];
         };
-        if text.len() > self.limits.max_event {
-            return vec![Message::Text(text)];
+        let (s, binary) = match &msg {
+            Message::Text(t) => (t.as_str(), false),
+            Message::Binary(b) => match std::str::from_utf8(b) {
+                Ok(s) => (s, true),
+                Err(_) => return vec![msg],
+            },
+            _ => return vec![msg],
+        };
+        if s.len() > self.limits.max_event {
+            return vec![msg];
         }
+        r.binary = binary;
         let began = self.rm.as_ref().map(|_| Instant::now());
         // One message is one SSE event with one data line. JSON has line breaks only as
         // whitespace, so they become spaces; an unchanged message still leaves as received.
-        let s: &str = &text;
         let line: Cow<'_, str> = if s.contains(['\r', '\n']) {
             Cow::Owned(s.replace(['\r', '\n'], " "))
         } else {
@@ -862,9 +916,9 @@ impl Relay {
             &mut out,
         );
         let msgs = if out == raw {
-            vec![Message::Text(text)]
+            vec![msg]
         } else {
-            messages(&out)
+            messages(&out, binary)
         };
         if let (Some(rm), Some(b)) = (&self.rm, began) {
             rm.chunk(b.elapsed());
@@ -885,7 +939,7 @@ impl Relay {
             },
             &mut out,
         );
-        messages(&out)
+        messages(&out, r.binary)
     }
 
     async fn refuse(&mut self, r: &Refusal, to_client: &mut Sink, to_up: &mut Sink) {
@@ -899,17 +953,20 @@ impl Relay {
             reason: r.reason,
             refs: r.refs.clone(),
         });
-        let _ = tokio::time::timeout(CLOSE_GRACE, async {
-            let _ = to_client.send(Message::text(r.ws_event())).await;
-        })
-        .await;
+        if let Some(ev) = self.api.error_event(r) {
+            let _ = tokio::time::timeout(CLOSE_GRACE, async {
+                let _ = to_client.send(Message::text(ev)).await;
+            })
+            .await;
+        }
         close(to_client, CloseCode::from(r.close_code()), r.reason.code()).await;
         close(to_up, CloseCode::Away, "").await;
     }
 }
 
-/// The data of each SSE event in `out` as a text message.
-fn messages(out: &[u8]) -> Vec<Message> {
+/// The data of each SSE event in `out` as a message: binary frames when `binary`, text
+/// otherwise.
+fn messages(out: &[u8], binary: bool) -> Vec<Message> {
     let mut msgs = Vec::new();
     let mut framer = sse::Framer::new(usize::MAX);
     framer.push(out, &mut |p| {
@@ -917,7 +974,12 @@ fn messages(out: &[u8]) -> Vec<Message> {
             && let Some(ev) = sse::Event::parse(e)
             && ev.has_data
         {
-            msgs.push(Message::text(ev.data.into_owned()));
+            let data = ev.data.into_owned();
+            msgs.push(if binary {
+                Message::binary(data)
+            } else {
+                Message::text(data)
+            });
         }
     });
     msgs
@@ -1024,11 +1086,47 @@ mod tests {
             WsApi::OpenAiResponses
         );
         assert_eq!(
-            WsApi::for_path(Provider::Gemini, "/ws/BidiGenerateContent"),
+            WsApi::for_path(
+                Provider::Gemini,
+                "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+            ),
+            WsApi::GeminiLive
+        );
+        assert_eq!(
+            WsApi::for_path(
+                Provider::Vertex,
+                "/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent"
+            ),
+            WsApi::GeminiLive
+        );
+        assert_eq!(
+            WsApi::for_path(Provider::Gemini, "/ws/other"),
             WsApi::Generic
         );
         assert_eq!(
+            WsApi::for_path(Provider::Openai, "/ws/BidiGenerateContent"),
+            WsApi::Generic
+        );
+        // Azure OpenAI on a Foundry route (an `anthropic` provider route).
+        assert_eq!(
+            WsApi::for_path(Provider::Anthropic, "/openai/v1/realtime"),
+            WsApi::OpenAiRealtime
+        );
+        assert_eq!(
+            WsApi::for_path(Provider::Anthropic, "/openai/realtime"),
+            WsApi::OpenAiRealtime
+        );
+        assert_eq!(
+            WsApi::for_path(Provider::Anthropic, "/voice-live/realtime"),
+            WsApi::OpenAiRealtime
+        );
+        assert_eq!(
             WsApi::for_path(Provider::Anthropic, "/v1/realtime"),
+            WsApi::Generic
+        );
+        // GPT-Live sessions are a protocol of their own: redacted, not restored.
+        assert_eq!(
+            WsApi::for_path(Provider::Openai, "/v1/live/sessions"),
             WsApi::Generic
         );
     }
@@ -1057,7 +1155,7 @@ mod tests {
     #[test]
     fn messages_split_events() {
         let out = b"data: {\"a\":1}\n\ndata: {\"b\":2}\n\n";
-        let m = messages(out);
+        let m = messages(out, false);
         assert_eq!(
             m,
             vec![Message::text("{\"a\":1}"), Message::text("{\"b\":2}")]

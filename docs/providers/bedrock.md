@@ -25,6 +25,11 @@ instead of IAM keys, set `api-key: <reference>`; scrim sends it as `Authorizatio
 
 The model id in the path is redacted and guarded like the rest of the request target.
 
+`POST /model/{modelId}/invoke-with-bidirectional-stream` (Amazon Nova Sonic speech to speech) does
+not work through scrim. It is an HTTP/2 event stream whose request body stays open for the whole
+session, and scrim reads a request body whole before it forwards anything
+([limitations](../limitations.md#how-traffic-reaches-scrim)).
+
 ## Signing
 
 scrim signs with SigV4 (service `bedrock`, the configured region) after redaction, over the

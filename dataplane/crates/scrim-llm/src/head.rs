@@ -19,9 +19,9 @@
 //! the same bytes come out of the target's own percent-encoding.
 //!
 //! Only the agent's own provider credentials ([`PASSTHROUGH`], and on a Gemini route the `key`
-//! query parameter, [`crate::Provider::query_credentials`]) are forwarded untouched: they skip
-//! both checks, as the spec requires, and capture masks them. Every other header and query
-//! parameter is redacted, known or not (design D4 applied to headers).
+//! and `access_token` query parameters, [`crate::Provider::query_credentials`]) are forwarded
+//! untouched: they skip both checks, as the spec requires, and capture masks them. Every other
+//! header and query parameter is redacted, known or not (design D4 applied to headers).
 
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 

@@ -49,11 +49,12 @@ impl Provider {
     }
 
     /// Query parameters that carry the agent's own provider credential (the Gemini API's
-    /// `key`). They are forwarded untouched, like the credential headers in
-    /// [`crate::head::PASSTHROUGH`], and masked in captures.
+    /// `key`, and the ephemeral token a Live API client sends as `access_token`). They are
+    /// forwarded untouched, like the credential headers in [`crate::head::PASSTHROUGH`], and
+    /// masked in captures.
     pub fn query_credentials(self) -> &'static [&'static str] {
         match self {
-            Provider::Gemini => &["key"],
+            Provider::Gemini => &["key", "access_token"],
             Provider::Anthropic | Provider::Openai | Provider::Bedrock | Provider::Vertex => &[],
         }
     }

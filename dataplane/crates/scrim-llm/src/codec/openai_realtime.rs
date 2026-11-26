@@ -7,14 +7,22 @@
 //! URLs in `input_image` parts are unscannable binary. Everything else, instructions, tool
 //! definitions, conversation items and every field this codec does not know, is redacted.
 //!
-//! Server events: assistant text (`output_text`, beta `text`) and audio transcripts
-//! (`output_audio_transcript`, beta `audio_transcript`) resolve under [`RestoreSite::Text`],
-//! function call arguments under [`RestoreSite::ToolInput`]. Deltas are keyed by item and content
-//! index, so responses that interleave (out-of-band responses) keep separate holdbacks. The
-//! matching `*.done` events, `response.content_part.done`, `response.output_item.done`,
-//! `conversation.item.done` (assistant and function call items only) and the final
-//! `response.done` get the same decisions. Audio itself, MCP calls and the echo of the client's
-//! own items are passed through.
+//! Server events (GA names, and the beta names where they differ): assistant text
+//! (`response.output_text.*`, beta `response.text.*`), transcripts of the model's audio
+//! (`response.output_audio_transcript.*`, beta `response.audio_transcript.*`) and transcripts of
+//! the user's audio (`conversation.item.input_audio_transcription.delta`, `.completed` and the
+//! diarized `.segment`) resolve under [`RestoreSite::Text`], function call arguments under
+//! [`RestoreSite::ToolInput`]. Deltas are keyed by item and content index, so responses that
+//! interleave (out-of-band responses) keep separate holdbacks. The matching `*.done` events,
+//! `response.content_part.done`, `response.output_item.done`, `conversation.item.done` and
+//! `.retrieved` (assistant and function call items, and the `transcript` of a user item's
+//! `input_audio` parts) and the final `response.done` get the same decisions. Audio itself, MCP
+//! calls (run by the provider, not the agent) and the rest of the echo of the client's own items
+//! are passed through. A transcription session (`"type": "transcription"`) sends the same
+//! transcription events. The same codec serves the protocols built on Realtime: Azure `OpenAI`
+//! Realtime and Azure Voice Live (which keeps the beta names), and xAI's Voice Agent API, whose
+//! cumulative `conversation.item.input_audio_transcription.updated` and
+//! `conversation.item.truncated` transcripts are restored whole.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -103,12 +111,14 @@ fn plan_item(plan: &mut Plan, item: Value<'_, '_>) -> Result<(), PlanError> {
 enum Key {
     Part(String, u64),
     Args(String),
+    /// The transcript of the user's audio in an input item.
+    Input(String, u64),
 }
 
 impl Key {
     fn item(&self) -> &str {
         match self {
-            Key::Part(i, _) | Key::Args(i) => i,
+            Key::Part(i, _) | Key::Args(i) | Key::Input(i, _) => i,
         }
     }
 }
@@ -186,7 +196,7 @@ impl Stream {
     fn block_for(&mut self, ctx: &Ctx<'_>, key: &Key) -> &mut StreamBlock {
         let tool = match key {
             Key::Args(i) => Some(self.calls.get(i).cloned().unwrap_or_default()),
-            Key::Part(..) => None,
+            Key::Part(..) | Key::Input(..) => None,
         };
         self.blocks
             .entry(key.clone())
@@ -257,7 +267,7 @@ impl Stream {
                     .unwrap_or_default();
                 (Some(name), TextKind::JsonText)
             }
-            Key::Part(..) => (None, TextKind::Plain),
+            Key::Part(..) | Key::Input(..) => (None, TextKind::Plain),
         };
         let mut edits = Edits::default();
         if let Ok(Some(v)) = root.get(field) {
@@ -323,8 +333,24 @@ fn restore_part(ctx: &Ctx<'_>, part: Value<'_, '_>, edits: &mut Edits) {
     }
 }
 
-/// Restores an assistant message or a function call item. The client's own items (user and
-/// system messages, function call output) are left as the provider echoed them.
+/// The transcript of the user's audio in a user item's `input_audio` part, written by the
+/// provider's transcription model.
+fn restore_input_transcripts(ctx: &Ctx<'_>, item: Value<'_, '_>, edits: &mut Edits) {
+    let Ok(Some(content)) = item.get("content") else {
+        return;
+    };
+    for part in content.children() {
+        if part.get_str("type").ok().flatten().as_deref() == Some("input_audio")
+            && let Ok(Some(v)) = part.get("transcript")
+        {
+            restore_string(ctx, &RestoreSite::Text, TextKind::Plain, v, edits);
+        }
+    }
+}
+
+/// Restores an assistant message, a function call item, and the transcripts of the user's
+/// audio. The rest of the client's own items (user and system messages, function call output)
+/// is left as the provider echoed it.
 fn restore_item(
     ctx: &Ctx<'_>,
     item: Value<'_, '_>,
@@ -333,8 +359,10 @@ fn restore_item(
 ) {
     match item.get_str("type").ok().flatten().as_deref() {
         Some("message") => {
-            if item.get_str("role").ok().flatten().as_deref() != Some("assistant") {
-                return;
+            match item.get_str("role").ok().flatten().as_deref() {
+                Some("assistant") => {}
+                Some("user") => return restore_input_transcripts(ctx, item, edits),
+                _ => return,
             }
             let Ok(Some(content)) = item.get("content") else {
                 return;
@@ -353,6 +381,22 @@ fn restore_item(
         }
         _ => {}
     }
+}
+
+/// Restores an event carrying a complete text without deltas of its own: a diarized segment
+/// (`text`), xAI's cumulative transcript so far and xAI's transcript of a truncated item
+/// (`transcript`).
+fn whole(ctx: &Ctx<'_>, ty: &str, raw: &[u8], data: &str, root: Value<'_, '_>, out: &mut Vec<u8>) {
+    let field = if ty.ends_with(".segment") {
+        "text"
+    } else {
+        "transcript"
+    };
+    let mut edits = Edits::default();
+    if let Ok(Some(v)) = root.get(field) {
+        restore_string(ctx, &RestoreSite::Text, TextKind::Plain, v, &mut edits);
+    }
+    emit(raw, data, edits, out);
 }
 
 fn emit(raw: &[u8], data: &str, edits: Edits, out: &mut Vec<u8>) {
@@ -412,6 +456,20 @@ impl StreamCodec for Stream {
                 ),
                 Some(i),
             ) => self.delta(ctx, &Key::Part(i, c), raw, data, root, out),
+            (Some("conversation.item.input_audio_transcription.delta"), Some(i)) => {
+                self.delta(ctx, &Key::Input(i, c), raw, data, root, out);
+            }
+            (Some("conversation.item.input_audio_transcription.completed"), Some(i)) => {
+                self.done(ctx, &Key::Input(i, c), "transcript", raw, data, root, out);
+            }
+            (
+                Some(
+                    t @ ("conversation.item.input_audio_transcription.segment"
+                    | "conversation.item.input_audio_transcription.updated"
+                    | "conversation.item.truncated"),
+                ),
+                Some(_),
+            ) => whole(ctx, t, raw, data, root, out),
             (Some("response.function_call_arguments.delta"), Some(i)) => {
                 self.delta(ctx, &Key::Args(i), raw, data, root, out);
             }
@@ -594,6 +652,54 @@ mod tests {
         assert_eq!(user["item"]["content"][0]["text"], p);
         let args: serde_json::Value = serde_json::from_str(&datas[2]).unwrap();
         assert!(args["arguments"].as_str().unwrap().contains(&fx.value("a")));
+    }
+
+    #[test]
+    fn transcripts_of_the_users_audio_are_restored() {
+        let fx = Fixture::new(&[("a", "alpha-secret-value-01")]);
+        let p = fx.placeholder("a");
+        let v = fx.value("a");
+        let (head, tail) = p.split_at(p.char_indices().nth(5).unwrap().0);
+        let ty = "conversation.item.input_audio_transcription";
+        let events = vec![
+            format!(
+                r#"{{"type":"{ty}.delta","item_id":"in1","content_index":0,"delta":"call {head}"}}"#
+            ),
+            format!(
+                r#"{{"type":"{ty}.delta","item_id":"in1","content_index":0,"delta":"{tail} now"}}"#
+            ),
+            format!(
+                r#"{{"type":"{ty}.completed","item_id":"in1","content_index":0,"transcript":"call {p} now"}}"#
+            ),
+            format!(
+                r#"{{"type":"{ty}.segment","item_id":"in1","content_index":0,"id":"seg_1","speaker":"A","start":0.0,"end":1.2,"text":"call {p}"}}"#
+            ),
+            format!(
+                r#"{{"type":"{ty}.updated","item_id":"in1","content_index":0,"transcript":"call {p}"}}"#
+            ),
+            format!(
+                r#"{{"type":"conversation.item.done","item":{{"id":"in1","type":"message","role":"user","content":[{{"type":"input_audio","transcript":"call {p} now"}},{{"type":"input_text","text":"{p}"}}]}}}}"#
+            ),
+        ];
+        let (datas, resolved) = run(&fx, &events);
+        assert_eq!(
+            deltas(&datas, &format!("{ty}.delta")),
+            format!("call {v} now")
+        );
+        let completed: serde_json::Value = serde_json::from_str(&datas[2]).unwrap();
+        assert_eq!(completed["transcript"], format!("call {v} now"));
+        let segment: serde_json::Value = serde_json::from_str(&datas[3]).unwrap();
+        assert_eq!(segment["text"], format!("call {v}"));
+        let updated: serde_json::Value = serde_json::from_str(&datas[4]).unwrap();
+        assert_eq!(updated["transcript"], format!("call {v}"));
+        let item: serde_json::Value = serde_json::from_str(&datas[5]).unwrap();
+        assert_eq!(
+            item["item"]["content"][0]["transcript"],
+            format!("call {v} now")
+        );
+        // The agent's own text in the same item stays as the provider echoed it.
+        assert_eq!(item["item"]["content"][1]["text"], p);
+        assert_eq!(resolved, 5);
     }
 
     #[test]

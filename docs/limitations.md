@@ -67,14 +67,27 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   agent settings enforce; DNS override is bypassed by connecting to an address; hooks see tool
   results and prompts, never the model traffic. [interception.md](interception.md) has the table.
 - **MCP-only use intercepts nothing.** The agent's model requests go straight to the provider.
-- **WebSocket restore is limited to OpenAI's protocols.** Client messages on every provider route
-  are redacted and guarded like request bodies, but placeholders in provider messages are restored
-  only for the OpenAI Realtime API (`/v1/realtime`) and the Responses API WebSocket mode
-  (`/v1/responses`). Elsewhere (for example the Gemini Live API) the agent sees placeholders. The
-  model speaks a placeholder aloud in Realtime audio, since audio is not restored, and server
-  messages are not written by capture mode. Base64 audio in Realtime events is a binary part like
-  an image ([Redaction](#redaction)). Other upgrades than WebSocket are refused
-  (`501 upgrade_unsupported`).
+- **WebSocket restore covers the Realtime and Gemini Live protocols.** Client messages on every
+  provider route are redacted and guarded like request bodies. Placeholders in provider messages
+  are restored for the OpenAI Realtime API (`/v1/realtime`, also Azure Voice Live and Azure
+  OpenAI Realtime under `/openai/` on a Foundry route), the Responses API WebSocket mode
+  (`/v1/responses`) and the Gemini Live API (`BidiGenerateContent` on the Gemini API and Vertex
+  AI). Elsewhere the agent sees placeholders: OpenAI's GPT-Live sessions (`/v1/live/sessions`)
+  and any other WebSocket on a provider route. Azure OpenAI's own host
+  (`<resource>.openai.azure.com`) has no route. Server messages are not written by capture mode.
+  Other upgrades than WebSocket are refused (`501 upgrade_unsupported`).
+- **Audio is not restored, transcripts are.** A model that reads a placeholder aloud says the
+  placeholder, not the value, and scrim cannot change audio. The transcripts the provider sends
+  with it (Realtime `response.output_audio_transcript.*`, Live `outputTranscription`) carry the
+  placeholder as text and are restored, so the value is in the transcript and not in the sound;
+  likewise the provider's transcripts of the user's audio. Audio the agent sends is a binary part
+  ([Redaction](#redaction)): a value spoken by the user reaches the provider. scrim adds no
+  instruction telling the model to avoid saying placeholders (see the
+  [design note](../openspec/changes/websocket-provider-restore/design.md)).
+- **Amazon Nova Sonic's bidirectional stream does not work through scrim.**
+  `InvokeModelWithBidirectionalStream` is an HTTP/2 event stream whose request body stays open for
+  the whole session; scrim reads a request body whole before forwarding it, so the session never
+  starts.
 - **A running scrim keeps its own upstream proxy.** `scrim run` chains an inherited `HTTPS_PROXY`
   behind scrim only when it starts scrim itself; a scrim already running as a service uses the
   upstream proxy it was configured with for every session, and `scrim run` only warns when yours

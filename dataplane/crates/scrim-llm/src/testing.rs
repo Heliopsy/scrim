@@ -849,7 +849,8 @@ pub enum WsReceived {
 pub type WsResponder = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 
 /// A fake WebSocket provider: records every handshake and message, sends `greeting` when a
-/// connection opens, answers each text message with what the responder returns, and with
+/// connection opens, answers each text message with what the responder returns, in text frames
+/// or, like the Gemini Live API, in binary frames (and then answers UTF-8 binary messages too), and with
 /// `refuse` answers every handshake with that status instead of upgrading.
 pub struct FakeWsUpstream {
     /// Listening address.
@@ -865,15 +866,28 @@ impl FakeWsUpstream {
         greeting: Vec<String>,
         responder: impl Fn(&str) -> Vec<String> + Send + Sync + 'static,
     ) -> Self {
-        Self::serve(greeting, Arc::new(responder), None).await
+        Self::serve(greeting, Arc::new(responder), None, false).await
+    }
+
+    /// Starts on 127.0.0.1, sending the greeting and every reply in binary frames.
+    pub async fn start_binary(
+        greeting: Vec<String>,
+        responder: impl Fn(&str) -> Vec<String> + Send + Sync + 'static,
+    ) -> Self {
+        Self::serve(greeting, Arc::new(responder), None, true).await
     }
 
     /// Starts a provider that answers every handshake with `status` and a JSON error body.
     pub async fn refusing(status: u16) -> Self {
-        Self::serve(Vec::new(), Arc::new(|_| Vec::new()), Some(status)).await
+        Self::serve(Vec::new(), Arc::new(|_| Vec::new()), Some(status), false).await
     }
 
-    async fn serve(greeting: Vec<String>, f: WsResponder, refuse: Option<u16>) -> Self {
+    async fn serve(
+        greeting: Vec<String>,
+        f: WsResponder,
+        refuse: Option<u16>,
+        binary: bool,
+    ) -> Self {
         use futures_util::{SinkExt, StreamExt};
         use tokio_tungstenite::tungstenite::Message;
         use tokio_tungstenite::tungstenite::handshake::server::{
@@ -922,30 +936,22 @@ impl FakeWsUpstream {
                     let Ok(mut ws) = tokio_tungstenite::accept_hdr_async(stream, cb).await else {
                         return;
                     };
+                    let frame = |s: String| {
+                        if binary {
+                            Message::binary(s)
+                        } else {
+                            Message::text(s)
+                        }
+                    };
                     for g in greeting {
-                        let _ = ws.send(Message::text(g)).await;
+                        let _ = ws.send(frame(g)).await;
                     }
                     while let Some(Ok(m)) = ws.next().await {
-                        match m {
-                            Message::Text(t) => {
-                                let replies = f(&t);
-                                rec.lock().unwrap().push(WsReceived::Text(t.to_string()));
-                                for r in replies {
-                                    if ws.send(Message::text(r)).await.is_err() {
-                                        return;
-                                    }
-                                }
+                        let replies = ws_replies(m, &f, &rec, binary);
+                        for r in replies {
+                            if ws.send(frame(r)).await.is_err() {
+                                return;
                             }
-                            Message::Binary(b) => {
-                                rec.lock().unwrap().push(WsReceived::Binary(b));
-                            }
-                            Message::Ping(p) => rec.lock().unwrap().push(WsReceived::Ping(p)),
-                            Message::Close(c) => {
-                                rec.lock().unwrap().push(WsReceived::Close(
-                                    c.map(|c| (u16::from(c.code), c.reason.to_string())),
-                                ));
-                            }
-                            Message::Pong(_) | Message::Frame(_) => {}
                         }
                     }
                 });
@@ -984,6 +990,35 @@ impl FakeWsUpstream {
             })
             .collect()
     }
+}
+
+/// Records one message the fake WebSocket provider received and returns its replies. Only a
+/// binary-frame provider reads JSON from binary frames.
+fn ws_replies(
+    m: tokio_tungstenite::tungstenite::Message,
+    f: &WsResponder,
+    rec: &Mutex<Vec<WsReceived>>,
+    binary: bool,
+) -> Vec<String> {
+    use tokio_tungstenite::tungstenite::Message;
+    let (got, replies) = match m {
+        Message::Text(t) => (WsReceived::Text(t.to_string()), f(&t)),
+        Message::Binary(b) => {
+            let replies = match std::str::from_utf8(&b) {
+                Ok(t) if binary => f(t),
+                _ => Vec::new(),
+            };
+            (WsReceived::Binary(b), replies)
+        }
+        Message::Ping(p) => (WsReceived::Ping(p), Vec::new()),
+        Message::Close(c) => (
+            WsReceived::Close(c.map(|c| (u16::from(c.code), c.reason.to_string()))),
+            Vec::new(),
+        ),
+        Message::Pong(_) | Message::Frame(_) => return Vec::new(),
+    };
+    rec.lock().unwrap().push(got);
+    replies
 }
 
 impl Drop for FakeWsUpstream {

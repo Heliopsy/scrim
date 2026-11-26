@@ -99,7 +99,7 @@ pub fn is_gemini_method(path: &str) -> bool {
 }
 
 /// The member named `camel` or `snake`. Both present is ambiguous and refused.
-fn member<'d, 'a>(
+pub(crate) fn member<'d, 'a>(
     v: Value<'d, 'a>,
     camel: &str,
     snake: &str,
@@ -117,7 +117,7 @@ fn member<'d, 'a>(
 }
 
 /// Lenient lookup for responses: never fails, prefers lowerCamelCase.
-fn field<'d, 'a>(v: Value<'d, 'a>, camel: &str, snake: &str) -> Option<Value<'d, 'a>> {
+pub(crate) fn field<'d, 'a>(v: Value<'d, 'a>, camel: &str, snake: &str) -> Option<Value<'d, 'a>> {
     v.get(camel)
         .ok()
         .flatten()
@@ -161,7 +161,7 @@ fn plan_request(plan: &mut Plan, root: Value<'_, '_>, depth: usize) -> Result<()
     Ok(())
 }
 
-fn plan_content(plan: &mut Plan, content: Value<'_, '_>) -> Result<(), PlanError> {
+pub(crate) fn plan_content(plan: &mut Plan, content: Value<'_, '_>) -> Result<(), PlanError> {
     if content.kind() != Kind::Object {
         return Ok(());
     }
@@ -228,14 +228,14 @@ pub(crate) fn restore_response(ctx: &Ctx<'_>, root: Value<'_, '_>, edits: &mut E
     }
 }
 
-fn is_thought(p: Value<'_, '_>) -> bool {
+pub(crate) fn is_thought(p: Value<'_, '_>) -> bool {
     p.get("thought")
         .ok()
         .flatten()
         .is_some_and(|t| t.raw() == b"true")
 }
 
-fn restore_call(ctx: &Ctx<'_>, call: Value<'_, '_>, edits: &mut Edits) {
+pub(crate) fn restore_call(ctx: &Ctx<'_>, call: Value<'_, '_>, edits: &mut Edits) {
     let name = call.get_str("name").ok().flatten().unwrap_or_default();
     let Ok(Some(args)) = call.get("args") else {
         return;
