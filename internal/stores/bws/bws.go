@@ -25,6 +25,17 @@
 // strings. The bearer token is the one exception: net/http takes the
 // Authorization header as a string, built for each request and dropped after
 // it.
+//
+// Per-agent identity: an agent's store credential is an access token of a
+// machine account of scrim's organisation. Before scrim uses a secret for
+// the agent, AgentCan logs in as that machine account (the login is cached
+// per agent and token) and fetches the secret, or for a new secret its
+// project, with the agent's bearer token: the server's own answer (404, or
+// the read and write flags it returns) decides, and the ciphertext it sends
+// is wiped without being decrypted. Bitwarden logs these fetches under the
+// agent's machine account (Secret_Retrieved, Project_Retrieved), so its
+// event log names the agent. Bitwarden has no token exchange; Kubernetes
+// passthrough and federation are unsupported.
 package bws
 
 import (
@@ -40,6 +51,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/internal/agentcache"
 	"github.com/heliopsy/scrim/internal/stores/vaultwarden/bwcrypto"
 )
 
@@ -84,6 +96,9 @@ type Adapter struct {
 	// allows duplicate keys, so writers in other processes can still race;
 	// see docs/stores/bws.md.
 	writeMu sync.Mutex
+	// agents caches the bearer tokens agents' own machine accounts logged
+	// in with (AgentCan).
+	agents *agentcache.Cache[secret.Value]
 }
 
 var (
@@ -104,7 +119,7 @@ func New(_ context.Context, inst stores.Instance) (stores.Adapter, error) {
 	if err != nil {
 		return nil, &stores.Error{Store: inst.Name, Op: "configure", Kind: stores.ErrInvalidRef, Detail: err.Error()}
 	}
-	return &Adapter{name: inst.Name, s: s, c: c}, nil
+	return &Adapter{name: inst.Name, s: s, c: c, agents: agentcache.New(copyValue, secret.Value.Wipe)}, nil
 }
 
 // Name implements stores.Adapter.
@@ -121,6 +136,7 @@ func (a *Adapter) Credentials() []secret.Value { return a.c.credentials() }
 // Close implements stores.Adapter.
 func (a *Adapter) Close() error {
 	a.c.close()
+	a.agents.Close()
 	return nil
 }
 

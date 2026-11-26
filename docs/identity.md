@@ -303,14 +303,15 @@ A pod can also act on OpenBao with its own service account (`kubernetes` in
 Redaction reads with its own identity: each store's refresher loads the `redact` targets with the
 credentials configured on the store instance (`stores.<name>.auth`, `token`, `role-id`, ...),
 never with an agent's login or static credential. Give that identity read access to everything in
-the redaction set. Because the per-agent identities above only govern use and writes, a value an
+the redaction set. Because the per-agent identities above only govern use, a value an
 agent cannot use is still redacted when the agent sends it by accident, for example when it reads
 a log file that holds another team's secret.
 
 The opposite is available as a weakening setting, `redaction.limit-to-agent-identity`. With it on,
 scrim asks the store, as each agent with a static credential in `identity.store-credentials`,
-whether that agent can read each value of the redaction set (OpenBao `sys/capabilities-self`,
-never a read), and the provider requests of that agent's `scrim run` sessions are no longer
+whether that agent can read each value of the redaction set (the store's check from
+[the table below](#store-identity-per-agent), for example OpenBao `sys/capabilities-self`, never a
+read), and the provider requests of that agent's `scrim run` sessions are no longer
 redacted for the values its store refused it:
 
 ```yaml
@@ -648,13 +649,19 @@ identity:
     gsm: "gcp-workload-identity provider://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/scrim/providers/scrim service-account:{agent_slug}@proj.iam.gserviceaccount.com"
     akv: "azure-federated tenant:00000000-0000-0000-0000-000000000000 client-id:11111111-1111-1111-1111-111111111111"
     inf: "infisical-oidc identity-id:22222222-2222-2222-2222-222222222222 audience:infisical"
-  # Static fallback: a store token per agent, by reference (store/agent).
+    dop: "doppler-oidc identity:33333333-3333-3333-3333-333333333333 audience:https://api.doppler.com"
+  # Static fallback: a store credential per agent, by reference (store/agent).
   store-credentials:
     bao/laptop: file:/run/secrets/bao-laptop-token
+    bws/laptop: file:/run/secrets/bws-laptop-access-token
+    vw/laptop: file:/run/secrets/vw-laptop-api-key.json
+    op/laptop: file:/run/secrets/op-connect-laptop-token
+    dop/laptop: file:/run/secrets/doppler-laptop-service-token
 ```
 
-Static credentials work with the store kinds in the table below; any other store configured for a
-per-agent identity refuses every use as unsupported.
+Any store configured for a per-agent identity that cannot check one refuses every use as
+unsupported (the `env`, `file`, `sops`, `keyring`, `kubernetes` and `plugin` stores, and AWS with a
+static credential: AWS checks agents only by token exchange).
 
 In templates `{agent}`, `{agent_slug}` (the agent name with anything outside `[A-Za-z0-9_.-]`
 replaced by `-`, so `agents/reviewer` becomes `agents-reviewer`), `{namespace}` and
@@ -668,6 +675,24 @@ replaced by `-`, so `agents/reviewer` becomes `agents-reviewer`), `{namespace}` 
 | `gcp-workload-identity` | `gcpsm` | `provider` (`//iam.googleapis.com/...`), `service-account`, `audience` (`https:` + provider) | `testIamPermissions` for `secretmanager.versions.access` |
 | `azure-federated` | `azkv` | `tenant`, `client-id`, `audience` (`api://AzureADTokenExchange`), `authority` (`https://login.microsoftonline.com`) | the read itself with the agent's token, value wiped |
 | `infisical-oidc` | `infisical` | `identity-id`, `audience` | the read itself with the agent's token, value wiped |
+| `doppler-oidc` | `doppler` | `identity` (a service account identity ID), `audience` | the read itself with the agent's token, value wiped |
+
+Static credentials (`identity.store-credentials`) and how each store checks them:
+
+| Store kind | The agent's credential | Read checked by | Write checked by |
+| --- | --- | --- | --- |
+| `openbao`, `vault` | a token | `sys/capabilities-self` | `sys/capabilities-self` |
+| `gcpsm` | an access token | `testIamPermissions` | `testIamPermissions` (`versions.add`) |
+| `azkv` | an access token | the read itself, value wiped | not checkable |
+| `infisical` | an access token of the agent's machine identity | the read itself, value wiped | not checkable |
+| `doppler` | a service token or service account token | the read itself, value wiped | not checkable |
+| `onepassword` | a Connect access token from the same Connect server | the vault's item list (summaries, no value) | not checkable |
+| `bws` | a machine account access token of the same organisation | `GET /secrets/{id}` as that machine account, never decrypted | the `write` flag Bitwarden returns for the secret or its project |
+| `vaultwarden` | the agent account's personal API key, as JSON | the item's `viewPassword` flag for that account | the item's `edit` flag, or the collection's `readOnly` |
+
+"Not checkable" means the store has no way to say whether an identity may write without writing:
+such a check is refused as unsupported. The checks above run before scrim uses a value
+(injection and restore); see [What is checked](#what-is-checked) for writes.
 
 For a store listed in either setting, every injection or restore of its secrets goes to the control
 plane. After scrim's rules allow it, the control plane checks with the store, as the agent, and
@@ -679,6 +704,41 @@ Store credentials obtained for an agent are cached per agent identity (per pod f
 agents) until two thirds of their lifetime has passed, and a `scrim run` session's are dropped when
 the session ends. scrim refuses to start when a store does not take the method its login names, or
 when a token exchange method is configured without `identity.issuer.url`.
+
+### What is checked
+
+The control plane asks the store as the agent before every injection or restore of a governed
+store's secret, and `redaction.limit-to-agent-identity` asks it before it narrows a session's
+redaction. Agent writes (`secret_gen`, `secret_capture`, `scrim secret put`) go to the store with
+scrim's own identity after scrim's rules allow them; the agent's own store identity is not asked
+for them yet, whatever the store.
+
+### Stores without a token exchange
+
+- **Bitwarden Secrets Manager**: create a machine account per agent, give it **Can read** or **Can
+  read, write** on the agent's projects, and hold its access token for the agent. scrim logs in as
+  that machine account (the token is cached per agent until two thirds of its life) and asks for
+  the secret: Bitwarden answers "not found" for a secret the machine account may not read and
+  returns a `write` flag with one it may read. The secret's ciphertext is never decrypted. Bitwarden
+  records `Secret_Retrieved` (or `Project_Retrieved`, for a new secret) under the agent's machine
+  account. Secrets Manager has no OIDC login, so there is no token exchange.
+- **Vaultwarden and Bitwarden password manager**: give each agent its own account, make it a member
+  of the organisation that holds the shared items and set its collection access (can view, can view
+  except passwords, can edit). Hold its personal API key for the agent as
+  `{"client_id": "user.<uuid>", "client_secret": "<secret>"}`; the agent's master password is not
+  needed, because the check decrypts nothing. scrim logs in with the API key and fetches the item as
+  that account: an item the account cannot see is refused, and one in a collection that hides
+  passwords is refused for every field. Items in scrim's personal vault are never an agent's. On
+  bitwarden.com each agent account takes a seat.
+- **1Password**: issue a Connect access token per agent from the same Connect server, scoped to the
+  agent's vaults (`op connect token create <agent> --server <server> --vault <vault>,r`). Connect
+  grants access per vault, so scrim checks that the agent's token lists the item in its vault.
+  1Password service account tokens cannot be used: the adapter only speaks Connect
+  ([onepassword.md](stores/onepassword.md#why-connect-and-not-service-accounts)).
+- **Doppler**: hold a service token for the agent's config, or a service account token, or log the
+  agent in with `doppler-oidc`: add a service account identity with OIDC authentication to a
+  service account, trust scrim's issuer URL, require the audience you configure and the subject
+  `agent:<name>`, and name the identity's ID. Doppler returns a short-lived token, cached per agent.
 
 `scrim doctor` lists, per store and agent, which identity applies (`kubernetes`, `federated`,
 `static`, `shared`, or `none` for refused), and fails a token exchange login while the issuer is

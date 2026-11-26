@@ -54,3 +54,21 @@ func TestCacheBounded(t *testing.T) {
 		t.Fatalf("cache holds %d entries", c.Len())
 	}
 }
+
+func TestForget(t *testing.T) {
+	c := New(copyValue, secret.Value.Wipe)
+	a, b := secret.FromString("cred-a"), secret.FromString("cred-b")
+	c.Put("agent-a", "", a, time.Hour)
+	c.Put("agent-b", "", b, time.Hour)
+	c.Forget("agent-a")
+	c.Forget("nobody")
+	if _, ok := c.Get("agent-a"); ok || !a.Wiped() {
+		t.Fatal("Forget kept or did not wipe the credential")
+	}
+	if got, ok := c.Get("agent-b"); !ok || b.Wiped() {
+		t.Fatal("Forget dropped another key's credential")
+	} else {
+		got.Wipe()
+	}
+	c.Close()
+}

@@ -189,10 +189,21 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   a responder outage refuses every certificate no current CRL covers. Without CRLs or OCSP, a stolen
   client certificate and key work until the certificate expires; use short-lived certificates
   ([identity.md](identity.md#revocation)).
-- **Per-agent store identity is not available for every store.** Only `openbao`, `vault`, `awssm`,
-  `ssm`, `gcpsm`, `azkv` and `infisical` take per-agent credentials; a store configured for one
-  that does not refuses every use. Infisical cannot check writes per agent, and Bitwarden Secrets
-  Manager, Doppler, 1Password and Vaultwarden have no per-agent identity at all.
+- **Per-agent store identity is not available for every store.** `openbao`, `vault`, `awssm`,
+  `ssm`, `gcpsm`, `azkv`, `infisical`, `doppler`, `onepassword`, `bws` and `vaultwarden` take
+  per-agent credentials; a store configured for one that does not (`env`, `file`, `sops`,
+  `keyring`, `kubernetes`, plugins) refuses every use. 1Password takes Connect tokens only, not
+  service account tokens. Vaultwarden needs an account per agent (a seat each on bitwarden.com).
+  [identity.md](identity.md#stores-without-a-token-exchange)
+- **Agent writes are not checked against the agent's own store identity.** The per-agent check runs
+  before a value is used (injection, restore). `secret_gen`, `secret_capture` and `scrim secret put`
+  write with scrim's own store identity once scrim's rules allow them. Where a store could check a
+  write (OpenBao, Vault, Google, Bitwarden Secrets Manager, Vaultwarden) the adapter can answer it,
+  but nothing asks yet; AWS, Azure Key Vault, Infisical, Doppler and 1Password Connect cannot say
+  whether an identity may write without writing.
+- **Some per-agent checks read the value as the agent.** AWS, Azure Key Vault, Infisical and Doppler
+  have no call that says whether an identity may read a secret, so the check reads it with the
+  agent's credential and wipes it unread.
 
 ## Several replicas
 

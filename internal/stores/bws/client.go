@@ -157,7 +157,8 @@ type identityResponse struct {
 }
 
 // login runs the access token login of bitwarden-core
-// (auth/login/access_token.rs). c.mu is held.
+// (auth/login/access_token.rs) for scrim's own machine account and keeps the
+// session. c.mu is held.
 func (c *client) login(ctx context.Context) error {
 	if c.tok == nil {
 		v, err := c.s.resolve(ctx, c.s.tokenRef)
@@ -171,66 +172,12 @@ func (c *client) login(ctx context.Context) error {
 		}
 		c.raw, c.tok = v, tok
 	}
-	// scope, client_id, client_secret, grant_type: the field order of the
-	// SDK's AccessTokenRequest, form-encoded.
-	form := []byte("scope=api.secrets&client_id=" + url.QueryEscape(c.tok.id) + "&client_secret=")
-	_ = c.tok.clientSecret.Expose(func(b []byte) error { form = appendFormEscaped(form, b); return nil })
-	form = append(form, "&grant_type=client_credentials"...)
-	body := wire.NewBody(form)
-	defer body.Wipe()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint(c.s.identity, "/connect/token", nil), body.Reader())
+	bearer, org, ttl, payload, err := c.loginWith(ctx, c.tok, c.raw)
 	if err != nil {
-		return &apiError{kind: stores.ErrInvalidRef, msg: "cannot build the login request", cause: err}
-	}
-	req.ContentLength = int64(body.Len())
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Device-Type", deviceTypeSDK)
-	req.Header.Set("User-Agent", userAgent)
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return &apiError{kind: stores.ErrUnavailable, msg: "identity server unreachable", cause: scrubURLError(err)}
-	}
-	defer func() { _ = resp.Body.Close() }()
-	b, err := wire.ReadBody(resp.Body)
-	if err != nil {
-		return &apiError{kind: stores.ErrUnavailable, msg: "reading the login response failed", cause: err}
-	}
-	defer secret.WipeBytes(b)
-	var ir identityResponse
-	jerr := json.Unmarshal(b, &ir)
-	defer ir.AccessToken.Wipe()
-	switch {
-	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
-		return &apiError{status: resp.StatusCode, kind: stores.ErrUnavailable, msg: "identity server: " + http.StatusText(resp.StatusCode)}
-	case resp.StatusCode != http.StatusOK:
-		// invalid_client: the access token was revoked, expired or never
-		// existed. The description is the server's own text.
-		msg := "login refused"
-		if ir.Error != "" {
-			msg += ": " + wire.SafeDetail(ir.Error+" "+ir.ErrorDescription, c.tok.clientSecret, c.raw)
-		}
-		return &apiError{status: resp.StatusCode, kind: stores.ErrPermission, msg: msg}
-	case jerr != nil:
-		return &apiError{status: resp.StatusCode, kind: stores.ErrUnavailable, msg: "login response is not JSON"}
-	}
-	q := bytes.TrimSpace(ir.AccessToken)
-	if len(q) < 2 || q[0] != '"' || ir.EncryptedPayload == "" {
-		return &apiError{kind: stores.ErrPermission, msg: "login response has no access token or encrypted payload; the token may not be a machine account access token"}
-	}
-	tb, err := wire.Unquote(q)
-	if err != nil {
-		return &apiError{kind: stores.ErrUnavailable, msg: "login response has a malformed access token"}
-	}
-	bearer := secret.Adopt(tb)
-	org, err := jwtOrganization(bearer)
-	if err != nil {
-		bearer.Wipe()
-		return &apiError{kind: stores.ErrPermission, msg: err.Error()}
+		return err
 	}
 	if !c.orgKey.Valid() {
-		k, err := orgKeyFromPayload(c.tok.key, ir.EncryptedPayload)
+		k, err := orgKeyFromPayload(c.tok.key, payload)
 		if err != nil {
 			bearer.Wipe()
 			return &apiError{kind: stores.ErrPermission, msg: err.Error()}
@@ -242,13 +189,83 @@ func (c *client) login(ctx context.Context) error {
 	}
 	c.bearer.Wipe()
 	c.bearer, c.org = bearer, org
-	ttl := time.Duration(ir.ExpiresIn) * time.Second
-	if ttl <= 0 {
-		ttl = time.Hour
-	}
 	// Log in again a little before the token expires.
 	c.expiry = c.now().Add(ttl - min(ttl/10, time.Minute))
 	return nil
+}
+
+// loginWith logs in as the machine account tok belongs to (raw is the
+// access token as written, redacted from errors) and returns the bearer
+// token, which the caller owns, the organisation it names, its lifetime and
+// the encrypted_payload, still encrypted. It touches no session state, so
+// it serves scrim's own login and an agent's alike.
+func (c *client) loginWith(ctx context.Context, tok *accessToken, raw secret.Value) (bearer secret.Value, org string, ttl time.Duration, payload string, err error) {
+	// scope, client_id, client_secret, grant_type: the field order of the
+	// SDK's AccessTokenRequest, form-encoded.
+	form := []byte("scope=api.secrets&client_id=" + url.QueryEscape(tok.id) + "&client_secret=")
+	_ = tok.clientSecret.Expose(func(b []byte) error { form = appendFormEscaped(form, b); return nil })
+	form = append(form, "&grant_type=client_credentials"...)
+	body := wire.NewBody(form)
+	defer body.Wipe()
+
+	fail := func(e *apiError) (secret.Value, string, time.Duration, string, error) {
+		return secret.Value{}, "", 0, "", e
+	}
+	req, rerr := http.NewRequestWithContext(ctx, http.MethodPost, endpoint(c.s.identity, "/connect/token", nil), body.Reader())
+	if rerr != nil {
+		return fail(&apiError{kind: stores.ErrInvalidRef, msg: "cannot build the login request", cause: rerr})
+	}
+	req.ContentLength = int64(body.Len())
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Device-Type", deviceTypeSDK)
+	req.Header.Set("User-Agent", userAgent)
+	resp, rerr := c.http.Do(req)
+	if rerr != nil {
+		return fail(&apiError{kind: stores.ErrUnavailable, msg: "identity server unreachable", cause: scrubURLError(rerr)})
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, rerr := wire.ReadBody(resp.Body)
+	if rerr != nil {
+		return fail(&apiError{kind: stores.ErrUnavailable, msg: "reading the login response failed", cause: rerr})
+	}
+	defer secret.WipeBytes(b)
+	var ir identityResponse
+	jerr := json.Unmarshal(b, &ir)
+	defer ir.AccessToken.Wipe()
+	switch {
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
+		return fail(&apiError{status: resp.StatusCode, kind: stores.ErrUnavailable, msg: "identity server: " + http.StatusText(resp.StatusCode)})
+	case resp.StatusCode != http.StatusOK:
+		// invalid_client: the access token was revoked, expired or never
+		// existed. The description is the server's own text.
+		msg := "login refused"
+		if ir.Error != "" {
+			msg += ": " + wire.SafeDetail(ir.Error+" "+ir.ErrorDescription, tok.clientSecret, tok.keyText, raw)
+		}
+		return fail(&apiError{status: resp.StatusCode, kind: stores.ErrPermission, msg: msg})
+	case jerr != nil:
+		return fail(&apiError{status: resp.StatusCode, kind: stores.ErrUnavailable, msg: "login response is not JSON"})
+	}
+	q := bytes.TrimSpace(ir.AccessToken)
+	if len(q) < 2 || q[0] != '"' || ir.EncryptedPayload == "" {
+		return fail(&apiError{kind: stores.ErrPermission, msg: "login response has no access token or encrypted payload; the token may not be a machine account access token"})
+	}
+	tb, uerr := wire.Unquote(q)
+	if uerr != nil {
+		return fail(&apiError{kind: stores.ErrUnavailable, msg: "login response has a malformed access token"})
+	}
+	bearer = secret.Adopt(tb)
+	org, oerr := jwtOrganization(bearer)
+	if oerr != nil {
+		bearer.Wipe()
+		return fail(&apiError{kind: stores.ErrPermission, msg: oerr.Error()})
+	}
+	ttl = time.Duration(ir.ExpiresIn) * time.Second
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	return bearer, org, ttl, ir.EncryptedPayload, nil
 }
 
 // appendFormEscaped percent-encodes b for an application/x-www-form-urlencoded

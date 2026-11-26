@@ -3,6 +3,7 @@
 package onepassword
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -23,6 +24,11 @@ import (
 //
 // What it reproduces: the endpoints, the bearer token check (401
 // {"status","message"}), vault scope (403), unknown vault and item (404),
+// further access tokens of the same server (op connect token create), each
+// with its own vaults and read and write bits enforced on every endpoint:
+// vaults outside the token are not listed, and a vault without the bit the
+// method needs (r for GET, w otherwise) answers 403 "vault <id> is not in
+// scope" whether or not it exists,
 // SCIM "name eq" and "title eq" filters with JSON string escapes, item
 // summaries without sections, fields or files, full items with them,
 // server-assigned IDs, versions and timestamps, create (POST) and replace
@@ -30,7 +36,11 @@ import (
 // the health document.
 //
 // What it does not (fidelity limits, docs/stores/onepassword.md): Connect's
-// exact 400 messages, rate limits, the sync delay between Connect and
+// exact 400 messages, the status Connect really answers for a vault outside
+// a token on the item listing (the OpenAPI document gives 403 "not in
+// scope" for the other vault endpoints but only 401 and 404 for that one;
+// scopeStatus switches the fake to 404), token expiry and revocation (an
+// unknown token is a 401), rate limits, the sync delay between Connect and
 // 1Password.com, case or Unicode folding in filters, field types Connect
 // may coerce or values it may normalise, the template fields 1Password may
 // add to a new item of a category, and PATCH, which the adapter does not use.
@@ -45,9 +55,19 @@ type fake struct {
 	requests []string
 	// itemGets counts full item reads, the only responses holding values.
 	itemGets int
-	// echo makes write errors quote the request body back, as a careless
-	// server might.
+	// echo makes write errors quote the request body back, and a 401 for
+	// a scoped token quote the token, as a careless server might.
 	echo bool
+	// scopes are further Connect access tokens: token -> vault ID ->
+	// permissions ("r", "w", "rw").
+	scopes map[string]map[string]string
+	// scopeStatus is the status a scoped token gets for a vault outside
+	// its scope (403 by default).
+	scopeStatus int
+	// unlisted are item IDs the item listing leaves out for scoped tokens,
+	// standing in for an item renamed or moved between scrim's lookup and
+	// the agent's.
+	unlisted map[string]bool
 }
 
 type fakeVault struct {
@@ -71,7 +91,8 @@ func randHex(n int) string {
 }
 
 func newFake(t *testing.T) *fake {
-	f := &fake{t: t, token: "connect-token-" + randHex(16), vaults: map[string]*fakeVault{}}
+	f := &fake{t: t, token: "connect-token-" + randHex(16), vaults: map[string]*fakeVault{},
+		scopes: map[string]map[string]string{}, scopeStatus: http.StatusForbidden, unlisted: map[string]bool{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /heartbeat", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -117,6 +138,16 @@ func (f *fake) addVault(name string) *fakeVault {
 	return v
 }
 
+// addToken issues a further access token for the vaults in scope (vault ID
+// -> "r", "w" or "rw") and returns it.
+func (f *fake) addToken(scope map[string]string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	tok := "agent-connect-token-" + randHex(16)
+	f.scopes[tok] = maps.Clone(scope)
+	return tok
+}
+
 func (f *fake) setDown(d bool) {
 	f.mu.Lock()
 	f.down = d
@@ -145,14 +176,33 @@ func apiErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"status": status, "message": msg})
 }
 
+// scopeKey carries a scoped token's vault permissions in the request
+// context; scrim's own token has none (every vault but Hidden ones).
+type scopeKey struct{}
+
+func scopeOf(r *http.Request) map[string]string {
+	s, _ := r.Context().Value(scopeKey{}).(map[string]string)
+	return s
+}
+
 func (f *fake) auth(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+f.token {
-			apiErr(w, 401, "Invalid token signature")
-			return
-		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		hdr := r.Header.Get("Authorization")
+		if hdr != "Bearer "+f.token {
+			tok, ok := strings.CutPrefix(hdr, "Bearer ")
+			scope, known := f.scopes[tok]
+			if !ok || !known {
+				msg := "Invalid token signature"
+				if f.echo {
+					msg += ": " + tok
+				}
+				apiErr(w, 401, msg)
+				return
+			}
+			r = r.WithContext(context.WithValue(r.Context(), scopeKey{}, scope))
+		}
 		h(w, r)
 	}
 }
@@ -189,6 +239,9 @@ func (f *fake) listVaults(w http.ResponseWriter, r *http.Request) {
 	out := []any{}
 	for _, id := range slices.Sorted(maps.Keys(f.vaults)) {
 		v := f.vaults[id]
+		if sc := scopeOf(r); sc != nil && sc[v.ID] == "" {
+			continue
+		}
 		if v.Hidden || (filtered && v.Name != name) {
 			continue
 		}
@@ -203,6 +256,20 @@ func (f *fake) vault(w http.ResponseWriter, r *http.Request) *fakeVault {
 	if !uuidRe.MatchString(id) {
 		apiErr(w, 400, "Invalid Vault UUID")
 		return nil
+	}
+	if sc := scopeOf(r); sc != nil {
+		need := "w"
+		if r.Method == http.MethodGet {
+			need = "r"
+		}
+		if !strings.Contains(sc[id], need) {
+			if f.scopeStatus == http.StatusNotFound {
+				apiErr(w, 404, "vault "+id+" not found")
+			} else {
+				apiErr(w, f.scopeStatus, "vault "+id+" is not in scope")
+			}
+			return nil
+		}
 	}
 	v, ok := f.vaults[id]
 	if !ok {
@@ -249,7 +316,7 @@ func (f *fake) listItems(w http.ResponseWriter, r *http.Request) {
 	out := []any{}
 	for _, id := range v.order {
 		it, ok := v.items[id]
-		if !ok || (filtered && it["title"] != title) {
+		if !ok || (filtered && it["title"] != title) || (scopeOf(r) != nil && f.unlisted[id]) {
 			continue
 		}
 		out = append(out, summary(it))

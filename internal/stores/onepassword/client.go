@@ -240,9 +240,10 @@ func copyValue(v secret.Value) secret.Value {
 	return out
 }
 
-// send performs one HTTP exchange. Network errors and timeouts are
+// send performs one HTTP exchange, with bearer as the Authorization bearer
+// token, or none when bearer is zero. Network errors and timeouts are
 // ErrUnavailable. The returned body belongs to the caller, who wipes it.
-func (c *client) send(ctx context.Context, method, u string, body *wire.Body, auth bool) (int, []byte, error) {
+func (c *client) send(ctx context.Context, method, u string, body *wire.Body, bearer secret.Value) (int, []byte, error) {
 	var r io.Reader
 	if body != nil {
 		r = body.Reader()
@@ -257,13 +258,8 @@ func (c *client) send(ctx context.Context, method, u string, body *wire.Body, au
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
-	if auth {
-		tok, err := c.accessToken(ctx)
-		if err != nil {
-			return 0, nil, err
-		}
-		defer tok.Wipe()
-		_ = tok.Expose(func(b []byte) error {
+	if !bearer.IsZero() {
+		_ = bearer.Expose(func(b []byte) error {
 			// net/http takes the header as a string; it lives only for
 			// this request. See the package documentation.
 			req.Header.Set("Authorization", "Bearer "+string(b))
@@ -282,6 +278,16 @@ func (c *client) send(ctx context.Context, method, u string, body *wire.Body, au
 	return resp.StatusCode, b, nil
 }
 
+// sendAuth performs one exchange with scrim's own Connect token.
+func (c *client) sendAuth(ctx context.Context, method, u string, body *wire.Body) (int, []byte, error) {
+	tok, err := c.accessToken(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer tok.Wipe()
+	return c.send(ctx, method, u, body, tok)
+}
+
 // scrubURLError drops the URL from a transport error.
 func scrubURLError(err error) error {
 	var ue *url.Error
@@ -296,7 +302,7 @@ func scrubURLError(err error) error {
 func (c *client) do(ctx context.Context, method, path string, q url.Values, body *wire.Body, involved []secret.Value) ([]byte, error) {
 	u := c.url(path, q)
 	for attempt := 0; ; attempt++ {
-		status, b, err := c.send(ctx, method, u, body, true)
+		status, b, err := c.sendAuth(ctx, method, u, body)
 		if err != nil {
 			return nil, err
 		}
@@ -314,9 +320,35 @@ func (c *client) do(ctx context.Context, method, path string, q url.Values, body
 	}
 }
 
+// doAs performs a call with as, a Connect token held for an agent, as the
+// bearer instead of scrim's own token. as is used as is: there is no retry
+// and nothing is cached. It returns the body of a 2xx response, which the
+// caller wipes.
+func (c *client) doAs(ctx context.Context, method, path string, q url.Values, as secret.Value) ([]byte, error) {
+	if as.IsZero() {
+		return nil, &apiError{kind: stores.ErrPermission, msg: "no agent credential"}
+	}
+	status, b, err := c.send(ctx, method, c.url(path, q), nil, as)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 200 && status < 300 {
+		return b, nil
+	}
+	e := classify(status, b, []secret.Value{as})
+	secret.WipeBytes(b)
+	return nil, e
+}
+
 // getJSON performs a GET whose response holds no value and decodes it.
 func (c *client) getJSON(ctx context.Context, path string, q url.Values, out any) error {
 	b, err := c.do(ctx, http.MethodGet, path, q, nil, nil)
+	return decodeWiped(b, err, out)
+}
+
+// decodeWiped decodes the body of a call that returned b and err, and
+// wipes b.
+func decodeWiped(b []byte, err error, out any) error {
 	if err != nil {
 		return err
 	}
@@ -404,23 +436,43 @@ func (c *client) lookupVault(ctx context.Context, name string) (apiVault, error)
 // items lists the summaries of the active items in a vault, optionally only
 // those titled title. Summaries never hold values.
 func (c *client) items(ctx context.Context, vaultID, title string) ([]apiSummary, error) {
-	var q url.Values
-	if title != "" {
-		q = eqFilter("title", title)
-	}
 	var out []apiSummary
-	if err := c.getJSON(ctx, "/v1/vaults/"+vaultID+"/items", q, &out); err != nil {
+	if err := c.getJSON(ctx, "/v1/vaults/"+vaultID+"/items", titleFilter(title), &out); err != nil {
 		return nil, err
 	}
-	active := out[:0]
-	for _, s := range out {
+	return activeTitled(out, title), nil
+}
+
+// itemsAs is items with as, a Connect token held for an agent, as the
+// bearer.
+func (c *client) itemsAs(ctx context.Context, vaultID, title string, as secret.Value) ([]apiSummary, error) {
+	var out []apiSummary
+	b, err := c.doAs(ctx, http.MethodGet, "/v1/vaults/"+vaultID+"/items", titleFilter(title), as)
+	if err := decodeWiped(b, err, &out); err != nil {
+		return nil, err
+	}
+	return activeTitled(out, title), nil
+}
+
+func titleFilter(title string) url.Values {
+	if title == "" {
+		return nil
+	}
+	return eqFilter("title", title)
+}
+
+// activeTitled keeps the active summaries titled title (all when title is
+// empty).
+func activeTitled(sums []apiSummary, title string) []apiSummary {
+	active := sums[:0]
+	for _, s := range sums {
 		// Connect does not return archived or deleted items today; the
 		// state attribute says so if it ever does.
 		if s.State == "" && (title == "" || s.Title == title) {
 			active = append(active, s)
 		}
 	}
-	return active, nil
+	return active
 }
 
 // item fetches a full item, values included. The caller wipes the returned
@@ -441,7 +493,7 @@ func (c *client) item(ctx context.Context, vaultID, itemID string) (*apiItem, []
 
 // heartbeat checks the server answers, without a token.
 func (c *client) heartbeat(ctx context.Context) error {
-	status, b, err := c.send(ctx, http.MethodGet, c.url("/heartbeat", nil), nil, false)
+	status, b, err := c.send(ctx, http.MethodGet, c.url("/heartbeat", nil), nil, secret.Value{})
 	if err != nil {
 		return err
 	}

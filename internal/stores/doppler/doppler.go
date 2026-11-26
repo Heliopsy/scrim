@@ -21,6 +21,13 @@
 // read/write on one config), a service account token, or a personal token.
 // There is no login and nothing to renew.
 //
+// Per-agent store identity (agent.go): an agent's own Doppler token, held
+// by scrim (identity.store-credentials) or obtained by presenting an
+// identity token scrim signs for the agent to a service account identity's
+// OIDC authentication (identity.store-login method doppler-oidc), is used
+// to read the secret before scrim's own token does, so Doppler's access
+// rules for that token decide too.
+//
 // The adapter talks to the Doppler v3 REST API with a small typed client
 // instead of an SDK, so values travel between the HTTP body and secret.Value
 // through package wire and never become Go strings. The token is the one
@@ -42,6 +49,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/internal/agentcache"
 	"github.com/heliopsy/scrim/internal/stores/internal/wire"
 )
 
@@ -60,6 +68,9 @@ type Adapter struct {
 	name string
 	s    *settings
 	c    *client
+	// agents caches the tokens agents' service account identities
+	// obtained with OIDC (agent.go).
+	agents *agentcache.Cache[secret.Value]
 }
 
 var (
@@ -80,7 +91,7 @@ func New(_ context.Context, inst stores.Instance) (stores.Adapter, error) {
 	if err != nil {
 		return nil, &stores.Error{Store: inst.Name, Op: "configure", Kind: stores.ErrInvalidRef, Detail: err.Error()}
 	}
-	return &Adapter{name: inst.Name, s: s, c: c}, nil
+	return &Adapter{name: inst.Name, s: s, c: c, agents: agentcache.New(copyValue, secret.Value.Wipe)}, nil
 }
 
 // Name implements stores.Adapter.
@@ -96,6 +107,7 @@ func (a *Adapter) Credentials() []secret.Value { return a.c.credentials() }
 
 // Close implements stores.Adapter.
 func (a *Adapter) Close() error {
+	a.agents.Close()
 	a.c.close()
 	return nil
 }
