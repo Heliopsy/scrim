@@ -853,12 +853,14 @@ jobs:
         env:
           SCRIM_TEST_REQUIRE_USERNS: "1"
 
-  # GitHub-hosted for the same reason as e2e-tools. Real Claude Code and
-  # Codex CLIs, installed at pinned versions into the runner's temporary
-  # directory, complete a task under `scrim run` against a real `scrim proxy`
-  # and the fake model (tasks.md 9.3, 11.2): seeded secrets read with their
-  # shell tools, a bound tool API called, scrim's MCP tool called, and zero
-  # seeded values in any provider request or capture.
+  # GitHub-hosted for the same reason as e2e-tools. Real Claude Code, Codex
+  # and OpenCode CLIs, installed at pinned versions into the runner's
+  # temporary directory, complete a task under `scrim run` against a real
+  # `scrim proxy` and the fake model (tasks.md 9.3, 11.2): seeded secrets read
+  # with their shell tools, a bound tool API called, scrim's MCP tool called,
+  # and zero seeded values in any provider request or capture. Then the leak
+  # suite's agent drivers: each CLI through the pass-through stand-in (the
+  # driver must exercise it) and the scenario gate through `scrim proxy`.
   e2e-agents:
     name: Agent CLIs end-to-end
     runs-on: ubuntu-24.04
@@ -870,6 +872,8 @@ jobs:
       CLAUDE_CODE_VERSION: 2.1.330
       # renovate: datasource=npm depName=@openai/codex
       CODEX_VERSION: 0.171.0
+      # renovate: datasource=npm depName=opencode-ai
+      OPENCODE_VERSION: 1.19.6
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -891,20 +895,48 @@ jobs:
           set -euo pipefail
           agents="$RUNNER_TEMP/agents"
           npm install --no-fund --no-audit --prefix "$agents" \
-            "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}"
+            "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}" \
+            "opencode-ai@${OPENCODE_VERSION}"
           echo "$agents/node_modules/.bin" >> "$GITHUB_PATH"
-          # The native binary, not the Node.js launcher: the session runs
+          # The native binaries, not the Node.js launchers: the sessions run
           # with an empty HOME.
           codex=$(find "$agents/node_modules/@openai" -path '*/bin/codex' -type f | head -n1)
-          echo "SCRIM_E2E_CODEX=$codex" >> "$GITHUB_ENV"
+          opencode="$agents/node_modules/opencode-linux-x64/bin/opencode"
+          {
+            echo "SCRIM_E2E_CLAUDE=$agents/node_modules/.bin/claude"
+            echo "SCRIM_E2E_CODEX=$codex"
+            echo "SCRIM_E2E_OPENCODE=$opencode"
+          } >> "$GITHUB_ENV"
           "$agents/node_modules/.bin/claude" --version
           "$codex" --version
+          "$opencode" --version
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # SCRIM_E2E_REQUIRE_TOOLS turns a missing agent into a failure.
       - run: test/e2e/run.sh session
         env:
           SCRIM_E2E_REQUIRE_TOOLS: "1"
+      - name: Agent drivers through the pass-through stand-in
+        run: |
+          go test -c -o "$RUNNER_TEMP/scenario.test" ./internal/leak/scenario/
+          test/e2e/sandbox.sh "$RUNNER_TEMP/scenario.test" -test.run 'TestAgentDriver' -test.v -test.count=1
+        env:
+          SCRIM_E2E_REQUIRE_TOOLS: "1"
+      # The leak gate over each agent's sessions through `scrim proxy`, with
+      # the data plane test/e2e/run.sh built.
+      - name: Leak gate with the agent CLIs
+        run: test/leak/agents.sh claude codex opencode
+        env:
+          SCRIM_DATAPLANE_PATH: ${{ github.workspace }}/dataplane/target/debug/scrim-dataplane
+          SCRIM_LEAK_REPORT_DIR: ${{ runner.temp }}
+      - name: Upload the agent leak reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: agent-leak-reports
+          path: ${{ runner.temp }}/agent-*-report.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   # The shell commands of the user documentation, run as written
   # (test/e2e/docs, `just docs-test`): every ```sh test block in the README

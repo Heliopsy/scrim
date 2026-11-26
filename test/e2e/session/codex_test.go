@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/heliopsy/scrim/internal/leak/scenario"
 	fp "github.com/heliopsy/scrim/internal/testing/fakeprovider"
 	"github.com/heliopsy/scrim/test/e2e/harness"
 )
@@ -20,13 +21,13 @@ import (
 // names its shell tool differently across releases and model families, so
 // the call is shaped for whichever tool the request offers.
 func codexModel(t fp.Turn) fp.Reply {
-	tools := toolNames(t.Body)
+	tools := scenario.ToolNames(t.Body)
 	if len(tools) == 0 {
 		return fp.Reply{Text: "scrim e2e session"}
 	}
 	switch n := t.ToolResults; {
 	case n < len(steps):
-		call, ok := codexShell(tools, steps[n].command)
+		call, ok := scenario.CodexShell(tools, steps[n].command)
 		if !ok {
 			return fp.Reply{Text: "no shell tool offered: " + strings.Join(tools, ",")}
 		}
@@ -44,48 +45,6 @@ func codexModel(t fp.Turn) fp.Reply {
 		return fp.Reply{Text: "no scrim MCP tool offered: " + strings.Join(tools, ",")}
 	}
 	return fp.Reply{Text: "Done."}
-}
-
-// codexShell is a call of the shell tool Codex offers.
-func codexShell(tools []string, command string) (fp.ToolCall, bool) {
-	for _, name := range tools {
-		switch name {
-		case "exec_command":
-			return fp.ToolCall{Name: name, Input: map[string]any{"cmd": command}}, true
-		case "shell_command":
-			return fp.ToolCall{Name: name, Input: map[string]any{"command": command}}, true
-		case "shell":
-			return fp.ToolCall{Name: name, Input: map[string]any{"command": []any{"bash", "-c", command}}}, true
-		}
-	}
-	return fp.ToolCall{}, false
-}
-
-// toolNames lists the function tools of a Responses request. A tool inside a
-// namespace tool (Codex puts each MCP server's tools in one) is listed as
-// namespace/name.
-func toolNames(body map[string]any) []string {
-	list, _ := body["tools"].([]any)
-	var out []string
-	for _, it := range list {
-		m, _ := it.(map[string]any)
-		name, _ := m["name"].(string)
-		if name == "" {
-			continue
-		}
-		nested, _ := m["tools"].([]any)
-		if len(nested) == 0 {
-			out = append(out, name)
-			continue
-		}
-		for _, n := range nested {
-			nm, _ := n.(map[string]any)
-			if sub, _ := nm["name"].(string); sub != "" {
-				out = append(out, name+"/"+sub)
-			}
-		}
-	}
-	return out
 }
 
 // TestCodexSession is TestClaudeCodeSession for the Codex CLI: `codex exec`

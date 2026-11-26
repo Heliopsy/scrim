@@ -317,7 +317,7 @@ stores:
 proxy:
   listen: 127.0.0.1:0
   forward-listen: 127.0.0.1:0
-  upstream: {anthropic: %[2]q, openai: %[2]q}
+  upstream: {anthropic: %[2]q, openai: %[2]q, gemini: %[2]q}
 %[4]sapi: {socket: %[1]s/api.sock}
 admin: {url: "unix:%[1]s/admin.sock"}
 redaction: {placeholder-key-dir: %[1]s/keys}

@@ -50,8 +50,8 @@ func (Commands) Run(e *Env) *cobra.Command {
 			"Nothing outside the session changes, and the session ends when the agent exits.\n\n" +
 			"scrim run refuses to start the agent (exit 125) when scrim cannot serve it; run.allow-unredacted-start " +
 			"weakens that. Otherwise it exits with the agent's status.\n\n" +
-			"Presets: claude (Claude Code), codex (Codex CLI), generic. See docs/run.md.",
-		Example: "  scrim run -- claude\n  scrim run -- codex exec 'fix the failing test'\n  scrim run --print-env -- claude",
+			"Presets: claude (Claude Code), codex (Codex CLI), opencode (OpenCode), generic. See docs/run.md.",
+		Example: "  scrim run -- claude\n  scrim run -- codex exec 'fix the failing test'\n  scrim run -- opencode run 'fix the failing test'\n  scrim run --print-env -- claude",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := e.Config()
@@ -112,7 +112,7 @@ func (Commands) Run(e *Env) *cobra.Command {
 	f := cmd.Flags()
 	// Everything after the agent's name is the agent's.
 	f.SetInterspersed(false)
-	f.StringVar(&agent, "agent", "", "agent preset: claude, codex or generic (default: from the command name)")
+	f.StringVar(&agent, "agent", "", "agent preset: claude, codex, opencode or generic (default: from the command name)")
 	f.BoolVar(&printEnv, "print-env", false, "print what would be set for the agent and exit; the session token is never printed")
 	f.StringVarP(&output, "output", "o", "text", "--print-env format: text or json")
 	f.StringVar(&name, "name", "", "session name shown in audit and whoami (default: the agent's command name)")
