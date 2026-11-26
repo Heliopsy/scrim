@@ -14,7 +14,8 @@ was written against Codex 0.17x and had not been checked against current release
   proxy and gated against `scrim proxy` in CI (`test/leak/agents.sh`, `just leak-agents`).
 - New `opencode` preset for `scrim run`: `OPENCODE_CONFIG_CONTENT` (merged over an inherited one)
   with scrim's routes for the anthropic, openai and google providers, `x-scrim-session` from
-  `{env:SCRIM_SESSION_TOKEN}`, `enabled_providers` limited to those three, and `scrim mcp`. A
+  `{env:SCRIM_SESSION_TOKEN}`, `enabled_providers` limited to those three (narrowing, never widening,
+  a list the user set), and `scrim mcp`. A
   `-m` of another provider is refused. `--print-env` hides an inherited configuration.
 - Codex preset checked against Codex 0.171: `openai_base_url`, `CODEX_CA_CERTIFICATE` and the MCP
   options are current (`OPENAI_BASE_URL` is ignored). New: a warning when the configuration selects

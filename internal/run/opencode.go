@@ -3,8 +3,12 @@
 package run
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -50,10 +54,26 @@ var OpenCodePreset = &Preset{
 			}
 			providers[p.id] = map[string]any{"options": opts}
 		}
+		// Only the providers scrim serves: any other would reach its own
+		// endpoint, with requests scrim's LLM proxy never sees. A list the
+		// user set is narrowed, never widened.
+		enabled := served
+		if user, from, err := openCodeUserProviders(b.env); err != nil {
+			return err
+		} else if user != nil {
+			enabled = nil
+			for _, p := range served {
+				if slices.Contains(user, p) {
+					enabled = append(enabled, p)
+				}
+			}
+			if len(enabled) == 0 {
+				return fmt.Errorf("enabled_providers in %s allows none of the providers scrim serves for OpenCode (%s); "+
+					"add one of them to it to run OpenCode under scrim", from, strings.Join(served, ", "))
+			}
+		}
 		cfg := map[string]any{
-			// Only the providers scrim serves: any other would reach its
-			// own endpoint, with requests scrim's LLM proxy never sees.
-			"enabled_providers": served,
+			"enabled_providers": enabled,
 			"provider":          providers,
 		}
 		if b.in.MCP {
@@ -71,7 +91,7 @@ var OpenCodePreset = &Preset{
 		if err != nil {
 			return err
 		}
-		why := "OpenCode's anthropic, openai and google providers through scrim's LLM proxy, other providers off"
+		why := "OpenCode's " + strings.Join(enabled, ", ") + " providers through scrim's LLM proxy, other providers off"
 		if b.identified() {
 			why += ", the session header on each request"
 		}
@@ -100,6 +120,110 @@ var OpenCodePreset = &Preset{
 		return nil
 	},
 }
+
+// openCodeUserProviders returns the enabled_providers list the user set,
+// and where, or nil when none is set. It reads what OpenCode reads before
+// OPENCODE_CONFIG_CONTENT that scrim run can see: the global configuration
+// ($XDG_CONFIG_HOME/opencode/config.json, opencode.json, opencode.jsonc),
+// the file OPENCODE_CONFIG names, then an inherited OPENCODE_CONFIG_CONTENT;
+// the last one that sets the list wins, as in OpenCode. Project files are not
+// read. A file that exists but cannot be parsed is an error: its list cannot
+// be honoured.
+func openCodeUserProviders(env map[string]string) ([]string, string, error) {
+	var files []string
+	dir := envGet(env, "XDG_CONFIG_HOME")
+	if dir == "" {
+		if h := envGet(env, "HOME"); h != "" {
+			dir = filepath.Join(h, ".config")
+		}
+	}
+	if dir != "" {
+		for _, n := range []string{"config.json", "opencode.json", "opencode.jsonc"} {
+			files = append(files, filepath.Join(dir, "opencode", n))
+		}
+	}
+	if f := env["OPENCODE_CONFIG"]; f != "" {
+		files = append(files, f)
+	}
+	var list []string
+	from := ""
+	for _, f := range files {
+		b, err := os.ReadFile(f) // #nosec G304 -- the user's own OpenCode configuration, read for its provider list
+		if err != nil {
+			continue
+		}
+		l, set, err := enabledProviders(b)
+		if err != nil {
+			return nil, "", fmt.Errorf("%s: cannot read its enabled_providers to keep them: %w", f, err)
+		}
+		if set {
+			list, from = l, f
+		}
+	}
+	if c := env[EnvOpenCodeConfig]; strings.TrimSpace(c) != "" {
+		if l, set, err := enabledProviders([]byte(c)); err == nil && set {
+			list, from = l, EnvOpenCodeConfig
+		}
+	}
+	return list, from, nil
+}
+
+// enabledProviders reads enabled_providers from an OpenCode configuration
+// (JSON with comments and trailing commas allowed).
+func enabledProviders(b []byte) ([]string, bool, error) {
+	var cfg struct {
+		Enabled *[]string `json:"enabled_providers"`
+	}
+	if err := json.Unmarshal(stripJSONC(b), &cfg); err != nil {
+		return nil, false, err
+	}
+	if cfg.Enabled == nil {
+		return nil, false, nil
+	}
+	return *cfg.Enabled, true, nil
+}
+
+// stripJSONC removes // and /* */ comments outside strings and commas
+// before a closing bracket, turning JSONC into JSON.
+func stripJSONC(b []byte) []byte {
+	out := make([]byte, 0, len(b))
+	inStr := false
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		switch {
+		case inStr:
+			out = append(out, c)
+			if c == '\\' && i+1 < len(b) {
+				i++
+				out = append(out, b[i])
+			} else if c == '"' {
+				inStr = false
+			}
+		case c == '"':
+			inStr = true
+			out = append(out, c)
+		case c == '/' && i+1 < len(b) && b[i+1] == '/':
+			for i < len(b) && b[i] != '\n' {
+				i++
+			}
+			i--
+		case c == '/' && i+1 < len(b) && b[i+1] == '*':
+			end := bytes.Index(b[i+2:], []byte("*/"))
+			if end < 0 {
+				return out
+			}
+			i += end + 3
+		default:
+			out = append(out, c)
+		}
+	}
+	return trailingComma.ReplaceAll(out, []byte("$1"))
+}
+
+// trailingComma matches a comma before a closing bracket. It runs after
+// comments are gone; a string holding ",}" would be changed too, which is
+// harmless for reading enabled_providers.
+var trailingComma = regexp.MustCompile(`,(\s*[}\]])`)
 
 // openCodeModelServed refuses a --model (-m) whose provider OpenCode would
 // not send through scrim. The model is provider/model.

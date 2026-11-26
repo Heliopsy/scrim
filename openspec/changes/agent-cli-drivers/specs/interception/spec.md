@@ -35,6 +35,12 @@ the agent around scrim.
   header, its other providers are disabled, it starts `scrim mcp` with the session token, and no
   OpenCode configuration file changes
 
+#### Scenario: OpenCode provider list narrowed
+
+- **WHEN** the user's OpenCode configuration sets `enabled_providers` to `["anthropic", "openrouter"]` and the user runs `scrim run -- opencode`
+- **THEN** the session enables only `anthropic`
+- **AND** when the list holds none of the providers scrim serves, `scrim run` refuses to start OpenCode
+
 #### Scenario: OpenCode model of another provider
 
 - **WHEN** a user runs `scrim run -- opencode run -m openrouter/some-model "fix the test"`

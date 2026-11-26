@@ -478,6 +478,85 @@ func TestOpenCodeInheritedConfig(t *testing.T) {
 	}
 }
 
+func TestOpenCodeNarrowsUserProviders(t *testing.T) {
+	enabled := func(t *testing.T, p *Plan) []string {
+		t.Helper()
+		var cfg struct {
+			Enabled []string `json:"enabled_providers"`
+		}
+		env, err := p.Environ(nil, secret.FromString("scrim_st_abc_def"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, kv := range env {
+			if k, v, _ := strings.Cut(kv, "="); k == EnvOpenCodeConfig {
+				if err := json.Unmarshal([]byte(v), &cfg); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		return cfg.Enabled
+	}
+	home := t.TempDir()
+	write := func(rel, body string) string {
+		p := filepath.Join(home, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	in := input("opencode")
+	in.Environ = []string{"PATH=/usr/bin", "HOME=" + home}
+
+	// The global configuration (JSONC) restricts OpenCode to anthropic.
+	write(".config/opencode/opencode.jsonc", "{\n  // mine\n  \"enabled_providers\": [\"anthropic\", \"openrouter\",],\n}\n")
+	if got := enabled(t, mustBuild(t, in)); !slices.Equal(got, []string{"anthropic"}) {
+		t.Errorf("global config: enabled_providers %q, want [anthropic]", got)
+	}
+	// OPENCODE_CONFIG ranks above it.
+	cfgFile := write("custom.json", `{"enabled_providers":["google","openai"]}`)
+	in.Environ = append(in.Environ, "OPENCODE_CONFIG="+cfgFile)
+	if got := enabled(t, mustBuild(t, in)); !slices.Equal(got, []string{"openai", "google"}) {
+		t.Errorf("OPENCODE_CONFIG: enabled_providers %q", got)
+	}
+	// An inherited inline configuration ranks above both.
+	in.Environ = append(in.Environ, EnvOpenCodeConfig+`={"enabled_providers":["google"]}`)
+	if got := enabled(t, mustBuild(t, in)); !slices.Equal(got, []string{"google"}) {
+		t.Errorf("inline: enabled_providers %q", got)
+	}
+	// Nothing scrim serves left: refused.
+	in.Environ[len(in.Environ)-1] = EnvOpenCodeConfig + `={"enabled_providers":["openrouter"]}`
+	if _, err := Build(in); err == nil || !strings.Contains(err.Error(), "allows none of the providers scrim serves") {
+		t.Errorf("empty intersection: %v", err)
+	}
+	// A configuration file that cannot be read is refused, not ignored.
+	in = input("opencode")
+	in.Environ = []string{"PATH=/usr/bin", "HOME=" + home}
+	write(".config/opencode/opencode.jsonc", `{"enabled_providers": [`)
+	if _, err := Build(in); err == nil || !strings.Contains(err.Error(), "opencode.jsonc") {
+		t.Errorf("unreadable config: %v", err)
+	}
+	// No list anywhere: the three scrim serves.
+	in.Environ = []string{"PATH=/usr/bin", "HOME=" + t.TempDir()}
+	if got := enabled(t, mustBuild(t, in)); !slices.Equal(got, []string{"anthropic", "openai", "google"}) {
+		t.Errorf("default: enabled_providers %q", got)
+	}
+}
+
+func TestStripJSONC(t *testing.T) {
+	in := "{\"a\": \"x // not a comment /* nor this */\", /* block */ \"b\": [1, 2,], // end\n \"c\": \"q\\\"//\",}"
+	var v map[string]any
+	if err := json.Unmarshal(stripJSONC([]byte(in)), &v); err != nil {
+		t.Fatalf("%v: %s", err, stripJSONC([]byte(in)))
+	}
+	if v["a"] != "x // not a comment /* nor this */" || v["c"] != `q"//` {
+		t.Errorf("strings changed: %v", v)
+	}
+}
+
 func TestOpenCodeRefusesUnservedModel(t *testing.T) {
 	for _, args := range [][]string{
 		{"run", "-m", "openrouter/x", "hi"}, {"run", "--model=opencode/big-pickle", "hi"}, {"--model", "github-copilot/gpt-5", "run"},

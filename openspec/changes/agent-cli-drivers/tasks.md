@@ -9,6 +9,7 @@
 
 - [x] 2.1 `opencode` preset: providers' base URLs, session header by `{env:}`, `enabled_providers`, `scrim mcp`, inherited `OPENCODE_CONFIG_CONTENT` merged and hidden from `--print-env`
 - [x] 2.2 Refuse `-m` of a provider scrim does not serve
+- [x] 2.5 Narrow the user's own `enabled_providers` (global files, `OPENCODE_CONFIG`, inherited content) to the served ones; refuse when none is left
 - [x] 2.3 Codex preset checked against Codex 0.171; warn about a custom `model_provider`
 - [x] 2.4 Unit tests for the configuration, the merge, the refusal and the warning
 

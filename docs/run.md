@@ -149,10 +149,16 @@ identified by the session header; the base-URL listener strips it before the pro
 
 `enabled_providers` keeps OpenCode to the providers scrim serves: any other (OpenCode Zen, GitHub
 Copilot, OpenRouter, Bedrock, a custom OpenAI-compatible endpoint) would send its requests to its own
-endpoint, which the LLM proxy never sees. `scrim run` refuses a `-m`/`--model` of another provider
-before the agent starts. Your own `OPENCODE_CONFIG_CONTENT` is kept with scrim's settings merged
-over it (objects key by key, other values replaced); it must be plain JSON, and `--print-env` shows
-it as `<inherited OPENCODE_CONFIG_CONTENT>` because it may hold your keys. Keys come from
+endpoint, which the LLM proxy never sees. A list you set yourself is narrowed, never widened: when
+your global configuration (`~/.config/opencode/config.json`, `opencode.json` or `opencode.jsonc`),
+the file `OPENCODE_CONFIG` names or your `OPENCODE_CONFIG_CONTENT` sets `enabled_providers` (the last
+of them that does, as OpenCode ranks them), the session enables only the providers in both that list
+and scrim's three, and `scrim run` refuses to start OpenCode when none is left. A configuration file
+that cannot be parsed is refused too, since its list could not be kept. `disabled_providers` is left
+as you set it. `scrim run` refuses a `-m`/`--model` of another provider before the agent starts.
+Your own `OPENCODE_CONFIG_CONTENT` is kept with scrim's settings merged over it (objects key by
+key, other values replaced); it must be plain JSON, and `--print-env` shows it as
+`<inherited OPENCODE_CONFIG_CONTENT>` because it may hold your keys. Keys come from
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` or `opencode auth login` as
 usual, and are passed through to the provider.
 
@@ -511,7 +517,9 @@ backend only one of them can hold the state file, so a second concurrent `scrim 
 - OpenCode's managed configuration (`/etc/opencode` on Linux, `/Library/Application Support/opencode`
   and managed preferences on macOS) ranks above `OPENCODE_CONFIG_CONTENT`. A provider base URL or
   `enabled_providers` set there is not changed by `scrim run`.
-- OpenCode is limited to its `anthropic`, `openai` and `google` providers in the session. scrim's
+- OpenCode is limited to its `anthropic`, `openai` and `google` providers in the session.
+  `enabled_providers` in a project's `opencode.json` or `.opencode/opencode.json` is not read, so the
+  session's narrowed list replaces it. scrim's
   cloud provider routes (Bedrock, Vertex, Foundry) are not wired to OpenCode's providers for them.
 - Runtimes with their own trust stores that read none of the variables above (Java, for one) do not
   trust scrim's CA inside the session.
