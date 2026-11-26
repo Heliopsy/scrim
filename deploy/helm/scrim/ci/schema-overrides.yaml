@@ -104,4 +104,10 @@ identity.issuer.signingKeys.key: {minLength: 1}
 identity.issuer.keyStore.type: {enum: [emptyDir, pvc]}
 identity.issuer.keyStore.accessModes: {items: {enum: [ReadWriteOnce, ReadWriteOncePod, ReadWriteMany]}, minItems: 1}
 identity.issuer.service.type: {enum: [ClusterIP, NodePort, LoadBalancer]}
+identity.clientCertificates.toolProxyPort: {minimum: 0, maximum: 65535}
+identity.clientCertificates.revocationScope: {enum: [end-entity, chain]}
+identity.clientCertificates.ocsp.responder: {pattern: "^(https?://[^/?#@]+([/?#].*)?)?$"}
+identity.clientCertificates.ocsp.unreachable: {enum: [fail-closed, soft-fail]}
+identity.clientCertificates.ocsp.timeout: {pattern: "^([0-9]+(ms|s))+$"}
+identity.clientCertificates.ocsp.cacheSize: {minimum: 1}
 networkPolicy.issuerFrom: {items: {type: object}}

@@ -143,6 +143,18 @@ pub struct ClientCertificateTrust {
     /// Set exactly when listener_chain_pem is.
     #[prost(bytes = "vec", tag = "5")]
     pub listener_key_pem: ::prost::alloc::vec::Vec<u8>,
+    /// revocation_chain checks every certificate below the trust anchor against
+    /// crls_der, not only the end entity: each needs a current CRL of its
+    /// issuer, unless ocsp is set. False checks the end entity only.
+    #[prost(bool, tag = "6")]
+    pub revocation_chain: bool,
+    /// ocsp is set while OCSP checking is on. The handshake then accepts a
+    /// certificate whose issuer has no CRL in crls_der (a listed or expired one
+    /// still refuses), and the connection is served only once the control plane
+    /// accepted the chain over CertificateChecks, where CRLs and OCSP are
+    /// applied together.
+    #[prost(bool, tag = "7")]
+    pub ocsp: bool,
 }
 /// UpstreamProxy is the outbound HTTP proxy (interception spec, "Outbound
 /// connections through an upstream proxy"). TLS to the destination runs
@@ -896,6 +908,42 @@ pub struct AskAnswer {
     pub grant_id: ::prost::alloc::string::String,
     #[prost(int64, tag = "6")]
     pub grant_expires_unix_nano: i64,
+}
+/// CertificateCheckRequest asks the control plane to check a client
+/// certificate chain the data plane accepted in a TLS handshake. Public.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CertificateCheckRequest {
+    #[prost(uint32, tag = "1")]
+    pub protocol: u32,
+    /// id is unique per data plane process; the result echoes it.
+    #[prost(uint64, tag = "2")]
+    pub id: u64,
+    /// listener names the listener that accepted the connection, for logs.
+    #[prost(string, tag = "3")]
+    pub listener: ::prost::alloc::string::String,
+    /// chain is what the client presented, leaf first, DER.
+    #[prost(bytes = "vec", repeated, tag = "4")]
+    pub chain: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    /// deadline_unix_nano is when the data plane closes the connection without
+    /// a result.
+    #[prost(int64, tag = "5")]
+    pub deadline_unix_nano: i64,
+}
+/// CertificateCheckResult answers a CertificateCheckRequest.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CertificateCheckResult {
+    #[prost(uint32, tag = "1")]
+    pub protocol: u32,
+    #[prost(uint64, tag = "2")]
+    pub id: u64,
+    /// accepted serves the connection; false closes it.
+    #[prost(bool, tag = "3")]
+    pub accepted: bool,
+    /// reason is why a chain was refused, one of the refusal reasons of
+    /// docs/identity.md ("revoked", "ocsp unavailable", ...). Empty when
+    /// accepted.
+    #[prost(string, tag = "4")]
+    pub reason: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StatusRequest {
@@ -1830,6 +1878,44 @@ pub mod data_plane_client {
                 .insert(GrpcMethod::new("scrim.dataplane.v1.DataPlane", "Redact"));
             self.inner.unary(req, path, codec).await
         }
+        /// CertificateChecks carries the control plane's revocation check of client
+        /// certificates while OCSP is on (ClientCertificateTrust.ocsp). The control
+        /// plane opens the call once; for every connection a TLS listener accepted,
+        /// the data plane sends the verified chain in a CertificateCheckRequest and
+        /// serves the connection only after a CertificateCheckResult that accepts
+        /// it. No answer by the deadline, a refusal, or no attached control plane
+        /// closes the connection. While ocsp is off the call carries nothing. A data
+        /// plane older than this call answers UNIMPLEMENTED and ignores ocsp, so its
+        /// handshakes check CRLs only; the control plane logs that as an error and
+        /// still applies OCSP to every ask and edge request it verifies.
+        pub async fn certificate_checks(
+            &mut self,
+            request: impl tonic::IntoStreamingRequest<
+                Message = super::CertificateCheckResult,
+            >,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::CertificateCheckRequest>>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/scrim.dataplane.v1.DataPlane/CertificateChecks",
+            );
+            let mut req = request.into_streaming_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("scrim.dataplane.v1.DataPlane", "CertificateChecks"),
+                );
+            self.inner.streaming(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -1929,6 +2015,29 @@ pub mod data_plane_server {
             &self,
             request: tonic::Request<super::RedactRequest>,
         ) -> std::result::Result<tonic::Response<super::RedactResponse>, tonic::Status>;
+        /// Server streaming response type for the CertificateChecks method.
+        type CertificateChecksStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::CertificateCheckRequest, tonic::Status>,
+            >
+            + std::marker::Send
+            + 'static;
+        /// CertificateChecks carries the control plane's revocation check of client
+        /// certificates while OCSP is on (ClientCertificateTrust.ocsp). The control
+        /// plane opens the call once; for every connection a TLS listener accepted,
+        /// the data plane sends the verified chain in a CertificateCheckRequest and
+        /// serves the connection only after a CertificateCheckResult that accepts
+        /// it. No answer by the deadline, a refusal, or no attached control plane
+        /// closes the connection. While ocsp is off the call carries nothing. A data
+        /// plane older than this call answers UNIMPLEMENTED and ignores ocsp, so its
+        /// handshakes check CRLs only; the control plane logs that as an error and
+        /// still applies OCSP to every ask and edge request it verifies.
+        async fn certificate_checks(
+            &self,
+            request: tonic::Request<tonic::Streaming<super::CertificateCheckResult>>,
+        ) -> std::result::Result<
+            tonic::Response<Self::CertificateChecksStream>,
+            tonic::Status,
+        >;
     }
     #[derive(Debug)]
     pub struct DataPlaneServer<T> {
@@ -2355,6 +2464,54 @@ pub mod data_plane_server {
                                 max_encoding_message_size,
                             );
                         let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/scrim.dataplane.v1.DataPlane/CertificateChecks" => {
+                    #[allow(non_camel_case_types)]
+                    struct CertificateChecksSvc<T: DataPlane>(pub Arc<T>);
+                    impl<
+                        T: DataPlane,
+                    > tonic::server::StreamingService<super::CertificateCheckResult>
+                    for CertificateChecksSvc<T> {
+                        type Response = super::CertificateCheckRequest;
+                        type ResponseStream = T::CertificateChecksStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::CertificateCheckResult>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as DataPlane>::certificate_checks(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CertificateChecksSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.streaming(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)

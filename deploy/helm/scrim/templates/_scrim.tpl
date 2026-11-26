@@ -240,6 +240,11 @@ refuses them so a values file never carries a secret.
 {{- fail "config.proxy.tls-listen and forward-tls-listen conflict with identity.clientCertificates.enabled, which sets them from llmPort and forwardPort" -}}
 {{- end -}}
 {{- end -}}
+{{- with (index $cfg "tool-proxy") -}}
+{{- if and (kindIs "map" .) (hasKey . "tls-listen") $.Values.identity.clientCertificates.enabled -}}
+{{- fail "config.tool-proxy.tls-listen conflicts with identity.clientCertificates.enabled, which sets it from toolProxyPort" -}}
+{{- end -}}
+{{- end -}}
 {{- if hasKey $cfg "metrics" -}}
 {{- fail "config.metrics is set by the chart; use the metrics values" -}}
 {{- end -}}
@@ -269,8 +274,13 @@ refuses them so a values file never carries a secret.
 {{- end -}}
 {{- end -}}
 
-{{/* Settings the chart owns, shared by central and sidecar. */}}
+{{/*
+Settings the chart owns, shared by central and sidecar: dict "root" and
+"central" (true for central scrim, which may serve the TLS tool proxy).
+*/}}
 {{- define "scrim.commonSettings" -}}
+{{- $central := .central -}}
+{{- with .root -}}
 log:
   level: {{ .Values.log.level }}
   format: {{ .Values.log.format }}
@@ -282,9 +292,13 @@ tool-proxy:
   ca:
     cert-file: /etc/scrim/ca/tls.crt
     key: file:/etc/scrim/ca/tls.key
+{{- if and $central (include "scrim.clientCertsOn" .) .Values.identity.clientCertificates.toolProxyPort }}
+  tls-listen: 0.0.0.0:{{ .Values.identity.clientCertificates.toolProxyPort }}
+{{- end }}
 {{- if .Values.policyRules }}
 policy:
   rules-file: /etc/scrim/config/policy.yaml
+{{- end }}
 {{- end }}
 {{- end -}}
 
@@ -347,6 +361,17 @@ client-certificates:
 {{- range $c.crls.keys }}
     - /etc/scrim/client-crl/{{ . }}
 {{- end }}
+{{- end }}
+  revocation-scope: {{ $c.revocationScope }}
+{{- if $c.ocsp.enabled }}
+  ocsp:
+    enabled: true
+{{- with $c.ocsp.responder }}
+    responder: {{ . | quote }}
+{{- end }}
+    unreachable: {{ $c.ocsp.unreachable }}
+    timeout: {{ $c.ocsp.timeout }}
+    cache-size: {{ int $c.ocsp.cacheSize }}
 {{- end }}
   unmapped: {{ $c.unmapped }}
   refresh: {{ $c.refresh }}

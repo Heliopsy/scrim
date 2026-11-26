@@ -10,6 +10,9 @@ outside the cluster (TLS passthrough) without exposing the plain listeners.
 {{- if $c.forwardPort -}}
   {{- $ports = append $ports (dict "name" "mtls-forward" "port" (int $c.forwardPort) "targetPort" "mtls-forward" "protocol" "TCP") -}}
 {{- end -}}
+{{- if $c.toolProxyPort -}}
+  {{- $ports = append $ports (dict "name" "mtls-tool" "port" (int $c.toolProxyPort) "targetPort" "mtls-tool" "protocol" "TCP") -}}
+{{- end -}}
 {{- include "chart.std.service" (dict "root" . "comp" "proxy" "values" (dict "service" $c.service)
       "name" (include "scrim.mtlsServiceName" .) "ports" $ports) }}
 {{- end }}

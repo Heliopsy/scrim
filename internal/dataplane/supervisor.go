@@ -38,6 +38,11 @@ type AskFunc func(ctx context.Context, req *pb.AskRequest) *pb.AskAnswer
 // withholds the field; its text must not contain the value.
 type CaptureFunc func(ctx context.Context, req *pb.CaptureRequest) (placeholder string, err error)
 
+// CertificateCheckFunc checks a client certificate chain a TLS listener
+// accepted, leaf first, DER, and returns why it is refused, "" to serve the
+// connection.
+type CertificateCheckFunc func(ctx context.Context, chain [][]byte) (reason string)
+
 // Supervisor runs the data plane and keeps it running. Ready is false
 // whenever the data plane is down or has no snapshot, and health uses it,
 // so traffic is refused rather than served unredacted.
@@ -52,6 +57,9 @@ type Supervisor struct {
 	OnAsk AskFunc
 	// OnCapture stores captured values; nil withholds every captured field.
 	OnCapture CaptureFunc
+	// OnCertificateCheck checks client certificate chains while OCSP is on;
+	// nil refuses every chain the data plane sends.
+	OnCertificateCheck CertificateCheckFunc
 	// OnPush, if set, is told about every snapshot push, for metrics.
 	OnPush func(PushReport)
 	// StartTimeout bounds launch, handshake and first snapshot.
@@ -195,6 +203,11 @@ func (s *Supervisor) session(ctx context.Context) error {
 		startCancel()
 		return fmt.Errorf("dataplane: captures: %w", err)
 	}
+	checks, err := p.Client.CertificateChecks(sctx)
+	if err != nil {
+		startCancel()
+		return fmt.Errorf("dataplane: certificate checks: %w", err)
+	}
 	if err := s.push(startCtx, p); err != nil {
 		startCancel()
 		return err
@@ -206,6 +219,7 @@ func (s *Supervisor) session(ctx context.Context) error {
 	wg.Go(func() { s.consumeEvents(events) })
 	wg.Go(func() { s.answerAsks(sctx, asks) })
 	wg.Go(func() { s.storeCaptures(sctx, captures) })
+	wg.Go(func() { s.checkCertificates(sctx, checks) })
 	<-sctx.Done()
 	s.ready.Store(false)
 	wg.Wait()
@@ -403,6 +417,39 @@ func (s *Supervisor) storeCaptures(ctx context.Context, stream pb.DataPlane_Capt
 				default:
 					res.Error, res.Placeholder = "", ph
 				}
+			}
+			send.Lock()
+			defer send.Unlock()
+			_ = stream.Send(res)
+		})
+	}
+}
+
+func (s *Supervisor) checkCertificates(ctx context.Context, stream pb.DataPlane_CertificateChecksClient) {
+	var send sync.Mutex
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	for {
+		req, err := stream.Recv()
+		if status.Code(err) == codes.Unimplemented && s.OnCertificateCheck != nil {
+			s.logger().Error("the data plane does not check client certificates with the control plane; " +
+				"its TLS listeners apply CRLs only, not OCSP")
+			return
+		}
+		if err != nil {
+			return
+		}
+		wg.Go(func() {
+			res := &pb.CertificateCheckResult{Protocol: Protocol, Id: req.GetId(), Reason: "no certificate check is configured"}
+			if req.GetProtocol() == Protocol && s.OnCertificateCheck != nil {
+				cctx := ctx
+				if dl := req.GetDeadlineUnixNano(); dl > 0 {
+					var cancel context.CancelFunc
+					cctx, cancel = context.WithDeadline(ctx, time.Unix(0, dl))
+					defer cancel()
+				}
+				res.Reason = s.OnCertificateCheck(cctx, req.GetChain())
+				res.Accepted = res.Reason == ""
 			}
 			send.Lock()
 			defer send.Unlock()

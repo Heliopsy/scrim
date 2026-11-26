@@ -64,13 +64,15 @@ monitor with nothing to scrape.
 {{- if .Values.admin.tcp.enabled }}{{ $taken = append $taken (int .Values.admin.tcp.port) }}{{ end -}}
 {{- if .Values.edge.enabled }}{{ $taken = append $taken (int .Values.edge.port) }}{{ end -}}
 {{- if .Values.identity.issuer.enabled }}{{ $taken = append $taken (int .Values.identity.issuer.port) }}{{ end -}}
-{{- range $name, $port := dict "llmPort" $cc.llmPort "forwardPort" $cc.forwardPort -}}
+{{- $mine := list -}}
+{{- range $name, $port := dict "llmPort" $cc.llmPort "forwardPort" $cc.forwardPort "toolProxyPort" $cc.toolProxyPort -}}
 {{- if and $port (has (int $port) $taken) -}}
 {{- fail (printf "identity.clientCertificates.%s %v is taken by another scrim listener" $name $port) -}}
 {{- end -}}
+{{- if and $port (has (int $port) $mine) -}}
+{{- fail "identity.clientCertificates.llmPort, forwardPort and toolProxyPort must differ" -}}
 {{- end -}}
-{{- if eq (int $cc.llmPort) (int $cc.forwardPort) -}}
-{{- fail "identity.clientCertificates.llmPort and forwardPort must differ" -}}
+{{- if $port }}{{ $mine = append $mine (int $port) }}{{ end -}}
 {{- end -}}
 {{- end -}}
 {{- $up := .Values.upstreamProxy -}}

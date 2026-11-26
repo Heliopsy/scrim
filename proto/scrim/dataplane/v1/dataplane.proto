@@ -85,6 +85,18 @@ service DataPlane {
   // back. A data plane older than this call answers UNIMPLEMENTED, which the
   // control plane reports as redaction unavailable.
   rpc Redact(RedactRequest) returns (RedactResponse);
+
+  // CertificateChecks carries the control plane's revocation check of client
+  // certificates while OCSP is on (ClientCertificateTrust.ocsp). The control
+  // plane opens the call once; for every connection a TLS listener accepted,
+  // the data plane sends the verified chain in a CertificateCheckRequest and
+  // serves the connection only after a CertificateCheckResult that accepts
+  // it. No answer by the deadline, a refusal, or no attached control plane
+  // closes the connection. While ocsp is off the call carries nothing. A data
+  // plane older than this call answers UNIMPLEMENTED and ignores ocsp, so its
+  // handshakes check CRLs only; the control plane logs that as an error and
+  // still applies OCSP to every ask and edge request it verifies.
+  rpc CertificateChecks(stream CertificateCheckResult) returns (stream CertificateCheckRequest);
 }
 
 message HelloRequest {
@@ -200,6 +212,16 @@ message ClientCertificateTrust {
   // (PKCS#8, PKCS#1 or SEC1), PEM. Secret: never logged, wiped after use.
   // Set exactly when listener_chain_pem is.
   bytes listener_key_pem = 5;
+  // revocation_chain checks every certificate below the trust anchor against
+  // crls_der, not only the end entity: each needs a current CRL of its
+  // issuer, unless ocsp is set. False checks the end entity only.
+  bool revocation_chain = 6;
+  // ocsp is set while OCSP checking is on. The handshake then accepts a
+  // certificate whose issuer has no CRL in crls_der (a listed or expired one
+  // still refuses), and the connection is served only once the control plane
+  // accepted the chain over CertificateChecks, where CRLs and OCSP are
+  // applied together.
+  bool ocsp = 7;
 }
 
 // UpstreamProxy is the outbound HTTP proxy (interception spec, "Outbound
@@ -852,6 +874,33 @@ message AskAnswer {
   // takes effect on the next request (design D7).
   string grant_id = 5;
   int64 grant_expires_unix_nano = 6;
+}
+
+// CertificateCheckRequest asks the control plane to check a client
+// certificate chain the data plane accepted in a TLS handshake. Public.
+message CertificateCheckRequest {
+  uint32 protocol = 1;
+  // id is unique per data plane process; the result echoes it.
+  uint64 id = 2;
+  // listener names the listener that accepted the connection, for logs.
+  string listener = 3;
+  // chain is what the client presented, leaf first, DER.
+  repeated bytes chain = 4;
+  // deadline_unix_nano is when the data plane closes the connection without
+  // a result.
+  int64 deadline_unix_nano = 5;
+}
+
+// CertificateCheckResult answers a CertificateCheckRequest.
+message CertificateCheckResult {
+  uint32 protocol = 1;
+  uint64 id = 2;
+  // accepted serves the connection; false closes it.
+  bool accepted = 3;
+  // reason is why a chain was refused, one of the refusal reasons of
+  // docs/identity.md ("revoked", "ocsp unavailable", ...). Empty when
+  // accepted.
+  string reason = 4;
 }
 
 message StatusRequest {

@@ -42,8 +42,11 @@ Client certificates (Service {{ $svc }}, TLS passthrough only; trust the {{ .Val
 {{- if $cc.forwardPort }}
   Forward proxy  https://{{ $svc }}.{{ include "scrim.namespace" . }}.svc:{{ $cc.forwardPort }}
 {{- end }}
-{{- if not $cc.crls.configMap }}
-No CRLs: revocation is not checked, so issue short-lived certificates.
+{{- if $cc.toolProxyPort }}
+  Tool proxy     https://{{ $svc }}.{{ include "scrim.namespace" . }}.svc:{{ $cc.toolProxyPort }}
+{{- end }}
+{{- if not (or $cc.crls.configMap $cc.ocsp.enabled) }}
+No CRLs or OCSP: revocation is not checked, so issue short-lived certificates.
 {{- end }}
 {{- end }}
 {{- if .Values.upstreamProxy.url }}

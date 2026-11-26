@@ -213,6 +213,13 @@ kubernetes-replicator (`global.replication`).
 | identity.clientCertificates.crls | object | See the keys below. | Certificate revocation lists (identity.client-certificates.crl-files), PEM or DER, read again every `refresh`. Once any CRL is set, a certificate whose issuer has none here is refused, and a CRL past its next update refuses its issuer's certificates. |
 | identity.clientCertificates.crls.configMap | string | `""` | ConfigMap with the CRLs (DER ones under binaryData). Empty: revocation is not checked; use short-lived certificates. |
 | identity.clientCertificates.crls.keys | list | `[]` | Keys of the CRLs in that ConfigMap, one file each. Required with configMap. |
+| identity.clientCertificates.revocationScope | string | `"end-entity"` | Which certificates of a client's chain are checked for revocation, by CRL and OCSP (identity.client-certificates.revocation-scope): `end-entity` (the client certificate only) or `chain` (every certificate below the trust anchor, so a revoked intermediate CA refuses what it issued). |
+| identity.clientCertificates.ocsp | object | See the keys below. | OCSP (identity.client-certificates.ocsp.*): scrim asks the issuer's responder whether each client certificate is revoked before it serves the connection, and keeps each answer until its next update. Requests go from scrim's pod, through upstreamProxy when set; allow them in networkPolicy.ocspEgress. |
+| identity.clientCertificates.ocsp.enabled | bool | `false` | Check client certificates with OCSP. |
+| identity.clientCertificates.ocsp.responder | string | `""` | Responder URL used for every certificate instead of the one the certificate names in its authority information access extension. Empty: the certificate's own. |
+| identity.clientCertificates.ocsp.unreachable | string | `"fail-closed"` | When no valid answer can be had (responder down, error, bad signature): `fail-closed` refuses the certificate, `soft-fail` accepts it as if OCSP were off. A revoked or unknown answer always refuses. |
+| identity.clientCertificates.ocsp.timeout | string | `"5s"` | How long one OCSP request may take, at most 10s. |
+| identity.clientCertificates.ocsp.cacheSize | int | `10000` | How many OCSP responses scrim keeps. |
 | identity.clientCertificates.agents | object | `{}` | Agents by certificate (identity.client-certificates.agents): agent name to selectors `spiffe:ID`, `cn:NAME`, `dns:NAME`, `uri:URI`, `email:ADDRESS` (globs allowed), `scope:`, `label:K=V`. |
 | identity.clientCertificates.unmapped | string | `"unknown"` | What a verified certificate no rule maps becomes: unknown, or derive (the agent is named after the certificate's SPIFFE ID). |
 | identity.clientCertificates.refresh | string | `"1m"` | How often the trust anchors and CRLs are read again. |
@@ -221,6 +228,7 @@ kubernetes-replicator (`global.replication`).
 | identity.clientCertificates.listenerCertificate.existingSecret | string | `""` | kubernetes.io/tls Secret with `tls.crt` (end entity first, then intermediates) and `tls.key`, such as one cert-manager keeps renewed. scrim reads both again every `refresh` and presents a renewal on new connections without a restart. Empty: scrim's CA issues it. |
 | identity.clientCertificates.llmPort | int | `9796` | Port of the TLS LLM base URL (proxy.tls-listen), on the container and the Service. |
 | identity.clientCertificates.forwardPort | int | `9797` | Port of the TLS forward proxy (proxy.forward-tls-listen), on the container and the Service. 0 leaves it off. |
+| identity.clientCertificates.toolProxyPort | int | `9798` | Port of the TLS tool proxy (tool-proxy.tls-listen), for tools pointed at the tool proxy directly, on the container and the Service. 0 leaves it off. |
 | identity.clientCertificates.service | object | See the keys below. | The Service `<fullname>-mtls`, with the TLS listeners only. Every connection must present a certificate that chains to `ca`, so it may be a LoadBalancer; terminate nothing in front of it (TLS passthrough only), or scrim never sees the certificate. |
 | identity.clientCertificates.service.type | string | `"ClusterIP"` | Service type. |
 | identity.clientCertificates.service.annotations | object | `{}` | Service annotations. |
@@ -362,6 +370,7 @@ kubernetes-replicator (`global.replication`).
 | networkPolicy.adminFrom | list | `[]` | Peers allowed to the admin TCP port (NetworkPolicy `from` entries). |
 | networkPolicy.issuerFrom | list | `[]` | Peers allowed to the issuer port with identity.issuer.enabled (NetworkPolicy `from` entries: the Ingress controller, in-cluster stores). Empty allows every source: the port serves public keys only. |
 | networkPolicy.clientCertificatesFrom | list | `[]` | Peers allowed to the TLS listeners with identity.clientCertificates.enabled (NetworkPolicy `from` entries). Empty allows every source: each connection must present a client certificate that chains to identity.clientCertificates.ca. |
+| networkPolicy.ocspEgress | list | `[{"ports":[{"port":80,"protocol":"TCP"}]}]` | Egress of central scrim to OCSP responders, added with identity.clientCertificates.ocsp.enabled. Responders mostly serve plain HTTP. Narrow it with `to` where you can; empty it when upstreamProxy carries the requests. |
 | networkPolicy.labels | object | `{}` | Labels on every NetworkPolicy the chart renders (tpl). |
 | networkPolicy.annotations | object | `{}` | Annotations on every NetworkPolicy the chart renders. |
 | sidecar | object | See the keys below. | Sidecar mode: an in-pod `scrim proxy` on loopback for pods labelled `sidecar`. |

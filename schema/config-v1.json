@@ -996,7 +996,7 @@
             },
             "crl-files": {
               "default": [],
-              "description": "Certificate revocation lists (PEM or DER files) checked for every client certificate. With any set, a certificate whose issuer has no current CRL among them is refused, and so is every certificate of an issuer whose CRL is past its next update. Empty checks no revocation: use short-lived certificates.",
+              "description": "Certificate revocation lists (PEM or DER files) checked for every client certificate. With any set, a certificate whose issuer has no current CRL among them is refused unless OCSP answers for it, and so is every certificate of an issuer whose CRL is past its next update. Empty, without OCSP, checks no revocation: use short-lived certificates.",
               "items": {
                 "type": "string"
               },
@@ -1030,12 +1030,77 @@
               "x-scrim-secret-ref": true,
               "x-scrim-weakening": false
             },
+            "ocsp": {
+              "additionalProperties": false,
+              "properties": {
+                "cache-size": {
+                  "default": 10000,
+                  "description": "How many OCSP responses are kept, each until its next update. When full, expired responses go first, then the ones that expire soonest.",
+                  "maximum": 9223372036854775807,
+                  "minimum": -9223372036854775808,
+                  "type": "integer",
+                  "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_OCSP_CACHE_SIZE",
+                  "x-scrim-restart-required": true,
+                  "x-scrim-weakening": false
+                },
+                "enabled": {
+                  "default": false,
+                  "description": "Ask the issuer's OCSP responder whether each client certificate is revoked before its connection is served. The control plane fetches and verifies the responses, through network.upstream-proxy, and keeps each until its next update. Off: only CRLs are checked.",
+                  "type": "boolean",
+                  "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_OCSP_ENABLED",
+                  "x-scrim-restart-required": true,
+                  "x-scrim-weakening": false
+                },
+                "responder": {
+                  "default": "",
+                  "description": "OCSP responder URL used for every certificate instead of the one in its authority information access extension. Empty uses the certificate's own; a certificate without one is checked by CRL only. Responses must still be signed by the issuer or a responder it delegated to.",
+                  "type": "string",
+                  "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_OCSP_RESPONDER",
+                  "x-scrim-restart-required": true,
+                  "x-scrim-weakening": false
+                },
+                "timeout": {
+                  "default": "5s",
+                  "description": "How long one OCSP request may take. Requests for one chain run in parallel. At most 10s.",
+                  "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
+                  "type": "string",
+                  "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_OCSP_TIMEOUT",
+                  "x-scrim-restart-required": true,
+                  "x-scrim-weakening": false
+                },
+                "unreachable": {
+                  "default": "fail-closed",
+                  "description": "What happens when no valid OCSP answer can be had (responder unreachable, error status, bad signature, stale response): fail-closed refuses the certificate, soft-fail accepts it as if OCSP were off. A revoked or unknown answer always refuses.",
+                  "enum": [
+                    "fail-closed",
+                    "soft-fail"
+                  ],
+                  "type": "string",
+                  "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_OCSP_UNREACHABLE",
+                  "x-scrim-restart-required": true,
+                  "x-scrim-weakening": false
+                }
+              },
+              "type": "object"
+            },
             "refresh": {
               "default": "1m0s",
               "description": "How often the trust anchors and CRL files are read again. A new CRL applies to new connections within this bound.",
               "pattern": "^[-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$",
               "type": "string",
               "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_REFRESH",
+              "x-scrim-restart-required": true,
+              "x-scrim-weakening": false
+            },
+            "revocation-scope": {
+              "default": "end-entity",
+              "description": "Which certificates of a client's chain are checked for revocation (CRLs and OCSP): end-entity checks the client certificate only, chain checks every certificate below the trust anchor as well, so a revoked intermediate CA refuses the certificates it issued.",
+              "enum": [
+                "end-entity",
+                "chain"
+              ],
+              "type": "string",
+              "x-scrim-env": "SCRIM_IDENTITY_CLIENT_CERTIFICATES_REVOCATION_SCOPE",
               "x-scrim-restart-required": true,
               "x-scrim-weakening": false
             },

@@ -115,6 +115,21 @@ func (f *fake) Captures(s grpc.BidiStreamingServer[pb.CaptureResult, pb.CaptureR
 	return nil
 }
 
+func (f *fake) CertificateChecks(s grpc.BidiStreamingServer[pb.CertificateCheckResult, pb.CertificateCheckRequest]) error {
+	if err := s.Send(&pb.CertificateCheckRequest{Protocol: Protocol, Id: 11, Listener: "tls", Chain: [][]byte{[]byte("revoked-leaf")}}); err != nil {
+		return err
+	}
+	r, err := s.Recv()
+	if err != nil {
+		return err
+	}
+	if r.GetId() == 11 && !r.GetAccepted() {
+		_ = s.Send(&pb.CertificateCheckRequest{Protocol: Protocol, Id: 12, Chain: [][]byte{[]byte("refused:" + r.GetReason())}})
+	}
+	<-s.Context().Done()
+	return nil
+}
+
 func (f *fake) Status(context.Context, *pb.StatusRequest) (*pb.StatusResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -40,6 +40,7 @@ adds to it.
   {{- $cc := .Values.identity.clientCertificates -}}
   {{- $tlsPorts := list (dict "port" (int $cc.llmPort) "protocol" "TCP") -}}
   {{- if $cc.forwardPort }}{{ $tlsPorts = append $tlsPorts (dict "port" (int $cc.forwardPort) "protocol" "TCP") }}{{ end -}}
+  {{- if $cc.toolProxyPort }}{{ $tlsPorts = append $tlsPorts (dict "port" (int $cc.toolProxyPort) "protocol" "TCP") }}{{ end -}}
   {{- $rule := dict "ports" $tlsPorts -}}
   {{- with $np.clientCertificatesFrom }}{{ $_ := set $rule "from" . }}{{ end -}}
   {{- $ingress = append $ingress $rule -}}
@@ -52,6 +53,9 @@ adds to it.
 {{- $egress := list (include "chart.netpolDNSEgress" . | fromYaml) -}}
 {{- if .Values.identity.kubernetes.enabled -}}
   {{- $egress = concat $egress $np.apiServerEgress -}}
+{{- end -}}
+{{- if and (include "scrim.clientCertsOn" .) .Values.identity.clientCertificates.ocsp.enabled -}}
+  {{- $egress = concat $egress (default list $np.ocspEgress) -}}
 {{- end -}}
 {{- $egress = concat $egress (default list $np.scrimEgress) -}}
 {{- include "chart.std.networkPolicy" (dict "root" . "comp" "proxy" "name" (include "scrim.fullname" .) "ingress" $ingress "egress" $egress "extra" .Values.central.networkPolicy) }}

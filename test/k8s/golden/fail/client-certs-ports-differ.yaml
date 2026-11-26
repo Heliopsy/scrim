@@ -1,0 +1,2 @@
+# expect: identity.clientCertificates.llmPort, forwardPort and toolProxyPort must differ
+identity: {clientCertificates: {enabled: true, ca: {configMap: c}, toolProxyPort: 9797}}

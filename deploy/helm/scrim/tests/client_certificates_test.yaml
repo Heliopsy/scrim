@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 suite: Client certificate identity (identity.clientCertificates.*)
 templates:
+  - agents.yaml
   - config.yaml
   - deployment.yaml
   - client-certificates.yaml
@@ -28,9 +29,10 @@ tests:
     template: config.yaml
     asserts:
       - matchRegex: {path: 'data["chart.yaml"]', pattern: "forward-listen: 0.0.0.0:9791\n  tls-listen: 0.0.0.0:9796\n  forward-tls-listen: 0.0.0.0:9797\n"}
-      - matchRegex: {path: 'data["chart.yaml"]', pattern: "client-certificates:\n    enabled: true\n    ca: file:/etc/scrim/client-ca/ca.crt\n    unmapped: unknown\n    refresh: 1m\n"}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "client-certificates:\n    enabled: true\n    ca: file:/etc/scrim/client-ca/ca.crt\n    revocation-scope: end-entity\n    unmapped: unknown\n    refresh: 1m\n"}
       - matchRegex: {path: 'data["chart.yaml"]', pattern: "server-names:\n      - rel-scrim-mtls.ns.svc.cluster.local\n      - rel-scrim-mtls.ns.svc\n      - rel-scrim-mtls.ns\n      - rel-scrim-mtls\n"}
-      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: crl-files}
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "tool-proxy:\n  ca:\n    cert-file: /etc/scrim/ca/tls.crt\n    key: file:/etc/scrim/ca/tls.key\n  tls-listen: 0.0.0.0:9798\n"}
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: "crl-files|ocsp"}
   - it: lists each CRL, adds serverNames and maps agents
     template: config.yaml
     set:
@@ -42,11 +44,12 @@ tests:
       - matchRegex: {path: 'data["chart.yaml"]', pattern: "crl-files:\n      - /etc/scrim/client-crl/a.crl\n      - /etc/scrim/client-crl/b.crl\n"}
       - matchRegex: {path: 'data["chart.yaml"]', pattern: "      - rel-scrim-mtls\n      - \"scrim.example.org\"\n      - \"192.0.2.10\"\n    agents:\n      ci: cn:ci-\\*\n"}
       - matchRegex: {path: 'data["chart.yaml"]', pattern: "unmapped: derive"}
-  - it: forwardPort 0 serves the TLS base URL only
+  - it: forwardPort and toolProxyPort 0 serve the TLS base URL only
     set:
       identity.clientCertificates.forwardPort: 0
+      identity.clientCertificates.toolProxyPort: 0
     asserts:
-      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: forward-tls-listen}
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: "forward-tls-listen|  tls-listen: 0.0.0.0:9798"}
         template: config.yaml
       - equal:
           path: spec.ports
@@ -63,6 +66,7 @@ tests:
       - contains: {path: 'spec.template.spec.containers[0].volumeMounts', content: {name: client-ca, mountPath: /etc/scrim/client-ca, readOnly: true}}
       - contains: {path: 'spec.template.spec.containers[0].ports', content: {name: mtls-llm, containerPort: 9796, protocol: TCP}}
       - contains: {path: 'spec.template.spec.containers[0].ports', content: {name: mtls-forward, containerPort: 9797, protocol: TCP}}
+      - contains: {path: 'spec.template.spec.containers[0].ports', content: {name: mtls-tool, containerPort: 9798, protocol: TCP}}
   - it: keeps the TLS listeners off the central Service
     template: deployment.yaml
     documentSelector: {path: kind, value: Service}
@@ -78,6 +82,7 @@ tests:
       - equal: {path: spec.type, value: LoadBalancer}
       - equal: {path: metadata.annotations.a, value: b}
       - contains: {path: spec.ports, content: {name: mtls-forward, port: 9797, targetPort: mtls-forward, protocol: TCP}}
+      - contains: {path: spec.ports, content: {name: mtls-tool, port: 9798, targetPort: mtls-tool, protocol: TCP}}
   - it: opens the TLS ports to every source unless clientCertificatesFrom narrows them
     template: networkpolicy.yaml
     documentSelector: {path: metadata.name, value: rel-scrim}
@@ -86,7 +91,7 @@ tests:
     asserts:
       - contains:
           path: spec.ingress
-          content: {ports: [{port: 9796, protocol: TCP}, {port: 9797, protocol: TCP}]}
+          content: {ports: [{port: 9796, protocol: TCP}, {port: 9797, protocol: TCP}, {port: 9798, protocol: TCP}]}
   - it: narrows the TLS ports to clientCertificatesFrom
     template: networkpolicy.yaml
     documentSelector: {path: metadata.name, value: rel-scrim}
@@ -96,7 +101,7 @@ tests:
     asserts:
       - contains:
           path: spec.ingress
-          content: {from: [{ipBlock: {cidr: 192.0.2.0/24}}], ports: [{port: 9796, protocol: TCP}, {port: 9797, protocol: TCP}]}
+          content: {from: [{ipBlock: {cidr: 192.0.2.0/24}}], ports: [{port: 9796, protocol: TCP}, {port: 9797, protocol: TCP}, {port: 9798, protocol: TCP}]}
   - it: presents an operator certificate from a TLS Secret
     set:
       identity.clientCertificates.listenerCertificate.existingSecret: scrim-listener-tls
@@ -117,3 +122,40 @@ tests:
     template: config.yaml
     asserts:
       - notMatchRegex: {path: 'data["chart.yaml"]', pattern: "listener-cert-file|listener-key"}
+  - it: sets the tool proxy TLS listener in central scrim only
+    template: agents.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim-sidecar-config}
+    set:
+      agents.namespaces: [team-a]
+      sidecar: {enabled: true, egressGuard: {image: nft:1}}
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "tool-proxy:\n  ca:\n"}
+      - notMatchRegex: {path: 'data["chart.yaml"]', pattern: tls-listen}
+  - it: checks the whole chain and asks OCSP responders
+    template: config.yaml
+    set:
+      identity.clientCertificates.revocationScope: chain
+      identity.clientCertificates.ocsp: {enabled: true, responder: "http://ocsp.example.org", unreachable: soft-fail, timeout: 3s, cacheSize: 500}
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "revocation-scope: chain\n    ocsp:\n      enabled: true\n      responder: \"http://ocsp.example.org\"\n      unreachable: soft-fail\n      timeout: 3s\n      cache-size: 500\n    unmapped: unknown\n"}
+  - it: leaves the responder to the certificate by default
+    template: config.yaml
+    set:
+      identity.clientCertificates.ocsp.enabled: true
+    asserts:
+      - matchRegex: {path: 'data["chart.yaml"]', pattern: "ocsp:\n      enabled: true\n      unreachable: fail-closed\n      timeout: 5s\n      cache-size: 10000\n"}
+  - it: lets scrim reach OCSP responders only with OCSP on
+    template: networkpolicy.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim}
+    set:
+      networkPolicy.enabled: true
+      identity.clientCertificates.ocsp.enabled: true
+    asserts:
+      - contains: {path: spec.egress, content: {ports: [{port: 80, protocol: TCP}]}}
+  - it: adds no OCSP egress with OCSP off
+    template: networkpolicy.yaml
+    documentSelector: {path: metadata.name, value: rel-scrim}
+    set:
+      networkPolicy.enabled: true
+    asserts:
+      - notContains: {path: spec.egress, content: {ports: [{port: 80, protocol: TCP}]}}

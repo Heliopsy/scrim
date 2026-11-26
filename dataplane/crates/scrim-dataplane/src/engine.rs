@@ -32,7 +32,7 @@ use crate::listeners::Listeners;
 use crate::metrics::DataPlaneMetrics;
 use crate::settings::Settings;
 use crate::snapshot::{self, Applied, Rejected};
-use crate::{audit, captures};
+use crate::{audit, captures, certchecks};
 
 /// The engines could not be built.
 #[derive(Debug)]
@@ -97,6 +97,8 @@ pub struct Shared {
     pub asks: Arc<Broker>,
     /// Outgoing captures.
     pub captures: Arc<captures::Broker>,
+    /// Outgoing client certificate checks, while OCSP is on.
+    pub certchecks: Arc<certchecks::Broker>,
     /// The HTTPS tool proxy (task 10.2). Provider hosts reached through it go to `llm`.
     pub tool_proxy: ToolProxy,
     /// The LLM proxy behind base-URL listeners and the forward proxy's provider hosts.
@@ -182,6 +184,7 @@ impl Shared {
             events,
             asks: Arc::new(Broker::default()),
             captures,
+            certchecks: Arc::new(certchecks::Broker::default()),
             tool_proxy,
             llm,
             listeners: Listeners::default(),
@@ -264,12 +267,13 @@ impl Shared {
         Ok((version, count))
     }
 
-    /// Stops serving: listeners closed, asks and captures denied, the dictionary dropped (and
+    /// Stops serving: listeners closed, asks, captures and certificate checks denied, the dictionary dropped (and
     /// zeroed) wherever this process can drop it.
     pub fn shutdown(&self) {
         self.listeners.stop_all();
         self.asks.detach();
         self.captures.detach();
+        self.certchecks.detach();
         self.snapshot.store(None);
     }
 }

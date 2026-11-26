@@ -26,7 +26,8 @@
 //!   the control plane where a rule says so; [`identity`]: who a request is
 //!   from, as far as its transport tells.
 //! - [`audit`] and [`captures`]: audit events of both proxies and tool-proxy
-//!   captures reach the control plane over the Events and Captures streams.
+//!   captures reach the control plane over the Events and Captures streams;
+//!   [`certchecks`]: client certificates the control plane checks with OCSP.
 //! - [`metrics`]: counters and histograms aggregated in process when the control plane asks
 //!   for them (`SCRIM_DP_METRICS=1`), read over the Metrics call once per scrape.
 //!
@@ -36,6 +37,7 @@
 pub mod asks;
 pub mod audit;
 pub mod captures;
+pub mod certchecks;
 pub mod engine;
 pub mod events;
 pub mod harden;
