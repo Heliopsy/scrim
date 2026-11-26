@@ -3,7 +3,11 @@
 package policy
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -85,11 +89,60 @@ func globRegexp(p string) (*regexp.Regexp, bool) {
 	return regexp.MustCompile(b.String()), true
 }
 
+// conformanceStrings returns the glob patterns of testdata/conformance.json's
+// snapshot and every other string in it, sorted and without duplicates, as
+// fuzz seeds.
+func conformanceStrings(f *testing.F) (globs, strs []string) {
+	f.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "conformance.json"))
+	if err != nil {
+		f.Fatal(err)
+	}
+	var doc any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		f.Fatal(err)
+	}
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if v["op"] == "glob" {
+				for _, g := range v["values"].([]any) {
+					globs = append(globs, g.(string))
+				}
+			}
+			for k, x := range v {
+				if k != "$comment" {
+					walk(x)
+				}
+			}
+		case []any:
+			for _, x := range v {
+				walk(x)
+			}
+		case string:
+			strs = append(strs, v)
+		}
+	}
+	walk(doc)
+	slices.Sort(globs)
+	slices.Sort(strs)
+	return slices.Compact(globs), slices.Compact(strs)
+}
+
 func FuzzGlob(f *testing.F) {
 	for _, s := range []struct{ p, s string }{
 		{"bao://kv/*/x", "bao://kv/a/x"}, {"**", "a/b"}, {"a?*\\*", "ab*"}, {"*.*.com", "a.b.com"},
 	} {
 		f.Add(s.p, s.s)
+	}
+	// From the conformance vectors: every glob of the snapshot against every
+	// string the requests carry.
+	globs, strs := conformanceStrings(f)
+	for _, p := range globs {
+		for _, s := range strs {
+			f.Add(p, s)
+		}
 	}
 	f.Fuzz(func(t *testing.T, p, s string) {
 		if len(p) > 64 || len(s) > 256 {

@@ -1,0 +1,3 @@
+sk-ant-api03-TeStFuzzSeed-0a1b2c3d4e5f6a7b8c9dAAÿþWhich service account does the staging deployer use?
+{"path":"kv/staging/deployer"}
+{"data":{"username":"deployer","password":"{{secret_json:password}}","token":"{{secret_json:github-token}}","ssh_key":"{{secret_json:private-key}}"},"metadata":{"version":4}}

@@ -223,8 +223,13 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
 - **The leak suite drives the provider APIs directly.** A Codex driver for `scrim audit run` is not
   implemented; Claude Code and Codex are covered by the scenario corpus and the `scrim run` tests,
   not by driving the real agents.
-- **Fuzzing for a release is short.** Each target runs for 10 minutes from an empty corpus in the
-  release and for 15 minutes in the weekly run; no corpus is kept between runs.
+- **Fuzzing for a release is 10 minutes per target.** It starts from the corpus the nightly runs
+  (1 hour per target) keep on the `fuzz-corpus` branch, so its coverage depends on those runs having
+  happened; the release results give the hours behind the corpus. Each target fuzzes in one
+  process on a 4-core GitHub-hosted runner (Go fuzzing uses every core, libFuzzer one). The Go
+  corpora are not minimised, Go having no minimiser, so they only grow. The scrim-llm stream
+  parsers and codecs have no fuzz target of their own; their recorded streams seed the redaction
+  targets ([leak-assurance.md](leak-assurance.md#fuzzing)).
 
 ## Limits of particular features
 

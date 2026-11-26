@@ -221,8 +221,14 @@ cargo +nightly fuzz run engines  -- -max_total_time=300   # AC and hash-window a
 cargo +nightly fuzz run variants -- -max_total_time=300   # encoded values never leave protect()
 cargo +nightly fuzz run guard    -- -max_total_time=300   # repairs leave nothing, no panics
 cargo +nightly fuzz run restore  -- -max_total_time=300   # chunked restore equals whole, no credential
+cargo +nightly fuzz run shaped   -- -max_total_time=300   # shaped placeholders keep their shape
 ```
 
-`fuzz/regressions/<target>` holds earlier findings, each also a unit test. CI reads them first,
-as a second corpus directory; locally, `cargo +nightly fuzz run guard corpus/guard
-regressions/guard`. A finding goes there with a name saying what it found.
+`fuzz/seeds/<target>` holds seed inputs built from the recorded provider fixtures and the leak
+suite's scenarios (`tests/fuzz_seeds.rs`; rewrite them with `SCRIM_FUZZ_SEEDS=update cargo test -p
+scrim-redact --test fuzz_seeds` after changing a fixture or a target's input format).
+`fuzz/regressions/<target>` holds earlier findings, each also a unit test. CI reads both after the
+persistent corpus; locally, `scripts/fuzz.sh run rust scrim-redact guard 300` from the repository
+root does the same, or `cargo +nightly fuzz run guard corpus/guard seeds/guard regressions/guard`.
+A finding goes under `regressions` with a name saying what it found
+([leak-assurance.md](../../../docs/leak-assurance.md#fuzzing)).

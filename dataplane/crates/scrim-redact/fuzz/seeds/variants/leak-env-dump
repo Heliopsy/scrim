@@ -1,0 +1,12 @@
+TeSt8chrÿAKIATESTFUZZSEED7Q2WÿTeStsEcReT/0a1b2c3d4e5f6a7b8c9d0e1f2a3b4cÿTeSt_db_pass_42ÿghp_TeStFuzzSeed0a1b2c3d4e5f6a7b8c9d0e1f2ÿeyJhbGciOiJIUzI1NiJ9.eyJUZVN0IjoxfQ.TeSt0a1b2c3d4e5f6a7bÿsk-ant-api03-TeStFuzzSeed-0a1b2c3d4e5f6a7b8c9dAAÿTeSt-pÃ¤ssw0rd!ÿþáMy deploy script fails. The vault unseal password I use is TeSt8chr. Help.
+{"command":"env | sort"}
+AWS_ACCESS_KEY_ID=AKIATESTFUZZSEED7Q2W
+AWS_SECRET_ACCESS_KEY=TeStsEcReT/0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c
+DB_PASSWORD=TeSt_db_pass_42
+GITHUB_TOKEN=ghp_TeStFuzzSeed0a1b2c3d4e5f6a7b8c9d0e1f2
+HOME=/home/dev
+JWT=eyJhbGciOiJIUzI1NiJ9.eyJUZVN0IjoxfQ.TeSt0a1b2c3d4e5f6a7b
+PATH=/usr/local/bin:/usr/bin:/bin
+PAYMENTS_API_KEY=sk-ant-api03-TeStFuzzSeed-0a1b2c3d4e5f6a7b8c9dAA
+SESSION_SECRET=TeSt-pÃ¤ssw0rd!
+UNSEAL=TeSt8chr

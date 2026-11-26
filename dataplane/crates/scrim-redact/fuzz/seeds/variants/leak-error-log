@@ -1,0 +1,7 @@
+eyJhbGciOiJIUzI1NiJ9.eyJUZVN0IjoxfQ.TeSt0a1b2c3d4e5f6a7bÿþThe API returns 500 since the last deploy. Check the logs.
+{"command":"tail -n 20 /var/log/api/error.log"}
+2026-11-19T22:14:03Z ERROR request failed method=GET path=/v1/invoices
+  headers: {"Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJUZVN0IjoxfQ.TeSt0a1b2c3d4e5f6a7b", "Accept": "application/json"}
+  url: https://api.internal/v1/invoices?access_token={{secret_url:api-key}}&page=2
+  pq: connection to postgres://api:{{secret_url:password}}@db.internal/api failed: timeout
+  at Object.query (/app/node_modules/pg/lib/client.js:526:17)
