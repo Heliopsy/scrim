@@ -347,6 +347,13 @@ func (r *Runner) run(ctx context.Context, row Row, seed leak.Seed, content Conte
 	if len(res.Findings) == 0 && len(ex) > 1 {
 		res.Findings = append(res.Findings, checker.Check(merged(ex))...)
 	}
+	// Pieces too short for the checker, sent over several requests: a leak
+	// when every piece arrived.
+	if len(res.Findings) == 0 && row.Placement.Pieces != nil {
+		if f, ok := piecesLeaked(row.Placement.Pieces(content.Value), ex, seed); ok {
+			res.Findings = append(res.Findings, f)
+		}
+	}
 	switch {
 	case len(res.Findings) > 0:
 		res.Outcome = OutcomeLeaked

@@ -64,6 +64,12 @@ type Placement struct {
 	// Build returns the requests for one API, or nil when the placement does
 	// not exist in that API.
 	Build func(api fp.API, c Content, mode Escape) []Request
+	// Transforms, when set, limits the placement to these transforms.
+	Transforms []string
+	// Pieces, when set, returns the pieces Build splits the transformed value
+	// into. The checker sees none of them as the value, so the runner reports
+	// a leak when every piece reached the provider.
+	Pieces func(value string) []string
 }
 
 const (
@@ -640,7 +646,7 @@ var Placements = []Placement{
 			return nil
 		}},
 	{ID: "split-requests", Desc: "the value split across two requests chained by previous_response_id (two events on one socket in the WebSocket mode)", Expect: Limitation,
-		Note: "limitation: server-side conversation state lets pieces arrive in separate requests; each is checked alone, so only a piece of at least half the value is caught",
+		Note: "limitation: the halves of a short value are below the minimum length; longer halves are caught alone (at least half the value) or joined across the session's requests (cross-request); the checker cannot tell a split it does not see from none, so the row is not gated (split-requests-2 and split-requests-3 are)",
 		Build: func(api fp.API, c Content, mode Escape) []Request {
 			if api != fp.OpenAIResponses && api != fp.OpenAIResponsesWS {
 				return nil

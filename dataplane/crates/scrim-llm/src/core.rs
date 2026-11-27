@@ -24,8 +24,8 @@ use scrim_redact as rc;
 
 use crate::engine::{
     BinaryPolicy, EngineError, Guard, GuardVerdict, PlaceholderMatch, Placeholders, RedactReport,
-    Redactor, Resolved, RestorePolicy, ScopedRedaction, SecretRef, SecretValue, Snapshot,
-    ValueClass,
+    Redactor, Resolved, RestorePolicy, ScopedRedaction, SecretRef, SecretValue, SessionKey,
+    Snapshot, ValueClass,
 };
 
 struct Inner {
@@ -170,9 +170,28 @@ struct CoreGuard(Arc<Inner>);
 
 impl Guard for CoreGuard {
     fn check(&self, outgoing: &[u8]) -> Result<GuardVerdict, EngineError> {
+        self.run(outgoing, None)
+    }
+
+    fn check_in(&self, outgoing: &[u8], session: &SessionKey) -> Result<GuardVerdict, EngineError> {
+        self.run(outgoing, Some(session))
+    }
+}
+
+impl CoreGuard {
+    fn run(
+        &self,
+        outgoing: &[u8],
+        session: Option<&SessionKey>,
+    ) -> Result<GuardVerdict, EngineError> {
         let inner = &self.0;
         let run = |scratch: &mut rc::GuardScratch| {
-            let verdict = match inner.snap.guard().check(outgoing, scratch) {
+            let guard = inner.snap.guard();
+            let verdict = match session {
+                Some(k) => guard.check_in(outgoing, scratch, &k.0),
+                None => guard.check(outgoing, scratch),
+            };
+            let verdict = match verdict {
                 rc::Verdict::Clean => GuardVerdict::Clean,
                 rc::Verdict::Repaired { bytes, findings } => GuardVerdict::Repaired {
                     bytes: bytes.to_vec(),
@@ -257,6 +276,10 @@ mod tests {
     const VALUE: &str = "core-adapter-value-0123456789";
 
     fn engine() -> CoreEngine {
+        engine_with(VALUE)
+    }
+
+    fn engine_with(value: &str) -> CoreEngine {
         let keyring = Arc::new(rc::Keyring::new(
             rc::PlaceholderKey::new(1, &[5u8; 32]).unwrap(),
         ));
@@ -264,7 +287,7 @@ mod tests {
             3,
             rc::RefSlug::new("db").unwrap(),
             rc::ValueClass::Display,
-            rc::SecretValue::from_slice(VALUE.as_bytes()),
+            rc::SecretValue::from_slice(value.as_bytes()),
         )];
         let snap = rc::Snapshot::build(entries, keyring, &rc::Config::default()).unwrap();
         CoreEngine::new(
@@ -327,6 +350,27 @@ mod tests {
                 .resolve("\u{27e6}scrim:db:01ffffffffffffffff\u{27e7}")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn guard_joins_pieces_across_a_sessions_requests() {
+        // A value that reads as random: the pieces of one made of words are not joined.
+        let value = "tk-9fQ2xLm7Rp4vZ8nW3cJ6hB";
+        let s = engine_with(value).snapshot(1, Arc::new(KeepAll), BinaryPolicy::Pass);
+        let (a, b) = (&value[..12], &value[12..24]);
+        let one = SessionKey::new("session", b"one");
+        let two = SessionKey::new("session", b"two");
+        let clean = |v: GuardVerdict| matches!(v, GuardVerdict::Clean);
+        assert!(clean(s.guard.check_in(a.as_bytes(), &one).unwrap()));
+        // Another session, or no session, joins nothing.
+        assert!(clean(s.guard.check_in(b.as_bytes(), &two).unwrap()));
+        assert!(clean(s.guard.check(b.as_bytes()).unwrap()));
+        let GuardVerdict::Repaired { bytes, refs } = s.guard.check_in(b.as_bytes(), &one).unwrap()
+        else {
+            panic!("the second piece was not repaired");
+        };
+        assert!(!String::from_utf8(bytes).unwrap().contains(b));
+        assert_eq!(refs, vec![SecretRef::new("bao://kv/db#password")]);
     }
 
     #[test]

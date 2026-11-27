@@ -48,7 +48,7 @@ use zeroize::Zeroizing;
 
 use crate::error::WithholdReason;
 use crate::guard_cache::{self, Key, SegmentCache};
-use crate::guard_tx::{TransformConfig, Transforms, TxScratch, derived_forms};
+use crate::guard_tx::{SessionKey, TransformConfig, Transforms, TxScratch, derived_forms};
 use crate::restore::Resolver;
 use crate::secret::EntryId;
 
@@ -95,6 +95,9 @@ pub enum GuardView {
     Spelled,
     /// Inside a compressed document in a base64 run.
     Compressed,
+    /// A short fragment that, with fragments of the same value sent in earlier requests of the
+    /// session, covers the value (`cross-request`).
+    CrossRequest,
 }
 
 impl GuardView {
@@ -115,6 +118,7 @@ impl GuardView {
             Self::Confusable => 11,
             Self::Spelled => 12,
             Self::Compressed => 13,
+            Self::CrossRequest => 14,
         }
     }
 }
@@ -768,20 +772,61 @@ impl Guard {
     /// Returns [`Verdict::Clean`], or [`Verdict::Repaired`] with the repaired body in `scratch`,
     /// or [`Verdict::Withhold`]. Never allocates once `scratch` has grown to the body size.
     pub fn check<'s>(&self, bytes: &[u8], scratch: &'s mut GuardScratch) -> Verdict<'s> {
+        self.check_session(bytes, scratch, None)
+    }
+
+    /// [`Guard::check`] for a request of the session `session`: with the `cross-request`
+    /// transform, short fragments of a value are also joined with those sent in the session's
+    /// earlier requests, and the ones that stay short of a value are remembered (which value,
+    /// which bytes of it, never the bytes). The request whose fragments complete a value has
+    /// them repaired.
+    pub fn check_in<'s>(
+        &self,
+        bytes: &[u8],
+        scratch: &'s mut GuardScratch,
+        session: &SessionKey,
+    ) -> Verdict<'s> {
+        self.check_session(bytes, scratch, Some(session))
+    }
+
+    /// Whether [`Guard::check_in`] remembers fragments across requests (`cross-request`).
+    pub fn remembers(&self) -> bool {
+        self.tx.remembers()
+    }
+
+    fn check_session<'s>(
+        &self,
+        bytes: &[u8],
+        scratch: &'s mut GuardScratch,
+        session: Option<&SessionKey>,
+    ) -> Verdict<'s> {
+        // A body shown clean by the cache has no short fragment in any segment (a segment
+        // holding one is never cached), so there is nothing to join or remember.
         if let Some(cache) = &self.cache
             && bytes.len() >= guard_cache::MIN_BYTES
             && self.clean_by_segments(cache, bytes, scratch)
         {
             return Verdict::Clean;
         }
-        self.check_whole(bytes, scratch)
+        self.check_whole_in(bytes, scratch, session)
     }
 
     /// [`Guard::check`] without the verdict cache: every byte is checked.
     pub fn check_whole<'s>(&self, bytes: &[u8], scratch: &'s mut GuardScratch) -> Verdict<'s> {
+        self.check_whole_in(bytes, scratch, None)
+    }
+
+    fn check_whole_in<'s>(
+        &self,
+        bytes: &[u8],
+        scratch: &'s mut GuardScratch,
+        session: Option<&SessionKey>,
+    ) -> Verdict<'s> {
         let mut hits = std::mem::take(&mut scratch.hits);
         hits.clear();
-        self.collect(bytes, scratch, &mut hits);
+        // Only this pass joins and remembers: the check of the repaired body below must not
+        // count the request's fragments twice.
+        self.collect_in(bytes, scratch, &mut hits, session);
         if hits.is_empty() {
             scratch.hits = hits;
             return Verdict::Clean;
@@ -875,8 +920,19 @@ impl Guard {
 
     /// All hits in every view, in raw coordinates, minus those inside genuine placeholders.
     fn collect(&self, bytes: &[u8], s: &mut GuardScratch, out: &mut Vec<RawHit>) {
+        self.collect_in(bytes, s, out, None);
+    }
+
+    /// [`Guard::collect`], joining short fragments with those remembered for `session`.
+    fn collect_in(
+        &self,
+        bytes: &[u8],
+        s: &mut GuardScratch,
+        out: &mut Vec<RawHit>,
+        session: Option<&SessionKey>,
+    ) {
         let from = out.len();
-        self.collect_views(bytes, s, out);
+        self.collect_views(bytes, s, out, session);
         if out.len() > from {
             let mut k = from;
             while k < out.len() {
@@ -893,7 +949,13 @@ impl Guard {
         }
     }
 
-    fn collect_views(&self, bytes: &[u8], s: &mut GuardScratch, out: &mut Vec<RawHit>) {
+    fn collect_views(
+        &self,
+        bytes: &[u8],
+        s: &mut GuardScratch,
+        out: &mut Vec<RawHit>,
+        session: Option<&SessionKey>,
+    ) {
         if self.long.is_empty() && self.short.is_empty() {
             return;
         }
@@ -952,6 +1014,7 @@ impl Guard {
                     });
                 },
                 parallel,
+                session,
             );
         };
         if regions.len() == 1 {

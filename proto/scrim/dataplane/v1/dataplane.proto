@@ -725,7 +725,7 @@ message RedactionSettings {
   bool guard_cache_off = 8;
   // guard_disabled names guard transform decoders switched off
   // (redaction.guard.disable): confusables, base85, compressed, spelled-out,
-  // split-fragments.
+  // split-fragments, cross-request.
   repeated string guard_disabled = 9;
   // guard_enabled names guard transform decoders that are off by default and
   // switched on (redaction.guard.enable).

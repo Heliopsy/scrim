@@ -48,11 +48,22 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   Compressed documents in base64 (gzip, zlib, zstd, brotli, deflate) and the base85 family are
   read only with `redaction.guard.enable` naming `compressed` or `base85`: they cost a third more
   guard time on requests with base64 data, and with ten thousand values, respectively.
-- **Values split across requests.** A value the agent splits across requests, including through
-  server-side state such as `previous_response_id` or a WebSocket session, arrives in pieces that
-  are each checked alone: only a piece of at least half the value (at least the minimum length, at
-  most 24 bytes) is caught. Within one request, pieces of at least the minimum length that
-  together cover the value are caught wherever they sit (`split-fragments`).
+- **Values split across requests.** Pieces of a value sent in separate requests of one agent
+  session, including turns the provider keeps (`previous_response_id`, conversations, a WebSocket
+  session), are joined by the guard's `cross-request` transform: it remembers which pieces of which
+  value each session sent (never the bytes) and repairs the pieces of the request that completes a
+  value. What still passes: pieces shorter than the minimum length (8 bytes by default); pieces
+  that read as words rather than random (no capital after a lower-case letter, no letter next to a
+  digit, no punctuation inside, fewer than four consonants in a row), since the words of a long
+  session would otherwise join into any value made of words, and an AWS access key ID's letters
+  between its digits can read that way; pieces more than 30 minutes apart, or past the 256 pieces
+  kept per session or the 1,024 sessions kept; pieces sent under different sessions (the session
+  is what the transport says: a client certificate, the session id, a Kubernetes token, the Unix
+  user, or one shared session for unknown callers, so an agent that can change its session id
+  starts over); pieces sent through different replicas, since each data plane replica remembers
+  only its own requests; and pieces sent before a new snapshot (any change to the redaction set, a
+  session ending), which starts empty. The earlier pieces have already left when the last one is
+  repaired: the provider holds part of the value, never all of it.
 - **Short values.** Values shorter than the minimum length (8 bytes by default) are matched only
   whole and in their encoded forms, never as fragments. `scrim status` lists them.
 - **Text in image pixels is not read.** Under the default `redaction.binary: scan`, scrim decodes
@@ -232,6 +243,10 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   backup of it) and the placeholder key can open them until they expire. Someone who can write the
   database can delete the rows, and a token is then redacted only by the replica that minted or
   verified it.
+- **Values split across requests are joined per replica.** The guard's memory of the pieces a
+  session sent (`cross-request`) lives in each data plane replica, so pieces sent through
+  different replicas are never joined. Pin a session to one replica (session affinity on the
+  proxy's Service or load balancer) where that matters.
 - **Decision links need a shared key.** Without `approvals.signing-key`, each process signs with a
   random key, and links stop working on restart and on other replicas
   ([approvals.md](approvals.md)).

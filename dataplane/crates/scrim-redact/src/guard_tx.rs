@@ -42,6 +42,10 @@ use crate::guard::GuardView;
 mod extra;
 pub use extra::{TRANSFORM_NAMES, TransformConfig};
 
+#[path = "guard_cross.rs"]
+mod cross;
+pub use cross::SessionKey;
+
 /// Fewest units a separated or escaped run needs to be decoded (the guard's long values are at
 /// least eight bytes).
 const MIN_UNITS: usize = 8;
@@ -159,6 +163,8 @@ pub(crate) type Scan<'a> = dyn Fn(&[u8], &mut Vec<(usize, usize, u32)>) + 'a;
 pub(crate) struct Transforms {
     frags: Fragments,
     cfg: TransformConfig,
+    /// Short pieces remembered per session (`cross-request`).
+    cross: Option<cross::CrossMemory>,
 }
 
 impl Transforms {
@@ -171,7 +177,13 @@ impl Transforms {
         Self {
             frags: Fragments::build(long, min_len.max(8), cfg.confusables),
             cfg: cfg.clone(),
+            cross: cfg.cross_request.then(cross::CrossMemory::new),
         }
+    }
+
+    /// Whether checks of a session's requests remember and join short pieces.
+    pub(crate) fn remembers(&self) -> bool {
+        self.cross.is_some()
     }
 
     /// Decodes `base` (the once-unescaped outgoing bytes) into the transform views, finds values
@@ -180,6 +192,9 @@ impl Transforms {
     ///
     /// With `parallel`, the decoders and the fragment search over `base` run on three threads;
     /// the result is the same.
+    ///
+    /// With `session` (and `cross-request` on), the short fragments of `base` are joined with
+    /// those remembered for the session, and remembered when they stay short of a value.
     pub(crate) fn collect(
         &self,
         base: &[u8],
@@ -187,8 +202,9 @@ impl Transforms {
         scan: &Scan<'_>,
         emit: &mut dyn FnMut(usize, usize, u32, GuardView),
         parallel: bool,
+        session: Option<&SessionKey>,
     ) {
-        self.collect_in(base, s, scan, emit, parallel);
+        self.collect_in(base, s, scan, emit, parallel, session);
         // Text documents sent as base64 data URLs: the guard's base64 view shows their text, and
         // the transform views are taken over that text too.
         let mut doc = std::mem::take(&mut s.doc);
@@ -226,6 +242,7 @@ impl Transforms {
                     emit(at(a), to(b - 1), o, v);
                 },
                 false,
+                None,
             );
         }
         // Compressed documents in base64 runs (`gzip | base64`): the inflated text gets every
@@ -253,6 +270,7 @@ impl Transforms {
                             emit(st, en, o, GuardView::Compressed);
                         },
                         false,
+                        None,
                     );
                 },
             );
@@ -280,6 +298,7 @@ impl Transforms {
         scan: &Scan<'_>,
         emit: &mut dyn FnMut(usize, usize, u32, GuardView),
         parallel: bool,
+        session: Option<&SessionKey>,
     ) {
         s.clear();
         s.bits.build(base);
@@ -287,7 +306,9 @@ impl Transforms {
         frag_hits.clear();
         let mut short = std::mem::take(&mut s.short);
         short.clear();
-        let split = self.cfg.split_fragments;
+        // Short fragments are collected for either rule: the cache must see them even in a check
+        // that joins nothing (a body cached clean is never joined).
+        let split = self.cfg.split_fragments || self.cross.is_some();
         if parallel {
             // Dumps and base32 into a second scratch, with the bitmaps they read; separated
             // units here; the fragment search over `base` on its own. The second scratch's runs
@@ -360,11 +381,30 @@ impl Transforms {
         s.frag_hits = frag_hits;
         if !short.is_empty() {
             let frags = &self.frags;
-            extra::assemble(
-                &mut short,
-                &|form| frags.vals[form as usize].value.len(),
-                &mut |a, b, form| emit(a, b, frags.vals[form as usize].owner, GuardView::Fragment),
-            );
+            let form_len = |form: u32| frags.vals[form as usize].value.len();
+            let owner = |form: u32| frags.vals[form as usize].owner;
+            let mut done: Vec<u32> = Vec::new();
+            if self.cfg.split_fragments {
+                extra::assemble(&mut short, &form_len, &mut |a, b, form| {
+                    if done.last() != Some(&form) {
+                        done.push(form);
+                    }
+                    emit(a, b, owner(form), GuardView::Fragment);
+                });
+            }
+            if let (Some(mem), Some(key)) = (&self.cross, session) {
+                let mut random: Vec<extra::Short> = short
+                    .iter()
+                    .filter(|f| {
+                        let v = &frags.vals[f.form as usize].value;
+                        cross::looks_random(&v[f.off as usize..(f.off + f.len) as usize])
+                    })
+                    .copied()
+                    .collect();
+                mem.join(key, &mut random, &done, &form_len, &mut |a, b, form| {
+                    emit(a, b, owner(form), GuardView::CrossRequest);
+                });
+            }
         }
         s.short = short;
     }
@@ -2055,6 +2095,7 @@ mod tests {
             &scan,
             &mut |a, b, o, view| hits.push((a, b, o, view)),
             false,
+            None,
         );
         let start = body.find("base64,").unwrap() + 7;
         assert!(

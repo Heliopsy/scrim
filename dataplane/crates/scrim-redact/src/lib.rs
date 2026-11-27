@@ -116,7 +116,7 @@ pub use detect::{
 };
 pub use error::{BuildError, Error, WithholdReason};
 pub use guard::{Guard, GuardFinding, GuardScratch, GuardView, Verdict};
-pub use guard_tx::{TRANSFORM_NAMES, TransformConfig};
+pub use guard_tx::{SessionKey, TRANSFORM_NAMES, TransformConfig};
 pub use matcher::{EngineChoice, EngineKind};
 pub use placeholder::{
     Keyring, MAX_PERCENT_PLACEHOLDER_LEN, MAX_PLACEHOLDER_LEN, MIN_PLACEHOLDER_LEN,

@@ -121,6 +121,29 @@ impl Identity {
             && self.client_certificate.is_none()
     }
 
+    /// The session the guard keeps cross-request state under (`cross-request`): the client
+    /// certificate's leaf, else the session id, else the Kubernetes token, else the Unix user;
+    /// every unknown caller shares one. A hash only (no token is kept), and as strong as what
+    /// the transport says: a caller that can change its session id or certificate starts over.
+    pub fn guard_session(&self) -> scrim_llm::SessionKey {
+        use scrim_llm::SessionKey;
+        if let Some(c) = &self.client_certificate
+            && let Some(leaf) = c.chain().first()
+        {
+            return SessionKey::new("certificate", leaf.as_ref());
+        }
+        if let Some(s) = &self.session {
+            return SessionKey::new("session", s.as_bytes());
+        }
+        if let Some(t) = &self.kubernetes_token {
+            return SessionKey::new("kubernetes", t.as_bytes());
+        }
+        if let Some(p) = self.peer {
+            return SessionKey::new("uid", &p.uid.to_le_bytes());
+        }
+        SessionKey::new("anonymous", b"")
+    }
+
     /// The restore engine's caller: an unknown caller (`agent.known` false) when the transport
     /// carried nothing, else an agent the data plane cannot place (agent fields unknown).
     pub fn caller(&self, provider: Option<&str>) -> Caller {
@@ -166,6 +189,39 @@ impl Identity {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guard_sessions() {
+        let mut h = http::HeaderMap::new();
+        let anon = Identity::of_llm(&h, &http::Extensions::new()).guard_session();
+        assert_eq!(
+            anon,
+            Identity::of_llm(&h, &http::Extensions::new()).guard_session()
+        );
+        h.insert(scrim_llm::SESSION_HEADER, "sess-1".parse().unwrap());
+        let one = Identity::of_llm(&h, &http::Extensions::new()).guard_session();
+        h.insert(scrim_llm::SESSION_HEADER, "sess-2".parse().unwrap());
+        let two = Identity::of_llm(&h, &http::Extensions::new()).guard_session();
+        assert!(one != two && one != anon && two != anon);
+        let mut ext = http::Extensions::new();
+        ext.insert(UnixPeer {
+            uid: 1000,
+            gid: 1000,
+            pid: Some(7),
+        });
+        let peer = Identity::of_llm(&http::HeaderMap::new(), &ext).guard_session();
+        ext.insert(UnixPeer {
+            uid: 1000,
+            gid: 1000,
+            pid: Some(8),
+        });
+        assert_eq!(
+            peer,
+            Identity::of_llm(&http::HeaderMap::new(), &ext).guard_session(),
+            "one Unix user is one session"
+        );
+        assert!(peer != anon && peer != one);
+    }
 
     #[test]
     fn sources_in_order() {

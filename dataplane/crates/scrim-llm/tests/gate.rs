@@ -22,8 +22,9 @@ use std::sync::{Arc, Mutex};
 use common::*;
 use scrim_llm::testing::{FakePolicy, FakeUpstream, Scripted};
 use scrim_llm::{
-    Admission, Placeholders, RequestGate, RequestInfo, RestoreDecision, RestorePolicy, RestoreSite,
-    SecretRef, ToolInputRestore, ValueClass,
+    Admission, EngineError, Guard, GuardVerdict, Placeholders, RequestGate, RequestInfo,
+    RestoreDecision, RestorePolicy, RestoreSite, SecretRef, SessionKey, ToolInputRestore,
+    ValueClass,
 };
 
 const H: &[(&str, &str)] = &[
@@ -61,6 +62,7 @@ impl RequestGate for Gate {
                 Admission::Forward {
                     policy: Arc::clone(&self.policy),
                     redaction: None,
+                    session: None,
                 }
             }
         })
@@ -212,4 +214,86 @@ async fn a_policy_restores_complete_tool_input_itself_and_never_sees_credentials
         "a credential never resolves for the policy"
     );
     assert!(!r.text().contains(&fx.value("s1")));
+}
+
+/// Forwards every request with the session named in `x-scrim-session`, if any.
+struct SessionGate;
+
+impl RequestGate for SessionGate {
+    fn admit<'a>(
+        &'a self,
+        req: RequestInfo<'a>,
+    ) -> Pin<Box<dyn Future<Output = Admission> + Send + 'a>> {
+        let session = req
+            .headers
+            .get(scrim_llm::SESSION_HEADER)
+            .map(|v| SessionKey::new("session", v.as_bytes()));
+        Box::pin(async move {
+            Admission::Forward {
+                policy: Arc::new(FakePolicy::keep_all()),
+                redaction: None,
+                session,
+            }
+        })
+    }
+}
+
+/// Records the session of every check, then defers to the fixture's guard.
+struct Sessions {
+    inner: Arc<dyn Guard>,
+    seen: Mutex<Vec<Option<SessionKey>>>,
+}
+
+impl Guard for Sessions {
+    fn check(&self, outgoing: &[u8]) -> Result<GuardVerdict, EngineError> {
+        self.seen.lock().unwrap().push(None);
+        self.inner.check(outgoing)
+    }
+
+    fn check_in(&self, outgoing: &[u8], s: &SessionKey) -> Result<GuardVerdict, EngineError> {
+        self.seen.lock().unwrap().push(Some(*s));
+        self.inner.check(outgoing)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_guard_checks_each_request_in_its_callers_session() {
+    let fx = fixture();
+    let up = FakeUpstream::start(Scripted::json(200, "{}")).await;
+    let h = start(None, up, |_| {}).await;
+    let mut snap = fx.snapshot();
+    let guard = Arc::new(Sessions {
+        inner: snap.guard.clone(),
+        seen: Mutex::default(),
+    });
+    snap.guard = guard.clone();
+    snap.gate = Some(Arc::new(SessionGate));
+    h.cell.store(snap);
+    let body = r#"{"model":"m","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}"#;
+    let other = &[
+        ("content-type", "application/json"),
+        ("x-api-key", "agent-key-for-tests"),
+        ("x-scrim-session", "sess-8"),
+    ];
+    let none = &[
+        ("content-type", "application/json"),
+        ("x-api-key", "agent-key-for-tests"),
+    ];
+    for hs in [H, other, none] {
+        let r = send(&h, "/anthropic/v1/messages", hs, body.to_owned(), false).await;
+        assert_eq!(r.status, 200, "{}", r.text());
+    }
+    let seen: Vec<Option<SessionKey>> = guard.seen.lock().unwrap().clone();
+    let (s7, s8) = (
+        SessionKey::new("session", b"sess-7"),
+        SessionKey::new("session", b"sess-8"),
+    );
+    // The body and the request head are checked in the request's session; a gate that names
+    // no session leaves the plain check.
+    assert!(
+        seen.contains(&Some(s7)) && seen.contains(&Some(s8)),
+        "{seen:?}"
+    );
+    assert!(seen.contains(&None), "{seen:?}");
+    assert!(!format!("{s7:?}").contains("sess"));
 }

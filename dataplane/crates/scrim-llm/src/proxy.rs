@@ -189,12 +189,22 @@ pub(crate) async fn admit(
         extensions: &parts.extensions,
     };
     match gate.admit(info).await {
-        Admission::Forward { policy, redaction } => {
+        Admission::Forward {
+            policy,
+            redaction,
+            session,
+        } => {
             let mut s = (*snap).clone();
             s.policy = policy;
             if let Some(r) = redaction {
                 s.redactor = r.redactor;
                 s.guard = r.guard;
+            }
+            if let Some(session) = session {
+                s.guard = Arc::new(crate::engine::SessionGuard {
+                    inner: s.guard,
+                    session,
+                });
             }
             s.gate = None;
             Ok(Arc::new(s))

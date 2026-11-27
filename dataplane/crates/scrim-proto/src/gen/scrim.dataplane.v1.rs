@@ -709,7 +709,7 @@ pub struct RedactionSettings {
     pub guard_cache_off: bool,
     /// guard_disabled names guard transform decoders switched off
     /// (redaction.guard.disable): confusables, base85, compressed, spelled-out,
-    /// split-fragments.
+    /// split-fragments, cross-request.
     #[prost(string, repeated, tag = "9")]
     pub guard_disabled: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// guard_enabled names guard transform decoders that are off by default and
