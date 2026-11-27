@@ -2261,7 +2261,7 @@
           "properties": {
             "disable": {
               "default": [],
-              "description": "Fallback pattern rules to turn off, by name: aws-access-key-id, aws-secret-access-key, github-token, github-fine-grained-token, anthropic-api-key, openai-api-key, gitlab-token, slack-token, slack-webhook-url, stripe-key, stripe-webhook-secret, google-api-key, google-oauth-client-secret, npm-token, pypi-token, docker-hub-token, huggingface-token, twilio-credential, sendgrid-api-key, azure-storage-key, azure-shared-access-key, azure-ad-client-secret, digitalocean-token, shopify-token, atlassian-api-token, database-url-password, hashicorp-vault-token, doppler-token, onepassword-service-account-token, grafana-token, sentry-token, linear-api-key, postman-api-key, age-secret-key, databricks-token, jwt, private-key.",
+              "description": "Fallback pattern rules to turn off, by name: aws-access-key-id, aws-secret-access-key, github-token, github-fine-grained-token, anthropic-api-key, openai-api-key, gitlab-token, slack-token, slack-webhook-url, stripe-key, stripe-webhook-secret, google-api-key, google-oauth-client-secret, npm-token, pypi-token, docker-hub-token, huggingface-token, twilio-credential, sendgrid-api-key, azure-storage-key, azure-shared-access-key, azure-ad-client-secret, digitalocean-token, shopify-token, atlassian-api-token, database-url-password, hashicorp-vault-token, doppler-token, onepassword-service-account-token, grafana-token, sentry-token, linear-api-key, postman-api-key, age-secret-key, databricks-token, groq-api-key, xai-api-key, perplexity-api-key, openrouter-api-key, deepseek-api-key, langfuse-secret-key, elevenlabs-api-key, replicate-api-token, langsmith-api-key, pinecone-api-key, tavily-api-key, aws-bedrock-api-key, google-oauth-access-token, heroku-api-key, notion-token, tailscale-key, sourcegraph-token, planetscale-token, supabase-key, contentful-token, new-relic-key, dynatrace-token, mapbox-secret-token, prefect-api-key, posthog-personal-api-key, square-token, discord-webhook-url, telegram-bot-token, jwt, private-key.",
               "items": {
                 "type": "string"
               },
@@ -2288,6 +2288,68 @@
               "x-scrim-env": "SCRIM_REDACTION_DETECTORS_ENABLED",
               "x-scrim-restart-required": false,
               "x-scrim-weakening": false
+            },
+            "encoded": {
+              "default": false,
+              "description": "Also run the fallback pattern rules over the decoded form of base64 runs, hex runs and percent-encoded text (a token in a Kubernetes secret, a base64 .env file, an escaped query string) and replace the characters that encode a match. Off by default: it costs about 0.5 ms per MB of request on one core, a third of the redactor's throughput.",
+              "type": "boolean",
+              "x-scrim-env": "SCRIM_REDACTION_DETECTORS_ENCODED",
+              "x-scrim-restart-required": false,
+              "x-scrim-weakening": false
+            },
+            "entropy": {
+              "additionalProperties": false,
+              "properties": {
+                "context": {
+                  "default": "key-name",
+                  "description": "Which tokens the entropy detector looks at: key-name, values after a key name that says secret; any, every token (hashes and base64 data trip it, so it needs a longer and more random token).",
+                  "enum": [
+                    "key-name",
+                    "any"
+                  ],
+                  "type": "string",
+                  "x-scrim-env": "SCRIM_REDACTION_DETECTORS_ENTROPY_CONTEXT",
+                  "x-scrim-restart-required": false,
+                  "x-scrim-weakening": false
+                },
+                "enabled": {
+                  "default": false,
+                  "description": "Replace high-entropy values that no store holds and no pattern rule knows, such as random passwords and API keys without a prefix. With the default key-name context only values assigned to a key name that says secret (token, secret, password, api_key, a name ending in key or auth, Bearer) are looked at. Off by default: pagination cursors, nonces and test values that look random would become placeholders the agent cannot send back.",
+                  "type": "boolean",
+                  "x-scrim-env": "SCRIM_REDACTION_DETECTORS_ENTROPY_ENABLED",
+                  "x-scrim-restart-required": false,
+                  "x-scrim-weakening": false
+                },
+                "min-classes": {
+                  "default": 0,
+                  "description": "How many character classes a value must mix: lower case, upper case, digits and, with the key-name context, symbols. 0 takes the default, 3.",
+                  "maximum": 9223372036854775807,
+                  "minimum": -9223372036854775808,
+                  "type": "integer",
+                  "x-scrim-env": "SCRIM_REDACTION_DETECTORS_ENTROPY_MIN_CLASSES",
+                  "x-scrim-restart-required": false,
+                  "x-scrim-weakening": false
+                },
+                "min-length": {
+                  "default": 0,
+                  "description": "Shortest value the entropy detector considers, in bytes, at least 8. 0 takes the context's default: 16 for key-name, 32 for any.",
+                  "maximum": 9223372036854775807,
+                  "minimum": -9223372036854775808,
+                  "type": "integer",
+                  "x-scrim-env": "SCRIM_REDACTION_DETECTORS_ENTROPY_MIN_LENGTH",
+                  "x-scrim-restart-required": false,
+                  "x-scrim-weakening": false
+                },
+                "threshold": {
+                  "default": 0,
+                  "description": "Minimum Shannon entropy of a value, in bits per byte. 0 takes the context's default: 3.5 for key-name, 4.3 for any.",
+                  "type": "number",
+                  "x-scrim-env": "SCRIM_REDACTION_DETECTORS_ENTROPY_THRESHOLD",
+                  "x-scrim-restart-required": false,
+                  "x-scrim-weakening": false
+                }
+              },
+              "type": "object"
             }
           },
           "type": "object"

@@ -15,10 +15,12 @@ mod common;
 use common::fixtures::{Rng, b64, gen_body, hex};
 use scrim_redact::*;
 
+/// The default rules with encoded forms on, so every corpus test covers them too.
 fn detector_snapshot(entropy: bool) -> Snapshot {
     let cfg = Config {
         detectors: DetectorConfig {
             entropy: entropy.then(EntropyConfig::default),
+            encoded: true,
             ..Default::default()
         },
         ..Config::default()
@@ -218,6 +220,116 @@ fn cases() -> Vec<(&'static str, String, String)> {
                 b64(br#"{"sub":"1234567890","iat":1516239022}"#, true, false),
                 b64(&r.bytes(32), true, false)
             ),
+        ),
+        // Formats added in the November 2026 review.
+        whole("groq-api-key", format!("gsk_{}", r.string(b62, 52))),
+        whole("xai-api-key", format!("xai-{}", r.string(b62, 80))),
+        whole("perplexity-api-key", format!("pplx-{}", r.string(b62, 48))),
+        whole(
+            "openrouter-api-key",
+            format!("sk-or-v1-{}", r.string(hexl, 64)),
+        ),
+        whole("deepseek-api-key", format!("sk-{}a1", r.string(hexl, 30))),
+        {
+            let u = r.string(hexl, 32);
+            whole(
+                "langfuse-secret-key",
+                format!(
+                    "sk-lf-{}-{}-{}-{}-{}",
+                    &u[..8],
+                    &u[8..12],
+                    &u[12..16],
+                    &u[16..20],
+                    &u[20..]
+                ),
+            )
+        },
+        whole("elevenlabs-api-key", format!("sk_{}b2", r.string(hexl, 46))),
+        whole("replicate-api-token", format!("r8_{}", r.string(b62, 37))),
+        whole(
+            "langsmith-api-key",
+            format!("lsv2_pt_{}_{}", r.string(hexl, 32), r.string(hexl, 10)),
+        ),
+        whole("pinecone-api-key", format!("pcsk_{}", r.string(b62, 70))),
+        whole("tavily-api-key", format!("tvly-dev-{}", r.string(b62, 32))),
+        whole(
+            "aws-bedrock-api-key",
+            format!("{}{}{}", "ABSK", "QmVkcm9ja0FQSUtleS", r.string(b64s, 110)),
+        ),
+        whole(
+            "aws-bedrock-api-key",
+            // The prefix and the base64 of the host are joined at run time, as every case is.
+            format!(
+                "{}{}{}==",
+                "bedrock-api-key-",
+                "YmVkcm9jay5hbWF6b25hd3MuY29t",
+                r.string(b64s, 400)
+            ),
+        ),
+        whole(
+            "google-oauth-access-token",
+            format!("ya29.{}", r.string(url, 150)),
+        ),
+        whole("heroku-api-key", format!("HRKU-AA{}", r.string(url, 58))),
+        whole(
+            "notion-token",
+            format!("ntn_{}{}", r.string("0123456789", 11), r.string(b62, 35)),
+        ),
+        whole(
+            "tailscale-key",
+            format!(
+                "tskey-auth-k{}CNTRL-{}",
+                r.string(b62, 8),
+                r.string(b62, 32)
+            ),
+        ),
+        whole(
+            "sourcegraph-token",
+            format!("sgp_{}_{}", r.string(hexl, 16), r.string(hexl, 40)),
+        ),
+        whole(
+            "planetscale-token",
+            format!("pscale_tkn_{}", r.string(url, 43)),
+        ),
+        whole("supabase-key", format!("sbp_{}", r.string(hexl, 40))),
+        whole("supabase-key", format!("sb_secret_{}", r.string(url, 31))),
+        whole("contentful-token", format!("CFPAT-{}", r.string(url, 43))),
+        whole(
+            "new-relic-key",
+            format!(
+                "NRAK-{}",
+                r.string("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 27)
+            ),
+        ),
+        whole(
+            "dynatrace-token",
+            format!(
+                "dt0c01.{}.{}",
+                r.string("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 24),
+                r.string("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 64)
+            ),
+        ),
+        whole(
+            "mapbox-secret-token",
+            format!("sk.eyJ{}.{}", r.string(url, 60), r.string(url, 22)),
+        ),
+        whole("prefect-api-key", format!("pnu_{}", r.string(b62, 36))),
+        whole(
+            "posthog-personal-api-key",
+            format!("phx_{}", r.string(b62, 43)),
+        ),
+        whole("square-token", format!("sq0csp-{}", r.string(url, 43))),
+        whole(
+            "discord-webhook-url",
+            format!(
+                "discord.com/api/webhooks/{}/{}",
+                r.string("0123456789", 19),
+                r.string(url, 68)
+            ),
+        ),
+        whole(
+            "telegram-bot-token",
+            format!("{}:AA{}", r.string("0123456789", 10), r.string(url, 33)),
         ),
         whole(
             "private-key",
@@ -743,4 +855,222 @@ fn rule_list_shared_with_the_control_plane() {
         .map(|n| (n.to_string(), !off.contains(&n)))
         .collect();
     assert_eq!(rules, ours);
+}
+
+fn entropy_snapshot(e: EntropyConfig) -> Snapshot {
+    let cfg = Config {
+        detectors: DetectorConfig {
+            rules_enabled: false,
+            entropy: Some(e),
+            ..Default::default()
+        },
+        ..Config::default()
+    };
+    Snapshot::build(vec![], common::keyring(), &cfg).unwrap()
+}
+
+/// Entropy hits on the repository corpus and the generated agent bodies, per context, printed
+/// for docs/configuration.md. The key-name context stays below one hit per megabyte of source
+/// and finds nothing in agent bodies; every token is much noisier.
+#[test]
+fn entropy_false_positive_rates() {
+    let root = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let mut files = Vec::new();
+    walk(&root, &mut files);
+    let mut repo = String::new();
+    for f in &files {
+        if let Ok(t) = std::fs::read_to_string(f) {
+            repo.push_str(&t);
+            repo.push('\n');
+        }
+    }
+    let body = String::from_utf8(gen_body(3, 2_000_000, &[]).0).unwrap();
+    let synthetic = corpus();
+    let mut rates = Vec::new();
+    for (name, e) in [
+        ("key-name", EntropyConfig::default()),
+        ("any", EntropyConfig::any_context()),
+    ] {
+        let s = entropy_snapshot(e);
+        for (what, text) in [
+            ("repository", &repo),
+            ("bodies", &body),
+            ("synthetic", &synthetic),
+        ] {
+            let mut hits = Vec::new();
+            let mut out = Vec::new();
+            s.redactor()
+                .redact_with(text.as_bytes(), &mut out, &mut |h| {
+                    if let Hit::Detected { start, end, .. } = h {
+                        hits.push({
+                            let a = start.saturating_sub(30);
+                            let a = (0..=a)
+                                .rev()
+                                .find(|&k| text.is_char_boundary(k))
+                                .unwrap_or(0);
+                            text[a..end].to_string()
+                        });
+                    }
+                })
+                .unwrap();
+            let per_mb = hits.len() as f64 / (text.len() as f64 / 1e6);
+            eprintln!(
+                "entropy {name:>8} on {what:<10} {:>9} bytes: {:>5} hits, {per_mb:>8.2}/MB {:?}",
+                text.len(),
+                hits.len(),
+                &hits[..hits.len().min(16)]
+            );
+            rates.push((name, what, per_mb));
+        }
+    }
+    for (name, what, per_mb) in rates {
+        if name == "key-name" {
+            let bound = if what == "repository" { 1.0 } else { 0.0 };
+            assert!(
+                per_mb <= bound,
+                "key-name entropy on {what}: {per_mb:.2}/MB"
+            );
+        }
+    }
+}
+
+/// The key-name context: values after a key name that says secret, in the forms code, config,
+/// shells and HTTP write them; not values a client must send back, paths or references.
+#[test]
+fn entropy_key_names() {
+    let s = entropy_snapshot(EntropyConfig::default());
+    let mut r = Rng::new(31);
+    let pw = format!("Zq7!{}", r.string(common::fixtures::BASE62, 16));
+    let tok = r.string(common::fixtures::BASE62, 24);
+    for t in [
+        format!("SESSION_SECRET={pw}\n"),
+        format!("export DB_PASSWORD='{pw}'"),
+        format!(r#"{{"api_key": "{pw}"}}"#),
+        format!(r#"{{\"client_secret\":\"{pw}\"}}"#),
+        format!("password := \"{pw}\""),
+        format!("'signing_key' => '{pw}',"),
+        format!("Authorization: Bearer {tok}\r\n"),
+        format!("mysql --password {pw} -h db"),
+        format!("encryptionKey: {pw}"),
+    ] {
+        let want = if t.contains(&pw) { &pw } else { &tok };
+        assert_eq!(
+            hits_with_text(&s, &t),
+            vec![(ENTROPY_RULE, want.clone())],
+            "{t}"
+        );
+    }
+    for t in [
+        format!(r#"{{"nextPageToken": "{tok}"}}"#),
+        format!(r#"{{"csrf_token": "{tok}"}}"#),
+        format!("password = os.environ[\"{tok}\"]"),
+        format!("api_key = settings.{tok}"),
+        format!("secret = make_{tok}()"),
+        format!("token = ${{{tok}}}"),
+        format!("username = {tok}"),
+        format!("the value {tok} again"),
+        "password: correcthorsebatterystaple".to_string(),
+        "secret_ref: /var/run/secrets/kubernetes.io/serviceaccount/token".to_string(),
+        "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request".to_string(),
+        "git push https://x-access-token:SCRIM_GITHUB_TOKEN@github.com/o/r".to_string(),
+        format!("token: {}", hex(&r.bytes(20))),
+    ] {
+        assert!(
+            hits_with_text(&s, &t).is_empty(),
+            "{t}: {:?}",
+            hits_with_text(&s, &t)
+        );
+    }
+}
+
+/// Encoded forms of a rule match: the characters that encode it are replaced, the text around
+/// them is kept, and `encoded: false` turns it off.
+#[test]
+fn encoded_forms_of_rule_matches() {
+    let on = detector_snapshot(false);
+    let off = Snapshot::build(
+        vec![],
+        common::keyring(),
+        &Config {
+            detectors: DetectorConfig {
+                encoded: false,
+                ..Default::default()
+            },
+            ..Config::default()
+        },
+    )
+    .unwrap();
+    let mut r = Rng::new(5);
+    let ghp = format!("ghp_{}", r.string(common::fixtures::BASE62, 36));
+    let aws = format!("Ab3/{}+x", r.string(common::fixtures::BASE62, 34));
+    let env = format!("SERVICE=billing\nGITHUB_TOKEN={ghp}\nLOG_LEVEL=debug\n");
+    let pct = |s: &str| -> String {
+        s.bytes()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == b'-' || c == b'_' {
+                    (c as char).to_string()
+                } else {
+                    format!("%{c:02X}")
+                }
+            })
+            .collect()
+    };
+    let cases: Vec<(String, &str)> = vec![
+        // kubectl get secret -o yaml
+        (
+            format!("data:\n  token: {}\n", b64(ghp.as_bytes(), false, true)),
+            "github-token",
+        ),
+        // base64 of a whole .env file, URL-safe and unpadded
+        (b64(env.as_bytes(), true, false), "github-token"),
+        // JSON-escaped line break before the run
+        (
+            format!(r#"{{"c":"secret:\n{}"}}"#, b64(ghp.as_bytes(), false, true)),
+            "github-token",
+        ),
+        (format!("value={}", hex(ghp.as_bytes())), "github-token"),
+        (format!("value=0x{}", hex(ghp.as_bytes())), "github-token"),
+        (
+            format!("q=1&{}&x=2", pct(&format!("aws_secret_access_key={aws}"))),
+            "aws-secret-access-key",
+        ),
+    ];
+    for (text, rule) in &cases {
+        let h = hits_with_text(&on, text);
+        assert_eq!(h.len(), 1, "{text}: {h:?}");
+        assert_eq!(h[0].0, *rule, "{text}");
+        let mut out = Vec::new();
+        on.redactor().redact(text.as_bytes(), &mut out).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains(&format!("⟦scrim:det-{rule}:")), "{out}");
+        // Nothing the encoding of the token leaves decodes back to it.
+        let h = hits_with_text(&on, &out);
+        assert!(h.is_empty(), "{out}: {h:?}");
+        assert!(hits_with_text(&off, text).is_empty(), "off: {text}");
+    }
+    // Around the token, the text stays: a kubernetes secret keeps its keys.
+    let text = format!(
+        "data:\n  token: {}\n  user: YWRtaW4=\n",
+        b64(ghp.as_bytes(), false, true)
+    );
+    let mut out = Vec::new();
+    on.redactor().redact(text.as_bytes(), &mut out).unwrap();
+    let out = String::from_utf8(out).unwrap();
+    assert!(
+        out.starts_with("data:\n  token: ") && out.ends_with("\n  user: YWRtaW4=\n"),
+        "{out}"
+    );
+    // Base64 and hex of text with no token, and of binary data, stay as they are.
+    for text in [
+        b64(
+            b"the quick brown fox jumps over the lazy dog, twice over",
+            false,
+            true,
+        ),
+        hex(b"the quick brown fox jumps over the lazy dog"),
+        b64(&r.bytes(3000), false, true),
+        "https://example.com/search?q=api%20key%20rotation&lang=en".to_string(),
+    ] {
+        assert!(hits_with_text(&on, &text).is_empty(), "{text}");
+    }
 }
