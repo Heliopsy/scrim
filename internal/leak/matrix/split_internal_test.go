@@ -70,9 +70,6 @@ func TestShortPiecesOfEverySeed(t *testing.T) {
 				if 2*len(x) >= len(v) && len(x) < maxFragment {
 					t.Fatalf("%s: piece %d is a fragment on its own", s, i)
 				}
-				if k := alnumCount(x); len(x) < maxFragment && k >= minPiece && 2*k >= alnumCount(v) {
-					t.Fatalf("%s: piece %d holds half the value's letters and digits", s, i)
-				}
 				covered += len(x)
 			}
 			if covered+min(splitSlack, len(v)/4) < len(v) {

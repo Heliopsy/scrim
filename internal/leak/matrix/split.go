@@ -93,12 +93,6 @@ func shortPieces(v string) []string {
 		if b-a < minPiece || (2*(b-a) >= n && b-a < maxFragment) {
 			return false
 		}
-		// Nor a leak to the checker alone, which compares a value's letters
-		// and digits too: a piece of a password with many symbols can hold
-		// half of them.
-		if k := alnumCount(v[a:b]); b-a < maxFragment && k >= minPiece && 2*k >= alnumCount(v) {
-			return false
-		}
 		return looksRandom(v[a:b])
 	}
 	c1, c2, found := randomCuts(size, n, slack, ok)
@@ -113,18 +107,6 @@ func shortPieces(v string) []string {
 		out = out[:2]
 	}
 	return out
-}
-
-// alnumCount counts the ASCII letters and digits of s.
-func alnumCount(s string) int {
-	k := 0
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
-			k++
-		}
-	}
-	return k
 }
 
 // randomCuts finds two cuts within three bytes of size and 2*size where ok
@@ -201,7 +183,10 @@ func splitOutputs(c Content, groups [][]int) []string {
 		if len(parts) == 0 {
 			continue
 		}
-		outs = append(outs, strings.Join(parts, "\n...\n"))
+		// Words between pieces of one request: the checker compares a value's
+		// letters and digits with the text's, symbols and spaces dropped, and
+		// two pieces with only punctuation between them could read as one run.
+		outs = append(outs, strings.Join(parts, "\n... skipped lines ...\n"))
 	}
 	if len(outs) == 0 {
 		return nil

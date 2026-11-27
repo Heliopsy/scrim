@@ -347,8 +347,20 @@ func (r *Runner) run(ctx context.Context, row Row, seed leak.Seed, content Conte
 	if len(res.Findings) == 0 && len(ex) > 1 {
 		res.Findings = append(res.Findings, checker.Check(merged(ex))...)
 	}
-	// Pieces too short for the checker, sent over several requests: a leak
-	// when every piece arrived.
+	// Pieces too short for the guard to count alone, sent over several
+	// requests: a leak when every piece arrived. The checker's partial
+	// matches are each one piece (it also compares a value's letters and
+	// digits alone, where a piece of a password with many symbols can hold
+	// half of them), which the row does not gate on.
+	if row.Placement.Pieces != nil {
+		kept := res.Findings[:0]
+		for _, f := range res.Findings {
+			if f.Match != "partial" {
+				kept = append(kept, f)
+			}
+		}
+		res.Findings = kept
+	}
 	if len(res.Findings) == 0 && row.Placement.Pieces != nil {
 		if f, ok := piecesLeaked(row.Placement.Pieces(content.Value), ex, seed); ok {
 			res.Findings = append(res.Findings, f)
