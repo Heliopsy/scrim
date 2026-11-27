@@ -175,6 +175,15 @@ func ReportChecks(r Report) []Check {
 			}
 			return nil
 		}})
+		if len(v.ReadableOwn) > 0 {
+			checks = append(checks, Check{Name: "own-files", Run: func(context.Context) []Finding {
+				return []Finding{{Outcome: Warn,
+					Message: "scrim runs as the user agents run as, and that user can read scrim's own secret files: " +
+						strings.Join(v.ReadableOwn, ", ") + "; scrim run hides them from its sessions, anything else this user runs can read them",
+					Fix: "run scrim as its own user: sudo scrim install --system --agent-user $USER (docs/service.md), " +
+						"or give its secrets as systemd credentials (cred:) instead of files"}}
+			}})
+		}
 	}
 	for _, s := range r.Stores {
 		checks = append(checks, Check{Name: "store:" + s.Name, Run: func(context.Context) []Finding {

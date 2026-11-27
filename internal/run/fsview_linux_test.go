@@ -154,6 +154,36 @@ func passwdHomeInner(t *testing.T, dir string) {
 	}
 }
 
+// TestFSViewOwnFiles: scrim's own files the daemon reports (its config
+// file, a Vaultwarden unlock file behind a file: reference, a signing key
+// outside the home) cannot be read from a session in the namespace view,
+// while the session still reaches the agent API and the rest of the home;
+// scrim commands in the session read the empty SCRIM_CONFIG instead.
+func TestFSViewOwnFiles(t *testing.T) {
+	requireUserns(t)
+	home := plantHome(t, t.TempDir())
+	h := newHarness(t, true)
+	cfg, unlock, outside, env := ownView(t, h, home)
+	r, stderr, err := runViewWith(t, h, home, FSViewOptions{Mode: fsview.ModeNamespace, PasswdHome: home.dir}, env)
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, stderr)
+	}
+	checkNamespaceView(t, r, home)
+	for _, p := range []string{cfg, unlock, outside} {
+		if got, ok := r.Own[p]; !ok || !strings.HasPrefix(got, "ERR:") {
+			t.Errorf("%s readable in the session: %q", p, got)
+		}
+	}
+	if r.ScrimConfig == "" || strings.HasPrefix(r.ScrimConfigData, "ERR:") || !strings.Contains(r.ScrimConfigData, "kind: Config") {
+		t.Errorf("SCRIM_CONFIG = %q (%q), want the session's empty config", r.ScrimConfig, r.ScrimConfigData)
+	}
+	for _, p := range []string{cfg, unlock, outside} {
+		if b, _ := os.ReadFile(p); !strings.Contains(string(b), home.decoy) {
+			t.Errorf("%s changed on disk", p)
+		}
+	}
+}
+
 // TestFSViewHelperMustRun: a helper executable that does not set the view
 // up (here /bin/true) refuses the start; the agent never runs unviewed.
 func TestFSViewHelperMustRun(t *testing.T) {

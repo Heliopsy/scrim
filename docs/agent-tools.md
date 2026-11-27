@@ -396,6 +396,7 @@ HTTP/1.1 with JSON on the Unix socket, every route under `/v1`, every response c
 | `DELETE /v1/sessions/self` | end the caller's session |
 | `DELETE /v1/sessions/{id}` | revoke a session of the same user |
 | `PUT /v1/sessions/self/values` | add the values found in the session's project files to the redaction set (`scrim run`) |
+| `GET /v1/own-paths` | the files and directories scrim reads secrets or key material from, paths only, for a local user with `sessions:mint` (`scrim run`'s [filesystem view](run.md#scrims-own-files)); sessions are refused |
 | `GET /v1/secrets` | `secrets_list` |
 | `POST /v1/secrets/request` | `secret_request` |
 | `POST /v1/secrets/generate` | `secret_gen` |
