@@ -295,8 +295,32 @@ fn detector_config(r: Option<&v1::RedactionSettings>) -> rc::DetectorConfig {
         d.rules_enabled = !r.detectors_off;
         d.disabled_rules.clone_from(&r.detectors_disabled);
         d.enabled_rules.clone_from(&r.detectors_enabled);
+        d.encoded = r.detectors_encoded;
+        d.entropy = r.entropy.as_ref().filter(|e| e.enabled).map(entropy_config);
     }
     d
+}
+
+/// `redaction.detectors.entropy.*`; zero fields keep the context's defaults.
+fn entropy_config(e: &v1::EntropySettings) -> rc::EntropyConfig {
+    let mut c = if e.any_context {
+        rc::EntropyConfig::any_context()
+    } else {
+        rc::EntropyConfig::default()
+    };
+    if e.threshold_bits > 0.0 {
+        c.threshold_bits = e.threshold_bits;
+    }
+    if e.min_length > 0 {
+        c.min_len = e.min_length as usize;
+    }
+    if e.max_length > 0 {
+        c.max_len = e.max_length as usize;
+    }
+    if e.min_classes > 0 {
+        c.min_classes = u8::try_from(e.min_classes).unwrap_or(u8::MAX);
+    }
+    c
 }
 
 /// The LLM proxy's routes. Routes that authenticate themselves take their credentials from the
@@ -928,6 +952,14 @@ mod tests {
 
     /// `redaction.detectors.*` reaches the redaction core: the group switch, a rule switched
     /// off, a rule off by default switched on, and an unknown name rejecting the snapshot.
+    fn hex_lower(b: &[u8]) -> String {
+        const H: &[u8; 16] = b"0123456789abcdef";
+        b.iter()
+            .flat_map(|&c| [H[usize::from(c >> 4)], H[usize::from(c & 15)]])
+            .map(char::from)
+            .collect()
+    }
+
     #[test]
     fn detector_settings_apply() {
         // Built at run time so no token-shaped literal is committed.
@@ -962,6 +994,39 @@ mod tests {
             ..Default::default()
         };
         assert!(detects(Some(generic), assign));
+        // Encoded forms and entropy are opt-in.
+        let encoded = format!("token: {}", hex_lower(tok.as_bytes()));
+        assert!(!detects(None, &encoded));
+        let on = v1::RedactionSettings {
+            detectors_encoded: true,
+            ..Default::default()
+        };
+        assert!(detects(Some(on), &encoded));
+        let keyed = "SESSION_SECRET=Zq7xR2mK9pLw4TbN8vYc";
+        assert!(!detects(None, keyed));
+        let entropy = |e: v1::EntropySettings| {
+            Some(v1::RedactionSettings {
+                entropy: Some(e),
+                ..Default::default()
+            })
+        };
+        assert!(detects(
+            entropy(v1::EntropySettings {
+                enabled: true,
+                ..Default::default()
+            }),
+            keyed
+        ));
+        // Configured but not enabled, and a threshold no value reaches.
+        assert!(!detects(entropy(v1::EntropySettings::default()), keyed));
+        assert!(!detects(
+            entropy(v1::EntropySettings {
+                enabled: true,
+                threshold_bits: 7.5,
+                ..Default::default()
+            }),
+            keyed
+        ));
         let mut bad = snap(1);
         bad.redaction = Some(v1::RedactionSettings {
             detectors_disabled: vec!["no-such-rule".into()],

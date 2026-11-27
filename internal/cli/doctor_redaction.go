@@ -9,6 +9,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/agentstore"
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/daemon"
 	"github.com/heliopsy/scrim/internal/redactscope"
 	"github.com/heliopsy/scrim/internal/status"
 )
@@ -18,7 +19,14 @@ import (
 // read configuration only and never resolve a credential.
 func redactionIdentityChecks(cfg *config.Config) []status.Check {
 	const name = "redaction: identity"
-	return []status.Check{{Name: name, Run: func(context.Context) []status.Finding { return redactionIdentityFindings(cfg) }}}
+	return []status.Check{
+		{Name: name, Run: func(context.Context) []status.Finding { return redactionIdentityFindings(cfg) }},
+		{Name: "redaction: detectors", Run: func(context.Context) []status.Finding {
+			f := daemon.DetectorFinding(cfg)
+			f.Check = "redaction: detectors"
+			return []status.Finding{f}
+		}},
+	}
 }
 
 func redactionIdentityFindings(cfg *config.Config) []status.Finding {

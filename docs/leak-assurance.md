@@ -13,7 +13,7 @@ The leak suite has four parts:
 - a **leak checker**, written independently of scrim's redactor and guard, that looks for every
   seeded value in what the fake provider received, under far more encodings than the redactor
   matches, including fragments;
-- the **bypass matrix**: 1159 rows, each a way a secret can sit in a request other than verbatim,
+- the **bypass matrix**: 1189 rows, each a way a secret can sit in a request other than verbatim,
   or a secret in a known format that is in no store, with the outcome scrim must produce, over
   HTTP and over WebSocket;
 - a **scenario corpus** of realistic agent sessions (reading `.env`, printing configs, a diff with
@@ -320,8 +320,13 @@ detector covers expect `redacted` and gate; the others are limitations.
 | `atlassian-api-token` | `cat .env` | redacted | |
 | `database-url-password` | `cat .env` | redacted | |
 | `private-key` | `cat id_ed25519` | redacted | |
-| `random-password` | `cat .env` | limitation | limitation: a secret in no store and in no known format is not matched (redaction.detectors.enable: [generic-secret-assignment] covers literal assignments, off by default) |
-| `base64-encoded-token` | `kubectl get secret billing -o yaml` | limitation | limitation: detectors match a format as written; an encoded value that is in no store is not decoded |
+| `groq-api-key` | `cat .env` | redacted | |
+| `xai-api-key` | `cat .env` | redacted | |
+| `openrouter-api-key` | `cat .env` | redacted | |
+| `aws-bedrock-api-key` | `cat .env` | redacted | |
+| `tailscale-key` | `cat .env` | redacted | |
+| `random-password` | `cat .env` | limitation | limitation: a secret in no store and in no known format is not matched by default (redaction.detectors.entropy.enabled covers values after a key name that says secret, off by default) |
+| `base64-encoded-token` | `kubectl get secret billing -o yaml` | limitation | limitation: detectors match a format as written by default (redaction.detectors.encoded decodes base64, hex and percent-encoding, off by default) |
 <!-- matrix:end -->
 
 ### WebSocket rows
