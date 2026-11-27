@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/agentstore"
 	"github.com/heliopsy/scrim/internal/agenttools"
 	"github.com/heliopsy/scrim/internal/audit"
 	"github.com/heliopsy/scrim/internal/gate"
@@ -178,6 +179,39 @@ func (s Stores) Write(ctx context.Context, _ identity.Identity, w agenttools.Wri
 	return agenttools.Written{Ref: out.String(), Store: r.Scheme, Placeholder: s.placeholder(out)}, nil
 }
 
+// WriteChecker is what [Writes] asks: [agentstore.Checker.CheckWrite].
+type WriteChecker interface {
+	CheckWrite(ctx context.Context, id identity.Identity, kubeToken []byte, ref stores.Ref) (agentstore.WriteResult, error)
+}
+
+// Writes adapts the per-agent store identity check to the agent tools
+// (agenttools.WriteAccess): after scrim's rules allow a write, the agent's
+// own store identity is asked, with the caller's service account token for
+// Kubernetes passthrough when the request carried one
+// ([identity.KubernetesTokenFrom]).
+type Writes struct {
+	Checker WriteChecker
+}
+
+// CheckWrite implements agenttools.WriteAccess. A refusal names the store,
+// the reference and the store's reason, never a value.
+func (w Writes) CheckWrite(ctx context.Context, id identity.Identity, op agenttools.Operation) (agenttools.WriteCheck, error) {
+	r, err := resolveRef(op.Ref, op.Store)
+	if err != nil {
+		return agenttools.WriteCheck{}, &agenttools.WriteRefusedError{Reason: "the reference is not valid"}
+	}
+	got, err := w.Checker.CheckWrite(ctx, id, identity.KubernetesTokenFrom(ctx), r.Secret())
+	out := agenttools.WriteCheck{Identity: got.Source, Check: got.Check}
+	switch {
+	case err == nil:
+		return out, nil
+	case errors.Is(err, stores.ErrPermission), errors.Is(err, agentstore.ErrNoIdentity), errors.Is(err, agentstore.ErrUncheckedWrite):
+		return out, &agenttools.WriteRefusedError{Reason: err.Error()}
+	default:
+		return out, err
+	}
+}
+
 // bindingsLabel is the store metadata label that lists a secret's bound
 // hosts, comma-separated.
 const bindingsLabel = "scrim.bindings"
@@ -263,6 +297,12 @@ func Entry(e agenttools.AuditEntry) audit.Entry {
 	}
 	if e.Store != "" {
 		out.Attrs["store"] = e.Store
+	}
+	if e.StoreIdentity != "" {
+		out.Attrs["store_identity"] = e.StoreIdentity
+	}
+	if e.WriteCheck != "" {
+		out.Attrs["store_write_check"] = e.WriteCheck
 	}
 	if e.Decision != "" {
 		out.Attrs["decision"] = e.Decision

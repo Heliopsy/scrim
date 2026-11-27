@@ -156,6 +156,10 @@ type Checker struct {
 	lookup  func(stores.Ref) (stores.Adapter, error)
 	resolve func(context.Context, config.SecretRef) (secret.Value, error)
 	issuer  Issuer
+	// kinds maps store instances to their adapter kinds.
+	kinds           map[string]string
+	skipWrites      bool
+	refuseUnchecked []string
 }
 
 // Options build a Checker.
@@ -175,12 +179,20 @@ type Options struct {
 	// Adapter finds a store by instance name, to check it supports its
 	// login method; nil skips the check.
 	Adapter func(name string) (stores.Adapter, bool)
+	// Kinds maps store instance names to adapter kinds, which say whether a
+	// store can check an agent's write ([stores.ChecksAgentWrites]).
+	Kinds map[string]string
+	// SkipWriteChecks and RefuseUncheckedWrites are the setting values
+	// (identity.skip-agent-write-checks, identity.refuse-unchecked-writes).
+	SkipWriteChecks       bool
+	RefuseUncheckedWrites []string
 }
 
 // New parses the settings. Every problem is reported, naming its key.
 func New(o Options) (*Checker, error) {
 	c := &Checker{logins: map[string]login{}, statics: map[string]map[string]config.SecretRef{},
-		lookup: o.Lookup, resolve: o.Resolve, issuer: o.Issuer}
+		lookup: o.Lookup, resolve: o.Resolve, issuer: o.Issuer,
+		kinds: o.Kinds, skipWrites: o.SkipWriteChecks, refuseUnchecked: o.RefuseUncheckedWrites}
 	var errs []error
 	for _, store := range slices.Sorted(maps.Keys(o.Login)) {
 		l, err := parseLogin(store, o.Login[store])
@@ -423,6 +435,19 @@ func (c *Checker) Check(ctx context.Context, id identity.Identity, kubeToken []b
 		return SourceNone, err
 	}
 	store := a.Name()
+	src := c.source(store, id, kubeToken)
+	if src == SourceShared {
+		return src, nil
+	}
+	if src == SourceNone {
+		return src, fmt.Errorf("store %s: agent %s: %w", store, id.Principal(), ErrNoIdentity)
+	}
+	return src, c.can(ctx, a, src, id, kubeToken, op, ref)
+}
+
+// source is [Checker.Source] for one request: Kubernetes passthrough
+// without the caller's token falls back to a static credential, or none.
+func (c *Checker) source(store string, id identity.Identity, kubeToken []byte) string {
 	src := c.Source(store, id)
 	if src == SourceKubernetes && len(kubeToken) == 0 {
 		src = SourceNone
@@ -430,15 +455,16 @@ func (c *Checker) Check(ctx context.Context, id identity.Identity, kubeToken []b
 			src = SourceStatic
 		}
 	}
-	if src == SourceShared {
-		return src, nil
-	}
-	if src == SourceNone {
-		return src, fmt.Errorf("store %s: agent %s: %w", store, id.Principal(), ErrNoIdentity)
-	}
+	return src
+}
+
+// can asks adapter a whether the agent's identity from src may perform op
+// on ref.
+func (c *Checker) can(ctx context.Context, a stores.Adapter, src string, id identity.Identity, kubeToken []byte, op stores.Op, ref stores.Ref) error {
+	store := a.Name()
 	acc, ok := a.(stores.AgentAccess)
 	if !ok {
-		return src, stores.NewError(store, op, ref, stores.ErrUnsupported, nil)
+		return stores.NewError(store, op, ref, stores.ErrUnsupported, nil)
 	}
 	cred := stores.AgentCredential{Agent: id.Principal()}
 	switch src {
@@ -452,12 +478,12 @@ func (c *Checker) Check(ctx context.Context, id identity.Identity, kubeToken []b
 	case SourceStatic:
 		tok, err := c.resolve(ctx, c.statics[store][id.Agent])
 		if err != nil {
-			return src, fmt.Errorf("store %s: agent %s: resolving identity.store-credentials: %w", store, id.Principal(), err)
+			return fmt.Errorf("store %s: agent %s: resolving identity.store-credentials: %w", store, id.Principal(), err)
 		}
 		cred.Token = tok
 		defer tok.Wipe()
 	}
-	return src, acc.AgentCan(ctx, cred, op, ref)
+	return acc.AgentCan(ctx, cred, op, ref)
 }
 
 // federation builds the exchange for one agent: rendered options, the
