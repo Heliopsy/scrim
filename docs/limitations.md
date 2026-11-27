@@ -209,12 +209,14 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   `keyring`, `kubernetes`, plugins) refuses every use. 1Password takes Connect tokens only, not
   service account tokens. Vaultwarden needs an account per agent (a seat each on bitwarden.com).
   [identity.md](identity.md#stores-without-a-token-exchange)
-- **Agent writes are not checked against the agent's own store identity.** The per-agent check runs
-  before a value is used (injection, restore). `secret_gen`, `secret_capture` and `scrim secret put`
-  write with scrim's own store identity once scrim's rules allow them. Where a store could check a
-  write (OpenBao, Vault, Google, Bitwarden Secrets Manager, Vaultwarden) the adapter can answer it,
-  but nothing asks yet; AWS, Azure Key Vault, Infisical, Doppler and 1Password Connect cannot say
-  whether an identity may write without writing.
+- **Agent writes to some stores cannot be checked against the agent's own store identity.** AWS,
+  Azure Key Vault, Infisical, Doppler and 1Password Connect cannot say whether an identity may write
+  without writing, so `secret_gen`, `secret_capture`, `secret_ask_human` and `scrim secret put` into
+  them are written with scrim's own store identity once scrim's rules allow them, and `scrim doctor`
+  warns about it. `identity.refuse-unchecked-writes` refuses agents' writes to such stores instead.
+  Where the check runs (OpenBao, Vault, Google, Bitwarden Secrets Manager, Vaultwarden), the value
+  is still written by scrim's identity after the agent's identity said it may write.
+  [identity.md](identity.md#what-is-checked)
 - **Some per-agent checks read the value as the agent.** AWS, Azure Key Vault, Infisical and Doppler
   have no call that says whether an identity may read a secret, so the check reads it with the
   agent's credential and wipes it unread.
