@@ -220,6 +220,33 @@ reference, now or once the referenced secret appears, so the computed value woul
 one scrim redacts and injects. Values that are not valid UTF-8 are refused too. Labels passed to a
 write are not stored: Doppler has nowhere to keep them.
 
+## Per-agent identity
+
+Each agent can use Doppler with a token of its own, so Doppler's access rules for that token decide
+alongside scrim's rules ([Agent identity](../identity.md#store-identity-per-agent)):
+
+- a static token per agent in `identity.store-credentials.<store>/<agent>`: a service token for the
+  agent's config, or a service account token whose project roles say what it may use;
+- or a service account identity with OIDC authentication, `identity.store-login.<store>:
+  doppler-oidc identity:<identity ID> audience:<aud>`. Trust scrim's issuer URL as the identity's
+  discovery URL, require the audience and the subject `agent:<name>` (`{agent}`, `{agent_slug}`,
+  `{namespace}` and `{service_account}` work in `identity` to pick one identity per agent). scrim
+  signs a token for the agent, trades it at `POST /v3/auth/oidc` for a short-lived Doppler token,
+  caches that until two thirds of its life and drops it when the agent's session ends.
+
+```yaml
+identity:
+  store-login:
+    dop: "doppler-oidc identity:{agent_slug}-identity-id audience:https://api.doppler.com"
+  store-credentials:
+    dop/ci-bot: file:/run/secrets/doppler-ci-bot-service-token
+```
+
+Doppler has no call that says what a token may do without using it, so before scrim injects or
+restores a value it reads the secret with the agent's token and wipes the value unread. A value
+Doppler withholds from that token (restricted visibility) refuses the use. Writes cannot be checked
+without writing.
+
 ## Errors
 
 Doppler answers errors with `{"messages": [...], "success": false}`. scrim maps them:
@@ -243,6 +270,9 @@ replaced by `(store message withheld)`.
 - Doppler's secret naming mode (Classic or Permissive) is the workplace's; a name the mode refuses
   fails the write with Doppler's message.
 - Visibility and value type labels need a read (see [Policy labels](#policy-labels)).
+- The per-agent check reads the value with the agent's token, and cannot check writes.
+- `doppler-oidc` is tested against the fake only: the request and response follow Doppler's API
+  reference, and the status Doppler answers for a refused identity token is assumed.
 
 ## Testing
 

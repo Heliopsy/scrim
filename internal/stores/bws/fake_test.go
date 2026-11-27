@@ -44,11 +44,21 @@ import (
 // strings clients send. Out-of-band seeding (Seed, the official fixtures)
 // encrypts with the organisation key, as another Bitwarden client would.
 //
+// Besides scrim's own machine account (the official token) it knows agents'
+// machine accounts (addAgent), each with an access token whose key really
+// derives the key of its login's encrypted_payload, an organisation, and
+// read or read-write access per project (grant). GET /secrets/{id} and GET
+// /projects/{id} answer with the caller's own read and write flags and 404
+// when it may not read (SecretsController.GetAsync, ProjectsController.
+// GetAsync).
+//
 // Fidelity limits: no rate limiting, no event logs, no access policies on
 // individual secrets (access is per project, read or read-write), no
-// secret versions or trash, no project management endpoints, bearer tokens
-// are not signed, and the server's exact validation messages are not
-// reproduced, only their status codes.
+// secret versions or trash, no project management endpoints beyond GET
+// /projects/{id}, bearer tokens are not signed, an agent of another
+// organisation gets a random organisation key and sees nothing of this
+// one, and the server's exact validation messages are not reproduced, only
+// their status codes.
 type fakeBWS struct {
 	t   testing.TB
 	srv *httptest.Server
@@ -56,12 +66,17 @@ type fakeBWS struct {
 	org    string
 	orgKey bwcrypto.SymmetricKey
 
-	mu        sync.Mutex
-	bearers   map[string]bool
+	mu sync.Mutex
+	// bearers maps an issued bearer token to the access token ID it was
+	// issued for.
+	bearers   map[string]string
+	agents    map[string]*fakeAgent
 	expiresIn int
 	projects  map[string]*fakeProject
 	secrets   map[string]*fakeSecret
 	logins    int
+	// agentLogins counts logins per agent access token ID.
+	agentLogins map[string]int
 	// requests records every request line and body, for leak checks.
 	requests []string
 	// deviceTypes records the Device-Type header of each request.
@@ -75,6 +90,14 @@ type fakeProject struct {
 	read     bool
 	write    bool
 	created  time.Time
+}
+
+// fakeAgent is an agent's machine account.
+type fakeAgent struct {
+	id, secret string
+	org        string
+	tokenKey   bwcrypto.SymmetricKey // derived from the access token's key part
+	access     map[string][2]bool    // project ID -> read, write
 }
 
 type fakeSecret struct {
@@ -155,7 +178,7 @@ func newFake(t testing.TB) *fakeBWS {
 	}
 	f := &fakeBWS{
 		t: t, org: officialOrg, orgKey: key, expiresIn: 3600,
-		bearers: map[string]bool{}, projects: map[string]*fakeProject{}, secrets: map[string]*fakeSecret{},
+		bearers: map[string]string{}, agents: map[string]*fakeAgent{}, agentLogins: map[string]int{}, projects: map[string]*fakeProject{}, secrets: map[string]*fakeSecret{},
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -249,7 +272,7 @@ func (f *fakeBWS) remove(projectID, key string) {
 func (f *fakeBWS) revokeBearers() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.bearers = map[string]bool{}
+	f.bearers = map[string]string{}
 }
 
 // now is the server clock at DateTime precision (100 ns).
@@ -269,13 +292,13 @@ func (f *fakeBWS) next(prev time.Time) time.Time {
 // fractional digits and Z.
 func dotnet(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.0000000Z") }
 
-func (f *fakeBWS) jwt() string {
+func (f *fakeBWS) jwt(clientID, org string) string {
 	enc := base64.RawURLEncoding.EncodeToString
 	head := enc([]byte(`{"alg":"RS256","typ":"at+jwt"}`))
 	now := time.Now().Unix()
 	body, _ := json.Marshal(map[string]any{
 		"nbf": now, "exp": now + int64(f.expiresIn), "iss": f.srv.URL + "/identity",
-		"client_id": officialTokenID, "sub": newUUID(), "organization": f.org,
+		"client_id": clientID, "sub": newUUID(), "organization": org,
 		"jti": newUUID(), "iat": now, "scope": []string{"api.secrets"},
 	})
 	return head + "." + enc(body) + ".unsigned"
@@ -324,24 +347,26 @@ func (f *fakeBWS) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	auth, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	f.mu.Lock()
-	valid := ok && f.bearers[auth]
+	who, valid := f.bearers[auth]
 	f.mu.Unlock()
-	if !valid {
+	if !ok || !valid {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 	seg := strings.Split(path, "/")
 	switch {
 	case r.Method == "GET" && len(seg) == 3 && seg[0] == "organizations" && seg[2] == "projects":
-		f.listProjects(w, seg[1])
+		f.listProjects(w, who, seg[1])
 	case r.Method == "GET" && len(seg) == 3 && seg[0] == "organizations" && seg[2] == "secrets":
-		f.listSecrets(w, seg[1])
+		f.listSecrets(w, who, seg[1])
 	case r.Method == "POST" && len(seg) == 3 && seg[0] == "organizations" && seg[2] == "secrets":
-		f.create(w, seg[1], body)
+		f.create(w, who, seg[1], body)
 	case r.Method == "GET" && len(seg) == 2 && seg[0] == "secrets":
-		f.get(w, seg[1])
+		f.get(w, who, seg[1])
+	case r.Method == "GET" && len(seg) == 2 && seg[0] == "projects":
+		f.getProject(w, who, seg[1])
 	case r.Method == "PUT" && len(seg) == 2 && seg[0] == "secrets":
-		f.update(w, seg[1], body)
+		f.update(w, who, seg[1], body)
 	default:
 		notFound(w)
 	}
@@ -357,19 +382,25 @@ func (f *fakeBWS) token(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 		return
 	}
-	if form["client_id"] != officialTokenID || form["client_secret"] != officialSecret {
+	id := form["client_id"]
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	org, payload := f.org, officialPayload
+	switch ag := f.agents[id]; {
+	case id == officialTokenID && form["client_secret"] == officialSecret:
+		f.logins++
+	case ag != nil && form["client_secret"] == ag.secret:
+		f.agentLogins[id]++
+		org, payload = ag.org, ag.payload(f)
+	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_client"})
 		return
 	}
-	f.mu.Lock()
-	tok := f.jwt()
-	f.bearers[tok] = true
-	f.logins++
-	exp := f.expiresIn
-	f.mu.Unlock()
+	tok := f.jwt(id, org)
+	f.bearers[tok] = id
 	writeJSON(w, http.StatusOK, map[string]any{
-		"access_token": tok, "expires_in": exp, "token_type": "Bearer", "scope": "api.secrets",
-		"encrypted_payload": officialPayload,
+		"access_token": tok, "expires_in": f.expiresIn, "token_type": "Bearer", "scope": "api.secrets",
+		"encrypted_payload": payload,
 	})
 }
 
@@ -392,12 +423,46 @@ func parseForm(b []byte) (map[string]string, error) {
 	return out, nil
 }
 
-func (f *fakeBWS) projectJSON(p *fakeProject) map[string]any {
+func (f *fakeBWS) projectJSON(p *fakeProject, read, write bool) map[string]any {
 	return map[string]any{"object": "project", "id": p.id, "organizationId": f.org, "name": p.name,
-		"creationDate": dotnet(p.created), "revisionDate": dotnet(p.created), "read": p.read, "write": p.write}
+		"creationDate": dotnet(p.created), "revisionDate": dotnet(p.created), "read": read, "write": write}
 }
 
-func (f *fakeBWS) listProjects(w http.ResponseWriter, org string) {
+// projectAccess is what the machine account who may do in a project.
+func (f *fakeBWS) projectAccess(who, pid string) (read, write bool) {
+	p, ok := f.projects[pid]
+	if !ok {
+		return false, false
+	}
+	if who == officialTokenID {
+		return p.read, p.write
+	}
+	ag := f.agents[who]
+	if ag == nil || ag.org != f.org {
+		return false, false
+	}
+	rw := ag.access[pid]
+	return rw[0], rw[1]
+}
+
+// getProject is ProjectsController.GetAsync: 404 without read access.
+func (f *fakeBWS) getProject(w http.ResponseWriter, who, id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p, ok := f.projects[strings.ToLower(id)]
+	if !ok {
+		notFound(w)
+		return
+	}
+	read, write := f.projectAccess(who, p.id)
+	if !read {
+		notFound(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, f.projectJSON(p, read, write))
+}
+
+func (f *fakeBWS) listProjects(w http.ResponseWriter, who, org string) {
 	if org != f.org {
 		notFound(w)
 		return
@@ -406,8 +471,8 @@ func (f *fakeBWS) listProjects(w http.ResponseWriter, org string) {
 	defer f.mu.Unlock()
 	data := []any{}
 	for _, p := range f.sortedProjects() {
-		if p.read {
-			data = append(data, f.projectJSON(p))
+		if read, write := f.projectAccess(who, p.id); read {
+			data = append(data, f.projectJSON(p, read, write))
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data, "continuationToken": nil})
@@ -422,14 +487,10 @@ func (f *fakeBWS) sortedProjects() []*fakeProject {
 	return out
 }
 
-// access is what the machine account may do with a secret: through its
-// project only.
-func (f *fakeBWS) access(s *fakeSecret) (read, write bool) {
-	p, ok := f.projects[s.projectID]
-	if !ok {
-		return false, false
-	}
-	return p.read, p.write
+// access is what the machine account who may do with a secret: through
+// its project only.
+func (f *fakeBWS) access(who string, s *fakeSecret) (read, write bool) {
+	return f.projectAccess(who, s.projectID)
 }
 
 func (f *fakeBWS) inner(s *fakeSecret) []map[string]any {
@@ -439,7 +500,7 @@ func (f *fakeBWS) inner(s *fakeSecret) []map[string]any {
 	return []map[string]any{}
 }
 
-func (f *fakeBWS) listSecrets(w http.ResponseWriter, org string) {
+func (f *fakeBWS) listSecrets(w http.ResponseWriter, who, org string) {
 	if org != f.org {
 		notFound(w)
 		return
@@ -456,7 +517,7 @@ func (f *fakeBWS) listSecrets(w http.ResponseWriter, org string) {
 	projects := []any{}
 	for _, id := range ids {
 		s := f.secrets[id]
-		read, write := f.access(s)
+		read, write := f.access(who, s)
 		if !read {
 			continue
 		}
@@ -481,7 +542,7 @@ func (f *fakeBWS) secretJSON(s *fakeSecret, projects any, read, write bool) map[
 	}
 }
 
-func (f *fakeBWS) get(w http.ResponseWriter, id string) {
+func (f *fakeBWS) get(w http.ResponseWriter, who, id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	s, ok := f.secrets[strings.ToLower(id)]
@@ -489,7 +550,7 @@ func (f *fakeBWS) get(w http.ResponseWriter, id string) {
 		notFound(w)
 		return
 	}
-	read, write := f.access(s)
+	read, write := f.access(who, s)
 	if !read {
 		notFound(w)
 		return
@@ -530,7 +591,7 @@ func (r writeReq) validate() string {
 	return ""
 }
 
-func (f *fakeBWS) create(w http.ResponseWriter, org string, body []byte) {
+func (f *fakeBWS) create(w http.ResponseWriter, who, org string, body []byte) {
 	var req writeReq
 	if err := json.Unmarshal(body, &req); err != nil {
 		badRequest(w, "malformed body")
@@ -552,7 +613,11 @@ func (f *fakeBWS) create(w http.ResponseWriter, org string, body []byte) {
 		return
 	}
 	p, ok := f.projects[strings.ToLower(req.ProjectIDs[0])]
-	if !ok || !p.write {
+	if !ok {
+		notFound(w)
+		return
+	}
+	if _, write := f.projectAccess(who, p.id); !write {
 		notFound(w)
 		return
 	}
@@ -564,7 +629,7 @@ func (f *fakeBWS) create(w http.ResponseWriter, org string, body []byte) {
 	writeJSON(w, http.StatusOK, f.secretJSON(s, []map[string]any{{"id": p.id, "name": nil}}, true, true))
 }
 
-func (f *fakeBWS) update(w http.ResponseWriter, id string, body []byte) {
+func (f *fakeBWS) update(w http.ResponseWriter, who, id string, body []byte) {
 	var req writeReq
 	if err := json.Unmarshal(body, &req); err != nil {
 		badRequest(w, "malformed body")
@@ -581,7 +646,7 @@ func (f *fakeBWS) update(w http.ResponseWriter, id string, body []byte) {
 		notFound(w)
 		return
 	}
-	if _, write := f.access(s); !write {
+	if _, write := f.access(who, s); !write {
 		notFound(w)
 		return
 	}
@@ -598,7 +663,7 @@ func (f *fakeBWS) update(w http.ResponseWriter, id string, body []byte) {
 			return
 		}
 		np, ok := f.projects[strings.ToLower(req.ProjectIDs[0])]
-		if !ok || !np.write {
+		if _, write := f.projectAccess(who, strings.ToLower(req.ProjectIDs[0])); !ok || !write {
 			notFound(w)
 			return
 		}
@@ -633,4 +698,78 @@ func (f *fakeBWS) sawPlain(p string) bool {
 		}
 	}
 	return false
+}
+
+// addAgent creates a machine account of org (the fake's own organisation
+// when org is "") and returns its access token, generated at runtime.
+func (f *fakeBWS) addAgent(org string) (token, id string) {
+	f.t.Helper()
+	if org == "" {
+		org = f.org
+	}
+	raw := make([]byte, 16)
+	_, _ = rand.Read(raw)
+	sec := make([]byte, 30)
+	_, _ = rand.Read(sec)
+	id = newUUID()
+	token = "0." + id + "." + base64.RawURLEncoding.EncodeToString(sec)[:30] + ":" + base64.StdEncoding.EncodeToString(raw)
+	tok, err := parseAccessToken(secret.FromString(token))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	tok.clientSecret.Wipe()
+	tok.keyText.Wipe()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.agents[id] = &fakeAgent{id: id, secret: token[len("0."+id+"."):strings.IndexByte(token, ':')], org: org, tokenKey: tok.key, access: map[string][2]bool{}}
+	return token, id
+}
+
+// grant gives the agent's machine account read, or read-write, access to
+// a project.
+func (f *fakeBWS) grant(agentID, projectID string, write bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.agents[agentID].access[projectID] = [2]bool{true, write}
+}
+
+func (f *fakeBWS) agentLoginCount(agentID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.agentLogins[agentID]
+}
+
+// payload is the login's encrypted_payload for the agent: the organisation
+// key under the access token key, as the identity server sends it (a
+// random key for another organisation). f.mu is held.
+func (ag *fakeAgent) payload(f *fakeBWS) string {
+	key := f.orgKey.Value()
+	if ag.org != f.org {
+		raw := make([]byte, bwcrypto.SymmetricKeySize)
+		_, _ = rand.Read(raw)
+		key = secret.Adopt(raw)
+	}
+	var js []byte
+	_ = key.Expose(func(b []byte) error {
+		js = []byte(`{"encryptionKey":"` + base64.StdEncoding.EncodeToString(b) + `"}`)
+		return nil
+	})
+	e, err := ag.tokenKey.Encrypt(secret.Adopt(js))
+	if err != nil {
+		f.t.Errorf("fake: %v", err)
+	}
+	return e.String()
+}
+
+// revokeAgent invalidates the agent's access token and its bearers, as
+// when the token is deleted in the web vault.
+func (f *fakeBWS) revokeAgent(agentID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.agents[agentID].secret = "revoked-" + newUUID()
+	for b, who := range f.bearers {
+		if who == agentID {
+			delete(f.bearers, b)
+		}
+	}
 }

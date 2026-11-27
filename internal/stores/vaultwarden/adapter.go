@@ -21,6 +21,21 @@
 // catalog labels, never values. Every item also carries native
 // "vaultwarden.*" labels describing its organisation, collections, folder
 // and attributes (labels.go), which policy rules see as secret.labels.
+//
+// Per-agent identity (agent.go): each agent has its own Bitwarden or
+// Vaultwarden account, a member of the organisations holding the shared
+// items, with collection access (can view, can view except passwords, can
+// edit, can manage) set per agent. identity.store-credentials holds that
+// account's personal API key as {"client_id": "user.<uuid>",
+// "client_secret": "..."}. Before scrim uses an item for an agent, it finds
+// the item in its own vault, logs in with the agent's API key and asks the
+// server for the item as the agent: an item the agent cannot see, whose
+// passwords its collection hides, or (for a write) that it may not edit is
+// refused, and a new item must go into a collection the agent may add to.
+// Nothing is decrypted with the agent's account, so its master password is
+// never needed. The server records the agent's logins and item views under
+// the agent's own account, and as organisation events when those are
+// enabled.
 package vaultwarden
 
 import (
@@ -40,6 +55,7 @@ import (
 	"github.com/heliopsy/scrim/internal/fsperm"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/stores"
+	"github.com/heliopsy/scrim/internal/stores/internal/agentcache"
 	"github.com/heliopsy/scrim/internal/stores/vaultwarden/bwcrypto"
 )
 
@@ -71,6 +87,8 @@ type Adapter struct {
 	opts    Options
 	resolve Resolver
 	cl      *client
+	// agents caches the access tokens agents' own accounts logged in with.
+	agents *agentcache.Cache[secret.Value]
 
 	mu          sync.Mutex
 	sess        *session
@@ -115,6 +133,7 @@ func New(name string, o Options, resolve Resolver) (*Adapter, error) {
 		opts:    o,
 		resolve: resolve,
 		cl:      newClient(o.URL, hc, o.deviceID(name)),
+		agents:  agentcache.New(copyValue, secret.Value.Wipe),
 	}, nil
 }
 
@@ -566,11 +585,13 @@ func (a *Adapter) Health(ctx context.Context) error {
 	return err
 }
 
-// Close implements stores.Adapter. It wipes the session token and keys.
+// Close implements stores.Adapter. It wipes the session token, the keys and
+// the agents' access tokens.
 func (a *Adapter) Close() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.closed = true
+	a.agents.Close()
 	a.dropSession()
 	a.keys.wipe()
 	a.keys = nil
@@ -578,11 +599,12 @@ func (a *Adapter) Close() error {
 	return nil
 }
 
-// Lock drops the keys and the session; the next operation unlocks again
-// from the unlock reference.
+// Lock drops the keys, the session and the agents' access tokens; the next
+// operation unlocks again from the unlock reference.
 func (a *Adapter) Lock() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.agents.Close()
 	a.dropSession()
 	a.keys.wipe()
 	a.keys = nil

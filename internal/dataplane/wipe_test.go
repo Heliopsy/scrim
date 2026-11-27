@@ -179,9 +179,13 @@ func (p *recordingPool) buffers() [][]byte {
 
 // TestBoundaryLeavesNoCopyInTransportBuffers sends a snapshot and redact
 // calls (large values that span HTTP/2 frames and small ones below gRPC's
-// pooling threshold) and checks that, once the calls return, no buffer the
-// client's transport read into or wrote from, and none its pool handed out,
-// still holds any part of the values.
+// pooling threshold) and checks that, once the connection is closed, no
+// buffer the client's transport read into or wrote from, and none its pool
+// handed out, still holds any part of the values. Closing first is what makes
+// the check sound: the transport's writer reuses its frame buffer for control
+// frames (PING, WINDOW_UPDATE) and its reader releases pool buffers, both on
+// their own goroutines, and ClientConn.Close returns only after both have
+// exited. Nothing in Close zeroes a buffer the codec or pool did not already.
 func TestBoundaryLeavesNoCopyInTransportBuffers(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -248,13 +252,10 @@ func TestBoundaryLeavesNoCopyInTransportBuffers(t *testing.T) {
 		}
 		return ""
 	}
-	// gRPC releases a sent message's buffer from its writer goroutine, which
-	// can run just after the response arrives.
-	deadline := time.Now().Add(5 * time.Second)
-	for where := leftover(); where != ""; where = leftover() {
-		if time.Now().After(deadline) {
-			t.Fatalf("%s still holds secret bytes after the calls", where)
-		}
-		time.Sleep(10 * time.Millisecond)
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if where := leftover(); where != "" {
+		t.Fatalf("%s still holds secret bytes after the calls", where)
 	}
 }
