@@ -5,6 +5,7 @@
     {"name": "base85", "default": false},
     {"name": "compressed", "default": false},
     {"name": "spelled-out", "default": true},
-    {"name": "split-fragments", "default": true}
+    {"name": "split-fragments", "default": true},
+    {"name": "cross-request", "default": true}
   ]
 }

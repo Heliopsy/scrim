@@ -30,6 +30,8 @@
 //! * Split fragments: fragments of a value too short for the fragment rule (at least the
 //!   minimum length, below half the value) count when together they cover all of the value
 //!   but its last [`SPLIT_SLACK`] bytes at most, from at least two places of the request.
+//! * Cross-request: the same rule over the requests of one session, from the pieces remembered
+//!   by [`crate::guard_cross`] (which value, which bytes of it, when: never the bytes).
 
 use std::io::Read;
 
@@ -53,6 +55,12 @@ pub struct TransformConfig {
     pub spelled: bool,
     /// Short fragments that together cover a value (`split-fragments`).
     pub split_fragments: bool,
+    /// Short fragments of a value spread over several requests of one session
+    /// (`cross-request`).
+    pub cross_request: bool,
+    /// The memory `cross-request` keeps its pieces in. Give every snapshot the same one so
+    /// pieces join across snapshot changes; `None` gives each guard its own.
+    pub memory: Option<std::sync::Arc<super::CrossMemory>>,
 }
 
 impl Default for TransformConfig {
@@ -63,6 +71,8 @@ impl Default for TransformConfig {
             compressed: false,
             spelled: true,
             split_fragments: true,
+            cross_request: true,
+            memory: None,
         }
     }
 }
@@ -74,6 +84,7 @@ pub const TRANSFORM_NAMES: &[&str] = &[
     "compressed",
     "spelled-out",
     "split-fragments",
+    "cross-request",
 ];
 
 impl TransformConfig {
@@ -85,6 +96,8 @@ impl TransformConfig {
             compressed: false,
             spelled: false,
             split_fragments: false,
+            cross_request: false,
+            memory: None,
         }
     }
 
@@ -96,6 +109,7 @@ impl TransformConfig {
             "compressed" => &mut self.compressed,
             "spelled-out" => &mut self.spelled,
             "split-fragments" => &mut self.split_fragments,
+            "cross-request" => &mut self.cross_request,
             _ => return false,
         };
         *f = on;
@@ -893,6 +907,20 @@ pub(super) struct Short {
     pub end: usize,
 }
 
+/// Bytes of a value of `len` bytes that the pieces `(off, end)` cover, and whether that is all of
+/// it but [`SPLIT_SLACK`] bytes (at most a quarter of it). `pieces` is sorted by offset.
+pub(super) fn covers(pieces: impl Iterator<Item = (usize, usize)>, len: usize) -> bool {
+    let mut covered = 0usize;
+    let mut reach = 0usize;
+    for (a, b) in pieces {
+        if b > reach {
+            covered += b - a.max(reach);
+            reach = b;
+        }
+    }
+    covered + SPLIT_SLACK.min(len / 4) >= len
+}
+
 /// Calls `emit(start, end, form)` for every short fragment of a form whose fragments, from at
 /// least two places, cover all of it but [`SPLIT_SLACK`] bytes (at most a quarter of it).
 pub(super) fn assemble(
@@ -910,21 +938,19 @@ pub(super) fn assemble(
         }
         let group = &short[i..j];
         let len = form_len(form);
-        let mut covered = 0usize;
-        let mut reach = 0usize;
-        for f in group {
-            let (a, b) = (f.off as usize, (f.off + f.len) as usize);
-            if b > reach {
-                covered += b - a.max(reach);
-                reach = b;
-            }
-        }
         let places = group
             .iter()
             .map(|f| f.start)
             .collect::<std::collections::BTreeSet<_>>()
             .len();
-        if places >= 2 && covered + SPLIT_SLACK.min(len / 4) >= len {
+        if places >= 2
+            && covers(
+                group
+                    .iter()
+                    .map(|f| (f.off as usize, (f.off + f.len) as usize)),
+                len,
+            )
+        {
             let mut last = None;
             for f in group {
                 if last != Some((f.start, f.end)) {

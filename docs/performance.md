@@ -119,6 +119,13 @@ short to count alone, the guard checks the whole body instead, and a segment hol
 cached. A conversation that carries such a piece is therefore checked whole on every turn, with or
 without the cache.
 
+The cross-request transform reads the same short pieces (it collects them even with
+split-fragments off) and only from a whole check: a body the cache shows clean holds none. Joining
+a request's pieces with the ones its session sent before takes one lock per guard and a scan of at
+most 256 remembered pieces. On the repository corpus (141 requests of 66 KB, 1,200 values) the
+guard took 0.74 ms per request with a session and 0.73 ms without
+(`measure_false_positives_and_cost` in `scrim-redact/tests/cross_request.rs`).
+
 The cache holds hashes only, never bytes or values: at most 65,536 per redaction set (about 3 MB),
 least recently used first out. It belongs to the snapshot, so any change to the values (and any
 new snapshot push) starts an empty one. A set with a value containing `,{` cannot have its

@@ -163,6 +163,56 @@ pub enum GuardVerdict {
 pub trait Guard: Send + Sync {
     /// Scans `outgoing`.
     fn check(&self, outgoing: &[u8]) -> Result<GuardVerdict, EngineError>;
+
+    /// Scans `outgoing`, one request of the session `session`: a guard that keeps state across
+    /// a session's requests (the `cross-request` transform) joins it with what the session sent
+    /// before. The default ignores the session.
+    fn check_in(&self, outgoing: &[u8], session: &SessionKey) -> Result<GuardVerdict, EngineError> {
+        let _ = session;
+        self.check(outgoing)
+    }
+}
+
+/// Which session a request belongs to, for state the guard keeps across a session's requests: a
+/// SHA-256 of what the transport said about the caller (a client certificate, a session id, a
+/// Kubernetes token, a Unix user). Never the token or credential itself, never printed.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SessionKey(pub [u8; 32]);
+
+impl SessionKey {
+    /// The key of the caller described by `kind` (what the transport carried) and `id`.
+    pub fn new(kind: &str, id: &[u8]) -> Self {
+        use sha2::Digest as _;
+        let mut h = sha2::Sha256::new();
+        h.update(b"scrim guard session\0");
+        h.update(kind.as_bytes());
+        h.update([0u8]);
+        h.update(id);
+        Self(h.finalize().into())
+    }
+}
+
+impl fmt::Debug for SessionKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SessionKey(..)")
+    }
+}
+
+/// A [`Guard`] bound to one request's session: [`Guard::check`] is the inner guard's
+/// [`Guard::check_in`].
+pub(crate) struct SessionGuard {
+    pub(crate) inner: Arc<dyn Guard>,
+    pub(crate) session: SessionKey,
+}
+
+impl Guard for SessionGuard {
+    fn check(&self, outgoing: &[u8]) -> Result<GuardVerdict, EngineError> {
+        self.inner.check_in(outgoing, &self.session)
+    }
+
+    fn check_in(&self, outgoing: &[u8], session: &SessionKey) -> Result<GuardVerdict, EngineError> {
+        self.inner.check_in(outgoing, session)
+    }
 }
 
 /// Where a placeholder sits in a piece of text.
@@ -340,6 +390,9 @@ pub enum Admission {
         /// Redactor and guard for this request in place of the snapshot's, `None` for the
         /// snapshot's (the whole dictionary).
         redaction: Option<ScopedRedaction>,
+        /// The caller's session, for the guard's state across requests (`cross-request`).
+        /// `None` checks every request on its own.
+        session: Option<SessionKey>,
     },
     /// Refuse with `policy_denied`. `detail` names the rule and never contains a value.
     Deny {

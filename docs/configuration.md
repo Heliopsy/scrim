@@ -3032,7 +3032,7 @@ Remember which parts of a request body the guard found clean (BLAKE3 hashes only
 
 #### `redaction.guard.disable`
 
-Guard transform decoders to turn off, by name: confusables, spelled-out, split-fragments. confusables reads look-alike Unicode, tag and invisible characters as ASCII, spelled-out reads values written as NATO, digit and symbol words, split-fragments joins short fragments of a value spread over one request. Turning one off lets that form of a value through.
+Guard transform decoders to turn off, by name: confusables, spelled-out, split-fragments, cross-request. confusables reads look-alike Unicode, tag and invisible characters as ASCII, spelled-out reads values written as NATO, digit and symbol words, split-fragments joins short fragments of a value spread over one request, cross-request joins them over the requests of one agent session (including providers that keep earlier turns, such as previous_response_id), for pieces that read as random, per replica, for 30 minutes; it adds no measurable guard time and found no false positive for random values over a 9 MB session. Turning one off lets that form of a value through.
 
 | | |
 |---|---|

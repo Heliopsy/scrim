@@ -309,8 +309,17 @@ fn detector_config(r: Option<&v1::RedactionSettings>) -> rc::DetectorConfig {
 
 /// The guard's transform decoders (`redaction.guard.enable` and `.disable`). Unset keeps the
 /// defaults; an unknown name rejects the snapshot.
+/// The guard's cross-request memory, one per process: every snapshot gets it, so pieces a
+/// session sent before a change to the redaction set (a session token added or revoked, a value
+/// refreshed) still join with the pieces it sends after.
+static CROSS_MEMORY: std::sync::LazyLock<Arc<rc::CrossMemory>> =
+    std::sync::LazyLock::new(|| Arc::new(rc::CrossMemory::new()));
+
 fn transform_config(r: Option<&v1::RedactionSettings>) -> Result<rc::TransformConfig, Rejected> {
-    let mut t = rc::TransformConfig::default();
+    let mut t = rc::TransformConfig {
+        memory: Some(Arc::clone(&CROSS_MEMORY)),
+        ..rc::TransformConfig::default()
+    };
     if let Some(r) = r {
         for (names, on) in [(&r.guard_disabled, false), (&r.guard_enabled, true)] {
             for n in names {
@@ -1016,6 +1025,15 @@ mod tests {
             ..Default::default()
         };
         assert!(detects(Some(generic), assign));
+        // Every snapshot's guard shares one cross-request memory.
+        let (a, b) = (
+            transform_config(None).unwrap(),
+            transform_config(None).unwrap(),
+        );
+        assert!(Arc::ptr_eq(
+            a.memory.as_ref().unwrap(),
+            b.memory.as_ref().unwrap()
+        ));
         // Guard transforms: unknown names reject the snapshot.
         let mut bad_tx = snap(1);
         bad_tx.redaction = Some(v1::RedactionSettings {

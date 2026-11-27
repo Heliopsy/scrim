@@ -22,7 +22,7 @@ func TestGuardTransformSettings(t *testing.T) {
 		t.Fatalf("defaults: %v", r)
 	}
 	def := buildConfig(t, "")
-	if p := guardProtection(def); !p.Active || p.Detail != "on: confusables, spelled-out, split-fragments; off: base85, compressed" {
+	if p := guardProtection(def); !p.Active || p.Detail != "on: confusables, spelled-out, split-fragments, cross-request; off: base85, compressed" {
 		t.Fatalf("default protection: %+v", p)
 	}
 	if f := GuardTransformFinding(def); f.Outcome != status.Pass {
@@ -38,7 +38,7 @@ func TestGuardTransformSettings(t *testing.T) {
 		t.Fatalf("settings: %v", r)
 	}
 	cfg := buildConfig(t, body)
-	if p := guardProtection(cfg); p.Detail != "on: confusables, compressed, split-fragments; off: base85, spelled-out" {
+	if p := guardProtection(cfg); p.Detail != "on: confusables, compressed, split-fragments, cross-request; off: base85, spelled-out" {
 		t.Fatalf("protection: %+v", p)
 	}
 	if f := GuardTransformFinding(cfg); f.Outcome != status.Warn || !strings.Contains(f.Message, "spelled-out") {

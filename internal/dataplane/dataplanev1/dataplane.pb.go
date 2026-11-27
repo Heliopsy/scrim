@@ -3155,7 +3155,7 @@ type RedactionSettings struct {
 	GuardCacheOff bool `protobuf:"varint,8,opt,name=guard_cache_off,json=guardCacheOff,proto3" json:"guard_cache_off,omitempty"`
 	// guard_disabled names guard transform decoders switched off
 	// (redaction.guard.disable): confusables, base85, compressed, spelled-out,
-	// split-fragments.
+	// split-fragments, cross-request.
 	GuardDisabled []string `protobuf:"bytes,9,rep,name=guard_disabled,json=guardDisabled,proto3" json:"guard_disabled,omitempty"`
 	// guard_enabled names guard transform decoders that are off by default and
 	// switched on (redaction.guard.enable).

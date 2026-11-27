@@ -399,6 +399,7 @@ impl RequestGate for LlmGate {
             Admission::Forward {
                 policy: Arc::new(d.restore_policy(who.caller(Some(info.provider)))),
                 redaction: self.1.for_caller(&who),
+                session: Some(who.guard_session()),
             }
         })
     }

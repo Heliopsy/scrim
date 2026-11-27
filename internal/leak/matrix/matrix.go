@@ -24,6 +24,7 @@ package matrix
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -110,6 +111,9 @@ func Rows() []Row {
 	seen := map[string]bool{}
 	add := func(api fp.API, t Transform, p Placement) {
 		if p.Build(api, Content{Value: "x"}, EscapeMinimal) == nil {
+			return
+		}
+		if len(p.Transforms) > 0 && !slices.Contains(p.Transforms, t.ID) {
 			return
 		}
 		id := fmt.Sprintf("%s/%s/%s", api, p.ID, t.ID)
