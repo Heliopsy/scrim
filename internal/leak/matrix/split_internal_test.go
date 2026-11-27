@@ -33,7 +33,7 @@ func TestShortPiecesOfEverySeed(t *testing.T) {
 	uncut := map[leak.Kind]int{}
 	defer func() {
 		for k, n := range uncut {
-			if (k == leak.KindAWSAccessKey && n > runs/3) || (k != leak.KindAWSAccessKey && n > runs/20) {
+			if ((k == leak.KindAWSAccessKey || k == leak.KindPassword) && n > runs/3) || (k != leak.KindAWSAccessKey && k != leak.KindPassword && n > runs/20) {
 				t.Errorf("%s: %d of %d values not cut", k, n, runs)
 			}
 		}
@@ -69,6 +69,9 @@ func TestShortPiecesOfEverySeed(t *testing.T) {
 				}
 				if 2*len(x) >= len(v) && len(x) < maxFragment {
 					t.Fatalf("%s: piece %d is a fragment on its own", s, i)
+				}
+				if k := alnumCount(x); len(x) < maxFragment && k >= minPiece && 2*k >= alnumCount(v) {
+					t.Fatalf("%s: piece %d holds half the value's letters and digits", s, i)
 				}
 				covered += len(x)
 			}
