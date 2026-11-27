@@ -291,7 +291,7 @@ tests:
         severity: critical
       exp_annotations:
         summary: scrim secret store is degraded
-        description: Store vault on 127.0.0.1:9792 is degraded. Values from it may be missing from redaction.
+        description: "Store vault on 127.0.0.1:9792 is degraded: its last refresh failed or a redact target holds no value. Secrets added or rotated there since the last good refresh are not redacted yet."
         runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimstoredegraded
 - name: ScrimStoreDegraded stays quiet after recovery
   interval: 1m
@@ -320,8 +320,8 @@ tests:
         store: vault
         severity: warning
       exp_annotations:
-        summary: scrim secret store is unreachable
-        description: Store vault on 127.0.0.1:9792 has not answered for 10 minutes. scrim keeps serving the last values it loaded.
+        summary: scrim secret store is unhealthy
+        description: "Store vault on 127.0.0.1:9792 has been unhealthy for 10 minutes: not loaded, locked, or not refreshed within its refresh.staleness. scrim keeps redacting the last values it loaded."
         runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimstoreunreachable
 - name: ScrimStoreUnreachable stays quiet while up
   interval: 1m
@@ -481,7 +481,7 @@ tests:
         severity: warning
       exp_annotations:
         summary: scrim is dropping audit entries
-        description: Audit entries on 127.0.0.1:9792 were dropped in the last 15 minutes. A sink is slow or failing.
+        description: Data plane audit events on 127.0.0.1:9792 were dropped in the last 15 minutes, by the data plane or because the state backend could not write them.
         runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditdropping
 - name: ScrimAuditDropping ignores old drops
   interval: 1m

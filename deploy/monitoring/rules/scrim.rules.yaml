@@ -135,8 +135,9 @@ groups:
         annotations:
           summary: scrim secret store is degraded
           description: >-
-            Store {{ $labels.store }} on {{ $labels.instance }} is degraded. Values from it may
-            be missing from redaction.
+            Store {{ $labels.store }} on {{ $labels.instance }} is degraded: its last refresh
+            failed or a redact target holds no value. Secrets added or rotated there since the
+            last good refresh are not redacted yet.
           runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimstoredegraded
 
       - alert: ScrimStoreUnreachable
@@ -145,10 +146,11 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: scrim secret store is unreachable
+          summary: scrim secret store is unhealthy
           description: >-
-            Store {{ $labels.store }} on {{ $labels.instance }} has not answered for 10 minutes.
-            scrim keeps serving the last values it loaded.
+            Store {{ $labels.store }} on {{ $labels.instance }} has been unhealthy for 10 minutes:
+            not loaded, locked, or not refreshed within its refresh.staleness. scrim keeps
+            redacting the last values it loaded.
           runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimstoreunreachable
 
       - alert: ScrimStoreStale
@@ -218,8 +220,8 @@ groups:
         annotations:
           summary: scrim is dropping audit entries
           description: >-
-            Audit entries on {{ $labels.instance }} were dropped in the last 15 minutes. A sink
-            is slow or failing.
+            Data plane audit events on {{ $labels.instance }} were dropped in the last 15
+            minutes, by the data plane or because the state backend could not write them.
           runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditdropping
 
       - alert: ScrimAuditSinkDropping
