@@ -47,6 +47,7 @@ var (
 	})
 	CredentialsFile = config.Register(config.Spec[string]{
 		Key:             "nats.credentials-file",
+		KeyMaterial:     true,
 		Description:     "Path to a NATS credentials file (JWT and NKey seed), for decentralised authentication; empty for none.",
 		RestartRequired: true,
 	})

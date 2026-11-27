@@ -30,6 +30,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/agenttools"
+	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/fsview"
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/profiles"
@@ -111,6 +113,10 @@ type FSViewOptions struct {
 	Probe func(ctx context.Context, helper string) fsview.Availability
 	// PasswdHome overrides the password-database home; tests set it.
 	PasswdHome string
+	// AllowReadableOwn starts the agent although the view cannot hide some
+	// of scrim's own files its user can read
+	// (run.fs-view-allow-readable-own-files, weakening).
+	AllowReadableOwn bool
 }
 
 func (f FSViewOptions) helper() string {
@@ -302,7 +308,7 @@ func (p *Prepared) build(ctx context.Context, ep Endpoints) error {
 			return err
 		}
 	}
-	return p.buildView(ctx, dir, rendered)
+	return p.buildView(ctx, ep, dir, scrimPath, rendered)
 }
 
 // writeFiles writes the plan's directories and files into the session
@@ -335,13 +341,34 @@ func (p *Prepared) writeFiles() error {
 	return nil
 }
 
+// SessionConfigFile is the empty config file SCRIM_CONFIG points at inside
+// a session whose view hides scrim's config files, so `scrim mcp` and
+// `scrim secret` there still start; they find the agent API through
+// SCRIM_API_SOCKET.
+const SessionConfigFile = "scrim-config.yaml"
+
 // buildView builds the session filesystem view over the profiles' fixed
-// paths and run.fs-view-hide, and prepares it outside a dry run.
-func (p *Prepared) buildView(ctx context.Context, dir string, rendered *profiles.Rendered) error {
+// paths, run.fs-view-hide and scrim's own files, and prepares it outside a
+// dry run.
+func (p *Prepared) buildView(ctx context.Context, ep Endpoints, dir, scrimPath string, rendered *profiles.Rendered) error {
 	o := p.opts
 	env := o.environ()
 	in := fsview.Input{Mode: o.FSView.Mode, Home: envMap(env)["HOME"], PasswdHome: o.FSView.PasswdHome,
-		Hide: o.FSView.Hide, SessionDir: dir, Paths: viewPaths(rendered, filepath.Join(dir, ProfilesDir))}
+		Hide: o.FSView.Hide, SessionDir: dir, Paths: viewPaths(rendered, filepath.Join(dir, ProfilesDir)),
+		Keep: []string{ep.APISocket, scrimPath, o.FSView.helper()}, AllowReadableOwn: o.FSView.AllowReadableOwn}
+	if !o.dry() {
+		in.Keep = append(in.Keep, dir)
+	}
+	if in.Mode != "" && in.Mode != fsview.ModeOff && runtime.GOOS != "windows" {
+		own, warn, err := ownPaths(ctx, ep.APISocket)
+		if err != nil {
+			return refused("session filesystem view: %v", err)
+		}
+		if warn != "" {
+			p.Plan.Warnings = append(p.Plan.Warnings, warn)
+		}
+		in.Own = own
+	}
 	in.Available = func() fsview.Availability {
 		probe := o.FSView.Probe
 		if probe == nil {
@@ -354,8 +381,24 @@ func (p *Prepared) buildView(ctx context.Context, dir string, rendered *profiles
 		return refused("session filesystem view: %v", err)
 	}
 	p.Plan.FSView = v
+	for _, x := range v.Exposed {
+		p.Plan.Warnings = append(p.Plan.Warnings, "filesystem view: NOT hidden ("+fsview.AllowReadableOwn.Name()+" is set): "+x)
+	}
 	if !v.Active() {
 		return nil
+	}
+	if slices.ContainsFunc(v.Entries, func(e fsview.Entry) bool { return e.Own && e.Origin == config.OwnOriginConfigFile }) {
+		cf := filepath.Join(dir, SessionConfigFile)
+		p.Plan.Set = slices.DeleteFunc(p.Plan.Set, func(x Var) bool { return x.Name == config.EnvConfig })
+		p.Plan.Set = append(p.Plan.Set, Var{Name: config.EnvConfig, Value: cf,
+			Why: "scrim's config files are hidden from the session; scrim commands in it read this empty one"})
+		if !o.dry() {
+			data := fmt.Sprintf("# scrim run session %s: scrim's own config files are hidden from the agent.\napiVersion: %s\nkind: %s\n",
+				p.Session.ID, config.APIVersion, config.FileKind)
+			if err := os.WriteFile(cf, []byte(data), 0o600); err != nil {
+				return refused("writing %s failed: %v", SessionConfigFile, err)
+			}
+		}
 	}
 	if v.Mode == fsview.ModeHome {
 		for _, fv := range v.Vars(env) {
@@ -375,6 +418,28 @@ func (p *Prepared) buildView(ctx context.Context, dir string, rendered *profiles
 		return refused("preparing the session filesystem view failed: %v", err)
 	}
 	return nil
+}
+
+// ownPaths asks the daemon behind socket, as the local user (the session
+// token is not sent: sessions may not ask), which files it reads secrets
+// or key material from. A daemon too old to say gives a warning and no
+// paths; any other failure is an error, so the view never silently misses
+// them.
+func ownPaths(ctx context.Context, socket string) ([]fsview.OwnPath, string, error) {
+	c := localapi.NewClient(socket, secret.Value{})
+	defer c.Close()
+	got, err := c.OwnPaths(ctx)
+	if agenttools.CodeOf(err) == agenttools.CodeNotFound {
+		return nil, "filesystem view: this scrim does not report its own files (an older version), so they are not hidden; restart it", nil
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("asking scrim for its own files failed: %w", err)
+	}
+	out := make([]fsview.OwnPath, 0, len(got))
+	for _, g := range got {
+		out = append(out, fsview.OwnPath{Path: g.Path, Origin: g.Origin})
+	}
+	return out, "", nil
 }
 
 // viewPaths are the profiles' fixed paths, each with its replacement only

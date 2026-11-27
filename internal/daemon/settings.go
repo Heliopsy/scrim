@@ -164,6 +164,7 @@ var (
 	// CaptureDir turns on capture mode.
 	CaptureDir = config.Register(config.Spec[string]{
 		Key:             "proxy.capture.dir",
+		KeyMaterial:     true,
 		Description:     "Capture mode: write every provider request exactly as it left, and the response as received, to this directory (mode 0700; refused if group or others can access it). Empty disables capture. `scrim proxy --capture=DIR` sets it.",
 		Flag:            true,
 		RestartRequired: true,

@@ -111,6 +111,12 @@ func WriteHuman(w io.Writer, r Report) error {
 		for _, g := range v.Gaps {
 			p.line("    not covered: %s", g)
 		}
+		if len(v.ReadableOwn) > 0 {
+			p.line("  scrim's own secret files readable by this user (scrim run hides them from sessions):")
+			for _, f := range v.ReadableOwn {
+				p.line("    %s", f)
+			}
+		}
 	}
 
 	if r.EBPF != nil {

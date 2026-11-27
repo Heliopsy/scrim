@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -342,6 +343,11 @@ func TestRuntimeEndToEnd(t *testing.T) {
 	who, err := c.WhoAmI(ctx)
 	if err != nil || who.Source != identity.SourcePeer || !who.Known() {
 		t.Fatalf("whoami: %+v %v", who, err)
+	}
+	// The daemon reports its own files to the user that mints sessions.
+	own, err := c.OwnPaths(ctx)
+	if err != nil || !slices.Contains(own, localapi.OwnPath{Path: filepath.Join(home, "scrim"), Origin: config.OwnOriginStateDir}) {
+		t.Fatalf("own paths: %+v %v", own, err)
 	}
 	out, err := c.Generate(ctx, agenttools.GenInput{Ref: "bao://kv/agents/db#password"})
 	if err != nil || out.Ref != "bao://kv/agents/db#password" {
