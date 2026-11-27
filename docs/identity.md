@@ -691,8 +691,8 @@ Static credentials (`identity.store-credentials`) and how each store checks them
 | `vaultwarden` | the agent account's personal API key, as JSON | the item's `viewPassword` flag for that account | the item's `edit` flag, or the collection's `readOnly` |
 
 "Not checkable" means the store has no way to say whether an identity may write without writing:
-such a check is refused as unsupported. The checks above run before scrim uses a value
-(injection and restore); see [What is checked](#what-is-checked) for writes.
+such a check is refused as unsupported. The read checks run before scrim uses a value (injection and
+restore), the write checks before an agent's write; see [What is checked](#what-is-checked).
 
 For a store listed in either setting, every injection or restore of its secrets goes to the control
 plane. After scrim's rules allow it, the control plane checks with the store, as the agent, and
@@ -709,9 +709,36 @@ when a token exchange method is configured without `identity.issuer.url`.
 
 The control plane asks the store as the agent before every injection or restore of a governed
 store's secret, and `redaction.limit-to-agent-identity` asks it before it narrows a session's
-redaction. Agent writes (`secret_gen`, `secret_capture`, `scrim secret put`) go to the store with
-scrim's own identity after scrim's rules allow them; the agent's own store identity is not asked
-for them yet, whatever the store.
+redaction.
+
+Agent writes (`secret_gen`, `secret_capture`, `secret_ask_human` and `scrim secret put`, over MCP,
+the local API or the edge listener) are decided by scrim's rules first. For a governed store, the
+control plane then asks the agent's own store identity whether it may write there, using the write
+check in the table above, and refuses the write when the store says no. An agent with no usable
+identity for such a store is refused, as it is for a read. The value itself is still written with
+scrim's own store identity once both agree, so the store's audit records scrim's write after the
+agent's check. `secret_capture` and `secret_ask_human` are checked before the command runs or a
+human is asked, so a refused write costs nothing.
+
+| Store kinds | Agents' writes |
+| --- | --- |
+| `openbao`, `vault`, `gcpsm`, `bws`, `vaultwarden` | checked with the agent's own identity; refused when it may not write |
+| `awssm`, `ssm`, `azkv`, `infisical`, `doppler`, `onepassword` | not checkable: written with scrim's own identity once scrim's rules allow them, or refused when `identity.refuse-unchecked-writes` names the store |
+| stores in neither identity setting | scrim's own identity, as before |
+
+```yaml
+identity:
+  # Refuse agents' writes to governed stores that cannot check them (or "*" for all of them).
+  refuse-unchecked-writes: [aws, dop]
+  # Weakening: write without asking the agent's identity on stores that could check.
+  # skip-agent-write-checks: true
+```
+
+`identity.skip-agent-write-checks` is a weakening setting, logged at start-up and listed in
+`scrim status`. Every write audit entry records how it was checked: `store_identity` (`static`,
+`federated`, `kubernetes`, `shared` or `none`) and `store_write_check` (`checked`, `unchecked`,
+`skipped` or `shared`). A refusal's message names the store, the reference and the store's reason,
+never a value or the agent's credential.
 
 ### Stores without a token exchange
 
@@ -741,8 +768,9 @@ for them yet, whatever the store.
   `agent:<name>`, and name the identity's ID. Doppler returns a short-lived token, cached per agent.
 
 `scrim doctor` lists, per store and agent, which identity applies (`kubernetes`, `federated`,
-`static`, `shared`, or `none` for refused), and fails a token exchange login while the issuer is
-off.
+`static`, `shared`, or `none` for refused), fails a token exchange login while the issuer is off,
+and says per governed store whether agents' writes are checked with the agent's identity, warning
+where they are not.
 
 ## What this does not protect against
 

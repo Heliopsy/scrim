@@ -527,3 +527,15 @@ func Resolved(ctx context.Context, cfg *config.Config, reg *stores.Registry, key
 	}
 	return n, done, nil
 }
+
+// Kinds maps each configured store instance to its adapter kind, from
+// configuration alone (an instance without a kind is left out).
+func Kinds(cfg *config.Config) map[string]string {
+	out := map[string]string{}
+	for _, ci := range Collection.Get(cfg) {
+		if k, ok := ci.Fields[FieldKind].(string); ok && k != "" {
+			out[ci.Name] = k
+		}
+	}
+	return out
+}

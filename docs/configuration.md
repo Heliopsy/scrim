@@ -425,6 +425,8 @@ is out of date.
 | [`identity.kubernetes.token-file`](#identitykubernetestoken-file) | string | `/var/run/secrets/kubernetes.io/serviceaccount/token` | restart required |
 | [`identity.kubernetes.unmapped`](#identitykubernetesunmapped) | string | `derive` | restart required |
 | [`identity.peers`](#identitypeers) | map | `{}` | restart required |
+| [`identity.refuse-unchecked-writes`](#identityrefuse-unchecked-writes) | list | `[]` | restart required |
+| [`identity.skip-agent-write-checks`](#identityskip-agent-write-checks) | bool | `false` | restart required |
 | [`identity.store-credentials`](#identitystore-credentials) | map | `{}` | restart required |
 | [`identity.store-login`](#identitystore-login) | map | `{}` | restart required |
 | [`interception.ebpf.cgroups`](#interceptionebpfcgroups) | list | `[]` | hot |
@@ -2094,6 +2096,31 @@ Agents by local user or group: agent name to space-separated selectors uid:N, us
 | Environment | `SCRIM_IDENTITY_PEERS` |
 | Flag | none |
 | Reload | restart required |
+
+#### `identity.refuse-unchecked-writes`
+
+Stores with per-agent identity that cannot tell whether an agent's identity may write without writing (awssm, ssm, azkv, infisical, doppler, onepassword), by instance name, that refuse agents' writes instead of making them with scrim's own identity once scrim's rules allow them. `*` names every such store. Empty by default.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_IDENTITY_REFUSE_UNCHECKED_WRITES` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.skip-agent-write-checks`
+
+Write agents' secrets (secret_gen, secret_capture, secret_ask_human, `scrim secret put`) with scrim's own store identity once scrim's rules allow them, without asking the agent's own store identity first, also on stores that can answer (openbao, vault, gcpsm, bws, vaultwarden). Off by default: a store with per-agent identity that can check a write refuses one the agent's identity may not make, and refuses agents without an identity of their own.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_IDENTITY_SKIP_AGENT_WRITE_CHECKS` |
+| Flag | none |
+| Reload | restart required |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
 
 #### `identity.store-credentials`
 

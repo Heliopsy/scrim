@@ -63,6 +63,7 @@ const listConcurrency = 8
 
 func init() {
 	stores.DeclareMulti(Kind, multiAttrs...)
+	stores.DeclareAgentWriteCheck(Kind)
 	stores.Register(Kind, New)
 }
 
