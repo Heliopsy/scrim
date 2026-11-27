@@ -119,6 +119,7 @@ func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) 
 	}
 	src.RunView = runViewStatus(ctx, cfg)
 	src.Service = installedService(ctx, cfg)
+	src.RunView.ReadableOwn = readableOwnFiles(cfg, src.Service)
 	src.EBPF = ebpfSource{e}
 	src.AgentModes = installedAgentModes(cfg)
 	stateCfg := cfg
@@ -163,6 +164,32 @@ func runViewStatus(ctx context.Context, cfg *config.Config) *status.RunView {
 	}
 	v.Mode, v.Fallback, v.Gaps = mode, fallback, fsview.Gaps(mode)
 	return v
+}
+
+// readableOwnFiles lists scrim's own secret files in cfg that this user can
+// read: file: reference targets, key-material settings and store fields,
+// and the state directory unless the system service is installed (its state
+// is under /var/lib/scrim). Config files are left out: they hold
+// references, and a literal secret in one has its own warning. Root reads
+// everything and runs no agents, so it gets no list.
+func readableOwnFiles(cfg *config.Config, svc *status.Service) []string {
+	if installEUID() == 0 {
+		return nil
+	}
+	var own []fsview.OwnPath
+	for _, p := range cfg.OwnPaths() {
+		switch {
+		case p.Origin == config.OwnOriginConfigFile:
+		case p.Origin == config.OwnOriginStateDir && svc != nil && svc.System:
+		default:
+			own = append(own, fsview.OwnPath{Path: p.Path, Origin: p.Origin})
+		}
+	}
+	var out []string
+	for _, p := range fsview.Readable(own) {
+		out = append(out, p.Path+" ("+p.Origin+")")
+	}
+	return out
 }
 
 // installedService reports the service `scrim install` set up: the system

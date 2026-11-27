@@ -15,6 +15,20 @@ If the account must hold other items, set `scope` to the folders or collections 
 Items outside the scope are invisible to every read, list and write. `scrim doctor` warns when no
 scope is set, or when the account holds items outside it.
 
+Keep the master password away from the agent too. With `unlock: file:...`, scrim reads it from a
+file, and on a single-user machine a user-level scrim runs as the same user as the agent, who can
+read that file. `scrim run` hides it from the session ([run.md](../run.md#scrims-own-files)): the
+namespace view makes it unreadable wherever it is, the home mirror only leaves it out of the
+session's `HOME`. An agent started without `scrim run` still reads it. Run scrim as its own user
+instead, so the file is mode 0600 under the `scrim` user and the agent's user cannot open it:
+
+```sh
+sudo scrim install --system --agent-user "$USER"
+```
+
+See [service.md](../service.md). Under systemd, a credential (`unlock: cred:vaultwarden-master`) is
+another way to keep the password out of a file the agent's user can read.
+
 ## Configuration
 
 ```yaml
