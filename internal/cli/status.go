@@ -20,6 +20,7 @@ import (
 	"github.com/heliopsy/scrim/internal/dataplane"
 	"github.com/heliopsy/scrim/internal/fsview"
 	"github.com/heliopsy/scrim/internal/install"
+	agentrun "github.com/heliopsy/scrim/internal/run"
 	"github.com/heliopsy/scrim/internal/state"
 	"github.com/heliopsy/scrim/internal/state/postgres"
 	"github.com/heliopsy/scrim/internal/state/sqlite"
@@ -118,6 +119,7 @@ func statusSources(ctx context.Context, e *Env) (status.Sources, func(), error) 
 		src.Stores = staticStores(info.Stores)
 	}
 	src.RunView = runViewStatus(ctx, cfg)
+	src.RunNetwork = runNetworkStatus(ctx, cfg)
 	src.Service = installedService(ctx, cfg)
 	src.RunView.ReadableOwn = readableOwnFiles(cfg, src.Service)
 	src.EBPF = ebpfSource{e}
@@ -146,6 +148,23 @@ var runViewProbe = func(ctx context.Context) fsview.Availability {
 		return fsview.Availability{Reason: err.Error()}
 	}
 	return fsview.Probe(ctx, exe)
+}
+
+// runNetworkProbe checks the agent network namespace; tests replace it.
+var runNetworkProbe = func(ctx context.Context) fsview.Availability {
+	exe, err := os.Executable()
+	if err != nil {
+		return fsview.Availability{Reason: err.Error()}
+	}
+	return fsview.ProbeNetwork(ctx, exe)
+}
+
+// runNetworkStatus reports run.network and whether this host can honour
+// proxy-only.
+func runNetworkStatus(ctx context.Context, cfg *config.Config) *status.RunNetwork {
+	req := agentrun.Network.Get(cfg)
+	a := runNetworkProbe(ctx)
+	return &status.RunNetwork{Requested: req, Available: a.Namespace, Reason: a.Reason, Gaps: agentrun.NetworkGaps(req)}
 }
 
 // runViewStatus reports the filesystem view scrim run gives sessions on

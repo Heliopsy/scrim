@@ -65,6 +65,10 @@ func testAgent(mode string) int {
 		return 0
 	case "fsview":
 		return agentFSView()
+	case "net":
+		return agentNet()
+	case "dial":
+		return agentDial()
 	case "env":
 		tok := os.Getenv(localapi.EnvToken)
 		for _, kv := range os.Environ() {

@@ -119,6 +119,23 @@ func WriteHuman(w io.Writer, r Report) error {
 		}
 	}
 
+	if n := r.RunNetwork; n != nil {
+		p.section("Agent network (scrim run)")
+		switch {
+		case n.Refused():
+			p.line("  REFUSED: run.network is proxy-only, but %s", n.Reason)
+		case n.Requested == "proxy-only":
+			p.line("  proxy-only (network namespace with loopback only; scrim's listeners are the way out)")
+		case n.Available:
+			p.line("  open (run.network: proxy-only is available on this host)")
+		default:
+			p.line("  open (run.network: proxy-only is not available here: %s)", n.Reason)
+		}
+		for _, g := range n.Gaps {
+			p.line("    not covered: %s", g)
+		}
+	}
+
 	if r.EBPF != nil {
 		p.section("eBPF transparent mode")
 		writeEBPF(p, r.EBPF)

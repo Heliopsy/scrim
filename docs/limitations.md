@@ -77,9 +77,21 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
 
 - **The wrapper, base URL and forward proxy modes rely on the agent using the settings it is
   given.** They stop accidents, not an agent or a prompt-injected command that sets out to reach
-  the provider directly. Transparent mode, Kubernetes injection with a NetworkPolicy and managed
-  agent settings enforce; DNS override is bypassed by connecting to an address; hooks see tool
-  results and prompts, never the model traffic. [interception.md](interception.md) has the table.
+  the provider directly. `scrim run` with `run.network: proxy-only` (Linux, no root), transparent
+  mode, Kubernetes injection with a NetworkPolicy and managed agent settings enforce; DNS override
+  is bypassed by connecting to an address; hooks see tool results and prompts, never the model
+  traffic. [interception.md](interception.md) has the table.
+- **`run.network: proxy-only` is off by default, Linux only, and leaves Unix sockets open.** The
+  default `open` keeps the gap above. `proxy-only` needs unprivileged user namespaces and is not
+  available on macOS or Windows. Inside it, a process can still ask a program running outside the
+  session to act for it over a Unix socket in the filesystem: the session and system buses, the
+  systemd user manager, the host's name resolvers (systemd-resolved, nscd, avahi), X11 and Wayland,
+  podman, docker and tmux sockets are covered, others (screen, editor servers, ssh `ControlMaster`
+  sockets) are not. Because the system bus is masked, tools that talk to system services over it
+  (`nmcli`, `resolvectl`, `timedatectl`, desktop notifications, the keyring) do not work inside the
+  session, nor do GUI programs or the clipboard. ssh and git over ssh cannot connect, and scrim's
+  database proxies and chained upstreams are not reachable from the session
+  ([run.md](run.md#agent-network)).
 - **MCP-only use intercepts nothing.** The agent's model requests go straight to the provider.
 - **WebSocket restore covers the Realtime and Gemini Live protocols.** Client messages on every
   provider route are redacted and guarded like request bodies. Placeholders in provider messages

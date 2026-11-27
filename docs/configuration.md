@@ -513,6 +513,7 @@ is out of date.
 | [`run.fs-view-allow-readable-own-files`](#runfs-view-allow-readable-own-files) | bool | `false` | hot |
 | [`run.fs-view-hide`](#runfs-view-hide) | list | `[".ssh/id_*","!.ssh/id_*.pub"]` | hot |
 | [`run.mcp`](#runmcp) | bool | `true` | hot |
+| [`run.network`](#runnetwork) | string | `open` | hot |
 | [`run.placeholder-env`](#runplaceholder-env) | bool | `true` | hot |
 | [`run.profiles`](#runprofiles) | list | `["auto"]` | hot |
 | [`run.scan-interval`](#runscan-interval) | duration | `10s` | hot |
@@ -3196,6 +3197,19 @@ Register scrim mcp with the agent for this session (Claude Code --mcp-config, Co
 | Environment | `SCRIM_RUN_MCP` |
 | Flag | `--run-mcp` |
 | Reload | hot |
+
+#### `run.network`
+
+The agent's network under scrim run: open (the host's network; proxy and base URL settings steer clients that honour them through scrim) or proxy-only (Linux: a network namespace with loopback only, in which scrim's LLM base URL and forward proxy are the only reachable addresses, so a command that ignores HTTPS_PROXY or dials a provider directly fails; scrim run refuses to start the agent when the namespace cannot be created). See docs/run.md.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `open` |
+| Environment | `SCRIM_RUN_NETWORK` |
+| Flag | `--run-network` |
+| Reload | hot |
+| Values | `open`, `proxy-only` |
 
 #### `run.placeholder-env`
 

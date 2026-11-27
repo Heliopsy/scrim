@@ -9,6 +9,7 @@ of their own: they are an add-on that keeps methods 1 and 2 from being skipped.
 | # | Method | Set up with | Coverage | Can the agent bypass it? |
 | --- | --- | --- | --- | --- |
 | 1 | [Wrapper (`scrim run`)](#1-wrapper-scrim-run), with base URL underneath | `scrim run` | full | yes, by ignoring or clearing its environment |
+| 1p | [Wrapper, proxy-only network](#proxy-only-network) (Linux, no root) | `scrim run --run-network proxy-only` (`run.network`) | full | no, inside the session; except through other programs' Unix sockets that run commands outside it |
 | 2 | [Forward proxy](#2-forward-proxy) (`HTTPS_PROXY` and CA) | `proxy.forward-listen` | full | yes, by ignoring the proxy variables |
 | 3 | [Transparent, machine-wide](#3-transparent-machine-wide) (nftables; eBPF variant) | `scrim install --transparent`; eBPF variant: `scrim install --ebpf` or `scrim ebpf attach` | full | no, inside the covered users or cgroups |
 | 4 | [DNS override](#4-dns-override) | `scrim install --dns` | full for connections by name | yes, by connecting to an IP address |
@@ -21,8 +22,9 @@ Full coverage means every model request from the covered agent is redacted, and 
 proxy its tool traffic gets credential injection and response redaction. Methods 1 and 2 rely on
 the agent using the settings it is given: they stop accidents, such as a secret a tool printed or a
 file the agent read, from reaching the provider, but they do not stop an agent or a prompt-injected
-command that sets out to reach the provider directly. Methods 3 and 5, and managed settings for
-the agent's own endpoint, enforce. See [Combining methods](#combining-methods).
+command that sets out to reach the provider directly. Method 1 with `run.network: proxy-only`
+(1p), methods 3 and 5, and managed settings for the agent's own endpoint, enforce. See [Combining
+methods](#combining-methods).
 
 Spec: `openspec/specs/interception`, with design D5, D8 and D11 and the
 `deployment` and `agent-identity` specs. The spec names its modes differently; the mapping is in
@@ -205,7 +207,8 @@ toward their bound hosts and redacts responses.
 
 - An agent, or a command the model wrote, that ignores the variables. `env -i curl
   https://api.anthropic.com/...`, a subprocess started with a clean environment, or a client that
-  hard-codes its endpoint goes straight out.
+  hard-codes its endpoint goes straight out, unless `run.network` is `proxy-only`
+  ([below](#proxy-only-network)).
 - Anything that changes the agent's settings: an exported variable, a project or user settings
   file, a flag, or a model that edits the agent's own config. [Managed agent
   settings](#managed-agent-settings-enforcement-add-on) close this for the agent itself.
@@ -235,6 +238,48 @@ If scrim stops mid-session, the agent's requests to the loopback base URL and th
 connection error; they do not fall back to the provider. Before its first snapshot the data plane
 refuses with 503 `not_ready`. The weakening setting `run.allow-unredacted-start` starts the agent
 anyway with your environment unchanged, and `scrim status` lists it.
+
+### Proxy-only network
+
+`run.network: proxy-only` (flag `--run-network proxy-only`) makes the wrapper enforce on a Linux
+workstation without root. The agent's whole process tree runs in a network namespace of its own,
+created inside the unprivileged user namespace `scrim run` already uses for the [filesystem
+view](run.md#filesystem-view). Only loopback exists in it. Listening sockets bound inside it at the
+addresses of scrim's LLM base URL and forward proxy are handed to `scrim run`, which serves them
+from outside by splicing each connection to scrim's real listener. A command that ignores
+`HTTPS_PROXY`, clears its environment or dials a provider's address fails to connect, and names do
+not resolve; tools that honour the proxy work, and the tool proxy sees every request they make.
+
+```mermaid
+flowchart LR
+  subgraph ns["agent network namespace (loopback only)"]
+    agent["claude and its tools"]
+    lo["127.0.0.1:9790, :9791<br>listening sockets"]
+  end
+  agent --> lo
+  lo -- "accepted and spliced by scrim run" --> dp["LLM proxy and forward proxy"]
+  dp --> prov["providers and tool hosts"]
+  agent -. "env -i curl, direct address" .-x prov
+  classDef agent fill:#7dd3fc,stroke:#0369a1,stroke-width:1.5px,color:#082f49
+  classDef dplane fill:#a5b4fc,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef ext fill:#cbd5e1,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  classDef os fill:#5eead4,stroke:#0f766e,stroke-width:1.5px,color:#042f2e
+  class agent agent
+  class lo os
+  class dp dplane
+  class prov ext
+  linkStyle 3 stroke:#dc2626,stroke-width:2px
+```
+
+It does not stop a process that asks a program outside the session to act for it over a Unix
+socket in the filesystem. `scrim run` covers the session and system buses, the systemd user
+manager, the host's name resolvers (resolved, nscd, avahi), X11 and Wayland, rootless podman and
+docker sockets, the docker daemon and tmux for the agent; others (screen, editor
+servers, ssh `ControlMaster` sockets) are not covered. ssh and git over ssh fail; use HTTPS
+remotes. It needs unprivileged user namespaces, so on Ubuntu 24.04
+`kernel.apparmor_restrict_unprivileged_userns=0` or an AppArmor profile for scrim; macOS is not
+supported. `scrim run` refuses to start the agent when the namespace cannot be set up. Details,
+what fails by design and the tests are in [run.md](run.md#agent-network).
 
 ## 2. Forward proxy
 
@@ -1092,7 +1137,7 @@ are not ([ca.md](ca.md)).
 
 | Situation | Start with | Add for enforcement |
 | --- | --- | --- |
-| Laptop, one agent, you start it | 1, wrapper (`scrim run -- claude`) | managed settings |
+| Laptop, one agent, you start it | 1, wrapper (`scrim run -- claude`) | 1p, `run.network: proxy-only` (Linux); managed settings |
 | Several agents on one machine | 1, wrapper per agent, each with its own session | 3, transparent per UID or cgroup |
 | CI job | 1, wrapper around the agent step, or a base URL in the job | 3 on self-managed runners, 5 on Kubernetes runners |
 | VM or workstation service | `scrim proxy` as a service with 2, forward proxy, or a base URL | 3, transparent |
@@ -1134,6 +1179,7 @@ intercepted").
 | Method | scrim stopped or failing | Can the agent fall back to the provider? |
 | --- | --- | --- |
 | 1. Wrapper | agent not started (status 125); a running agent gets connection errors | only by ignoring its environment |
+| 1p. Wrapper, proxy-only | agent not started (status 125), also when the namespace cannot be created; a running agent gets connection errors | no, except through other programs' Unix sockets |
 | 2. Forward proxy | `CONNECT` fails; uninspectable tunnels are closed | only by ignoring the proxy variables |
 | 3. Transparent (nftables or eBPF) | redirect and deny stay in place; connections fail | no |
 | 4. DNS override | names resolve to a dead address | yes, by address |

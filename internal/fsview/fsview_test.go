@@ -19,6 +19,9 @@ import (
 
 func TestMain(m *testing.M) {
 	Main()
+	if os.Getenv(envNetChild) != "" {
+		os.Exit(netChild())
+	}
 	os.Exit(m.Run())
 }
 
@@ -255,9 +258,17 @@ func TestGapsAndProbe(t *testing.T) {
 		if os.Getenv("SCRIM_TEST_REQUIRE_USERNS") == "1" && !a.Namespace {
 			t.Fatalf("user namespaces required: %s", a.Reason)
 		}
+		n := ProbeNetwork(context.Background(), os.Args[0])
+		t.Logf("network namespace here: %+v", n)
+		if os.Getenv("SCRIM_TEST_REQUIRE_USERNS") == "1" && !n.Namespace {
+			t.Fatalf("network namespaces required: %s", n.Reason)
+		}
 	default:
 		if a.Namespace || !strings.Contains(a.Reason, runtime.GOOS) {
 			t.Errorf("probe on %s = %+v", runtime.GOOS, a)
+		}
+		if n := ProbeNetwork(context.Background(), os.Args[0]); n.Namespace {
+			t.Errorf("network probe on %s = %+v", runtime.GOOS, n)
 		}
 	}
 }

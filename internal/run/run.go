@@ -95,6 +95,9 @@ type Options struct {
 	// SSHAgent serves scrim's ssh-agent on a socket in the session
 	// directory and points SSH_AUTH_SOCK at it (run.ssh-agent).
 	SSHAgent bool
+	// Network configures the agent's network (run.network); the zero
+	// value is open.
+	Network NetworkOptions
 
 	// dryRun builds the plan only (PrintEnv).
 	dryRun bool
@@ -308,7 +311,10 @@ func (p *Prepared) build(ctx context.Context, ep Endpoints) error {
 			return err
 		}
 	}
-	return p.buildView(ctx, ep, dir, scrimPath, rendered)
+	if err := p.buildView(ctx, ep, dir, scrimPath, rendered); err != nil {
+		return err
+	}
+	return p.buildNetwork(ctx, ep)
 }
 
 // writeFiles writes the plan's directories and files into the session
@@ -483,6 +489,11 @@ func (p *Prepared) unprotected(cause error) (*Prepared, error) {
 	if !p.opts.AllowUnredacted {
 		return nil, fmt.Errorf("%w: %w; refusing to start it without redaction (run.allow-unredacted-start weakens this)", ErrRefused, cause)
 	}
+	if p.opts.Network.Mode == NetworkProxyOnly {
+		// proxy-only promises that nothing leaves except through scrim;
+		// without scrim the agent would have no way out, or an open one.
+		return nil, fmt.Errorf("%w: %w; run.network is proxy-only, so the agent is not started without scrim even with run.allow-unredacted-start", ErrRefused, cause)
+	}
 	p.opts.say("WARNING: %v", cause)
 	p.opts.say("WARNING: run.allow-unredacted-start is set: starting %s WITHOUT scrim; its traffic reaches providers unredacted", filepath.Base(p.opts.Command[0]))
 	p.Unprotected = true
@@ -542,15 +553,39 @@ func (p *Prepared) Start(ctx context.Context) error {
 	cmd := &exec.Cmd{Path: path, Args: p.Plan.Args, Env: env, Dir: o.Dir,
 		Stdin: o.Stdin, Stdout: o.Stdout, Stderr: o.Stderr}
 	started := func() error { return nil }
-	if v := p.Plan.FSView; !p.Unprotected && v.Active() && v.Mode == fsview.ModeNamespace {
-		launch, err := fsview.Wrap(cmd, o.FSView.helper(), v)
+	v := p.Plan.FSView
+	view := !p.Unprotected && v.Active() && v.Mode == fsview.ModeNamespace
+	netPlan := p.Plan.Network
+	if p.Unprotected || !netPlan.ProxyOnly() {
+		netPlan = nil
+	}
+	if view || netPlan != nil {
+		var fn *fsview.Network
+		var targets map[string]string
+		what := "session filesystem view"
+		if netPlan != nil {
+			fn, targets = netPlan.fsNetwork()
+			what = "agent network namespace (run.network: proxy-only)"
+			if !view {
+				v = nil
+			}
+		}
+		launch, err := fsview.Wrap(cmd, o.FSView.helper(), v, fn)
 		if err != nil {
-			return refused("session filesystem view: %v", err)
+			return refused("%s: %v", what, err)
 		}
 		defer launch.Close()
 		started = func() error {
 			if err := launch.Started(); err != nil {
-				return refused("session filesystem view: %v", err)
+				return refused("%s: %v", what, err)
+			}
+			for _, ln := range launch.Listeners() {
+				target, ok := targets[ln.Addr]
+				if !ok {
+					_ = cmd.Process.Kill()
+					return refused("%s: the helper bound an unexpected address %s", what, ln.Addr)
+				}
+				go serveBridge(ln.Listener, target)
 			}
 			return nil
 		}
