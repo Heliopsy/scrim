@@ -3,6 +3,7 @@
 ## 1. Collect the paths
 
 - [x] 1.1 `internal/config`: `KeyMaterial` and `Companions` on settings, `KeyMaterialFields` on collections, `Config.OwnPaths` (file: targets, key-material settings and fields, state directory, config files); mark the key directories, the SQLite file, token and credential files and the store `root`, kubeconfig and token-file options; verify: `TestOwnPaths`, `TestKeyMaterialOnlyForStrings`
+- [x] 1.3 `KeyMaterialWhen`: a key-material setting counts only while its feature is on (Kubernetes identity, edge forwarder, sqlite backend, generated issuer and placeholder keys), so a default path of an unused feature is never an own path; verify: `TestOwnPathsKeyMaterialWhen`, `internal/cli` `TestOwnPathsOnlyUsedFeatures`, watched failing without the gate
 - [x] 1.2 `GET /v1/own-paths` for a mapped local user with `sessions:mint`, refused to sessions and unknown callers; wired to the daemon's live configuration; verify: `internal/localapi` `TestOwnPaths`, `TestUnknownCallersAreRefused`, `internal/agentapi` `TestRuntimeEndToEnd`
 
 ## 2. Hide them in the session view

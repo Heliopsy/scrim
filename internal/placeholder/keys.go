@@ -41,6 +41,7 @@ var (
 	KeyDir = config.Register(config.Spec[string]{
 		Key:             "redaction.placeholder-key-dir",
 		KeyMaterial:     true,
+		KeyMaterialWhen: func(c *config.Config) bool { return len(Keys.Get(c)) == 0 },
 		Description:     "Directory of the generated placeholder key, used when redaction.placeholder-keys is empty. Empty means $XDG_STATE_HOME/scrim/keys (~/.local/state/scrim/keys).",
 		RestartRequired: true,
 	})

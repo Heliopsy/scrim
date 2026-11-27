@@ -29,3 +29,19 @@ refuse the start unless `run.fs-view-allow-readable-own-files` is set.
 
 - **WHEN** a session token asks the daemon for its own paths
 - **THEN** the request is refused
+
+### Requirement: Own paths follow the effective configuration
+
+A setting or store field SHALL count as one of scrim's own paths only while the effective
+configuration makes scrim read it. The default path of a feature that is off SHALL NOT count.
+
+#### Scenario: Pod without Kubernetes identity
+
+- **WHEN** scrim runs in a pod with `identity.kubernetes.enabled` off and the pod's service account
+  token is readable at the default `identity.kubernetes.token-file`
+- **THEN** the token is not one of scrim's own paths and `scrim run` starts the agent
+
+#### Scenario: Kubernetes identity on
+
+- **WHEN** `identity.kubernetes.enabled` is on
+- **THEN** `identity.kubernetes.token-file` is one of scrim's own paths

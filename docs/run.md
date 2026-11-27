@@ -331,6 +331,14 @@ agent's user can read:
 - store files: the file and sops stores' `root`, a Kubernetes store's `auth.kubeconfig`, and
   `auth.*token-file` options.
 
+A path counts only while the configuration makes scrim read it. A setting whose feature is off is not
+one of scrim's own files, even at a non-empty default: `identity.kubernetes.token-file` only with
+`identity.kubernetes.enabled`, the `edge-forwarder.*` files only with `edge-forwarder.central` set
+(the token file only without a client certificate), `state.sqlite.path` only with the sqlite backend,
+`identity.issuer.key-dir` only with `identity.issuer.url` set and no `identity.issuer.signing-keys`,
+and `redaction.placeholder-key-dir` only without `redaction.placeholder-keys`. So a pod's own service
+account token is not hidden, and does not make `scrim run` refuse, unless scrim uses it.
+
 A file the agent's user cannot read, such as a system service's files under its own user, needs no
 cover and is skipped. The namespace view mounts the empty 0000 file or directory over each one,
 inside or outside the home. The home mirror can only leave out paths under `$HOME`; it does not hide

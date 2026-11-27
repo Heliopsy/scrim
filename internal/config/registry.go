@@ -102,6 +102,12 @@ type Spec[T Type] struct {
 	// Companions, for a KeyMaterial file, are suffixes of files written
 	// next to it that hold the same data (a SQLite database's "-wal").
 	Companions []string
+	// KeyMaterialWhen, for a KeyMaterial setting, reports whether the
+	// effective configuration makes scrim read the path at all (the feature
+	// that reads it is on, no setting replaces it). Nil means whenever the
+	// value is set. A default path of an unused feature is not scrim's own
+	// file, so `scrim run` neither hides it nor refuses over it.
+	KeyMaterialWhen func(*Config) bool
 }
 
 // Setting is the type-erased view of a registered setting, used by the
@@ -128,7 +134,14 @@ type Setting struct {
 	KeyMaterial bool
 	Companions  []string
 
-	validate func(any) error
+	validate        func(any) error
+	keyMaterialWhen func(*Config) bool
+}
+
+// KeyMaterialIn reports whether c makes scrim read this setting's path:
+// the setting is KeyMaterial and its [Spec.KeyMaterialWhen], if any, holds.
+func (s *Setting) KeyMaterialIn(c *Config) bool {
+	return s.KeyMaterial && (s.keyMaterialWhen == nil || s.keyMaterialWhen(c))
 }
 
 // Weakens reports whether value v of the setting weakens an invariant.
@@ -246,6 +259,7 @@ func RegisterIn[T Type](r *Registry, spec Spec[T]) (Key[T], error) {
 	if v := spec.Validate; v != nil {
 		s.validate = func(a any) error { return v(a.(T)) }
 	}
+	s.keyMaterialWhen = spec.KeyMaterialWhen
 	if err := r.add(s); err != nil {
 		return Key[T]{}, err
 	}
@@ -284,6 +298,9 @@ func (r *Registry) add(s *Setting) error {
 	}
 	if len(s.Companions) > 0 && !s.KeyMaterial {
 		return fmt.Errorf("config: setting %s: Companions need KeyMaterial", s.Key)
+	}
+	if s.keyMaterialWhen != nil && !s.KeyMaterial {
+		return fmt.Errorf("config: setting %s: KeyMaterialWhen needs KeyMaterial", s.Key)
 	}
 	if s.RequireReference && s.Kind != KindSecretRef {
 		return fmt.Errorf("config: setting %s: RequireReference is only valid for secret-ref settings", s.Key)

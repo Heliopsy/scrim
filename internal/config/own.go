@@ -30,7 +30,9 @@ type OwnPath struct {
 
 // OwnPaths lists the files and directories this configuration makes scrim
 // read secrets or key material from, by path, each once (the first origin
-// wins), sorted by path. Relative paths are left out. `scrim run` hides
+// wins), sorted by path. Relative paths are left out, and so is a
+// key-material setting whose feature the configuration does not use
+// ([Spec.KeyMaterialWhen]), even at a non-empty default. `scrim run` hides
 // them from sessions (specs/credential-injection, "Session filesystem view
 // hides scrim's own files").
 func (c *Config) OwnPaths() []OwnPath {
@@ -53,7 +55,7 @@ func (c *Config) OwnPaths() []OwnPath {
 		}
 	}
 	for _, e := range c.Entries() {
-		if !e.Setting.KeyMaterial {
+		if !e.Setting.KeyMaterialIn(c) {
 			continue
 		}
 		p, _ := e.Value.(string)
