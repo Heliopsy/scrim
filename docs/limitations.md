@@ -15,6 +15,15 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   key. scrim locks and wipes its own copies, but that does not stop a debugger. Give scrim a
   dedicated user (`scrim install --system`) and a dedicated store identity that only holds agent
   secrets.
+- **The agent's user, when scrim runs as that user.** A user-level scrim (`scrim install --user`,
+  or the daemon `scrim run` starts) keeps its secrets in files that user can read: the targets of
+  `file:` references (a Vaultwarden `unlock:` master password, client secrets, tokens), its CA and
+  placeholder keys, its state database. `scrim run` hides them from the session
+  ([run.md](run.md#scrims-own-files)), but only in the namespace view; the home mirror hides them
+  only from tools that go through `HOME`, and an agent started outside `scrim run`, or any other
+  process of that user, reads them. `scrim doctor` warns about them (`own-files`). Run scrim as its
+  own user: `sudo scrim install --system --agent-user $USER` ([service.md](service.md)), or give
+  secrets as systemd credentials (`cred:`).
 - **The agent's own disk.** Transcripts, memory and history files hold whatever the agent read, in
   clear: a `cat .env` is in the local transcript even though the provider only saw placeholders.
   scrim protects the wire to the provider, not the agent's files. Keep agent state on an encrypted

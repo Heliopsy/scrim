@@ -12,8 +12,9 @@ import (
 // Settings of the interception CA.
 var (
 	DirSetting = config.Register(config.Spec[string]{
-		Key:     "tool-proxy.ca.dir",
-		Default: "",
+		Key:         "tool-proxy.ca.dir",
+		KeyMaterial: true,
+		Default:     "",
 		Description: "Directory of the generated interception CA (certificates, private keys, rotation state, trust manifest). " +
 			"Empty means $XDG_STATE_HOME/scrim/ca (~/.local/state/scrim/ca). Created with mode 0700.",
 		RestartRequired: true,
@@ -87,8 +88,9 @@ func policyFrom(cfg *config.Config) (policy, error) {
 // rotate-before and overlap).
 var (
 	EdgeDirSetting = config.Register(config.Spec[string]{
-		Key:     "edge.ca.dir",
-		Default: "",
+		Key:         "edge.ca.dir",
+		KeyMaterial: true,
+		Default:     "",
 		Description: "Directory of the generated edge CA, which issues only the edge listener's certificate. " +
 			"Empty means $XDG_STATE_HOME/scrim/edge-ca (~/.local/state/scrim/edge-ca). Created with mode 0700. " +
 			"Never the interception CA's directory.",

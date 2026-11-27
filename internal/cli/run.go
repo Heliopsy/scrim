@@ -65,8 +65,9 @@ func (Commands) Run(e *Env) *cobra.Command {
 				Reserved:        agentrun.ReservedBy(e.Registry),
 				ScanProject:     agentrun.ScanProject.Get(cfg),
 				ScanInterval:    agentrun.ScanInterval.Get(cfg),
-				FSView:          agentrun.FSViewOptions{Mode: fsview.Setting.Get(cfg), Hide: fsview.Hide.Get(cfg)},
-				SSHAgent:        agentrun.SSHAgent.Get(cfg),
+				FSView: agentrun.FSViewOptions{Mode: fsview.Setting.Get(cfg), Hide: fsview.Hide.Get(cfg),
+					AllowReadableOwn: fsview.AllowReadableOwn.Get(cfg)},
+				SSHAgent: agentrun.SSHAgent.Get(cfg),
 			}
 			if log, err := obs.LoggerFromConfig(e.Stderr, cfg, nil); err == nil {
 				o.Log = obs.WithComponent(log, "run")
@@ -219,7 +220,14 @@ func writeView(w io.Writer, v *fsview.Plan) {
 		if !e.Hidden() {
 			what = "shows " + e.Source
 		}
-		_, _ = fmt.Fprintf(w, "  %s  %s  (%s)\n", e.Target, what, e.Origin)
+		origin := e.Origin
+		if e.Own {
+			origin = "scrim's own: " + origin
+		}
+		_, _ = fmt.Fprintf(w, "  %s  %s  (%s)\n", e.Target, what, origin)
+	}
+	for _, x := range v.Exposed {
+		_, _ = fmt.Fprintf(w, "  NOT hidden: %s\n", x)
 	}
 	for _, g := range v.Gaps {
 		_, _ = fmt.Fprintf(w, "  not covered: %s\n", g)

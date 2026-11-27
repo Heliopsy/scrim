@@ -485,6 +485,7 @@ is out of date.
 | [`restore.display-mode`](#restoredisplay-mode) | string | `values` | hot |
 | [`run.allow-unredacted-start`](#runallow-unredacted-start) | bool | `false` | hot |
 | [`run.fs-view`](#runfs-view) | string | `auto` | hot |
+| [`run.fs-view-allow-readable-own-files`](#runfs-view-allow-readable-own-files) | bool | `false` | hot |
 | [`run.fs-view-hide`](#runfs-view-hide) | list | `[".ssh/id_*","!.ssh/id_*.pub"]` | hot |
 | [`run.mcp`](#runmcp) | bool | `true` | hot |
 | [`run.placeholder-env`](#runplaceholder-env) | bool | `true` | hot |
@@ -3135,7 +3136,7 @@ Start the agent anyway when scrim cannot start, its data plane is not ready or n
 
 #### `run.fs-view`
 
-Session filesystem view for credential files at fixed home paths: auto (a user and mount namespace where the host allows it, the home mirror elsewhere), namespace (refuse to start the agent without one), home (HOME points at a mirror of the home directory without the real credential files) or off. See docs/run.md.
+Session filesystem view for credential files at fixed home paths and scrim's own secret files: auto (a user and mount namespace where the host allows it, the home mirror elsewhere), namespace (refuse to start the agent without one), home (HOME points at a mirror of the home directory without the real credential files) or off. See docs/run.md.
 
 | | |
 |---|---|
@@ -3145,6 +3146,19 @@ Session filesystem view for credential files at fixed home paths: auto (a user a
 | Flag | `--run-fs-view` |
 | Reload | hot |
 | Values | `auto`, `namespace`, `home`, `off` |
+
+#### `run.fs-view-allow-readable-own-files`
+
+Start scrim run sessions even when the filesystem view cannot hide some of scrim's own secret files (file: reference targets, config files, key and state directories) that the agent's user can read: outside $HOME with the home mirror, or above a path the session needs. Off, scrim run refuses to start the agent. See docs/run.md.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_RUN_FS_VIEW_ALLOW_READABLE_OWN_FILES` |
+| Flag | `--run-fs-view-allow-readable-own-files` |
+| Reload | hot |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
 
 #### `run.fs-view-hide`
 

@@ -2494,7 +2494,7 @@
         },
         "fs-view": {
           "default": "auto",
-          "description": "Session filesystem view for credential files at fixed home paths: auto (a user and mount namespace where the host allows it, the home mirror elsewhere), namespace (refuse to start the agent without one), home (HOME points at a mirror of the home directory without the real credential files) or off. See docs/run.md.",
+          "description": "Session filesystem view for credential files at fixed home paths and scrim's own secret files: auto (a user and mount namespace where the host allows it, the home mirror elsewhere), namespace (refuse to start the agent without one), home (HOME points at a mirror of the home directory without the real credential files) or off. See docs/run.md.",
           "enum": [
             "auto",
             "namespace",
@@ -2506,6 +2506,15 @@
           "x-scrim-flag": "--run-fs-view",
           "x-scrim-restart-required": false,
           "x-scrim-weakening": false
+        },
+        "fs-view-allow-readable-own-files": {
+          "default": false,
+          "description": "Start scrim run sessions even when the filesystem view cannot hide some of scrim's own secret files (file: reference targets, config files, key and state directories) that the agent's user can read: outside $HOME with the home mirror, or above a path the session needs. Off, scrim run refuses to start the agent. See docs/run.md.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_RUN_FS_VIEW_ALLOW_READABLE_OWN_FILES",
+          "x-scrim-flag": "--run-fs-view-allow-readable-own-files",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true
         },
         "fs-view-hide": {
           "default": [

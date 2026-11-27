@@ -5,6 +5,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -86,5 +88,35 @@ func TestStatusRunFSViewFallbackAndRefusal(t *testing.T) {
 	_ = Run(context.Background(), e, []string{"doctor"})
 	if !strings.Contains(out.String(), "[fail] run-fs-view") {
 		t.Errorf("doctor does not fail:\n%s", out.String())
+	}
+}
+
+// TestDoctorWarnsReadableOwnFiles: scrim's own secret file behind a file:
+// reference that this user (the agent's) can read is listed by status and
+// warned about by doctor, with the system install as the fix. (A file it
+// cannot read is skipped: internal/fsview TestBuildOwnFilesUnreadableSkipped.)
+func TestDoctorWarnsReadableOwnFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no session filesystem view")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every file")
+	}
+	key := filepath.Join(t.TempDir(), "signing.key")
+	if err := os.WriteFile(key, []byte(strings.Repeat("k", 40)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := isolatedEnv(t, "SCRIM_APPROVALS_SIGNING_KEY=file:"+key)
+	e, out, _ := newEnv(env...)
+	_ = Run(context.Background(), e, []string{"doctor"})
+	for _, want := range []string{"[warn] own-files:", key + " (approvals.signing-key)", "sudo scrim install --system --agent-user"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("doctor lacks %q:\n%s", want, out.String())
+		}
+	}
+	e, out, _ = newEnv(env...)
+	_ = Run(context.Background(), e, []string{"status"})
+	if !strings.Contains(out.String(), "scrim's own secret files readable by this user") || !strings.Contains(out.String(), key) {
+		t.Errorf("status does not list the readable file:\n%s", out.String())
 	}
 }
