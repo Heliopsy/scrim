@@ -140,17 +140,23 @@ groups:
             last good refresh are not redacted yet.
           runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimstoredegraded
 
+      # 900 s is the default stores.<name>.refresh.staleness. The setting is not
+      # exported as a metric: change the threshold here if you change it. The
+      # second branch catches a store that never loaded or is locked, which has
+      # no staleness yet or is unhealthy while fresh.
       - alert: ScrimStoreUnreachable
-        expr: scrim_store_up == 0
-        for: 10m
+        expr: >-
+          max by (job, instance, store) (scrim_store_staleness_seconds) > 900
+          or
+          max by (job, instance, store) (max_over_time(scrim_store_up[5m])) == 0
         labels:
           severity: warning
         annotations:
           summary: scrim secret store is unhealthy
           description: >-
-            Store {{ $labels.store }} on {{ $labels.instance }} has been unhealthy for 10 minutes:
-            not loaded, locked, or not refreshed within its refresh.staleness. scrim keeps
-            redacting the last values it loaded.
+            Store {{ $labels.store }} on {{ $labels.instance }} has not refreshed successfully
+            for longer than refresh.staleness (15 minutes by default), or has been unloaded or
+            locked for 5 minutes. scrim keeps redacting the last values it loaded.
           runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimstoreunreachable
 
       - alert: ScrimStoreStale

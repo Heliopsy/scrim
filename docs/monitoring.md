@@ -263,13 +263,19 @@ or a glob that matches nothing, accepted at start-up only with `redaction.allow-
 
 ### ScrimStoreUnreachable
 
-Warning. `scrim_store_up` has been 0 for 10 minutes: the store never loaded, is locked, or has not
-refreshed successfully within its `refresh.staleness`. The gauge changes only when a refresh is
-attempted, every `refresh.interval` (5m, with ±20% jitter) while the store fails. With the defaults,
-a store that stops answering turns unhealthy 15 to 20 minutes after its last good refresh, so this
-alert fires about 25 to 30 minutes into an outage. `scrim_store_staleness_seconds`, computed at
-scrape time, shows the outage sooner. Check network, credentials and the store itself. Loaded values
-stay in redaction; injection refuses values not confirmed within `refresh.staleness`.
+Warning. A store has not refreshed successfully for longer than `refresh.staleness` (15 minutes by
+default), or has been unloaded or locked for 5 minutes. The first condition reads
+`scrim_store_staleness_seconds`, which is computed at scrape time, so the alert fires on the first
+evaluation after the staleness limit passes, the moment injection from the store starts refusing.
+It does not wait for `scrim_store_up`, which only changes on the next refresh attempt (every
+`refresh.interval` while the store fails, up to 5 minutes later with the defaults).
+
+The rule compares against 900 s, the default staleness. The setting is not exported as a metric, so
+if you set `stores.<name>.refresh.staleness` to something else, change the threshold in
+`rules/scrim.rules.yaml` (or add a rule per store) to match.
+
+Check network, credentials and the store itself. Loaded values stay in redaction; injection refuses
+values not confirmed within `refresh.staleness`.
 
 ### ScrimStoreStale
 
