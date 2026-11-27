@@ -186,7 +186,9 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   again on every turn (only its detector scan is skipped), so a conversation full of values costs
   more than one without. A 1 MB body seen for the first time, any body with `redaction.guard-cache`
   and `redaction.redactor-cache` off, and the first request after a snapshot push (which starts empty
-  caches) go through every decoder: 10 to 27 ms at p99 on ho-z10. The plan cache covers Anthropic
+  caches) go through every decoder: 10 to 27 ms at p99 on ho-z10. On a loaded ho-z10 the next turn
+  at 1,000 secrets still measures about 7 ms at p99 (about 4.8 ms once the runner's slowdown is taken
+  out), so the 5 ms budget passes there only through the gate's slowdown stretch. The plan cache covers Anthropic
   Messages only; other APIs are parsed whole on every request. The redactor's cache is off for a set
   with the entropy detector, encoded forms, format-preserving placeholders, nested values or a value
   containing `,{`. The latency gate fails a change that misses a budget in two runs; its comparison

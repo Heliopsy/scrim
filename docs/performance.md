@@ -97,7 +97,10 @@ cache (below). With them the next turn's budgets are the spec's targets for 10 a
 (5 ms) and 7 ms for 10,000. On a Xeon W-2295 workstation, pinned to one core and measured against the
 same code without the redactor and plan caches, the next turn went from 3.3, 3.8 and 4.2 ms to 2.0,
 2.2 and 2.6 ms at the median (p99 3.7, 4.2 and 4.8 ms to 2.1, 2.5 and 3.0 ms) for 10, 1,000 and
-10,000 secrets. A body seen for the first time has its own budgets (`engine.request_p99_ms` 40 ms,
+10,000 secrets. On ho-z10 the first run with the caches measured p50 4.1, 4.8 and 5.1 ms and p99
+6.9, 7.0 and 8.4 ms while the runner ran 1.45 times slower than its reference (budgets stretched by
+that factor); unstretched that is about p99 4.8 ms at 1,000 secrets, so the 5 ms target holds on a
+quiet runner and not yet with margin on a loaded one. A body seen for the first time has its own budgets (`engine.request_p99_ms` 40 ms,
 `core.protect_p99_ms` 30 ms): every byte goes through the guard's decoders, 7.6 to 21 ms at the
 median on ho-z10 (it was 24 to 29 ms before the decoder prefilters). Filling the caches costs a first
 request about 1 ms per MB more (hashing what the next turn looks up), about 0.35 ms of it in the
