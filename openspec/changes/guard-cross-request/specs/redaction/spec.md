@@ -26,15 +26,21 @@ sessions SHALL never combine.
 ### Requirement: Bounded cross-request memory
 
 The cross-request memory SHALL hold at most 256 pieces per session and 1,024 sessions, SHALL forget
-a piece 30 minutes after it was last seen, and SHALL start empty with every new snapshot and in
-every replica.
+a piece 30 minutes after it was last seen, SHALL name values by a fingerprint keyed with a
+per-process random key, SHALL survive changes to the redaction set, and SHALL drop pieces of values
+that left the set at the session's next check. Replicas SHALL NOT share it.
 
 #### Scenario: Expired piece
 
 - **WHEN** a session sends the second piece of a value more than 30 minutes after the first
 - **THEN** the guard reports nothing
 
-#### Scenario: New snapshot
+#### Scenario: Snapshot change
 
-- **WHEN** the redaction set changes between the first and the second piece
-- **THEN** the guard reports nothing
+- **WHEN** a session token is added to the redaction set between the first and the second piece of a value
+- **THEN** the second request is repaired
+
+#### Scenario: Value removed
+
+- **WHEN** a value leaves the redaction set after its first piece, the session sends another request, and the value comes back
+- **THEN** its second piece alone is not repaired

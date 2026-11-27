@@ -15,8 +15,10 @@ cannot gate it.
 - Only pieces that read as random count: a lower-case letter followed by a capital, a letter
   next to a digit, two letters or digits next to punctuation that does not join words, or four
   consonants in a row.
-- Bounded: 256 pieces per session, 1,024 sessions, 30 minutes after a piece was last seen. The
-  memory belongs to the guard, so a new snapshot starts empty, and to one replica.
+- Bounded: 256 pieces per session, 1,024 sessions, 30 minutes after a piece was last seen. Pieces
+  name their value by a keyed fingerprint (a per-process random key), and the data plane gives
+  every snapshot one memory, so pieces join across changes to the redaction set; a check drops
+  pieces of values that left the set. Per replica.
 - The session is what the transport says (`Identity::guard_session`): the client certificate's
   leaf, else the session id, else the Kubernetes token, else the Unix user; unknown callers share
   one. The LLM gate returns it in `Admission::Forward`, and the proxy binds the request's guard to

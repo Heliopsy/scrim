@@ -61,9 +61,11 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   is what the transport says: a client certificate, the session id, a Kubernetes token, the Unix
   user, or one shared session for unknown callers, so an agent that can change its session id
   starts over); pieces sent through different replicas, since each data plane replica remembers
-  only its own requests; and pieces sent before a new snapshot (any change to the redaction set, a
-  session ending), which starts empty. The earlier pieces have already left when the last one is
-  repaired: the provider holds part of the value, never all of it.
+  only its own requests; pieces of a value removed from the redaction set and added again (they are
+  dropped at the session's next check); and pieces sent before the data plane restarted. Changes
+  to the redaction set, such as a session starting or ending, keep the memory. The earlier pieces
+  have already left when the last one is repaired: the provider holds part of the value, never all
+  of it.
 - **Short values.** Values shorter than the minimum length (8 bytes by default) are matched only
   whole and in their encoded forms, never as fragments. `scrim status` lists them.
 - **Text in image pixels is not read.** Under the default `redaction.binary: scan`, scrim decodes

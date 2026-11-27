@@ -58,6 +58,9 @@ pub struct TransformConfig {
     /// Short fragments of a value spread over several requests of one session
     /// (`cross-request`).
     pub cross_request: bool,
+    /// The memory `cross-request` keeps its pieces in. Give every snapshot the same one so
+    /// pieces join across snapshot changes; `None` gives each guard its own.
+    pub memory: Option<std::sync::Arc<super::CrossMemory>>,
 }
 
 impl Default for TransformConfig {
@@ -69,6 +72,7 @@ impl Default for TransformConfig {
             spelled: true,
             split_fragments: true,
             cross_request: true,
+            memory: None,
         }
     }
 }
@@ -93,6 +97,7 @@ impl TransformConfig {
             spelled: false,
             split_fragments: false,
             cross_request: false,
+            memory: None,
         }
     }
 

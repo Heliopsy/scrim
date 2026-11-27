@@ -4,6 +4,7 @@
 - [x] 1.2 Short pieces collected for either rule; joined after a whole check only; `CrossRequest` view
 - [x] 1.3 `looks_random` filter, chosen from measured false positives
 - [x] 1.4 `Guard::check_in`; unit tests (two and three requests, slack, expiry, other sessions and values, bounds) and integration tests (verdict cache, snapshot change, toggle, quiet conversations)
+- [x] 1.5 Pieces keyed by a keyed fingerprint of the value form; one memory per data plane process shared by every snapshot; pieces of values that left the set dropped
 
 ## 2. Session
 

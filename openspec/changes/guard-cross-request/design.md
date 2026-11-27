@@ -8,13 +8,18 @@ snapshot; the data plane binds a request to a caller only in the request gate.
 
 ## Decisions
 
-### D1 Memory of offsets, per guard
+### D1 Memory of offsets, per process, keyed by fingerprint
 
-Each guard built with `cross-request` holds a `CrossMemory`: a map from session key to the pieces
-seen, each `(form, offset, length, last seen)` as four `u32`, 16 bytes. The form index is only
-meaningful within one guard, so the memory belongs to it and a new snapshot starts empty. That
-also clears it when the redaction set changes, including when a session's token is added or
-revoked. Bytes and values are never stored.
+A `CrossMemory` maps a session key to the pieces seen, each `(fingerprint, offset, length, last
+seen)`, 28 bytes. The fingerprint is the first 16 bytes of the form's BLAKE3 hash keyed with a
+random key the memory draws at start (from the standard library's OS-seeded hash keys and the
+clock) and never stores elsewhere, so it names the value without holding it and means nothing
+outside the process. The data plane builds one memory per process and gives it to every snapshot
+(`TransformConfig::memory`), so the memory survives changes to the redaction set. Keying by the
+per-snapshot form index would clear it whenever any session token is added or revoked, which on a
+busy daemon is all the time, and an agent could clear it itself by starting a session between two
+pieces. Each guard knows the fingerprints of its own forms; a check drops its session's pieces of
+other fingerprints (values that left the set). Bytes and values are never stored.
 
 ### D2 Join and remember under one lock
 
@@ -52,7 +57,7 @@ joins more.
 ### D5 Bounds
 
 256 pieces per session (the oldest replaced), 1,024 sessions (the one seen longest ago evicted),
-30 minutes after a piece was last seen; expired sessions are swept every 256 joins. At most 4 MiB.
+30 minutes after a piece was last seen; expired sessions are swept every 256 joins. At most 7 MiB.
 Per replica: the shared state backend is not used, since a lookup per request would add a round
 trip to the guard's path; deployments that care pin sessions to a replica.
 

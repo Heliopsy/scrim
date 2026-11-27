@@ -150,6 +150,39 @@ fn other_values_never_combine() {
     assert_eq!(send(&s, &S1, &turn(&b[19..38], None)).0, vec![]);
 }
 
+/// The data plane gives every snapshot one memory: pieces join across a change to the
+/// redaction set (a session token added, a value refreshed), and pieces of a value that left the
+/// set are dropped.
+#[test]
+fn one_memory_across_snapshots() {
+    let mut r = Rng::new(10);
+    let (v, w) = (value(&mut r), value(&mut r));
+    let mem = std::sync::Arc::new(CrossMemory::new());
+    let with = |values: &[&[u8]]| {
+        snap_with(
+            values,
+            TransformConfig {
+                memory: Some(mem.clone()),
+                ..TransformConfig::default()
+            },
+        )
+    };
+    let s = with(&[v.as_bytes()]);
+    assert_eq!(send(&s, &S1, &turn(&v[..19], None)).0, vec![]);
+    // A new snapshot with one more value: the first piece is still known.
+    let s = with(&[v.as_bytes(), w.as_bytes()]);
+    assert!(joined(&send(&s, &S1, &turn(&v[19..38], None)).0));
+    // v leaves the set: the next check of the session drops its pieces.
+    let s = with(&[w.as_bytes()]);
+    let before = mem.pieces(&S1);
+    assert_eq!(send(&s, &S1, &turn(&w[..19], None)).0, vec![]);
+    assert!(mem.pieces(&S1) < before, "v's pieces kept");
+    // Back in the set, its old pieces are gone: one piece alone is no finding.
+    let s = with(&[v.as_bytes(), w.as_bytes()]);
+    assert_eq!(send(&s, &S1, &turn(&v[19..38], None)).0, vec![]);
+}
+
+/// Without a shared memory each guard keeps its own.
 #[test]
 fn a_new_snapshot_starts_empty() {
     let mut r = Rng::new(6);

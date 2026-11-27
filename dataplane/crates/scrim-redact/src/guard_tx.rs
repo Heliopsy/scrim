@@ -44,7 +44,7 @@ pub use extra::{TRANSFORM_NAMES, TransformConfig};
 
 #[path = "guard_cross.rs"]
 mod cross;
-pub use cross::SessionKey;
+pub use cross::{CrossMemory, SessionKey};
 
 /// Fewest units a separated or escaped run needs to be decoded (the guard's long values are at
 /// least eight bytes).
@@ -164,7 +164,15 @@ pub(crate) struct Transforms {
     frags: Fragments,
     cfg: TransformConfig,
     /// Short pieces remembered per session (`cross-request`).
-    cross: Option<cross::CrossMemory>,
+    cross: Option<Cross>,
+}
+
+/// The cross-request memory with this guard's names for its forms.
+struct Cross {
+    mem: std::sync::Arc<CrossMemory>,
+    /// Per fragment form, its fingerprint in `mem`.
+    fps: Vec<cross::Fingerprint>,
+    known: std::collections::HashSet<cross::Fingerprint>,
 }
 
 impl Transforms {
@@ -174,10 +182,24 @@ impl Transforms {
         min_len: usize,
         cfg: &TransformConfig,
     ) -> Self {
+        let frags = Fragments::build(long, min_len.max(8), cfg.confusables);
+        let cross = cfg.cross_request.then(|| {
+            let mem = cfg
+                .memory
+                .clone()
+                .unwrap_or_else(|| std::sync::Arc::new(CrossMemory::new()));
+            let fps: Vec<cross::Fingerprint> = frags
+                .vals
+                .iter()
+                .map(|v| mem.fingerprint(&v.value))
+                .collect();
+            let known = fps.iter().copied().collect();
+            Cross { mem, fps, known }
+        });
         Self {
-            frags: Fragments::build(long, min_len.max(8), cfg.confusables),
+            frags,
             cfg: cfg.clone(),
-            cross: cfg.cross_request.then(cross::CrossMemory::new),
+            cross,
         }
     }
 
@@ -392,7 +414,7 @@ impl Transforms {
                     emit(a, b, owner(form), GuardView::Fragment);
                 });
             }
-            if let (Some(mem), Some(key)) = (&self.cross, session) {
+            if let (Some(c), Some(key)) = (&self.cross, session) {
                 let mut random: Vec<extra::Short> = short
                     .iter()
                     .filter(|f| {
@@ -401,9 +423,15 @@ impl Transforms {
                     })
                     .copied()
                     .collect();
-                mem.join(key, &mut random, &done, &form_len, &mut |a, b, form| {
-                    emit(a, b, owner(form), GuardView::CrossRequest);
-                });
+                let forms = cross::Forms {
+                    len: &form_len,
+                    fingerprint: &|form| c.fps[form as usize],
+                    known: &|fp| c.known.contains(fp),
+                };
+                c.mem
+                    .join(key, &mut random, &done, &forms, &mut |a, b, form| {
+                        emit(a, b, owner(form), GuardView::CrossRequest);
+                    });
             }
         }
         s.short = short;

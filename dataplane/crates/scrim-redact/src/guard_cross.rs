@@ -19,10 +19,12 @@
 //! need them once older pieces have expired.
 //!
 //! Bounded: [`MAX_PIECES`] per session (the oldest go first), [`MAX_SESSIONS`] sessions (the one
-//! seen longest ago goes first), each piece forgotten [`TTL`] after it was last seen. The memory
-//! belongs to one guard, which belongs to one snapshot: a new snapshot (a value added, changed or
-//! removed, a session token revoked when its session ends) starts empty, and so does every
-//! replica.
+//! seen longest ago goes first), each piece forgotten [`TTL`] after it was last seen. A piece
+//! names its value form by a [`Fingerprint`]: a keyed hash under the memory's random key, which
+//! never leaves the process. The data plane gives every snapshot the same memory, so pieces join
+//! across changes to the redaction set (a session token added or revoked, a value refreshed); a
+//! check drops its session's pieces of forms its guard does not know (a value no longer in the
+//! set). Each replica has its own memory.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -89,9 +91,14 @@ pub(crate) fn looks_random(piece: &[u8]) -> bool {
 /// here.
 pub type SessionKey = [u8; 32];
 
+/// A value form as the memory names it: the first 16 bytes of its BLAKE3 hash keyed with the
+/// memory's random key, so a form keeps its name across snapshots while the memory lives, and
+/// the memory never holds the form.
+pub(super) type Fingerprint = [u8; 16];
+
 #[derive(Clone, Copy)]
 struct Piece {
-    form: u32,
+    fp: Fingerprint,
     off: u32,
     len: u32,
     /// Seconds since the memory was made, when last seen.
@@ -110,20 +117,65 @@ struct Sessions {
     calls: u32,
 }
 
-/// The cross-request memory of one guard.
-pub(crate) struct CrossMemory {
+/// The guard's memory of the short pieces each session sent (`cross-request`). Build one per
+/// process and hand it to every snapshot through `TransformConfig::memory`, so pieces join
+/// across snapshot changes; a guard built without one keeps its own.
+pub struct CrossMemory {
+    key: [u8; 32],
     start: Instant,
     ttl: u32,
     sessions: Mutex<Sessions>,
 }
 
+impl std::fmt::Debug for CrossMemory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CrossMemory(..)")
+    }
+}
+
+/// Two configurations name the same memory only when it is the same object.
+impl PartialEq for CrossMemory {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+impl Eq for CrossMemory {}
+
+impl Default for CrossMemory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CrossMemory {
-    pub(crate) fn new() -> Self {
+    /// An empty memory with a fresh random key (never stored anywhere else).
+    pub fn new() -> Self {
         Self {
+            key: random_key(),
             start: Instant::now(),
             ttl: TTL.as_secs() as u32,
             sessions: Mutex::new(Sessions::default()),
         }
+    }
+
+    /// The name of a value form in this memory.
+    pub(crate) fn fingerprint(&self, form: &[u8]) -> Fingerprint {
+        let h = blake3::keyed_hash(&self.key, form);
+        let mut fp = [0u8; 16];
+        fp.copy_from_slice(&h.as_bytes()[..16]);
+        fp
+    }
+
+    /// Pieces remembered for `key`.
+    #[doc(hidden)]
+    pub fn pieces(&self, key: &SessionKey) -> usize {
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .by_key
+            .get(key)
+            .map_or(0, |s| s.pieces.len())
     }
 
     fn now(&self) -> u32 {
@@ -133,25 +185,27 @@ impl CrossMemory {
     /// Joins `short` (the short pieces of the request being checked, in its coordinates) with the
     /// pieces remembered for `key`, skipping the forms in `done` (already joined within the
     /// request). Calls `emit(start, end, form)` for each piece of the request whose form is now
-    /// covered, and remembers the others.
-    pub(crate) fn join(
+    /// covered, and remembers them all. `forms` names the guard's forms (their length and
+    /// fingerprint); remembered pieces of a form it does not know (a value no longer in the
+    /// redaction set) are dropped.
+    pub(super) fn join(
         &self,
         key: &SessionKey,
         short: &mut [Short],
         done: &[u32],
-        form_len: &dyn Fn(u32) -> usize,
+        forms: &Forms<'_>,
         emit: &mut dyn FnMut(usize, usize, u32),
     ) {
-        self.join_at(self.now(), key, short, done, form_len, emit);
+        self.join_at(self.now(), key, short, done, forms, emit);
     }
 
-    pub(crate) fn join_at(
+    pub(super) fn join_at(
         &self,
         now: u32,
         key: &SessionKey,
         short: &mut [Short],
         done: &[u32],
-        form_len: &dyn Fn(u32) -> usize,
+        forms: &Forms<'_>,
         emit: &mut dyn FnMut(usize, usize, u32),
     ) {
         if short.is_empty() {
@@ -177,7 +231,7 @@ impl CrossMemory {
         }
         let sess = g.by_key.entry(*key).or_default();
         sess.seen = now;
-        sess.pieces.retain(|p| live(p.at));
+        sess.pieces.retain(|p| live(p.at) && (forms.known)(&p.fp));
         let mut spans: Vec<(usize, usize)> = Vec::new();
         let mut i = 0;
         while i < short.len() {
@@ -188,6 +242,7 @@ impl CrossMemory {
             }
             let group = &short[i..j];
             i = j;
+            let fp = (forms.fingerprint)(form);
             // Every piece is remembered, the repaired ones too: a value's piece that completed
             // it once (with pieces since forgotten, or within its request) still completes it
             // with the pieces that come after.
@@ -196,7 +251,7 @@ impl CrossMemory {
                 spans.extend(
                     sess.pieces
                         .iter()
-                        .filter(|p| p.form == form)
+                        .filter(|p| p.fp == fp)
                         .map(|p| (p.off as usize, (p.off + p.len) as usize)),
                 );
                 // Only together with pieces from earlier requests.
@@ -207,7 +262,7 @@ impl CrossMemory {
                             .map(|f| (f.off as usize, (f.off + f.len) as usize)),
                     );
                     spans.sort_unstable();
-                    covers(spans.iter().copied(), form_len(form))
+                    covers(spans.iter().copied(), (forms.len)(form))
                 }
             };
             if joined {
@@ -220,20 +275,9 @@ impl CrossMemory {
                 }
             }
             for f in group {
-                remember(&mut sess.pieces, f, now);
+                remember(&mut sess.pieces, fp, f, now);
             }
         }
-    }
-
-    /// Pieces remembered for `key` (tests).
-    #[cfg(test)]
-    pub(crate) fn pieces(&self, key: &SessionKey) -> usize {
-        self.sessions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .by_key
-            .get(key)
-            .map_or(0, |s| s.pieces.len())
     }
 
     /// Sessions remembered (tests).
@@ -247,10 +291,37 @@ impl CrossMemory {
     }
 }
 
-fn remember(pieces: &mut Vec<Piece>, f: &Short, now: u32) {
+/// What [`CrossMemory::join`] needs to know about the guard's forms.
+pub(super) struct Forms<'a> {
+    /// Length of a form.
+    pub len: &'a dyn Fn(u32) -> usize,
+    /// Fingerprint of a form.
+    pub fingerprint: &'a dyn Fn(u32) -> Fingerprint,
+    /// Whether a fingerprint names one of the guard's forms.
+    pub known: &'a dyn Fn(&Fingerprint) -> bool,
+}
+
+/// 32 random bytes: the standard library's hash seeds (each `RandomState` is keyed from the
+/// operating system's generator) and the clock, hashed together.
+fn random_key() -> [u8; 32] {
+    use std::hash::BuildHasher;
+    let mut h = blake3::Hasher::new();
+    h.update(b"scrim cross-request memory key");
+    for i in 0u64..8 {
+        let s = std::collections::hash_map::RandomState::new();
+        h.update(&s.hash_one(i).to_le_bytes());
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    h.update(&nanos.to_le_bytes());
+    *h.finalize().as_bytes()
+}
+
+fn remember(pieces: &mut Vec<Piece>, fp: Fingerprint, f: &Short, now: u32) {
     if let Some(p) = pieces
         .iter_mut()
-        .find(|p| p.form == f.form && p.off == f.off && p.len == f.len)
+        .find(|p| p.fp == fp && p.off == f.off && p.len == f.len)
     {
         p.at = now;
         return;
@@ -265,7 +336,7 @@ fn remember(pieces: &mut Vec<Piece>, f: &Short, now: u32) {
         pieces.swap_remove(k);
     }
     pieces.push(Piece {
-        form: f.form,
+        fp,
         off: f.off,
         len: f.len,
         at: now,
@@ -289,12 +360,39 @@ mod tests {
         }
     }
 
+    fn fp(form: u32) -> Fingerprint {
+        let mut f = [0u8; 16];
+        f[..4].copy_from_slice(&form.to_le_bytes());
+        f
+    }
+
+    const FORMS: Forms<'static> = Forms {
+        len: &|_| LEN,
+        fingerprint: &fp,
+        known: &|_| true,
+    };
+
     fn join(m: &CrossMemory, now: u32, key: &SessionKey, mut short: Vec<Short>) -> Vec<usize> {
         let mut out = Vec::new();
-        m.join_at(now, key, &mut short, &[], &|_| LEN, &mut |a, _, _| {
+        m.join_at(now, key, &mut short, &[], &FORMS, &mut |a, _, _| {
             out.push(a)
         });
         out
+    }
+
+    #[test]
+    fn pieces_of_values_no_longer_known_are_dropped() {
+        let m = CrossMemory::new();
+        let k = [11u8; 32];
+        assert!(join(&m, 0, &k, vec![piece(0, 0, 20, 0)]).is_empty());
+        let only_one = Forms {
+            known: &|f| *f == fp(1),
+            ..FORMS
+        };
+        let mut short = vec![piece(1, 0, 10, 0)];
+        m.join_at(1, &k, &mut short, &[], &only_one, &mut |_, _, _| {});
+        assert_eq!(m.pieces(&k), 1, "the unknown value's piece stayed");
+        assert!(join(&m, 2, &k, vec![piece(0, 20, 20, 0)]).is_empty());
     }
 
     #[test]
@@ -392,9 +490,7 @@ mod tests {
         assert!(join(&m, 0, &k, vec![piece(0, 0, 20, 0)]).is_empty());
         let mut short = vec![piece(0, 20, 20, 0)];
         let mut out = Vec::new();
-        m.join_at(0, &k, &mut short, &[0], &|_| LEN, &mut |a, _, _| {
-            out.push(a)
-        });
+        m.join_at(0, &k, &mut short, &[0], &FORMS, &mut |a, _, _| out.push(a));
         assert!(out.is_empty());
         assert_eq!(m.pieces(&k), 2);
     }
