@@ -5,6 +5,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -84,5 +85,66 @@ func TestDetectorRuleList(t *testing.T) {
 			t.Fatalf("duplicate rule %s", n)
 		}
 		seen[n] = true
+	}
+}
+
+// Encoded forms and entropy are opt-in; their settings reach the snapshot
+// and show in the status line and the doctor finding.
+func TestEncodedAndEntropySettings(t *testing.T) {
+	b := detectorSnapshot(t, "")
+	s, err := b.Build(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := s.GetRedaction(); r.GetDetectorsEncoded() || r.GetEntropy() != nil {
+		t.Fatalf("defaults: %v", r)
+	}
+	def := buildConfig(t, "")
+	if p := detectorProtection(def); !p.Active || !strings.Contains(p.Detail, "encoded forms off") ||
+		!strings.Contains(p.Detail, "entropy off") || !strings.HasPrefix(p.Detail, fmt.Sprintf("%d of %d pattern rules", len(DetectorRules)-1, len(DetectorRules))) {
+		t.Fatalf("default protection: %+v", p)
+	}
+	body := `redaction:
+  detectors:
+    encoded: true
+    entropy:
+      enabled: true
+      context: any
+      threshold: 4.5
+      min-length: 40
+      min-classes: 2
+`
+	b = detectorSnapshot(t, body)
+	s, err = b.Build(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := s.GetRedaction()
+	e := r.GetEntropy()
+	if !r.GetDetectorsEncoded() || !e.GetEnabled() || !e.GetAnyContext() || e.GetThresholdBits() != 4.5 ||
+		e.GetMinLength() != 40 || e.GetMinClasses() != 2 {
+		t.Fatalf("settings: %v", r)
+	}
+	cfg := buildConfig(t, body)
+	if p := detectorProtection(cfg); !strings.Contains(p.Detail, "encoded forms (base64, hex, percent) on") ||
+		!strings.Contains(p.Detail, "entropy on (any context)") {
+		t.Fatalf("protection: %+v", p)
+	}
+	off := buildConfig(t, "redaction:\n  detectors:\n    enabled: false\n")
+	if p := detectorProtection(off); p.Active {
+		t.Fatalf("detectors off reported active: %+v", p)
+	}
+	if f := DetectorFinding(off); f.Outcome != "warn" {
+		t.Fatalf("doctor: %+v", f)
+	}
+	for _, bad := range []string{"min-length: 4", "threshold: 9", "min-classes: 5", "context: words"} {
+		p := filepath.Join(t.TempDir(), "config.yaml")
+		y := "apiVersion: " + config.APIVersion + "\nkind: Config\nredaction:\n  detectors:\n    entropy:\n      " + bad + "\n"
+		if err := os.WriteFile(p, []byte(y), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := config.Build(config.Options{Registry: config.Default, ConfigPaths: []string{p}, Environ: []string{}}); err == nil {
+			t.Errorf("%s accepted", bad)
+		}
 	}
 }

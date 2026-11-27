@@ -18,6 +18,7 @@
 
 use aho_corasick::{AhoCorasick, Input, MatchKind};
 use regex::bytes::Regex;
+use zeroize::Zeroize;
 
 use crate::error::BuildError;
 
@@ -27,8 +28,10 @@ pub const ENTROPY_RULE: &str = "high-entropy";
 /// Configuration of the fallback detectors.
 ///
 /// Defaults: every built-in pattern rule that is on by default (all but
-/// [`default_off_rule_names`]), entropy off. Entropy catches unknown random tokens but also
-/// hashes, nonces and base64 data, so it is opt-in.
+/// [`default_off_rule_names`]), encoded forms and entropy off. Entropy catches unknown random
+/// tokens but also hashes, nonces and base64 data, so it is opt-in. Decoding encoded forms finds
+/// nothing in ordinary text but costs about 0.5 ms per MB of agent request on one core, a third
+/// of the redactor's throughput, so it is opt-in too.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DetectorConfig {
     /// Master switch for the pattern rules (`redaction.detectors.enabled`).
@@ -39,6 +42,10 @@ pub struct DetectorConfig {
     pub enabled_rules: Vec<String>,
     /// Entropy detector; `None` disables it.
     pub entropy: Option<EntropyConfig>,
+    /// Also run the pattern rules over the decoded form of base64 runs, hex runs and
+    /// percent-encoded text (`redaction.detectors.encoded`), and replace the characters that
+    /// encode a match.
+    pub encoded: bool,
 }
 
 impl Default for DetectorConfig {
@@ -48,11 +55,18 @@ impl Default for DetectorConfig {
             disabled_rules: Vec::new(),
             enabled_rules: Vec::new(),
             entropy: None,
+            encoded: false,
         }
     }
 }
 
 /// Tuning of the entropy detector.
+///
+/// The default only looks at values assigned to a key name that says secret ([`KEY_WORDS`]:
+/// `token`, `secret`, `password`, `api_key`, a name ending in `key` or `auth`, ...), at least 16
+/// bytes, 3.5 bits per byte and three of lower case, upper case, digits and symbols.
+/// [`EntropyConfig::any_context`] looks at every token, which needs a longer and more random one
+/// to stay quiet on hashes and identifiers.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EntropyConfig {
     /// Shortest token considered, in bytes.
@@ -61,17 +75,36 @@ pub struct EntropyConfig {
     pub max_len: usize,
     /// Minimum Shannon entropy in bits per byte.
     pub threshold_bits: f64,
-    /// Minimum number of character classes (lower, upper, digit) the token mixes.
+    /// Minimum number of character classes the token mixes: lower case, upper case and digits,
+    /// and with `key_names` symbols as a fourth.
     pub min_classes: u8,
+    /// Only values assigned to a key name that says secret (`redaction.detectors.entropy.context`
+    /// `key-name`); false looks at every token (`any`).
+    pub key_names: bool,
 }
 
 impl Default for EntropyConfig {
     fn default() -> Self {
         Self {
+            min_len: 16,
+            max_len: 256,
+            threshold_bits: 3.5,
+            min_classes: 3,
+            key_names: true,
+        }
+    }
+}
+
+impl EntropyConfig {
+    /// Every token of at least 32 bytes, 4.3 bits per byte, mixing lower case, upper case and
+    /// digits, whatever precedes it.
+    pub fn any_context() -> Self {
+        Self {
             min_len: 32,
             max_len: 256,
             threshold_bits: 4.3,
             min_classes: 3,
+            key_names: false,
         }
     }
 }
@@ -153,6 +186,14 @@ impl Start {
 
 fn is_ident_byte(c: u8) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.')
+}
+
+fn is_host_byte(c: u8) -> bool {
+    c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'-' | b'.')
+}
+
+fn is_ascii_digit_byte(c: u8) -> bool {
+    c.is_ascii_digit()
 }
 
 /// Schemes `database-url-password` accepts, checked before its regex runs: `://` is in every URL.
@@ -648,6 +689,345 @@ const RULES: &[Rule] = &[
         default_on: true,
         check: Some(hex_tail_has_digit_and_letter),
     },
+    // Formats added in the November 2026 review: AI providers and developer platforms that
+    // issue tokens with a fixed prefix.
+    Rule {
+        name: "groq-api-key",
+        anchors: &["sk_"],
+        start: Start::Back(1),
+        pattern: r"gsk_[A-Za-z0-9]{52}",
+        max_len: 56,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "xai-api-key",
+        anchors: &["ai-"],
+        start: Start::Back(1),
+        pattern: r"xai-[A-Za-z0-9]{80}",
+        max_len: 84,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "perplexity-api-key",
+        anchors: &["lx-"],
+        start: Start::Back(2),
+        pattern: r"pplx-[A-Za-z0-9]{48}",
+        max_len: 53,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "openrouter-api-key",
+        anchors: &["sk-or-v1-"],
+        start: Start::At,
+        pattern: r"sk-or-v1-[a-f0-9]{64}",
+        max_len: 73,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    // DeepSeek: `sk-` and 32 lower-case hex digits.
+    Rule {
+        name: "deepseek-api-key",
+        anchors: &["sk-"],
+        start: Start::At,
+        pattern: r"sk-[a-f0-9]{32}",
+        max_len: 35,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: Some(hex_run_has_digit_and_letter),
+    },
+    Rule {
+        name: "langfuse-secret-key",
+        anchors: &["sk-lf-"],
+        start: Start::At,
+        pattern: r"sk-lf-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+        max_len: 42,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "elevenlabs-api-key",
+        anchors: &["sk_"],
+        start: Start::At,
+        pattern: r"sk_[a-f0-9]{48}",
+        max_len: 51,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: Some(hex_run_has_digit_and_letter),
+    },
+    Rule {
+        name: "replicate-api-token",
+        anchors: &["r8_"],
+        start: Start::At,
+        pattern: r"r8_[A-Za-z0-9]{37}",
+        max_len: 40,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "langsmith-api-key",
+        anchors: &["v2_"],
+        start: Start::Back(2),
+        pattern: r"lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}",
+        max_len: 51,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "pinecone-api-key",
+        anchors: &["sk_"],
+        start: Start::Back(2),
+        pattern: r"pcsk_[A-Za-z0-9_]{40,120}",
+        max_len: 125,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "tavily-api-key",
+        anchors: &["ly-"],
+        start: Start::Back(2),
+        pattern: r"tvly-(?:dev-|prod-)?[A-Za-z0-9]{32}",
+        max_len: 42,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    // Amazon Bedrock API keys: long-term keys are `ABSK` and the base64 of `BedrockAPIKey-...`,
+    // short-term keys `bedrock-api-key-` and the base64 of a presigned `bedrock.amazonaws.com`
+    // URL (found from that base64, which is rare in text; `bed` is not).
+    Rule {
+        name: "aws-bedrock-api-key",
+        anchors: &["ABSKQmVkcm9ja0FQSUtleS"],
+        start: Start::At,
+        pattern: r"ABSKQmVkcm9ja0FQSUtleS[A-Za-z0-9+/]{20,400}={0,2}",
+        max_len: 430,
+        left: Edge::Token,
+        right: Edge::Base64,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "aws-bedrock-api-key",
+        anchors: &["YmVkcm9jay5hbWF6b25hd3MuY29t"],
+        start: Start::Back(16),
+        pattern: r"bedrock-api-key-YmVkcm9jay5hbWF6b25hd3MuY29t[A-Za-z0-9+/]{60,4000}={0,2}",
+        max_len: 4050,
+        left: Edge::Token,
+        right: Edge::Base64,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "google-oauth-access-token",
+        anchors: &["ya29."],
+        start: Start::At,
+        pattern: r"ya29\.[A-Za-z0-9_-]{30,2048}",
+        max_len: 2053,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "heroku-api-key",
+        anchors: &["HRKU-"],
+        start: Start::At,
+        pattern: r"HRKU-AA[A-Za-z0-9_-]{58}",
+        max_len: 65,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "notion-token",
+        anchors: &["tn_"],
+        start: Start::Back(1),
+        pattern: r"ntn_[0-9]{11}[A-Za-z0-9]{35}",
+        max_len: 50,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "tailscale-key",
+        anchors: &["tskey-"],
+        start: Start::At,
+        pattern: r"tskey-[a-z]{3,8}-[A-Za-z0-9]{6,32}-[A-Za-z0-9]{16,64}",
+        max_len: 112,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "sourcegraph-token",
+        anchors: &["gp_"],
+        start: Start::Back(1),
+        pattern: r"sgp_(?:[a-fA-F0-9]{16}|local)_[a-fA-F0-9]{40}",
+        max_len: 61,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "planetscale-token",
+        anchors: &["pscale_"],
+        start: Start::At,
+        pattern: r"pscale_(?:tkn|pw|oauth)_[A-Za-z0-9_.=-]{32,64}",
+        max_len: 77,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "supabase-key",
+        anchors: &["bp_"],
+        start: Start::Back(1),
+        pattern: r"sbp_[a-f0-9]{40}",
+        max_len: 44,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "supabase-key",
+        anchors: &["sb_secret_"],
+        start: Start::At,
+        pattern: r"sb_secret_[A-Za-z0-9_-]{20,128}",
+        max_len: 138,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "contentful-token",
+        anchors: &["CFPAT-"],
+        start: Start::At,
+        pattern: r"CFPAT-[A-Za-z0-9_-]{43}",
+        max_len: 49,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "new-relic-key",
+        anchors: &["NRAK-"],
+        start: Start::At,
+        pattern: r"NRAK-[A-Z0-9]{27}",
+        max_len: 32,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "dynatrace-token",
+        anchors: &["dt0c01."],
+        start: Start::At,
+        pattern: r"dt0c01\.[A-Z0-9]{24}\.[A-Z0-9]{64}",
+        max_len: 96,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "mapbox-secret-token",
+        anchors: &["sk.eyJ"],
+        start: Start::At,
+        pattern: r"sk\.eyJ[A-Za-z0-9_-]{20,1000}\.[A-Za-z0-9_-]{20,100}",
+        max_len: 1106,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "prefect-api-key",
+        anchors: &["nu_"],
+        start: Start::Back(1),
+        pattern: r"pnu_[A-Za-z0-9]{36}",
+        max_len: 40,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "posthog-personal-api-key",
+        anchors: &["hx_"],
+        start: Start::Back(1),
+        pattern: r"phx_[A-Za-z0-9]{43}",
+        max_len: 47,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    Rule {
+        name: "square-token",
+        anchors: &["sq0csp-", "sq0atp-"],
+        start: Start::At,
+        pattern: r"sq0(?:csp|atp)-[A-Za-z0-9_-]{22,43}",
+        max_len: 50,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    // A Discord webhook URL, found from its path; the host is read back from there (past the
+    // letter of an escape such as `\n` before it).
+    Rule {
+        name: "discord-webhook-url",
+        anchors: &["/api/webhooks/"],
+        start: Start::Scan(32, is_host_byte),
+        pattern: r"[a-z0-9.-]{0,32}?(?P<v>(?:[a-z0-9-]+\.)?discord(?:app)?\.com/api/webhooks/[0-9]{17,20}/[A-Za-z0-9_-]{60,68})",
+        max_len: 140,
+        left: Edge::Free,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
+    // A Telegram bot token: the bot id, `:AA` and 33 more characters.
+    Rule {
+        name: "telegram-bot-token",
+        anchors: &[":AA"],
+        start: Start::Scan(10, is_ascii_digit_byte),
+        pattern: r"[0-9]{8,10}:AA[A-Za-z0-9_-]{33}",
+        max_len: 46,
+        left: Edge::Token,
+        right: Edge::Token,
+        default_on: true,
+        check: None,
+    },
     Rule {
         name: "jwt",
         anchors: &["eyJ"],
@@ -746,6 +1126,7 @@ pub(crate) struct Detectors {
     /// Furthest an enabled rule's match starts before its anchor.
     max_back: usize,
     entropy: Option<EntropyConfig>,
+    encoded: bool,
 }
 
 /// A detection: `[start, end)` and the rule name.
@@ -771,11 +1152,15 @@ const ANCHORS_PER_AUTOMATON: usize = 24;
 ///
 /// Teddy, the SIMD prefilter, checks the low and high half of each fingerprint byte separately,
 /// so a bucket holding several fingerprints also admits their crossings, and ordinary text,
-/// mostly lower case letters, then keeps it verifying. Anchors are grouped by their first byte
-/// (upper case, lower case, other) so the crossings stay in byte ranges text rarely hits, the
-/// lower case group is split into automata of at most [`ANCHORS_PER_AUTOMATON`], and an anchor
-/// alone in its automaton is found with `memmem`. Measured with the `detect` bench group: one
-/// automaton over every anchor costs about three times as much.
+/// mostly lower case letters, then keeps it verifying. Anchors are grouped by their fingerprint
+/// (three upper case-first letters, three lower case-first letters, or a digit or punctuation
+/// among the three) so the crossings stay in byte ranges text rarely hits, each group is split
+/// into automata of at most [`ANCHORS_PER_AUTOMATON`], and an anchor alone in its automaton is
+/// found with `memmem`. Measured with the `detect` bench group: one automaton over every anchor
+/// costs about three times as much, and grouping by first byte only cost 35% more on agent
+/// bodies once the rules of the November 2026 review were in. New anchors should put a digit or
+/// punctuation in their first three bytes (`sk_` with the match starting a byte earlier for
+/// `gsk_`): text rarely crosses those.
 fn automata(rules: &[CompiledRule], pem: bool) -> Result<Vec<Group>, BuildError> {
     let mut anchors: Vec<&str> = rules
         .iter()
@@ -796,10 +1181,15 @@ fn automata(rules: &[CompiledRule], pem: bool) -> Result<Vec<Group>, BuildError>
                 .any(|m| m.len() < a.len() && a.starts_with(m))
         })
         .collect();
-    let class = |a: &str| match a.as_bytes()[0] {
-        b'A'..=b'Z' => 0,
-        b'a'..=b'z' => 1,
-        _ => 2,
+    // Text is mostly letters: fingerprints of three letters go together by case, and those with
+    // a digit or punctuation among their three bytes, which text rarely crosses, share theirs.
+    let class = |a: &str| {
+        let b = a.as_bytes();
+        if b[..3].iter().all(u8::is_ascii_alphabetic) {
+            usize::from(b[0].is_ascii_lowercase())
+        } else {
+            2
+        }
     };
     let mut groups: Vec<Vec<&str>> = Vec::new();
     for k in 0..3 {
@@ -901,6 +1291,7 @@ impl Detectors {
             aws_neighbour,
             max_back,
             entropy: cfg.entropy.clone(),
+            encoded: cfg.encoded,
         })
     }
 
@@ -920,7 +1311,12 @@ impl Detectors {
             .unwrap_or(0);
         let pem = if self.pem { PEM_MAX } else { 0 };
         let ent = self.entropy.as_ref().map_or(0, |e| e.max_len);
-        rules.max(pem).max(ent)
+        let enc = if self.encoded && !self.automata.is_empty() {
+            ENC_MAX_RUN
+        } else {
+            0
+        };
+        rules.max(pem).max(ent).max(enc)
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -935,9 +1331,7 @@ impl Detectors {
         while pos < hay.len() {
             let next = self.next_rule_hit(hay, pos, &mut cur);
             let gap_end = next.as_ref().map_or(hay.len(), |d| d.start);
-            if let Some(e) = &self.entropy {
-                entropy_scan(e, hay, pos, gap_end, &mut f);
-            }
+            self.scan_gap(hay, pos, gap_end, &mut f);
             match next {
                 Some(d) => {
                     pos = d.end;
@@ -946,6 +1340,200 @@ impl Detectors {
                 None => break,
             }
         }
+    }
+
+    /// Detections between two rule hits: encoded forms of a rule match, then entropy over what
+    /// is left.
+    fn scan_gap(&self, hay: &[u8], from: usize, to: usize, f: &mut impl FnMut(Detection)) {
+        if from >= to {
+            return;
+        }
+        let mut p = from;
+        if self.encoded && !self.automata.is_empty() {
+            let entropy = self.entropy.as_ref();
+            self.encoded_scan(hay, from, to, &mut |d| {
+                if let Some(e) = entropy {
+                    entropy_scan(e, hay, p, d.start, f);
+                }
+                p = d.end;
+                f(d);
+            });
+        }
+        if let Some(e) = &self.entropy {
+            entropy_scan(e, hay, p, to, f);
+        }
+    }
+
+    /// Rule matches inside the decoded form of base64 runs, hex runs and percent-encoded spans
+    /// of `hay[from..to]`, each reported as the characters that encode it, in order and without
+    /// overlap.
+    fn encoded_scan(&self, hay: &[u8], from: usize, to: usize, f: &mut dyn FnMut(Detection)) {
+        // Found out of order (runs, then escapes); only grows when something is found.
+        let mut found: Vec<Detection> = Vec::new();
+        b64_runs(hay, from, to, &mut |mut s, i| {
+            // `\n` before the run in a JSON string: the `n` belongs to the escape.
+            if escaped_letter_before(hay, s + 1) {
+                s += 1;
+            }
+            let run = &hay[s..i];
+            if run.len() < ENC_MIN_B64 || run.len() > ENC_MAX_RUN {
+                return;
+            }
+            let mut pad = i;
+            while pad < to && hay[pad] == b'=' && pad - i < 2 {
+                pad += 1;
+            }
+            let hs = if run.starts_with(b"0x") { s + 2 } else { s };
+            if hay[hs..i].iter().all(u8::is_ascii_hexdigit) {
+                if i - hs >= ENC_MIN_HEX {
+                    self.decoded_hex(hay, hs, i, &mut |d| found.push(d));
+                }
+            } else {
+                self.decoded_base64(hay, s, i, pad, &mut |d| found.push(d));
+            }
+        });
+        let mut pct_done = from;
+        for i in memchr::memchr_iter(b'%', &hay[from..to]).map(|k| from + k) {
+            // `%s`, `50%`: not an escape.
+            if i < pct_done
+                || i + 2 >= to
+                || hexv(hay[i + 1]).is_none()
+                || hexv(hay[i + 2]).is_none()
+            {
+                continue;
+            }
+            // A percent-encoded span: the URL-ish run around the escape.
+            let mut s = i;
+            while s > from.max(i.saturating_sub(ENC_MAX_PCT)) && is_url_byte(hay[s - 1]) {
+                s -= 1;
+            }
+            let mut e = i;
+            while e < to && e - s < ENC_MAX_PCT && is_url_byte(hay[e]) {
+                e += 1;
+            }
+            pct_done = e;
+            self.decoded_percent(hay, s, e, &mut |d| found.push(d));
+        }
+        found.sort_unstable_by_key(|d| (d.start, std::cmp::Reverse(d.end)));
+        let mut last_end = from;
+        for d in found {
+            if d.start >= last_end && d.end > d.start {
+                last_end = d.end;
+                f(d);
+            }
+        }
+    }
+
+    /// Rule matches in the base64 run `hay[s..e]` (`pad` is its end with `=` padding).
+    fn decoded_base64(
+        &self,
+        hay: &[u8],
+        s: usize,
+        e: usize,
+        pad: usize,
+        f: &mut dyn FnMut(Detection),
+    ) {
+        let run = &hay[s..e];
+        // Cheap reject first: the first characters of anything but text decode to control bytes.
+        let mut probe = [0u8; 36];
+        let n = b64_decode_into(&run[..run.len().min(48)], &mut probe);
+        let text = looks_like_text(&probe[..n]);
+        probe.zeroize();
+        if !text {
+            return;
+        }
+        with_buffer(run.len() / 4 * 3 + 3, |buf| {
+            let n = b64_decode_into(run, buf);
+            let mut cur = Cursor::default();
+            let mut pos = 0;
+            while let Some(d) = self.next_rule_hit(&buf[..n], pos, &mut cur) {
+                pos = d.end;
+                let a = s + (d.start * 8) / 6;
+                let b = (s + (d.end * 8).div_ceil(6)).min(e);
+                // Padding belongs to the last group: it goes with the characters before it.
+                let b = if b == e { pad } else { b };
+                f(Detection {
+                    start: a,
+                    end: b,
+                    rule: d.rule,
+                });
+            }
+        });
+    }
+
+    /// Rule matches in the hex run `hay[s..e]`.
+    fn decoded_hex(&self, hay: &[u8], s: usize, e: usize, f: &mut dyn FnMut(Detection)) {
+        // Odd runs are decoded from their start; a trailing digit is left over.
+        let run = &hay[s..e];
+        let mut probe = [0u8; 24];
+        let n = hex_decode_into(&run[..run.len().min(48)], &mut probe);
+        let text = looks_like_text(&probe[..n]);
+        probe.zeroize();
+        if !text {
+            return;
+        }
+        with_buffer(run.len() / 2, |buf| {
+            let n = hex_decode_into(run, buf);
+            let mut cur = Cursor::default();
+            let mut pos = 0;
+            while let Some(d) = self.next_rule_hit(&buf[..n], pos, &mut cur) {
+                pos = d.end;
+                f(Detection {
+                    start: s + 2 * d.start,
+                    end: s + 2 * d.end,
+                    rule: d.rule,
+                });
+            }
+        });
+    }
+
+    /// Rule matches in the percent-decoded form of `hay[s..e]` that cover an escape (anything
+    /// else the rules saw in the raw bytes already).
+    fn decoded_percent(&self, hay: &[u8], s: usize, e: usize, f: &mut dyn FnMut(Detection)) {
+        // Decoded bytes, then per decoded byte its raw offset from `s` (two bytes each).
+        with_buffer(3 * (e - s) + 2, |buf| {
+            let (dec, at) = buf.split_at_mut(e - s);
+            let mut n = 0;
+            let mut j = s;
+            let mut escapes = 0;
+            let mut put_at = |n: usize, off: usize| {
+                at[2 * n..2 * n + 2].copy_from_slice(&(off as u16).to_le_bytes());
+            };
+            while j < e {
+                put_at(n, j - s);
+                if hay[j] == b'%'
+                    && j + 2 < e
+                    && let (Some(h), Some(l)) = (hexv(hay[j + 1]), hexv(hay[j + 2]))
+                {
+                    dec[n] = h << 4 | l;
+                    j += 3;
+                    escapes += 1;
+                } else {
+                    dec[n] = hay[j];
+                    j += 1;
+                }
+                n += 1;
+            }
+            put_at(n, j - s);
+            if escapes == 0 {
+                return;
+            }
+            let at = |k: usize| s + usize::from(u16::from_le_bytes([at[2 * k], at[2 * k + 1]]));
+            let mut cur = Cursor::default();
+            let mut pos = 0;
+            while let Some(d) = self.next_rule_hit(&dec[..n], pos, &mut cur) {
+                pos = d.end;
+                let (a, b) = (at(d.start), at(d.end));
+                // Only a match whose bytes were escaped is new.
+                if hay[a..b].contains(&b'%') {
+                    f(Detection {
+                        start: a,
+                        end: b,
+                        rule: d.rule,
+                    });
+                }
+            }
+        });
     }
 
     /// The detection starting first at or after `pos`.
@@ -1188,6 +1776,13 @@ fn hex_tail_has_digit_and_letter(hay: &[u8], start: usize, _end: usize) -> bool 
     t.iter().any(u8::is_ascii_digit) && t.iter().any(u8::is_ascii_lowercase)
 }
 
+/// A run of random hex digits holds both; `sk-` or `sk_` and only digits or only letters is a
+/// name, not a key.
+fn hex_run_has_digit_and_letter(hay: &[u8], start: usize, end: usize) -> bool {
+    let t = &hay[start + 3..end];
+    t.iter().any(u8::is_ascii_digit) && t.iter().any(u8::is_ascii_lowercase)
+}
+
 /// Words documentation writes where a password goes. Matched whole, ignoring case.
 const PASSWORD_WORDS: &[&str] = &[
     "password", "passwd", "pass", "pwd", "pw", "secret", "redacted", "changeme", "example",
@@ -1284,6 +1879,389 @@ fn pem_block(b: &[u8]) -> Option<usize> {
     Some(j)
 }
 
+/// Shortest base64 run decoded for rule matches: the shortest rule match is 20 bytes.
+const ENC_MIN_B64: usize = 24;
+/// Shortest hex run decoded for rule matches.
+const ENC_MIN_HEX: usize = 40;
+/// Longest base64 or hex run decoded for rule matches; longer runs are data (images, archives).
+const ENC_MAX_RUN: usize = 16 * 1024;
+/// Longest percent-encoded span decoded for rule matches.
+const ENC_MAX_PCT: usize = 4096;
+
+/// Base64 values of both alphabets, 0xFF for anything else.
+const B64DEC: [u8; 256] = {
+    let mut t = [0xFFu8; 256];
+    let a = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut i = 0;
+    while i < 64 {
+        t[a[i] as usize] = i as u8;
+        i += 1;
+    }
+    t[b'-' as usize] = 62;
+    t[b'_' as usize] = 63;
+    t
+};
+
+/// Decodes base64 characters (either alphabet, no padding) into `out`; returns the bytes
+/// written. Stops when `out` is full.
+fn b64_decode_into(chars: &[u8], out: &mut [u8]) -> usize {
+    let (mut acc, mut bits, mut n) = (0u32, 0u32, 0usize);
+    for &c in chars {
+        let v = B64DEC[usize::from(c)];
+        if v == 0xFF {
+            break;
+        }
+        acc = (acc << 6) | u32::from(v);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            if n == out.len() {
+                break;
+            }
+            out[n] = (acc >> bits) as u8;
+            n += 1;
+        }
+    }
+    n
+}
+
+fn hexv(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn hex_decode_into(digits: &[u8], out: &mut [u8]) -> usize {
+    let mut n = 0;
+    for p in digits.chunks_exact(2) {
+        let (Some(h), Some(l)) = (hexv(p[0]), hexv(p[1])) else {
+            break;
+        };
+        if n == out.len() {
+            break;
+        }
+        out[n] = h << 4 | l;
+        n += 1;
+    }
+    n
+}
+
+fn is_b64_byte(c: u8) -> bool {
+    B64DEC[usize::from(c)] != 0xFF
+}
+
+const fn rep8(b: u8) -> u64 {
+    u64::from_ne_bytes([b; 8])
+}
+
+/// Bytes of `x` (high bits clear) in `lo..=hi`, as their high bit.
+const fn in_range8(x: u64, lo: u8, hi: u8) -> u64 {
+    x.wrapping_add(rep8(0x80 - lo)) & !x.wrapping_add(rep8(0x7F - hi)) & rep8(0x80)
+}
+
+/// Whether all eight bytes are base64 characters of either alphabet, eight at a time.
+fn all_b64_8(b: &[u8]) -> bool {
+    let Ok(b) = <[u8; 8]>::try_from(b) else {
+        return false;
+    };
+    let w = u64::from_ne_bytes(b);
+    // Any byte below `+` (space, quote, line break, control): no base64 character. One test
+    // that rejects most chunks of text.
+    if w.wrapping_sub(rep8(b'+')) & !w & rep8(0x80) != 0 {
+        return false;
+    }
+    let x = w & rep8(0x7F);
+    let ok = in_range8(x, b'0', b'9')
+        | in_range8(x, b'A', b'Z')
+        | in_range8(x, b'a', b'z')
+        | in_range8(x, b'+', b'+')
+        | in_range8(x, b'-', b'-')
+        | in_range8(x, b'/', b'/')
+        | in_range8(x, b'_', b'_');
+    ok & !(w & rep8(0x80)) == rep8(0x80)
+}
+
+/// Calls `f(start, end)` for every maximal run of at least [`ENC_MIN_B64`] base64 characters
+/// in `hay[from..to]`, in order. Such a run holds two consecutive aligned eight-byte chunks of
+/// base64 characters, one of them at an offset divisible by sixteen, so the scan tests every
+/// other chunk and expands only around a full pair: prose and code, whose words are shorter,
+/// cost one test per sixteen bytes, most of them failing on the first byte below `+` (a space,
+/// a quote, a line break).
+fn b64_runs(hay: &[u8], from: usize, to: usize, f: &mut dyn FnMut(usize, usize)) {
+    let full = |c: usize| all_b64_8(&hay[c..c + 8]);
+    let mut c = from.div_ceil(16) * 16;
+    while c + 8 <= to {
+        if !full(c) || !((c >= from + 8 && full(c - 8)) || (c + 16 <= to && full(c + 8))) {
+            c += 16;
+            continue;
+        }
+        let mut s = c;
+        while s >= from + 8 && full(s - 8) {
+            s -= 8;
+        }
+        while s > from && is_b64_byte(hay[s - 1]) {
+            s -= 1;
+        }
+        let mut e = c + 8;
+        while e + 8 <= to && full(e) {
+            e += 8;
+        }
+        while e < to && is_b64_byte(hay[e]) {
+            e += 1;
+        }
+        if e - s >= ENC_MIN_B64 {
+            f(s, e);
+        }
+        c = (e + 1).div_ceil(16) * 16;
+    }
+}
+
+/// Calls `f(start, end)` for every maximal run of bytes `class` accepts in `hay[from..to]` that
+/// is at least `min` long, in order. Such a run holds a position that is a multiple of `min`,
+/// so only those positions are probed: text costs one lookup every `min` bytes plus the words
+/// it lands in. `class` accepts every base64 character, so runs of them (data, blobs) are
+/// stepped over eight bytes at a time.
+fn long_runs(
+    hay: &[u8],
+    from: usize,
+    to: usize,
+    min: usize,
+    class: impl Fn(u8) -> bool,
+    f: &mut dyn FnMut(usize, usize),
+) {
+    let min = min.max(1);
+    let mut p = from.div_ceil(min) * min;
+    while p < to {
+        if !class(hay[p]) {
+            p += min;
+            continue;
+        }
+        let mut s = p;
+        while s >= from + 8 && all_b64_8(&hay[s - 8..s]) {
+            s -= 8;
+        }
+        while s > from && class(hay[s - 1]) {
+            s -= 1;
+        }
+        let mut e = p + 1;
+        while e + 8 <= to && all_b64_8(&hay[e..e + 8]) {
+            e += 8;
+        }
+        while e < to && class(hay[e]) {
+            e += 1;
+        }
+        if e - s >= min {
+            f(s, e);
+        }
+        p = (e + 1).div_ceil(min) * min;
+    }
+}
+
+thread_local! {
+    /// Decoded bytes of an encoded run, reused so a scan allocates nothing once warm.
+    static DECODED: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Runs `f` with a zeroed buffer of `n` bytes, wiped afterwards.
+fn with_buffer(n: usize, f: impl FnOnce(&mut [u8])) {
+    DECODED.with(|b| {
+        // A nested call (none today) gets a fresh buffer instead of a borrow panic.
+        let Ok(mut v) = b.try_borrow_mut() else {
+            let mut v = vec![0u8; n];
+            f(&mut v);
+            v.zeroize();
+            return;
+        };
+        if v.len() < n {
+            v.resize(n, 0);
+        }
+        f(&mut v[..n]);
+        v[..n].zeroize();
+    });
+}
+
+/// Characters of a URL, a query string or form data, `%` included.
+fn is_url_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric()
+        || matches!(
+            c,
+            b'%' | b'-' | b'.' | b'_' | b'~' | b'+' | b'/' | b'=' | b'&' | b':' | b'?' | b'@'
+        )
+}
+
+/// No control bytes but tab and line breaks: decoded text, not binary data.
+fn looks_like_text(b: &[u8]) -> bool {
+    !b.is_empty()
+        && b.iter()
+            .all(|&c| c >= 0x20 && c != 0x7F || matches!(c, b'\t' | b'\n' | b'\r'))
+}
+
+/// Key names whose value the entropy detector looks at, matched in the lower-cased name (a name
+/// ending in `key` or `auth` counts too).
+const KEY_WORDS: &[&[u8]] = &[
+    b"token",
+    b"secret",
+    b"password",
+    b"passwd",
+    b"passphrase",
+    b"pwd",
+    b"apikey",
+    b"api_key",
+    b"api-key",
+    b"credential",
+    b"bearer",
+    b"private_key",
+    b"privatekey",
+];
+
+/// Parts of key names whose high-entropy values are not secrets.
+const NOT_SECRET_WORDS: &[&[u8]] = &[
+    b"page",
+    b"next",
+    b"cursor",
+    b"continuation",
+    b"sync",
+    b"csrf",
+    b"xsrf",
+    b"nonce",
+];
+
+/// Whether the token starting at `s` is the value of a key name that says secret: `name=`,
+/// `name: `, `"name": "`, `name := `, `name => `, `--name ` or `Bearer `.
+fn key_context(hay: &[u8], s: usize) -> bool {
+    let lo = s.saturating_sub(96);
+    let mut j = s;
+    let quote = |j: &mut usize| {
+        if *j > lo && matches!(hay[*j - 1], b'"' | b'\'') {
+            *j -= 1;
+            if *j > lo && hay[*j - 1] == b'\\' {
+                *j -= 1;
+            }
+        }
+    };
+    let spaces = |j: &mut usize| {
+        let at = *j;
+        while *j > lo && at - *j < 4 && matches!(hay[*j - 1], b' ' | b'\t') {
+            *j -= 1;
+        }
+        at - *j
+    };
+    quote(&mut j);
+    let sp = spaces(&mut j);
+    let op = if j >= lo + 2 && &hay[j - 2..j] == b"=>" {
+        j -= 2;
+        true
+    } else if j > lo && hay[j - 1] == b'=' {
+        j -= 1;
+        if j > lo && hay[j - 1] == b':' {
+            j -= 1;
+        }
+        true
+    } else if j > lo && hay[j - 1] == b':' {
+        j -= 1;
+        true
+    } else {
+        false
+    };
+    if !op && sp == 0 {
+        return false;
+    }
+    if op {
+        spaces(&mut j);
+        quote(&mut j);
+    }
+    let end = j;
+    while j > lo && end - j < 64 && is_ident_byte(hay[j - 1]) {
+        j -= 1;
+    }
+    let key = &hay[j..end];
+    // `scheme://user:password@host`: a URL's user name, not a key.
+    if key.is_empty() || key.len() > 63 || hay[..j].ends_with(b"//") {
+        return false;
+    }
+    let mut low = [0u8; 64];
+    for (d, &c) in low.iter_mut().zip(key) {
+        *d = c.to_ascii_lowercase();
+    }
+    let low = &low[..key.len()];
+    let low = low.strip_suffix(b"s").unwrap_or(low);
+    // Tokens a client must send back as they are: pagination, sync and anti-forgery tokens.
+    if NOT_SECRET_WORDS
+        .iter()
+        .any(|w| memchr::memmem::find(low, w).is_some())
+    {
+        return false;
+    }
+    if low.ends_with(b"key") || low.ends_with(b"auth") {
+        return true;
+    }
+    KEY_WORDS
+        .iter()
+        .any(|w| memchr::memmem::find(low, w).is_some())
+}
+
+/// A byte of a value after a key name: letters, digits and the symbols passwords use, but no
+/// quote, space, separator (`,;&`), bracket, `$` (a variable) or `.` (a dotted name).
+fn is_value_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric()
+        || matches!(
+            c,
+            b'+' | b'/' | b'_' | b'-' | b'~' | b'!' | b'#' | b'%' | b'*' | b'?' | b'@' | b'^'
+        )
+}
+
+/// Entropy over values after a key name that says secret.
+fn keyed_entropy_scan(
+    cfg: &EntropyConfig,
+    hay: &[u8],
+    from: usize,
+    to: usize,
+    f: &mut impl FnMut(Detection),
+) {
+    long_runs(
+        hay,
+        from,
+        to,
+        cfg.min_len.min(16),
+        is_value_byte,
+        &mut |s, i| {
+            // Base64 padding ends a value.
+            let mut e = i;
+            while e < to && hay[e] == b'=' && e - i < 2 {
+                e += 1;
+            }
+            let len = e - s;
+            if len < cfg.min_len || len > cfg.max_len {
+                return;
+            }
+            // A call, an index or a template, not a literal.
+            if matches!(hay.get(e), Some(b'(' | b'[' | b'{' | b'.')) {
+                return;
+            }
+            let t = &hay[s..e];
+            // A path (`/etc/...`, `AKID/20150830/us-east-1/s3/aws4_request`), not a token.
+            if t[0] == b'/' || memchr::memchr_iter(b'/', t).count() >= 3 {
+                return;
+            }
+            let classes = u8::from(t.iter().any(u8::is_ascii_lowercase))
+                + u8::from(t.iter().any(u8::is_ascii_uppercase))
+                + u8::from(t.iter().any(u8::is_ascii_digit))
+                + u8::from(t.iter().any(|c| !c.is_ascii_alphanumeric() && *c != b'='));
+            if classes >= cfg.min_classes && key_context(hay, s) && shannon(t) >= cfg.threshold_bits
+            {
+                f(Detection {
+                    start: s,
+                    end: e,
+                    rule: ENTROPY_RULE,
+                });
+            }
+        },
+    );
+}
+
 fn entropy_scan(
     cfg: &EntropyConfig,
     hay: &[u8],
@@ -1291,17 +2269,12 @@ fn entropy_scan(
     to: usize,
     f: &mut impl FnMut(Detection),
 ) {
+    if cfg.key_names {
+        keyed_entropy_scan(cfg, hay, from, to, f);
+        return;
+    }
     let is_tok = |c: u8| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'/' | b'_' | b'-' | b'=');
-    let mut i = from;
-    while i < to {
-        if !is_tok(hay[i]) {
-            i += 1;
-            continue;
-        }
-        let s = i;
-        while i < to && is_tok(hay[i]) {
-            i += 1;
-        }
+    long_runs(hay, from, to, cfg.min_len, is_tok, &mut |s, i| {
         // A JSON escape like `\n` leaves a letter glued to the token; drop it.
         let s = if s >= 1 && hay[s - 1] == b'\\' {
             s + 1
@@ -1316,7 +2289,7 @@ fn entropy_scan(
                 rule: ENTROPY_RULE,
             });
         }
-    }
+    });
 }
 
 fn high_entropy(cfg: &EntropyConfig, t: &[u8]) -> bool {
@@ -1398,6 +2371,124 @@ mod tests {
         let mut compiled: Vec<&str> = d.rules.iter().map(|r| r.name).collect();
         compiled.dedup();
         assert_eq!(compiled.len() + 1, builtin_rule_names().len());
+    }
+
+    /// Every option on, over random mixes of fragments that steer the decoders (escapes, padding,
+    /// `0x`, key names, prefixes): detections stay in bounds, in order and apart.
+    #[test]
+    fn scan_with_everything_on_is_ordered_and_in_bounds() {
+        let d = Detectors::build(&DetectorConfig {
+            entropy: Some(EntropyConfig::default()),
+            encoded: true,
+            enabled_rules: default_off_rule_names()
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ..Default::default()
+        })
+        .unwrap();
+        let any = Detectors::build(&DetectorConfig {
+            entropy: Some(EntropyConfig::any_context()),
+            encoded: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let parts: &[&[u8]] = &[
+            b"%",
+            b"%4",
+            b"%41",
+            b"%2F",
+            b"0x",
+            b"=",
+            b"==",
+            b"\\n",
+            b"\\",
+            b"\"",
+            b" ",
+            b"token=",
+            b"Bearer ",
+            b"Z2hwX",
+            b"Z2hw",
+            b"6768705f",
+            b"ghp_",
+            b"sk-",
+            b"sk_",
+            b"AKIA",
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef",
+            b"0123456789abcdef",
+            b"/",
+            b"+",
+            b"\xff",
+            b":AA",
+            b"/api/webhooks/",
+            b"-----BEGIN ",
+            b"://",
+        ];
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..3000 {
+            let mut hay = Vec::new();
+            for _ in 0..(x % 60) {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                hay.extend_from_slice(parts[(x % parts.len() as u64) as usize]);
+            }
+            for det in [&d, &any] {
+                let mut last = 0;
+                det.scan(&hay, |m| {
+                    assert!(m.start >= last && m.start < m.end && m.end <= hay.len());
+                    last = m.end;
+                });
+            }
+        }
+    }
+
+    /// The chunked run finder reports exactly the runs a byte-by-byte scan finds.
+    #[test]
+    fn b64_runs_match_a_plain_scan() {
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..300 {
+            let mut hay = Vec::new();
+            for _ in 0..40 {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                let n = (x % 70) as usize;
+                hay.extend(std::iter::repeat_n(b'A' + (x % 26) as u8, n));
+                hay.push(b" \"%."[(x >> 8) as usize % 4]);
+            }
+            let from = (x % 9) as usize;
+            let to = hay.len() - (x >> 20) as usize % 9;
+            let mut got = Vec::new();
+            b64_runs(&hay, from, to, &mut |a, b| got.push((a, b)));
+            let mut want = Vec::new();
+            let mut i = from;
+            while i < to {
+                if !is_b64_byte(hay[i]) {
+                    i += 1;
+                    continue;
+                }
+                let s = i;
+                while i < to && is_b64_byte(hay[i]) {
+                    i += 1;
+                }
+                if i - s >= ENC_MIN_B64 {
+                    want.push((s, i));
+                }
+            }
+            assert_eq!(got, want);
+        }
+    }
+
+    #[test]
+    fn swar_base64_class_matches_the_table() {
+        for c in 0..=255u8 {
+            for k in 0..8 {
+                let mut b = *b"AAAAAAAA";
+                b[k] = c;
+                assert_eq!(all_b64_8(&b), is_b64_byte(c), "{c:#x} at {k}");
+            }
+        }
     }
 
     #[test]
