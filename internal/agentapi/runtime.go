@@ -119,7 +119,14 @@ func New(a *app.App, o Options) (*Runtime, error) {
 	gv := *a.PolicyParts.Gate
 	gv.Engine = a.Policy
 	g := &gv
+	// Agents' writes ask their own store identity where per-agent identity
+	// is configured (the same checker the gate asks for injection).
+	var writes agenttools.WriteAccess
+	if wc, ok := g.StoreAccess.(WriteChecker); ok && wc != nil {
+		writes = Writes{Checker: wc}
+	}
 	svc, err := agenttools.New(agenttools.Deps{
+		Writes:    writes,
 		Policy:    Policy{Engine: a.Policy, Labels: a.SecretLabels},
 		Approvals: Approvals{Gate: g, DefaultTTL: GrantDefaultTTL.Get(cfg), MaxTTL: GrantMaxTTL.Get(cfg)},
 		Catalog:   Stores{Set: a.Stores, Placeholders: o.Placeholders},

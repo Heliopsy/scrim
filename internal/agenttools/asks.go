@@ -193,6 +193,9 @@ func (s *Service) askHuman(ctx context.Context, c *call, in AskInput) (AskOutput
 	if err := c.decide(ctx); err != nil {
 		return AskOutput{}, err
 	}
+	if err := c.confirmWrite(ctx); err != nil {
+		return AskOutput{}, err
+	}
 	if err := c.limit(ctx, ratelimit.ClassAsks); err != nil {
 		return AskOutput{}, err
 	}
