@@ -16,8 +16,9 @@
 //     - Token exchange: scrim's identity issuer signs a token for the agent
 //     and the store trades it for a credential of its own (Vault and
 //     OpenBao JWT auth, AWS web identity, Google workload identity
-//     federation, Entra ID federated credentials, Infisical OIDC), so the
-//     store's policy for that agent applies and its audit names it.
+//     federation, Entra ID federated credentials, Infisical OIDC, Doppler
+//     OIDC service account identities), so the store's policy for that
+//     agent applies and its audit names it.
 //  2. A static per-agent credential (identity.store-credentials), held by
 //     scrim and given by reference.
 //  3. Neither: when the store has per-agent identity configured at all, the
@@ -54,8 +55,8 @@ var (
 			"`jwt role:<template> audience:<aud> [mount:jwt]` (Vault and OpenBao JWT auth), " +
 			"`aws-web-identity role-arn:<template> [audience:sts.amazonaws.com] [duration:15m]`, " +
 			"`gcp-workload-identity provider://iam.googleapis.com/projects/<n>/locations/global/workloadIdentityPools/<pool>/providers/<p> [service-account:<template>] [audience:<aud>]`, " +
-			"`azure-federated tenant:<id> client-id:<template> [audience:api://AzureADTokenExchange] [authority:<url>]` and " +
-			"`infisical-oidc identity-id:<template> audience:<aud>`. In templates {agent}, {agent_slug}, {namespace} and {service_account} are replaced. " +
+			"`azure-federated tenant:<id> client-id:<template> [audience:api://AzureADTokenExchange] [authority:<url>]`, " +
+			"`infisical-oidc identity-id:<template> audience:<aud>` and `doppler-oidc identity:<template> audience:<aud>`. In templates {agent}, {agent_slug}, {namespace} and {service_account} are replaced. " +
 			"A store listed here refuses agents that have no usable identity of their own.",
 		RestartRequired: true,
 	})
@@ -135,6 +136,7 @@ var methods = map[string]method{
 			return map[string]string{"audience": "api://AzureADTokenExchange", "authority": "https://login.microsoftonline.com"}
 		}},
 	stores.FederationInfisical: {required: []string{"identity-id", "audience"}, templated: []string{"identity-id"}},
+	stores.FederationDoppler:   {required: []string{"identity", "audience"}, templated: []string{"identity"}},
 }
 
 type login struct {

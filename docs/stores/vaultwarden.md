@@ -224,6 +224,35 @@ A new item without `?org=` goes into the personal vault, in the folder named by 
 which scrim creates if needed. With `?org=` it goes into the existing collection named by the
 prefix; scrim does not create collections.
 
+## Per-agent identity
+
+scrim's own account decrypts every item it uses. To have Vaultwarden's collection access decide per
+agent as well ([Agent identity](../identity.md#store-identity-per-agent)), give each agent its own
+account, invite it to the organisation that holds the shared items, set its collection access (can
+view, can view except passwords, can edit), and hold the agent account's personal API key for it:
+
+```yaml
+identity:
+  store-credentials:
+    vw/reviewer: file:/run/secrets/vw-reviewer-api-key.json
+```
+
+The file holds `{"client_id": "user.<uuid>", "client_secret": "<secret>"}` (the account's **API
+key** under **Security, Keys**). Before scrim uses an item for the agent, it resolves the reference
+with its own account, logs in with the agent's API key (cached per agent until two thirds of the
+token's life, logged in again once if the server stops accepting it) and fetches the item as the
+agent (`GET /api/ciphers/{id}`):
+
+- an item the agent's account cannot see is refused, and so is one whose collection hides passwords
+  from it (`viewPassword: false`), whatever the field;
+- a write needs `edit`; a new item needs one of its target collections listed for the agent's account,
+  as a confirmed member, without `readOnly`;
+- items in scrim's personal vault, and new items without `?org=`, are never an agent's.
+
+Nothing is decrypted with the agent's account, so its master password is not needed. The server
+records the agent's logins and item views under its account, and as organisation events when
+`ORG_EVENTS_ENABLED` is on. On bitwarden.com each agent account takes a seat.
+
 ## Watch
 
 The adapter checks the account revision date (one small request) every `poll-interval` and syncs

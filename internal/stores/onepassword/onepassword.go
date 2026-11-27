@@ -22,6 +22,15 @@
 // 1Password domains hard-coded in the module, so it can be neither kept off
 // the heap as a string nor tested against a fake. Connect speaks a
 // documented REST API scrim can hold to its own rules.
+//
+// Per-agent identity takes a Connect access token issued for each agent by
+// the same Connect server and scoped to the agent's own vaults, held in
+// identity.store-credentials. Before scrim reads a reference with its own
+// token, AgentCan (agent.go) lists the item's summary in its vault with the
+// agent's token, which needs no value; Connect scopes tokens per vault, so
+// that is exactly the agent's read access. Writes cannot be checked without
+// writing. With no service accounts there is no token exchange and no
+// Kubernetes passthrough.
 package onepassword
 
 import (

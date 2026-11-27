@@ -246,7 +246,19 @@ func (o Options) deviceID(instance string) string {
 	if o.DeviceID != "" {
 		return o.DeviceID
 	}
-	h := sha256.Sum256([]byte("scrim-vaultwarden-device\x00" + instance + "\x00" + o.URL.String() + "\x00" + o.ClientID + "\x00" + strings.ToLower(o.Email)))
+	return deviceUUID("scrim-vaultwarden-device\x00" + instance + "\x00" + o.URL.String() + "\x00" + o.ClientID + "\x00" + strings.ToLower(o.Email))
+}
+
+// agentDeviceID is the device identifier an agent's own account logs in
+// with: stable per instance, server and agent, so the server sees one
+// device per agent rather than a new one per login.
+func (o Options) agentDeviceID(instance, agent string) string {
+	return deviceUUID("scrim-vaultwarden-agent-device\x00" + instance + "\x00" + o.URL.String() + "\x00" + agent)
+}
+
+// deviceUUID formats a hash of seed as a UUID.
+func deviceUUID(seed string) string {
+	h := sha256.Sum256([]byte(seed))
 	b := h[:16]
 	b[6] = (b[6] & 0x0f) | 0x50 // version 5 layout
 	b[8] = (b[8] & 0x3f) | 0x80

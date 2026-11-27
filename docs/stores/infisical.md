@@ -387,9 +387,12 @@ such values.
 - Per-agent store identity ([Agent identity](../identity.md#store-identity-per-agent)) works with a
   static Infisical access token per agent (`identity.store-credentials`) or with `infisical-oidc`,
   which logs in to a machine identity's OIDC Auth with an identity token scrim signs for the agent.
-  Infisical has no call that reports an identity's permissions, so the per-agent check is the read
-  itself, with the value wiped unread, and writes cannot be checked per agent: they are refused for
-  an agent credential. Kubernetes passthrough is not supported; use `infisical-oidc`.
+  Infisical has no call that reports a machine identity's permissions, so the per-agent check is the
+  read itself, with the value wiped unread, and a write check is refused as unsupported. The only
+  permissions endpoint (`GET /api/v1/projects/{id}/permissions`, undocumented) accepts user
+  sessions, not machine identity tokens, and there is no dry run for a secret write. Infisical's
+  audit log names the agent's machine identity for its reads. Kubernetes passthrough is not
+  supported; use `infisical-oidc`.
 - Infisical's own approval workflows are not used.
 
 ## Testing against a local Infisical

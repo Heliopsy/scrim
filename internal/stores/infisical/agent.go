@@ -38,7 +38,10 @@ func (a *Adapter) ForgetSession(id string) { a.agents.ForgetSession(id) }
 // (identity.store-credentials), or one obtained with OIDC Auth by presenting
 // an identity token scrim's issuer signs for the agent at the machine
 // identity identity-id names. Writes cannot be checked without writing, so
-// OpWrite is refused as unsupported.
+// OpWrite is refused as unsupported: the only endpoint that reports
+// permissions (GET /api/v1/projects/{id}/permissions, undocumented)
+// accepts user sessions only, not a machine identity's access token, and
+// Infisical has no dry run for a secret write.
 func (a *Adapter) AgentCan(ctx context.Context, cred stores.AgentCredential, op stores.Op, ref stores.Ref) error {
 	if op != stores.OpRead {
 		return &stores.Error{Store: a.name, Op: op, Ref: ref, Kind: stores.ErrUnsupported,

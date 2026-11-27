@@ -471,7 +471,7 @@ pod ([identity.md](identity.md#store-identity-per-agent)). The agent token's aud
 ([identity.md](identity.md#scrim-as-an-identity-provider)): it signs short-lived tokens for the
 agents it has identified and presents them to stores that trust it, for the token exchange methods
 of `config.identity.store-login` (`jwt`, `aws-web-identity`, `gcp-workload-identity`,
-`azure-federated`, `infisical-oidc`). The agent never sees the token.
+`azure-federated`, `infisical-oidc`, `doppler-oidc`). The agent never sees the token.
 
 ```yaml
 identity:

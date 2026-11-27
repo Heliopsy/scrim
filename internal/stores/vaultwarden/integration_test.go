@@ -4,6 +4,7 @@ package vaultwarden_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -626,4 +627,101 @@ func TestVaultwarden(t *testing.T) {
 			t.Fatalf("wrong client secret: %v", err)
 		}
 	})
+
+	t.Run("AgentIdentity", func(t *testing.T) {
+		testAgentIdentity(t, srv)
+	})
+}
+
+// agentKey is an agent's credential as identity.store-credentials holds it
+// for this store: the account's personal API key.
+func agentKey(t *testing.T, acc *vwtest.Account) secret.Value {
+	t.Helper()
+	b, err := json.Marshal(map[string]string{"client_id": acc.ClientID, "client_secret": expose(t, acc.ClientSecret)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return secret.Adopt(b)
+}
+
+// testAgentIdentity: agent A may edit collection "Team A", agent B may view
+// it except passwords, neither has "Prod". Each agent's own account decides
+// through the server, which scrim asks as the agent.
+func testAgentIdentity(t *testing.T, srv *vwtest.Server) {
+	e := newEnv(t, srv, bwcrypto.DefaultPBKDF2())
+	org := e.account.CreateOrg(t, "Acme Agents", "Team A")
+	prod := e.account.CreateCollection(t, org, "Prod")
+	dbPW := secret.FromString("db_" + vwtest.RandHex(t, 16))
+	apiPW := secret.FromString("api_" + vwtest.RandHex(t, 16))
+	e.account.CreateItem(t, vwtest.Item{Org: org, Name: "DB", Password: dbPW, ItemKey: true})
+	e.account.CreateItem(t, vwtest.Item{Org: org, Name: "API", Password: apiPW, Collections: []string{prod}, OnlyCollections: true})
+	e.account.CreateItem(t, vwtest.Item{Folder: "Agents", Name: "Mine", Password: secret.FromString("mine_" + vwtest.RandHex(t, 8))})
+
+	accA := srv.Register(t, bwcrypto.DefaultPBKDF2())
+	accB := srv.Register(t, bwcrypto.DefaultPBKDF2())
+	e.account.AddMember(t, org, accA, vwtest.Access{CollectionID: org.CollectionID})
+	e.account.AddMember(t, org, accB, vwtest.Access{CollectionID: org.CollectionID, ReadOnly: true, HidePasswords: true})
+
+	a := e.adapter(t, srv.URL, nil)
+	defer func() { _ = a.Close() }()
+	ctx := vwtest.Ctx(t, 60*time.Second)
+	credA := stores.AgentCredential{Agent: "agent-a", Token: agentKey(t, accA)}
+	credB := stores.AgentCredential{Agent: "agent-b", Token: agentKey(t, accB)}
+	ref := stores.MustParseRef
+	var errs []error
+	check := func(what string, err, want error) {
+		t.Helper()
+		if want == nil && err != nil || want != nil && !errors.Is(err, want) {
+			t.Fatalf("%s: got %v, want %v", what, err, want)
+		}
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	team, api := ref("vw://Team A/DB#password"), ref("vw://Prod/API")
+	newTeam, newProd := ref("vw://Team A/New?org=Acme Agents"), ref("vw://Prod/New?org=Acme Agents")
+	check("A reads Team A", a.AgentCan(ctx, credA, stores.OpRead, team), nil)
+	check("A writes Team A", a.AgentCan(ctx, credA, stores.OpWrite, team), nil)
+	check("B reads Team A (passwords hidden)", a.AgentCan(ctx, credB, stores.OpRead, team), stores.ErrPermission)
+	check("B writes Team A (read-only)", a.AgentCan(ctx, credB, stores.OpWrite, team), stores.ErrPermission)
+	// B sees the item: the refusals come from its collection flags.
+	if !strings.Contains(errs[0].Error(), "passwords") || !strings.Contains(errs[1].Error(), "may not edit") {
+		t.Fatalf("B refused for another reason: %v; %v", errs[0], errs[1])
+	}
+	for _, c := range []stores.AgentCredential{credA, credB} {
+		check(c.Agent+" reads Prod", a.AgentCan(ctx, c, stores.OpRead, api), stores.ErrPermission)
+		if !strings.Contains(errs[len(errs)-1].Error(), "cannot see this item") {
+			t.Fatalf("%s refused on Prod for another reason: %v", c.Agent, errs[len(errs)-1])
+		}
+		check(c.Agent+" writes Prod", a.AgentCan(ctx, c, stores.OpWrite, api), stores.ErrPermission)
+		check(c.Agent+" creates in Prod", a.AgentCan(ctx, c, stores.OpWrite, newProd), stores.ErrPermission)
+		check(c.Agent+" reads scrim's personal item", a.AgentCan(ctx, c, stores.OpRead, ref("vw://Agents/Mine")), stores.ErrPermission)
+	}
+	check("A creates in Team A", a.AgentCan(ctx, credA, stores.OpWrite, newTeam), nil)
+	check("B creates in Team A", a.AgentCan(ctx, credB, stores.OpWrite, newTeam), stores.ErrPermission)
+
+	wrongSecret := vwtest.RandHex(t, 15)
+	wrong := stores.AgentCredential{Agent: "agent-c", Token: func() secret.Value {
+		b, _ := json.Marshal(map[string]string{"client_id": accA.ClientID, "client_secret": wrongSecret})
+		return secret.Adopt(b)
+	}()}
+	check("a wrong API key", a.AgentCan(ctx, wrong, stores.OpRead, team), stores.ErrPermission)
+
+	// scrim's own reads are unaffected: it still reads the value itself.
+	s, err := a.Read(ctx, team)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := s.Field("password"); !v.Equal(dbPW) {
+		t.Fatal("scrim's own read of Team A/DB is wrong")
+	}
+	s.Wipe()
+
+	for _, err := range errs {
+		for _, v := range []string{expose(t, accA.ClientSecret), expose(t, accB.ClientSecret), wrongSecret, expose(t, dbPW), expose(t, apiPW)} {
+			if strings.Contains(err.Error(), v) {
+				t.Fatalf("error %q holds a secret", err)
+			}
+		}
+	}
 }

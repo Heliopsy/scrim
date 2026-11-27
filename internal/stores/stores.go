@@ -209,6 +209,9 @@ const (
 	FederationAzure = "azure-federated"
 	// FederationInfisical is an Infisical OIDC machine identity.
 	FederationInfisical = "infisical-oidc"
+	// FederationDoppler is a Doppler service account identity with OIDC
+	// authentication.
+	FederationDoppler = "doppler-oidc"
 )
 
 // Federation is an agent's identity token exchanged for a store
@@ -220,7 +223,7 @@ type Federation struct {
 	Method string
 	// Params are the method's options with the agent's placeholders
 	// rendered: role, mount, role-arn, duration, provider, service-account,
-	// tenant, client-id, authority, identity-id.
+	// tenant, client-id, authority, identity-id, identity.
 	Params map[string]string
 	// Audience is what the identity token is minted for.
 	Audience string
