@@ -356,6 +356,14 @@ func (s *Server) authenticate(h func(http.ResponseWriter, *http.Request, identit
 			writeError(w, agenttools.Errorf(agenttools.CodeUnauthenticated, "this local user is not mapped to an agent"))
 			return
 		}
+		if id.Source == identity.SourceKubernetes && r.Context().Value(callerKey) == nil && identity.KubernetesTokenFrom(r.Context()) == nil {
+			// Kept for the request, so a store write can log in as the
+			// pod's service account (Kubernetes passthrough).
+			if tok, _ := bearer(r); len(tok) > 0 {
+				defer secret.WipeBytes(tok)
+				r = r.WithContext(identity.WithKubernetesToken(r.Context(), tok))
+			}
+		}
 		h(w, r, id)
 	}
 }

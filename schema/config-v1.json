@@ -1289,6 +1289,25 @@
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         },
+        "refuse-unchecked-writes": {
+          "default": [],
+          "description": "Stores with per-agent identity that cannot tell whether an agent's identity may write without writing (awssm, ssm, azkv, infisical, doppler, onepassword), by instance name, that refuse agents' writes instead of making them with scrim's own identity once scrim's rules allow them. `*` names every such store. Empty by default.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_IDENTITY_REFUSE_UNCHECKED_WRITES",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "skip-agent-write-checks": {
+          "default": false,
+          "description": "Write agents' secrets (secret_gen, secret_capture, secret_ask_human, `scrim secret put`) with scrim's own store identity once scrim's rules allow them, without asking the agent's own store identity first, also on stores that can answer (openbao, vault, gcpsm, bws, vaultwarden). Off by default: a store with per-agent identity that can check a write refuses one the agent's identity may not make, and refuses agents without an identity of their own.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_IDENTITY_SKIP_AGENT_WRITE_CHECKS",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": true
+        },
         "store-credentials": {
           "additionalProperties": {
             "type": "string"

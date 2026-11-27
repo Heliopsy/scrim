@@ -64,6 +64,7 @@ const Kind = "vaultwarden"
 
 func init() {
 	stores.DeclareMulti(Kind, multiAttrs...)
+	stores.DeclareAgentWriteCheck(Kind)
 	stores.Register(Kind, func(_ context.Context, inst stores.Instance) (stores.Adapter, error) {
 		o, err := decodeOptions(inst.Name, inst.Options)
 		if err != nil {

@@ -31,6 +31,9 @@ type Deps struct {
 	Auditor   Auditor
 	Notifier  Notifier
 	Links     EntryLinks
+	// Writes checks the caller's own store identity before a write; nil
+	// writes with scrim's own identity once policy allows.
+	Writes WriteAccess
 	// Limits rate-limits calls per agent (ratelimit.agent-api.*, and
 	// ratelimit.asks.* for secret_ask_human); nil means unlimited.
 	Limits Limits
@@ -150,6 +153,30 @@ func (c *call) decide(ctx context.Context) error {
 			return Errorf(CodeDenied, "denied by policy: %s", d.Reason)
 		}
 		return Errorf(CodeDenied, "denied by policy")
+	}
+}
+
+// confirmWrite asks the caller's own store identity, after policy allowed
+// the write (specs/agent-identity "Agent writes are checked as the agent").
+func (c *call) confirmWrite(ctx context.Context) error {
+	if c.s.d.Writes == nil {
+		return nil
+	}
+	got, err := c.s.d.Writes.CheckWrite(ctx, c.id, Operation{Tool: c.entry.Tool, Ref: c.entry.Ref, Store: c.entry.Store})
+	c.entry.StoreIdentity, c.entry.WriteCheck = got.Identity, got.Check
+	var refused *WriteRefusedError
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &refused):
+		c.entry.Outcome = OutcomeDenied
+		if c.entry.Detail == "" {
+			c.entry.Detail = "store identity refused"
+		}
+		return Errorf(CodeDenied, "%s", refused.Error())
+	default:
+		c.s.d.Logger.Warn("checking the agent's store identity failed; refusing the write", "tool", c.entry.Tool, "ref", c.entry.Ref, "error", err)
+		return Errorf(CodeUnavailable, "the agent's own store identity could not be checked; nothing was written")
 	}
 }
 
@@ -376,6 +403,9 @@ func (s *Service) Check(ctx context.Context, id identity.Identity, in CheckInput
 	if err == nil {
 		err = c.decide(ctx)
 	}
+	if err == nil {
+		err = c.confirmWrite(ctx)
+	}
 	switch CodeOf(err) {
 	case CodeDenied, CodeNeedsApproval, CodeForbidden:
 		c.entry.Outcome = OutcomeDenied
@@ -413,6 +443,9 @@ func (s *Service) generate(ctx context.Context, c *call, in GenInput) (WriteOutp
 		return WriteOutput{}, err
 	}
 	if err := c.decide(ctx); err != nil {
+		return WriteOutput{}, err
+	}
+	if err := c.confirmWrite(ctx); err != nil {
 		return WriteOutput{}, err
 	}
 	v, err := Generate(spec, s.d.Rand)
@@ -459,6 +492,9 @@ func (s *Service) put(ctx context.Context, c *call, in PutInput, v secret.Value)
 		return WriteOutput{}, Errorf(CodeInvalid, "the value is larger than %d bytes", MaxValueSize)
 	}
 	if err := c.decide(ctx); err != nil {
+		return WriteOutput{}, err
+	}
+	if err := c.confirmWrite(ctx); err != nil {
 		return WriteOutput{}, err
 	}
 	return s.write(ctx, c, Write{Ref: in.Ref, Store: in.Store, Value: v, Overwrite: in.Overwrite})
