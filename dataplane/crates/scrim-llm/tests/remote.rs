@@ -560,12 +560,14 @@ async fn fetches_go_through_the_upstream_proxy() {
     )
     .await;
     // Set after the start: the provider (on loopback) stays direct, the attachment host does not.
+    // The test proxy accepts any credentials; generated ones keep the setup realistic.
+    let password = scrim_llm::testing::random_value("proxy-");
     handle.set(Some(
         scrim_upstream_proxy::UpstreamProxy::new::<&str>(
             &format!("http://{}", proxy.addr()),
             &["127.0.0.1"],
-            "",
-            b"",
+            "scrim",
+            password.as_bytes(),
         )
         .unwrap(),
     ));
@@ -574,6 +576,7 @@ async fn fetches_go_through_the_upstream_proxy() {
     let r = send(&h, "/anthropic/v1/messages", H, body, false).await;
     assert_eq!(r.status, 200, "{}", r.text());
     assert_eq!(proxy.seen()[0].target, "attachments.invalid:80");
+    assert!(proxy.seen()[0].sent_authorization);
     let v: serde_json::Value = serde_json::from_slice(&h.upstream.received()[0].body).unwrap();
     assert_eq!(
         v["messages"][0]["content"][0]["source"]["data"],
