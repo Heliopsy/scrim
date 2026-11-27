@@ -15,7 +15,8 @@
 //! the request that would complete the value never carries its last piece. Deciding and
 //! remembering happen under one lock, so two requests of a session checked at the same time are
 //! seen one after the other: the second one sees the first one's pieces. Pieces that are repaired
-//! are not remembered, since they do not leave.
+//! are remembered too: they show which value the session is sending, and the next piece may
+//! need them once older pieces have expired.
 //!
 //! Bounded: [`MAX_PIECES`] per session (the oldest go first), [`MAX_SESSIONS`] sessions (the one
 //! seen longest ago goes first), each piece forgotten [`TTL`] after it was last seen. The memory
@@ -187,32 +188,35 @@ impl CrossMemory {
             }
             let group = &short[i..j];
             i = j;
-            if done.contains(&form) {
-                continue;
-            }
-            spans.clear();
-            spans.extend(
-                sess.pieces
-                    .iter()
-                    .filter(|p| p.form == form)
-                    .map(|p| (p.off as usize, (p.off + p.len) as usize)),
-            );
-            if !spans.is_empty() {
+            // Every piece is remembered, the repaired ones too: a value's piece that completed
+            // it once (with pieces since forgotten, or within its request) still completes it
+            // with the pieces that come after.
+            let joined = !done.contains(&form) && {
+                spans.clear();
                 spans.extend(
-                    group
+                    sess.pieces
                         .iter()
-                        .map(|f| (f.off as usize, (f.off + f.len) as usize)),
+                        .filter(|p| p.form == form)
+                        .map(|p| (p.off as usize, (p.off + p.len) as usize)),
                 );
-                spans.sort_unstable();
-                if covers(spans.iter().copied(), form_len(form)) {
-                    let mut last = None;
-                    for f in group {
-                        if last != Some((f.start, f.end)) {
-                            emit(f.start, f.end, form);
-                            last = Some((f.start, f.end));
-                        }
+                // Only together with pieces from earlier requests.
+                !spans.is_empty() && {
+                    spans.extend(
+                        group
+                            .iter()
+                            .map(|f| (f.off as usize, (f.off + f.len) as usize)),
+                    );
+                    spans.sort_unstable();
+                    covers(spans.iter().copied(), form_len(form))
+                }
+            };
+            if joined {
+                let mut last = None;
+                for f in group {
+                    if last != Some((f.start, f.end)) {
+                        emit(f.start, f.end, form);
+                        last = Some((f.start, f.end));
                     }
-                    continue;
                 }
             }
             for f in group {
@@ -322,9 +326,9 @@ mod tests {
         let k = [1u8; 32];
         assert!(join(&m, 0, &k, vec![piece(0, 0, 14, 100)]).is_empty());
         assert_eq!(m.pieces(&k), 1);
-        // The second request completes it: its piece is repaired, and not remembered.
+        // The second request completes it: its piece is repaired, and remembered too.
         assert_eq!(join(&m, 1, &k, vec![piece(0, 14, 26, 7)]), vec![7]);
-        assert_eq!(m.pieces(&k), 1);
+        assert_eq!(m.pieces(&k), 2);
     }
 
     #[test]
@@ -392,7 +396,20 @@ mod tests {
             out.push(a)
         });
         assert!(out.is_empty());
-        assert_eq!(m.pieces(&k), 1);
+        assert_eq!(m.pieces(&k), 2);
+    }
+
+    /// A piece repaired because it completed a value with old pieces still completes it with
+    /// the pieces sent after, once the old ones are gone (the leak gate's case).
+    #[test]
+    fn repaired_pieces_are_remembered() {
+        let m = CrossMemory::new();
+        let k = [10u8; 32];
+        let ttl = TTL.as_secs() as u32;
+        assert!(join(&m, 0, &k, vec![piece(0, 20, 20, 0)]).is_empty());
+        assert_eq!(join(&m, ttl, &k, vec![piece(0, 0, 14, 3)]), vec![3]);
+        // The first piece has expired; the second, repaired, has not.
+        assert_eq!(join(&m, ttl + 10, &k, vec![piece(0, 14, 19, 5)]), vec![5]);
     }
 
     #[test]

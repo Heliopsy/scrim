@@ -20,8 +20,9 @@ revoked. Bytes and values are never stored.
 
 After a whole check, the request's short pieces (minus forms the within-request rule already
 joined) are grouped by form; a form with remembered pieces whose union with the request's covers
-it has the request's pieces emitted as `CrossRequest` hits and repaired, and is not remembered.
-Every other piece is remembered. Both steps run under the memory's lock, so two requests of a
+it has the request's pieces emitted as `CrossRequest` hits and repaired. Every piece is remembered,
+the repaired ones too: once the older pieces have expired, the next piece may need them (the leak
+gate found this). Both steps run under the memory's lock, so two requests of a
 session checked at once are seen in some order and the second sees the first; the completing piece
 is therefore always in the request being checked, and refusing an earlier request after the fact
 never arises. The check of the repaired body does not join, so pieces are not counted twice. The
