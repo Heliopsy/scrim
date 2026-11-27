@@ -7,9 +7,15 @@ itself.
 
 ## Capabilities
 
-| Kind          | read | list | watch | write | generate | dynamic |
-|---------------|------|------|-------|-------|----------|---------|
-| `onepassword` | yes  | yes  | yes   | yes   | no       | no      |
+<!-- BEGIN GENERATED STORE CAPABILITIES kinds=onepassword -->
+
+| Kind | read | list | watch | write | glob | dynamic | per-agent check | `identity.store-login` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `onepassword` | yes | yes | yes | yes | yes | no | yes | none |
+
+The columns are explained under [Capabilities](README.md#capabilities).
+
+<!-- END GENERATED STORE CAPABILITIES -->
 
 Watch polls the item listing; see [Watch](#watch). Listing accepts a trailing `*` (glob).
 

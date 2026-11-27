@@ -25,33 +25,58 @@ value back.
 
 ## Capabilities
 
-`scrim doctor` prints this matrix for the stores you configure. An operation a store does not
-support is refused before anything is attempted.
+An operation a store does not support is refused before anything is attempted. The table below is
+generated from the adapters, as are the tables on each store's page: after changing an adapter, run
+`go test ./internal/app -run TestStoreCapabilityMatrix -update`, which CI checks.
 
-| Kind          | read | list | watch | write  | generate | dynamic |
-|---------------|------|------|-------|--------|----------|---------|
-| `openbao`     | yes  | yes  | yes   | yes    | no       | no      |
-| `vault`       | yes  | yes  | yes   | yes    | no       | yes     |
-| `infisical`   | yes  | yes  | yes   | yes    | no       | no      |
-| `doppler`     | yes  | yes  | yes   | yes    | no       | no      |
-| `onepassword` | yes  | yes  | yes   | yes    | no       | no      |
-| `awssm`       | yes  | yes  | yes   | yes    | no       | no      |
-| `ssm`         | yes  | yes  | yes   | yes    | no       | no      |
-| `bws`         | yes  | yes  | yes   | yes    | no       | no      |
-| `vaultwarden` | yes  | yes  | yes   | yes    | no       | no      |
-| `gcpsm`       | yes  | yes  | yes   | yes(2) | no       | no      |
-| `azkv`        | yes  | yes  | yes   | yes(2) | no       | no      |
-| `kubernetes`  | yes  | yes  | yes   | opt-in | no       | no      |
-| `env`         | yes  | yes  | no    | no     | no       | no      |
-| `file`        | yes  | yes  | yes   | no     | no       | no      |
-| `sops`        | yes  | yes  | yes   | no     | no       | no      |
-| `keyring`     | yes  | yes  | no    | no     | no       | no      |
-| `memory`      | yes  | yes  | yes   | yes    | no       | no      |
-| `plugin`      | (1)  | (1)  | (1)   | (1)    | no       | no      |
+- **read**, **list**: read one secret, list a folder without reading values.
+- **watch**: scrim notices changes between full refreshes (most stores poll version metadata, below).
+- **write**: agents and `scrim secret put` can create and update secrets there. Generated secrets
+  (`secret_gen`, `scrim secret gen`) are produced by scrim and then written, so any store with write
+  can take them; there is no separate generate capability.
+- **glob**: a redact target or listing may end in `*` right after part of a name (`APP_*`,
+  `dir/app-*`). On a store without it such a target is refused at start-up; use a folder prefix
+  (`dir/*`) or name each secret.
+- **dynamic**: the store issues short-lived values with a lease
+  ([Vault dynamic secrets](vault.md#dynamic-secrets)).
+- **per-agent check**: before scrim injects or restores a value, the store can be asked whether the
+  agent's own store identity may read it ([Agent identity](../identity.md#store-identity-per-agent)).
+- **`identity.store-login`**: the methods that log an agent in with its own identity (Kubernetes
+  passthrough or token exchange).
 
-(1) What the plugin declares, narrowed by the instance's `capabilities` field.
+<!-- BEGIN GENERATED STORE CAPABILITIES kinds=all -->
 
-(2) Unless the instance is configured read-only.
+| Kind | read | list | watch | write | glob | dynamic | per-agent check | `identity.store-login` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `openbao` | yes | yes | yes | yes | no | no | yes | `kubernetes`, `jwt` |
+| `vault` | yes | yes | yes | yes | no | yes | yes | `kubernetes`, `jwt` |
+| `infisical` | yes | yes | yes | yes | no | no | yes | `infisical-oidc` |
+| `doppler` | yes | yes | yes | yes | yes | no | yes | `doppler-oidc` |
+| `onepassword` | yes | yes | yes | yes | yes | no | yes | none |
+| `awssm` | yes | yes | yes | yes | yes | no | yes | `aws-web-identity` |
+| `ssm` | yes | yes | yes | yes | yes | no | yes | `aws-web-identity` |
+| `bws` | yes | yes | yes | yes | yes | no | yes | none |
+| `vaultwarden` | yes | yes | yes | yes | no | no | yes | none |
+| `gcpsm` | yes | yes | yes | yes, not with `read-only: true` | yes | no | yes | `gcp-workload-identity` |
+| `azkv` | yes | yes | yes | yes, not with `read-only: true` | yes | no | yes | `azure-federated` |
+| `kubernetes` | yes | yes | yes | with `writable: true` | yes | no | no | none |
+| `env` | yes | yes | no | no | yes | no | no | none |
+| `file` | yes | yes | yes | no | yes | no | no | none |
+| `sops` | yes | yes | yes | no | yes | no | no | none |
+| `keyring` Secret Service (Linux) | yes | yes | no | no | yes | no | no | none |
+| `keyring` Keychain (macOS), Credential Manager (Windows) | yes | no | no | no | no | no | no | none |
+| `memory` | yes | yes | yes | yes | no | no | no | none |
+| `plugin` | (1) | (1) | (1) | (1) | (1) | no | no | none |
+
+<!-- END GENERATED STORE CAPABILITIES -->
+
+(1) What the plugin declares, narrowed by the instance's `capabilities` field
+([plugins.md](../plugins.md)).
+
+Every store with a per-agent check also takes a static credential per agent
+(`identity.store-credentials`), except the AWS stores, which check agents only by token exchange.
+The check runs before every injection or restore of the store's secrets; agent writes still go to
+the store with scrim's own identity ([Agent identity](../identity.md#what-is-checked)).
 
 Watch on OpenBao, Vault (KV v2), Infisical, 1Password, Bitwarden Secrets Manager, the AWS stores,
 Google Secret Manager and Azure Key Vault polls version metadata. It never fetches values, so it
@@ -61,8 +86,11 @@ its ETag: an unchanged config is answered without values, a changed one is finge
 Watch on Vaultwarden polls the account revision date and syncs only when it changed.
 Kubernetes watches Secrets through the API server, and writes there are off unless the instance
 enables them. The keyring source lists on Linux only (Secret Service); on macOS and Windows it reads
-single secrets. Generated secrets are produced by scrim and then written, so generate needs write
-and no store-side support.
+single secrets.
+
+A store without watch still picks up a rotated value at the next `refresh.interval`, and every
+store keeps a rotated, deleted or overwritten value in the redaction set for `refresh.retention`
+(below).
 
 ## Configuring an instance
 
