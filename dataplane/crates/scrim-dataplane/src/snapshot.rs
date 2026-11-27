@@ -25,7 +25,7 @@ use scrim_llm::auth::AuthConfig;
 use scrim_llm::config::{ChainConfig, OnUnavailable, Provider, RouteConfig, default_routes};
 use scrim_llm::core::CoreEngine;
 use scrim_llm::route::RouteTable;
-use scrim_llm::{BinaryPolicy, SecretRef};
+use scrim_llm::{BinaryPolicy, Network, RemoteMode, RemotePolicy, SecretRef};
 use scrim_proto::v1;
 use scrim_redact as rc;
 
@@ -248,6 +248,7 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
         Arc::new(decisions.restore_policy(scrim_policy::Caller::default())),
         binary_policy(snap.redaction.as_ref()),
     );
+    llm.remote = remote_policy(snap.redaction.as_ref())?;
     llm.routes = Some(Arc::new(routes));
     llm.gate = Some(decisions.llm_gate_scoped(Arc::clone(&scopes)));
 
@@ -528,6 +529,32 @@ fn binary_policy(r: Option<&v1::RedactionSettings>) -> BinaryPolicy {
     }
 }
 
+/// The LLM proxy's remote attachment policy (`redaction.remote-attachments`). Unset is
+/// `inline`, the safe default. A network that does not parse rejects the snapshot.
+fn remote_policy(r: Option<&v1::RedactionSettings>) -> Result<RemotePolicy, Rejected> {
+    let mode = match r.map_or(
+        v1::RemoteAttachments::Unspecified,
+        v1::RedactionSettings::remote_attachments,
+    ) {
+        v1::RemoteAttachments::Inline | v1::RemoteAttachments::Unspecified => RemoteMode::Inline,
+        v1::RemoteAttachments::Refuse => RemoteMode::Refuse,
+        v1::RemoteAttachments::Pass => RemoteMode::Pass,
+    };
+    let allowed_networks = r
+        .map_or(&[][..], |r| r.remote_allowed_networks.as_slice())
+        .iter()
+        .map(|n| {
+            n.parse::<Network>().map_err(|_| {
+                invalid("redaction.remote-attachments-allowed-networks: not an address or address/prefix")
+            })
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(RemotePolicy {
+        mode,
+        allowed_networks,
+    })
+}
+
 fn core_class(c: v1::ValueClass) -> rc::ValueClass {
     match c {
         v1::ValueClass::Display => rc::ValueClass::Display,
@@ -758,6 +785,34 @@ mod tests {
             s.redaction = Some(r);
             assert_eq!(ok(s).llm.binary, want, "{p:?}");
         }
+    }
+
+    #[test]
+    fn remote_policy_from_snapshot() {
+        let p = ok(snap(1)).llm.remote;
+        assert_eq!(p.mode, RemoteMode::Inline, "unset is inline");
+        assert_eq!(p.allowed_networks, Vec::<Network>::new());
+        for (m, want) in [
+            (v1::RemoteAttachments::Unspecified, RemoteMode::Inline),
+            (v1::RemoteAttachments::Inline, RemoteMode::Inline),
+            (v1::RemoteAttachments::Refuse, RemoteMode::Refuse),
+            (v1::RemoteAttachments::Pass, RemoteMode::Pass),
+        ] {
+            let mut s = snap(1);
+            let mut r = v1::RedactionSettings::default();
+            r.set_remote_attachments(m);
+            r.remote_allowed_networks = vec!["10.0.0.0/8".into(), "fd00::1".into()];
+            s.redaction = Some(r);
+            let p = ok(s).llm.remote;
+            assert_eq!(p.mode, want, "{m:?}");
+            assert_eq!(p.allowed_networks.len(), 2);
+        }
+        let mut s = snap(1);
+        s.redaction = Some(v1::RedactionSettings {
+            remote_allowed_networks: vec!["example.com".into()],
+            ..Default::default()
+        });
+        assert!(build(s, 0, &Hooks::default()).is_err());
     }
 
     /// A session token as the control plane mints it, with a generated secret part.

@@ -78,6 +78,43 @@ func TestBinaryPassIsWeakened(t *testing.T) {
 	}
 }
 
+// TestRemoteAttachmentsPassIsWeakened: redaction.remote-attachments pass and a
+// non-empty redaction.remote-attachments-allowed-networks are reported as
+// weakened by status and doctor; refuse and inline are not.
+func TestRemoteAttachmentsPassIsWeakened(t *testing.T) {
+	const (
+		mode = "redaction.remote-attachments"
+		nets = "redaction.remote-attachments-allowed-networks"
+	)
+	for env, want := range map[string]string{
+		"SCRIM_REDACTION_REMOTE_ATTACHMENTS=pass":                        mode,
+		"SCRIM_REDACTION_REMOTE_ATTACHMENTS=refuse":                      "",
+		"SCRIM_REDACTION_REMOTE_ATTACHMENTS=inline":                      "",
+		"SCRIM_REDACTION_REMOTE_ATTACHMENTS_ALLOWED_NETWORKS=10.0.0.0/8": nets,
+	} {
+		e, out, errb := newEnv(isolatedEnv(t, env)...)
+		if code := Run(context.Background(), e, []string{"status", "-o", "json"}); code != 0 {
+			t.Fatalf("%s: exit %d: %s", env, code, errb.String())
+		}
+		var r status.Report
+		if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		ok := len(r.Weakened) == 0
+		if want != "" {
+			ok = len(r.Weakened) == 1 && r.Weakened[0].Key == want
+		}
+		if !ok {
+			t.Errorf("%s: status weakened = %+v", env, r.Weakened)
+		}
+		e, out, _ = newEnv(isolatedEnv(t, env)...)
+		_ = Run(context.Background(), e, []string{"doctor"})
+		if got := strings.Contains(out.String(), mode); got != (want != "") {
+			t.Errorf("%s: doctor names %s = %v:\n%s", env, mode, got, out.String())
+		}
+	}
+}
+
 func TestStatusHumanAndBadOutput(t *testing.T) {
 	e, out, _ := newEnv(isolatedEnv(t)...)
 	if code := Run(context.Background(), e, []string{"status"}); code != 0 {

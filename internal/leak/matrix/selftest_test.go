@@ -35,7 +35,7 @@ func newHarness(t *testing.T, proxy func(*url.URL) *httptest.Server) *harness {
 	t.Cleanup(px.Close)
 	return &harness{fake: fake, runner: &matrix.Runner{
 		Target:   matrix.Target{BaseURL: px.URL},
-		Upstream: matrix.LocalUpstream{Server: fake},
+		Upstream: matrix.LocalUpstream{Server: fake, URL: up.URL},
 		Checker:  leak.NewChecker(nil),
 	}}
 }

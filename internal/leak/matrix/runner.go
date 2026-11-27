@@ -24,6 +24,11 @@ import (
 type Upstream interface {
 	Reset(ctx context.Context) error
 	Exchanges(ctx context.Context) ([]fp.Exchange, error)
+	// FilesURL is where the fake serves the files it holds (ending in
+	// fp.FilesPath), empty when unknown.
+	FilesURL() string
+	// Attach holds a file at the fake provider until the next Reset.
+	Attach(ctx context.Context, f fp.File) error
 }
 
 // Target is the proxy under test.
@@ -302,8 +307,21 @@ func (r *Runner) run(ctx context.Context, row Row, seed leak.Seed, content Conte
 		res.Outcome, res.Error = OutcomeError, "reset upstream: "+err.Error()
 		return res
 	}
+	content.FilesURL = r.Upstream.FilesURL()
 	reqs := row.Placement.Build(row.API, content, row.Transform.Body)
 	allFailed, settle := true, false
+	for _, q := range reqs {
+		for _, f := range q.Files {
+			if content.FilesURL == "" {
+				res.Outcome, res.Error = OutcomeError, "the row references files and the fake provider's URL is unknown"
+				return res
+			}
+			if err := r.Upstream.Attach(ctx, f); err != nil {
+				res.Outcome, res.Error = OutcomeError, "attach: "+err.Error()
+				return res
+			}
+		}
+	}
 	for _, q := range reqs {
 		status, _, err := r.Target.Send(ctx, q)
 		if err != nil {
