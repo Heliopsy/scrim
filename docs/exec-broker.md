@@ -186,5 +186,22 @@ It does not control what an allowed program does with the secret:
 - The control plane's copy of a value is wiped after the command starts, but the Go runtime copies
   the environment and arguments while it forks, and those copies are garbage-collected, not wiped.
 
+## Central scrim in Kubernetes
+
 Where scrim runs centrally, the edge forwarder in an agent pod forwards `POST /v1/exec` to the
-central broker, which runs the command where scrim runs, not in the pod.
+central broker ([edge-forwarder.md](edge-forwarder.md)), which runs the command in the central scrim
+container, not in the agent pod. The Helm chart's defaults decide what that means:
+
+- There is no other user to run it as. The chart runs scrim as UID 65532 with every capability
+  dropped and no privilege escalation, so scrim cannot switch users: leave `exec.user` empty, or
+  every command fails to start. Commands run as scrim's own user. The agent is in another pod and
+  cannot read the process, and the same-user check does not apply to callers that come through the
+  edge listener.
+- The command can read everything scrim's user can read in that container: the interception CA key,
+  the placeholder keys, the edge CA key, store credentials and tokens mounted for scrim, and scrim's
+  state and socket directories. Allow only programs you would trust with all of that, pin their
+  arguments with `args`, and keep `dirs` unset so each command starts in a fresh empty directory.
+- The release image is distroless and holds only scrim, so `exec.path` finds nothing and
+  `exec.commands` paths do not exist. Build an image from the scrim image that adds the programs,
+  statically linked since the base has no C library, and set the chart's `image` to it.
+  `test/k8s/edge/Containerfile.scrim` does this for the end-to-end test.

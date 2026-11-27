@@ -14,13 +14,17 @@ and `specs/interception` (Kubernetes injection), design D8, D9 and D11.
 | --- | --- | --- |
 | What runs | a Deployment of `scrim proxy` behind a Service | a full `scrim proxy` inside each agent pod, on loopback |
 | Agent pod label | `scrim.dev/inject: central` | `scrim.dev/inject: sidecar` |
-| Agents reach scrim at | `http://<release>-scrim.<namespace>.svc:9790` and `:9791` | `http://127.0.0.1:9790` and `:9791` |
+| Agents reach scrim at | `http://<fullname>.<namespace>.svc:9790` and `:9791` | `http://127.0.0.1:9790` and `:9791` |
 | Secret values live in | the scrim pods only | every agent pod's scrim container |
-| Store login and CA key | scrim's service account (or credentials in scrim's namespace) | the agent pod's service account (or credentials copied into every agent namespace) |
+| Store login and CA key | scrim's service account (or credentials in scrim's namespace) | the agent pod's service account (or credentials copied into every agent namespace); the CA key copied into every agent namespace |
 | State and events | memory and local (one replica) or PostgreSQL (several) | memory and local, per pod |
 | Approvals and grants | shared across replicas with PostgreSQL | per pod; lost when the pod goes |
 | What keeps the agent from going around scrim | NetworkPolicy: the pod reaches scrim and DNS only | the egress guard (nftables in the pod) plus NetworkPolicy |
 | Needs | a CNI that enforces NetworkPolicy | the same, and `NET_ADMIN` for the guard's init container |
+
+`<fullname>` in object names on this page is the release name followed by `-scrim`, or the release
+name alone when it already contains `scrim` (`fullnameOverride` replaces both). The release `scrim`
+installed below names its objects `scrim`, `scrim-proxy`, `scrim-issuer` and so on.
 
 Central is the default and the one to start with. The value dictionary, the CA key and the store
 credentials stay in one place, the agent pods hold nothing secret, and NetworkPolicy alone enforces
@@ -117,7 +121,7 @@ networkPolicy:
     - ports: [{port: 443, protocol: TCP}]           # providers, GitHub, OpenBao
 ```
 
-The OpenBao role `scrim` binds scrim's service account (`<release>-scrim-proxy`, so `scrim-proxy`
+The OpenBao role `scrim` binds scrim's service account (`<fullname>-proxy`, so `scrim-proxy`
 in namespace `scrim` here) with audience `openbao`
 ([stores/openbao.md](stores/openbao.md#kubernetes-auth)); in sidecar mode it must also bind the
 agent pods' service accounts, since each in-pod scrim logs in as its pod. Infisical works the same
@@ -171,11 +175,13 @@ The tool proxy signs a leaf certificate for each host it intercepts with scrim's
 trust that CA. Every replica and sidecar must use the same one, so the chart never lets scrim
 generate its own per pod:
 
-- `ca.create: true` (default): Helm generates an Ed25519 CA on the first install into the Secret
-  `<release>-scrim-ca`, marked `helm.sh/resource-policy: keep`, and reads it back with `lookup` on
-  every upgrade. GitOps tools that render with `helm template` (Argo CD, Flux with
-  `postRenderers` off is fine) have no `lookup`: they would generate a new CA on every render.
-  Use `ca.existingSecret` with those.
+- `ca.create: true` (default): Helm generates an Ed25519 CA, valid for `ca.validityDays` (730
+  days), on the first install into the Secret `<fullname>-ca`, marked
+  `helm.sh/resource-policy: keep`, and reads it back with `lookup` on every upgrade. Flux's
+  helm-controller installs and upgrades with cluster access, so `lookup` works there
+  ([deploy/flux.md](deploy/flux.md)). Argo CD, kustomize's `helmCharts` and anything else that
+  renders with `helm template` have no `lookup`: they would generate a new CA on every render. Use
+  `ca.existingSecret` with those ([deploy/argocd.md](deploy/argocd.md)).
 - `ca.existingSecret`: a `kubernetes.io/tls` Secret with `tls.crt` and a PKCS#8 `tls.key`, for
   example from cert-manager with `privateKey.encoding: PKCS8` and `isCA: true`. Set
   `ca.certificate` to the public PEM when rendering without cluster access. scrim never rotates an
@@ -187,11 +193,56 @@ plus `ca.extraTrustedCerts`). The bundle has no public roots: an agent pod reach
 every TLS connection it makes ends at a scrim leaf. Add the CAs of cluster services you let agents
 reach directly to `ca.extraTrustedCerts`.
 
+In sidecar mode the CA key leaves scrim's namespace: every agent namespace holds a copy of the CA
+Secret (`sidecar.caSecretName`, written by the chart with `ca.create`), and each in-pod scrim
+mounts it. Anyone who can read Secrets in an agent namespace can then sign certificates every agent
+there trusts. Central mode keeps the key in the release namespace.
+
+#### CA expiry and rotation
+
+The chart hands its CA to scrim as an operator CA (`tool-proxy.ca.cert-file` and
+`tool-proxy.ca.key`), so neither Helm nor scrim ever rotates it, whether it was generated or comes
+from `ca.existingSecret`. The rotation and overlap in [ca.md](ca.md#rotation) apply to a CA scrim
+generates in its own directory, which the chart never uses. A generated chart CA expires
+`ca.validityDays` (730) days after the first install:
+
+- From `tool-proxy.ca.rotate-before` (30 days) before the end, scrim logs a warning once a day.
+- No leaf it signs outlives the CA, so once the CA has expired agents refuse every intercepted
+  connection, and a scrim pod that starts after that point exits with
+  `ca: the interception CA in /etc/scrim/ca/tls.crt expired at ...` (CrashLoopBackOff).
+
+Check the end date in the release namespace:
+
+```sh
+kubectl --context <ctx> -n scrim get secret <fullname>-ca -o jsonpath='{.data.tls\.crt}' \
+  | base64 -d | openssl x509 -noout -enddate
+```
+
+Rotating is a cut-over with no overlap: agents started before the new CA reaches them fail TLS
+toward intercepted hosts until they restart. Plan it for a quiet moment:
+
+1. Replace the CA. With `ca.create`, delete the Secret `<fullname>-ca`; the next render generates a
+   new one. With `ca.existingSecret`, put the new certificate and key in that Secret (and the new
+   PEM in `ca.certificate`, if you set it); in sidecar mode also in the `sidecar.caSecretName`
+   Secret you keep in each agent namespace.
+2. `helm upgrade` with the same values. It writes the new CA, the `scrim-ca` ConfigMaps in every
+   agent namespace and, with `ca.create` in sidecar mode, the CA copies there.
+3. Restart central scrim (`kubectl rollout restart deployment/<fullname>`): it reads an operator CA
+   only at start-up, and the Deployment does not roll when a Secret changes.
+4. Restart the agent workloads. Kubelet updates the mounted `scrim-ca` files, but runtimes read
+   their trust when the process starts, and each sidecar reads the CA when it starts.
+
+A cert-manager `Certificate` that renews the Secret behind `ca.existingSecret` does not change
+this: the renewal reaches scrim and the agents only through steps 2 to 4. The edge CA
+(`edge.ca.validityDays`, also 730 days) is handed over the same way and is never rotated either.
+Rotate it with the same steps on `<fullname>-edge-ca`, then restart the agent pods so their
+forwarders load it.
+
 ### Placeholder keys
 
 Placeholders are an HMAC of the value, so every replica and sidecar needs the same keys, or a
 conversation started on one replica stops matching on another. The chart generates a 64-byte key
-into `<release>-scrim-placeholder-keys` the same way as the CA, or takes `placeholderKeys.existingSecret`
+into `<fullname>-placeholder-keys` the same way as the CA, or takes `placeholderKeys.existingSecret`
 with the key versions listed in `placeholderKeys.keys` (highest is current; keep older versions
 while conversations made with them may continue).
 
@@ -255,9 +306,9 @@ spec:
       image: ghcr.io/example/agent:1
 ```
 
-`kyverno.enabled` installs two Kyverno MutatingPolicies, `<release>-scrim-<namespace>-inject-central`
+`kyverno.enabled` installs two Kyverno MutatingPolicies, `<fullname>-<namespace>-inject-central`
 and `-inject-sidecar` (one per enabled mode), and a ValidatingPolicy,
-`<release>-scrim-<namespace>-require-prepared-namespace`. They select pods by the label in their
+`<fullname>-<namespace>-require-prepared-namespace`. They select pods by the label in their
 object selector, so the API server sends Kyverno labelled pods only. They mutate Pods only, at
 creation: controllers are left as written, so a Deployment in Git does not drift (an object selector
 also turns off Kyverno's generated variants for Deployments, Jobs and the other pod controllers).
@@ -273,7 +324,7 @@ Every container of a labelled pod gets:
 | `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `AWS_CA_BUNDLE`, `PIP_CERT`, `NPM_CONFIG_CAFILE`, `CARGO_HTTP_CAINFO`, `DENO_CERT`, `CODEX_CA_CERTIFICATE` | `/etc/scrim/trust/ca-bundle.pem` | the same |
 | `SCRIM_K8S_TOKEN_FILE` (with `identity.kubernetes.enabled`) | `identity.kubernetes.tokenPath` | the same |
 
-`<svc>` is `<release>-scrim.<namespace>.svc.<global.clusterDomain>`. These are the variables `scrim run`
+`<svc>` is `<fullname>.<namespace>.svc.<global.clusterDomain>`. These are the variables `scrim run`
 sets for an agent on a laptop (`internal/run`), with the Service in place of loopback. The `scrim-ca`
 ConfigMap is mounted at `agents.trustPath` (`/etc/scrim/trust`), with the `scrim-exec` launcher when
 identity is on, and the projected identity token at `identity.kubernetes.tokenPath`
@@ -301,7 +352,9 @@ carries every connection to central scrim's edge listener (port `edge.port`, 979
 the pod's projected identity token. Keys, database passwords and exec secrets stay in central scrim;
 the forwarder holds nothing secret and refuses connections while central scrim cannot be reached. It
 needs `identity.kubernetes.enabled`. Values, policy examples, the channel and failure behaviour are in
-[edge-forwarder.md](edge-forwarder.md).
+[edge-forwarder.md](edge-forwarder.md). Commands sent to the exec broker this way run inside the
+central scrim container, as scrim's own user and with the programs of its image; read
+[exec-broker.md](exec-broker.md#central-scrim-in-kubernetes) before allowing any.
 
 ### Kyverno versions
 
@@ -320,7 +373,7 @@ There is no setting that renders the old ClusterPolicy: on Kyverno 1.16 or older
 order:
 
 1. On Kyverno 1.17 to 1.19, upgrade the scrim chart. Helm creates the new policies and deletes the
-   ClusterPolicy `<release>-scrim-<namespace>-inject`. While both exist for the moment of the
+   ClusterPolicy `<fullname>-<namespace>-inject`. While both exist for the moment of the
    upgrade a pod may be patched by both; they add the same values, so the pod is the same.
 2. Check that no ClusterPolicy is left (`kubectl get clusterpolicies`), then upgrade Kyverno to
    1.20. Its chart refuses to install or upgrade while a `kyverno.io` policy remains
@@ -336,7 +389,7 @@ enforced); 1.18 and 1.19 are not tested.
 ### Without Kyverno
 
 The chart writes the same environment into a ConfigMap in each agent namespace,
-`<release>-scrim-agent-env` (and `-agent-env-sidecar`). Reference it and mount the CA yourself:
+`<fullname>-agent-env` (and `-agent-env-sidecar`). Reference it and mount the CA yourself:
 
 ```yaml
 spec:
@@ -345,7 +398,7 @@ spec:
       image: ghcr.io/example/agent:1
       envFrom:
         - configMapRef:
-            name: scrim-agent-env       # <release>-scrim-agent-env
+            name: scrim-agent-env       # <fullname>-agent-env
       volumeMounts:
         - name: scrim-trust
           mountPath: /etc/scrim/trust
@@ -380,9 +433,9 @@ JSON, in the `initContainers` and `volumes` variables of the `-inject-sidecar` M
 
 | Policy | Namespace | Selects | Allows |
 | --- | --- | --- | --- |
-| `<release>-scrim` | release | scrim pods | ingress to 9790 and 9791 (and `edge.port` with `edge.enabled`) from pods labelled `central` in `agents.namespaces`; to the metrics port from `networkPolicy.prometheus` when `metrics.enabled`; to the admin port from `networkPolicy.adminFrom` when `admin.tcp.enabled`; to the issuer port from `networkPolicy.issuerFrom` (every source when empty) when `identity.issuer.enabled`. Egress to DNS, the API server (`networkPolicy.apiServerEgress`, for TokenReview) and `networkPolicy.scrimEgress` |
-| `<release>-scrim-agents-central` | each agent namespace | pods labelled `central` | egress to the scrim pods on 9790 and 9791 (and `edge.port` with `edge.enabled`), DNS and `networkPolicy.agentEgress` (empty by default). Nothing else |
-| `<release>-scrim-agents-sidecar` | each agent namespace | pods labelled `sidecar` | egress to DNS, the API server (`networkPolicy.apiServerEgress`) and `networkPolicy.sidecarEgress` (what the in-pod scrim needs; the guard keeps the agent off it) |
+| `<fullname>` | release | scrim pods | ingress to 9790 and 9791 (and `edge.port` with `edge.enabled`) from pods labelled `central` in `agents.namespaces`; to the metrics port from `networkPolicy.prometheus` when `metrics.enabled`; to the admin port from `networkPolicy.adminFrom` when `admin.tcp.enabled`; to the issuer port from `networkPolicy.issuerFrom` (every source when empty) when `identity.issuer.enabled`. Egress to DNS, the API server (`networkPolicy.apiServerEgress`, for TokenReview) and `networkPolicy.scrimEgress` |
+| `<fullname>-agents-central` | each agent namespace | pods labelled `central` | egress to the scrim pods on 9790 and 9791 (and `edge.port` with `edge.enabled`), DNS and `networkPolicy.agentEgress` (empty by default). Nothing else |
+| `<fullname>-agents-sidecar` | each agent namespace | pods labelled `sidecar` | egress to DNS, the API server (`networkPolicy.apiServerEgress`) and `networkPolicy.sidecarEgress` (what the in-pod scrim needs; the guard keeps the agent off it) |
 
 `scrimEgress` and `sidecarEgress` default to TCP 443 anywhere, `apiServerEgress` to TCP 443 and
 6443 anywhere: policies match the API server's endpoint, often port 6443 on the control plane nodes,
@@ -390,6 +443,11 @@ not the `kubernetes` Service port. Narrow them to your providers, stores,
 tool hosts and PostgreSQL where your CNI supports it (CIDRs, or FQDN policies with Cilium or Calico
 Enterprise as separate objects). DNS goes to `networkPolicy.dns` (kube-dns in kube-system by
 default; change the selectors for NodeLocal DNSCache or another resolver).
+
+The chart's policies select agent pods by `scrim.dev/inject`. The raw manifests and the kustomize
+component in `deploy/examples/kubernetes` ([deploy/kubernetes.md](deploy/kubernetes.md)) select
+`scrim.dev/agent: "true"` instead. They are separate installs: a pod labelled for one is not covered
+by the other's policies.
 
 A NetworkPolicy that the CNI does not enforce is silently ignored. Check before relying on it: from
 a pod labelled `central`, `curl -m 5 --noproxy '*' https://api.anthropic.com` must fail.
@@ -486,7 +544,7 @@ config:
 ```
 
 The chart runs the listener on `identity.issuer.port` (9795) on the pod IP and puts it on its own
-Service, `<release>-scrim-issuer`, with that port only, so publishing it exposes nothing else. The
+Service, `<fullname>-issuer`, with that port only, so publishing it exposes nothing else. The
 listener serves two public documents under the URL's path and answers 404 to everything else:
 `<url>/.well-known/openid-configuration` and `<url>/.well-known/jwks.json`. Stores fetch them from
 `url`, so `url` must reach that Service. Terminate TLS in front of it with an Ingress or a Gateway
@@ -505,7 +563,7 @@ spec:
         paths:
           - path: /idp/.well-known/
             pathType: Prefix
-            backend: {service: {name: scrim-scrim-issuer, port: {name: issuer}}}
+            backend: {service: {name: scrim-issuer, port: {name: issuer}}}
 ```
 
 Route only the `.well-known` paths, and put no authentication in front of them: stores fetch them
@@ -561,7 +619,7 @@ root.
   within that window, not a lasting outage. A store that does not refetch on an unknown key ID
   refuses new tokens until its cache expires.
 - `pvc` keeps the keys, so a restart changes nothing a store can see. The chart creates
-  `<release>-scrim-issuer-keys` (`keyStore.size`, `storageClassName`, `accessModes`) or uses
+  `<fullname>-issuer-keys` (`keyStore.size`, `storageClassName`, `accessModes`) or uses
   `keyStore.existingClaim`, and sets the pod's `fsGroupChangePolicy` to `OnRootMismatch` unless
   `central.podSecurityContext` sets one: a recursive group change on every mount would make the key
   files group-readable, and scrim would refuse them. scrim does not lock the directory, so two pods
@@ -609,7 +667,9 @@ identity:
   `networkPolicy.ocspEgress` (port 80 anywhere by default; narrow it, or empty it when the proxy
   carries them). `ocsp.unreachable: soft-fail` accepts a certificate when no responder answers;
   the default `fail-closed` refuses it.
-- With `edge.enabled`, forwarders may present a certificate instead of the pod's token.
+- With `edge.enabled`, the edge listener also accepts a forwarder that presents a certificate
+  (`edge-forwarder.client-cert-file`) instead of the pod's token. The forwarder the chart injects
+  always sends the token ([edge-forwarder.md](edge-forwarder.md#the-channel)).
 - `networkPolicy.clientCertificatesFrom` narrows who may connect; empty allows every source, since
   every connection needs a valid certificate.
 
@@ -751,8 +811,9 @@ port. In sidecar mode the token Secret must exist in every agent namespace, so t
 ## Upgrades
 
 - The CA and placeholder key Secrets are kept across upgrades and uninstalls
-  (`helm.sh/resource-policy: keep`). Delete them by hand only together with every agent's trust in
-  the CA.
+  (`helm.sh/resource-policy: keep`). Delete the CA Secret only to rotate the CA
+  ([CA expiry and rotation](#ca-expiry-and-rotation)), and the placeholder key Secret only when
+  every placeholder may change.
 - Config changes roll the Deployment (a checksum of the ConfigMap is a pod annotation). scrim also
   reloads file changes itself while `config.watch` is on, but the chart's mount is a ConfigMap
   volume, which kubelet updates with a delay; the roll is what makes it immediate.
@@ -764,12 +825,13 @@ port. In sidecar mode the token Secret must exist in every agent namespace, so t
 
 | Symptom | Look at |
 | --- | --- |
-| scrim pod never ready | `kubectl logs deploy/<release>-scrim`: `snapshot rejected` names the data plane's reason; `/readyz` lists failing checks (`kubectl exec deploy/<release>-scrim -- scrim status`) |
+| scrim pod never ready | `kubectl logs deploy/<fullname>`: `snapshot rejected` names the data plane's reason; `/readyz` lists failing checks (`kubectl exec deploy/<fullname> -- scrim status`) |
 | `store <name>` failing in `/readyz` | the store address, the Secret behind the reference, `networkPolicy.scrimEgress` |
 | agent gets `403 unbound_destination` | the credential's `hosts` binding does not name the host (with its port if not 443) |
 | agent gets `403 policy_denied ... rule default` | the agent was not started through `scrim-exec`, or its token was refused (scrim's log has `caller=refused` and the reason); see [Identity](#identity) |
 | scrim logs `tokenreviews.authentication.k8s.io is forbidden` | `identity.kubernetes.tokenReviewRBAC` is off, or the binding names another service account |
 | TokenReview times out | `networkPolicy.apiServerEgress` does not match the API server's endpoint address and port |
+| pod in CrashLoopBackOff, log says the interception CA or edge CA `expired at` | the chart's CA is never rotated; replace it ([CA expiry and rotation](#ca-expiry-and-rotation)) |
 | pod in CrashLoopBackOff, log names a redact target | the target matches no secret; fix the path or pattern ([Install](#install)) |
 | TLS errors in the agent | the pod lacks the `scrim-ca` mount or the variables (label, namespace listed, Kyverno running), or the runtime ignores them ([CA trust per runtime](interception.md#ca-trust-per-runtime)) |
 | TLS errors in scrim toward a tool host | the host's CA is private: `upstreamCA` |
@@ -836,13 +898,14 @@ namespace's directory under `$XDG_RUNTIME_DIR/libpod/tmp/rootless-netns/run` los
 
 ## Not covered yet
 
-- Publishing and signing the chart (OCI registry, cosign), part of the release pipeline.
 - Transparent redirection for agents that ignore the injected variables (an init container or CNI
   that redirects with `NET_ADMIN`). The egress guard rejects such traffic instead of redirecting it.
 - MCP registration in agent pods: the edge forwarder serves the agent API socket, but nothing
   registers `scrim mcp` with the agent for you.
-- The chart lives in `oci://ghcr.io/heliopsy/charts/scrim` from the first release after it
-  merged; earlier releases have no chart.
+- Rotating the chart's CA and edge CA: both are operator CAs to scrim and expire after
+  `validityDays` (730 by default) unless rotated by hand
+  ([CA expiry and rotation](#ca-expiry-and-rotation)).
+- Releases before 0.2.0 have no chart in `oci://ghcr.io/heliopsy/charts/scrim`.
 - A standalone `scrim-dataplane` sidecar with a remote control plane (no transport is specified).
 - An Ingress or Gateway route for the identity issuer: the chart renders the Service, you publish
   it ([Identity issuer](#identity-issuer)). The issuer runs in central scrim only; in-pod scrims in
