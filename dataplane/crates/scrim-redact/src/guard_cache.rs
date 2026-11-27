@@ -161,6 +161,43 @@ pub(crate) fn cuts(b: &[u8], out: &mut Vec<usize>) {
     }
 }
 
+/// Groups the segments of `b` cut at `cuts` into runs, appended to `out` as (first segment,
+/// end segment), so the cache hashes and holds runs of about [`RUN_MASK`] + 1 segments: BLAKE3
+/// hashes a few kilobytes at a time at a fraction of its speed on tens of kilobytes. A segment
+/// ends a run when its length and last bytes say so ([`ends_run`]), or when the run reaches
+/// [`RUN_MAX`] bytes; the same segments therefore group the same way wherever the body changed
+/// before them. A run's ends are cuts, so the argument above holds for runs as for segments.
+pub(crate) fn runs(b: &[u8], cuts: &[usize], out: &mut Vec<(usize, usize)>) {
+    let n = cuts.len() + 1;
+    let (mut first, mut start) = (0, 0);
+    for i in 0..n {
+        let a = if i == 0 { 0 } else { cuts[i - 1] };
+        let e = cuts.get(i).copied().unwrap_or(b.len());
+        if i + 1 == n || ends_run(&b[a..e]) || e - start >= RUN_MAX {
+            out.push((first, i + 1));
+            (first, start) = (i + 1, e);
+        }
+    }
+}
+
+/// About one segment in `RUN_MASK + 1` ends a run.
+const RUN_MASK: u64 = 7;
+
+/// A run ends at the segment that takes it to this many bytes, whatever its bytes.
+const RUN_MAX: usize = 64 << 10;
+
+/// Whether a segment ends a run: decided by its length and last 16 bytes.
+fn ends_run(seg: &[u8]) -> bool {
+    let tail = &seg[seg.len().saturating_sub(16)..];
+    let mut x = seg.len() as u64 ^ 0x2545_f491_4f6c_dd1d;
+    for c in tail.chunks(8) {
+        let mut w = [0u8; 8];
+        w[..c.len()].copy_from_slice(c);
+        x = (x ^ u64::from_le_bytes(w)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+    (x >> 40) & RUN_MASK == 0
+}
+
 /// Whether the line ending at `end`, as the JSON-unescaped view reads it (back to the last line
 /// break: a newline byte or a `\n` escape), is at most `MAX_LINE` bytes and has neither `|` nor
 /// `: `, so no dump line's ASCII column can reach `end`. A `\u` escape on the line could decode

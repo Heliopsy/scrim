@@ -55,7 +55,8 @@ pub fn prepare_timed(
     body: &[u8],
     timed: bool,
 ) -> Result<Outgoing, Refusal> {
-    prepare_planned(snap, body, timed, |b| codec::plan(api, b))
+    let cache = snap.redactor.plan_cache();
+    prepare_planned(snap, body, timed, |b| codec::plan_cached(api, b, cache))
 }
 
 /// [`prepare_timed`] with the codec plan made by `planner` (WebSocket messages, whose events are

@@ -13,6 +13,7 @@
 
 use std::collections::BTreeMap;
 
+use super::plan_cache::Elements;
 use super::{
     DeltaOut, Edits, Plan, PlanError, StreamBlock, StreamCodec, StreamLimits, feed_delta,
     flush_block, keep_allowlisted, restore_json_source, restore_string, synth_from_template,
@@ -38,7 +39,11 @@ pub(crate) const ALLOWLIST: &[&str] = &[
     "anthropic_version",
 ];
 
-pub(crate) fn plan(doc: &Doc<'_>) -> Result<Plan, PlanError> {
+/// Root members whose elements the plan cache may step over: `messages` and `system` are
+/// planned element by element, `tools` is not read.
+pub(crate) const CACHED_ARRAYS: &[&str] = &["messages", "system", "tools"];
+
+pub(crate) fn plan(doc: &Doc<'_>, els: &mut Elements<'_>) -> Result<Plan, PlanError> {
     let mut plan = Plan::default();
     let root = doc.root();
     keep_allowlisted(&mut plan, root, ALLOWLIST)?;
@@ -47,13 +52,28 @@ pub(crate) fn plan(doc: &Doc<'_>) -> Result<Plan, PlanError> {
             return Err(PlanError::Shape("messages is not an array"));
         }
         for m in messages.children() {
-            if let Some(content) = m.get("content")? {
-                plan_blocks(&mut plan, content, 0)?;
-            }
+            els.element(0, m, &mut plan, |plan| {
+                if let Some(content) = m.get("content")? {
+                    plan_blocks(plan, content, 0)?;
+                }
+                Ok(())
+            })?;
         }
     }
-    if let Some(system) = root.get("system")? {
-        plan_blocks(&mut plan, system, 0)?;
+    if let Some(system) = root.get("system")?
+        && system.kind() == Kind::Array
+    {
+        for b in system.children() {
+            els.element(1, b, &mut plan, |plan| plan_block(plan, b, 0))?;
+        }
+    }
+    // Not read by the plan, so a duplicate key is no error here.
+    if let Ok(Some(tools)) = root.get("tools")
+        && tools.kind() == Kind::Array
+    {
+        for t in tools.children() {
+            els.unread(2, t);
+        }
     }
     Ok(plan)
 }
@@ -63,40 +83,45 @@ fn plan_blocks(plan: &mut Plan, content: Value<'_, '_>, depth: usize) -> Result<
         return Ok(());
     }
     for b in content.children() {
-        if b.kind() != Kind::Object {
-            continue;
-        }
-        let ty = b.get_str("type")?;
-        match ty.as_deref() {
-            Some("thinking") => {
-                for f in ["thinking", "signature"] {
-                    if let Some(v) = b.get(f)? {
-                        plan.keep(v);
-                    }
-                }
-            }
-            Some("redacted_thinking") => {
-                if let Some(v) = b.get("data")? {
+        plan_block(plan, b, depth)?;
+    }
+    Ok(())
+}
+
+fn plan_block(plan: &mut Plan, b: Value<'_, '_>, depth: usize) -> Result<(), PlanError> {
+    if b.kind() != Kind::Object {
+        return Ok(());
+    }
+    let ty = b.get_str("type")?;
+    match ty.as_deref() {
+        Some("thinking") => {
+            for f in ["thinking", "signature"] {
+                if let Some(v) = b.get(f)? {
                     plan.keep(v);
                 }
             }
-            Some("image" | "document") => {
-                if let Some(src) = b.get("source")? {
-                    plan_source(plan, src, depth)?;
-                }
-            }
-            Some("container_upload") => {
-                if let Some(id) = b.get_str("file_id")? {
-                    plan.reference(Target::FileId(id.into_owned()), Edit::None);
-                }
-            }
-            Some("tool_result" | "search_result") => {
-                if let Some(c) = b.get("content")? {
-                    plan_blocks(plan, c, depth + 1)?;
-                }
-            }
-            _ => {}
         }
+        Some("redacted_thinking") => {
+            if let Some(v) = b.get("data")? {
+                plan.keep(v);
+            }
+        }
+        Some("image" | "document") => {
+            if let Some(src) = b.get("source")? {
+                plan_source(plan, src, depth)?;
+            }
+        }
+        Some("container_upload") => {
+            if let Some(id) = b.get_str("file_id")? {
+                plan.reference(Target::FileId(id.into_owned()), Edit::None);
+            }
+        }
+        Some("tool_result" | "search_result") => {
+            if let Some(c) = b.get("content")? {
+                plan_blocks(plan, c, depth + 1)?;
+            }
+        }
+        _ => {}
     }
     Ok(())
 }

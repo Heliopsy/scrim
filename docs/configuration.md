@@ -507,6 +507,7 @@ is out of date.
 | [`redaction.limit-to-agent-identity`](#redactionlimit-to-agent-identity) | bool | `false` | restart required |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
+| [`redaction.redactor-cache`](#redactionredactor-cache) | bool | `true` | hot |
 | [`redaction.remote-attachments`](#redactionremote-attachments) | string | `inline` | hot |
 | [`redaction.remote-attachments-allowed-networks`](#redactionremote-attachments-allowed-networks) | list | `[]` | hot |
 | [`restore.allow-reveal-credentials`](#restoreallow-reveal-credentials) | list | `[]` | hot |
@@ -3121,6 +3122,18 @@ Directory of the generated placeholder key, used when redaction.placeholder-keys
 | Environment | `SCRIM_REDACTION_PLACEHOLDER_KEY_DIR` |
 | Flag | none |
 | Reload | restart required |
+
+#### `redaction.redactor-cache`
+
+Remember which parts of a request body the redactor replaced nothing in, which parts' detector scan found nothing, and the plan of conversation messages already parsed (BLAKE3 hashes, short probes and offsets only, never bytes or values, at most 65,536 per redaction set, cleared when the set changes), so an agent's next turn has only its new parts parsed, redacted and scanned. The output is the same either way; off redacts every byte of every request.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `true` |
+| Environment | `SCRIM_REDACTION_REDACTOR_CACHE` |
+| Flag | none |
+| Reload | hot |
 
 #### `redaction.remote-attachments`
 

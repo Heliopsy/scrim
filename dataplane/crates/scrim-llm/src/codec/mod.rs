@@ -18,6 +18,12 @@ pub(crate) mod gemini_live;
 pub(crate) mod openai_chat;
 pub(crate) mod openai_realtime;
 pub(crate) mod openai_responses;
+pub mod plan_cache;
+#[cfg(test)]
+mod plan_cache_tests;
+
+use plan_cache::Elements;
+pub use plan_cache::PlanCache;
 
 use crate::engine::RestoreSite;
 use crate::json::{self, Doc, Duplicate, JsonError, Kind, Value};
@@ -176,7 +182,7 @@ pub(crate) fn members_except(v: Value<'_, '_>, drop: &[&str]) -> Vec<(String, (u
 pub(crate) fn plan(api: Api, body: &[u8]) -> Result<Plan, PlanError> {
     let plan = match api {
         Api::Generic => return Ok(Plan::default()),
-        Api::AnthropicMessages => anthropic::plan(&Doc::parse(body)?)?,
+        Api::AnthropicMessages => anthropic::plan(&Doc::parse(body)?, &mut Elements::none())?,
         Api::OpenAiChat => openai_chat::plan(&Doc::parse(body)?)?,
         Api::OpenAiResponses => openai_responses::plan(&Doc::parse(body)?)?,
         Api::Gemini => gemini::plan(&Doc::parse(body)?)?,
@@ -184,6 +190,53 @@ pub(crate) fn plan(api: Api, body: &[u8]) -> Result<Plan, PlanError> {
     };
     Ok(plan.finish())
 }
+
+/// [`plan`] with the plan cache (see [`plan_cache`]): elements of the conversation planned
+/// before are stepped over. The plan is the same.
+pub(crate) fn plan_cached(
+    api: Api,
+    body: &[u8],
+    cache: Option<&PlanCache>,
+) -> Result<Plan, PlanError> {
+    plan_counted(api, body, cache).map(|(p, _)| p)
+}
+
+/// [`plan_cached`], also returning how many bytes of the body were stepped over.
+pub(crate) fn plan_counted(
+    api: Api,
+    body: &[u8],
+    cache: Option<&PlanCache>,
+) -> Result<(Plan, usize), PlanError> {
+    let Some(cache) = cache else {
+        return plan(api, body).map(|p| (p, 0));
+    };
+    let (members, planner): (&[&str], PlanFn) = match api {
+        Api::AnthropicMessages => (anthropic::CACHED_ARRAYS, anthropic::plan),
+        _ => return plan(api, body).map(|p| (p, 0)),
+    };
+    let mut els = Elements::with(cache);
+    let mut skipped = 0;
+    let doc = {
+        let mut skip = |role: usize, at: usize| {
+            let len = els.skip(role, body, at);
+            skipped += len.unwrap_or(0);
+            len
+        };
+        Doc::parse_skipping(
+            body,
+            &mut json::Skip {
+                members,
+                skip: &mut skip,
+            },
+        )?
+    };
+    let plan = planner(&doc, &mut els)?.finish();
+    els.remember(body);
+    Ok((plan, skipped))
+}
+
+/// A codec's planner that takes the plan cache's elements.
+type PlanFn = fn(&Doc<'_>, &mut Elements<'_>) -> Result<Plan, PlanError>;
 
 /// Keeps allowlisted top-level members verbatim; requires an object root.
 pub(crate) fn keep_allowlisted(

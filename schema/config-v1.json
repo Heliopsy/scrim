@@ -2430,6 +2430,14 @@
           "x-scrim-env": "SCRIM_REDACTION_PLACEHOLDER_KEYS",
           "x-scrim-restart-required": false
         },
+        "redactor-cache": {
+          "default": true,
+          "description": "Remember which parts of a request body the redactor replaced nothing in, which parts' detector scan found nothing, and the plan of conversation messages already parsed (BLAKE3 hashes, short probes and offsets only, never bytes or values, at most 65,536 per redaction set, cleared when the set changes), so an agent's next turn has only its new parts parsed, redacted and scanned. The output is the same either way; off redacts every byte of every request.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_REDACTION_REDACTOR_CACHE",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
         "remote-attachments": {
           "default": "inline",
           "description": "Attachments a provider request references instead of carrying: image and document URLs, provider file IDs, Cloud Storage and S3 locations. inline fetches each URL itself (through network.upstream-proxy, never to a non-public address), scans the content under redaction.binary and sends it to the provider inline in place of the URL, so the model sees exactly what was scanned; refuse refuses requests with a URL; pass forwards references unfetched and audits it, and the provider fetches content scrim never sees. Under inline and refuse a file ID passes only when its upload went through scrim on the same route and was scanned; other references scrim cannot fetch are refused.",

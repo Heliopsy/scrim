@@ -257,6 +257,7 @@ dependencies = [
  "hmac",
  "memchr",
  "regex",
+ "regex-syntax",
  "sha2",
  "subtle",
  "zeroize",

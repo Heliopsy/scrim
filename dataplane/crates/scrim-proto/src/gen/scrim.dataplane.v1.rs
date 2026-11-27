@@ -718,6 +718,11 @@ pub struct RedactionSettings {
     /// (redaction.guard-cache false). The zero value keeps it on.
     #[prost(bool, tag = "10")]
     pub guard_cache_off: bool,
+    /// redactor_cache_off turns the redactor's segment cache and the LLM proxy's
+    /// codec plan cache off (redaction.redactor-cache false). The zero value keeps
+    /// them on.
+    #[prost(bool, tag = "11")]
+    pub redactor_cache_off: bool,
 }
 /// EntropySettings tune the entropy detector. Zero fields take the data
 /// plane's defaults.

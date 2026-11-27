@@ -745,6 +745,10 @@ message RedactionSettings {
   // guard_cache_off turns the guard's verdict cache off
   // (redaction.guard-cache false). The zero value keeps it on.
   bool guard_cache_off = 10;
+  // redactor_cache_off turns the redactor's segment cache and the LLM proxy's
+  // codec plan cache off (redaction.redactor-cache false). The zero value keeps
+  // them on.
+  bool redactor_cache_off = 11;
 }
 
 // EntropySettings tune the entropy detector. Zero fields take the data
