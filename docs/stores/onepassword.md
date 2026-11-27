@@ -155,6 +155,28 @@ A rule that allows reads of production CI credentials only:
 secret.labels["onepassword.vault"] == "Prod" && "onepassword.tag.ci" in secret.labels
 ```
 
+## Per-agent identity
+
+Issue a Connect access token per agent from the same Connect server, scoped to that agent's vaults,
+and hold it for the agent ([Agent identity](../identity.md#store-identity-per-agent)):
+
+```sh
+op connect token create reviewer --server scrim-connect --vault Reviewer,r
+```
+
+```yaml
+identity:
+  store-credentials:
+    op/reviewer: file:/run/secrets/op-connect-reviewer-token
+```
+
+Connect grants read and write per vault, to every item in it. Before scrim injects or restores a
+value it resolves the reference with its own token, then lists the vault's items with that title
+using the agent's token (summaries only, no value) and refuses the use unless the item is among
+them. Connect cannot say whether a token may write without writing, so writes are not checked per
+agent. 1Password service account tokens are not accepted, for the reasons above; `GET /v1/activity`
+on the Connect server records each request with the token's `jti`.
+
 ## Errors
 
 | Connect answer | scrim error |

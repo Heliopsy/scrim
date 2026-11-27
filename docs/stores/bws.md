@@ -186,6 +186,27 @@ elsewhere (another scrim replica, a person in the web app) creating the same new
 moment can leave two secrets with that key; scrim then refuses the name as ambiguous until one is
 removed.
 
+## Per-agent identity
+
+Create a machine account per agent, give it access to the agent's projects (**Can read**, or **Can
+read, write**), and hold its access token for the agent
+([Agent identity](../identity.md#store-identity-per-agent)):
+
+```yaml
+identity:
+  store-credentials:
+    bws/reviewer: file:/run/credentials/scrim/bws-reviewer-access-token
+```
+
+Before scrim uses a value it resolves the reference with its own machine account, logs in as the
+agent's (the bearer is cached per agent until two thirds of its lifetime) and fetches the secret as
+the agent. Bitwarden answers "not found" for a secret the agent's machine account may not read, and
+otherwise reports its read and write access. The answer holds only ciphertext; scrim does not
+decrypt it, and does not unwrap the organization key the agent's login returns. A write check needs
+the secret's `write` flag, or for a new secret the project's (`GET /projects/{id}`). Bitwarden logs
+`Secret_Retrieved` or `Project_Retrieved` under the agent's machine account. An access token of
+another organization is refused. Secrets Manager has no token exchange.
+
 ## Watch
 
 Secrets Manager has no change feed for machine accounts, so the adapter polls the secret identifier
@@ -236,8 +257,7 @@ response and ciphertexts recorded in its fake server (`internal/stores/bws/crypt
   calls per refresh; prefer one project-wide redact target to many single references.
 - Secrets in no project are reachable by ID only and never listed.
 - Organization keys other than 64-byte AES-256-CBC-HMAC-SHA256 keys are refused.
-- Secret versions, the trash and project management are not used. Per-agent store identity is not
-  implemented: a store configured for it refuses every use.
+- Secret versions, the trash and project management are not used.
 
 ## Testing
 

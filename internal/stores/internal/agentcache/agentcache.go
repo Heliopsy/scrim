@@ -8,7 +8,6 @@
 package agentcache
 
 import (
-	"crypto/sha256"
 	"sync"
 	"time"
 )
@@ -19,10 +18,12 @@ const MaxEntries = 1024
 
 // Cache maps a key to a credential of type T. wipe is called on every
 // credential the cache drops; Get returns a copy made by clone, which the
-// caller owns.
+// caller owns. Keys are kept as given, so they hold only identities and
+// public IDs: a caller keying by secret material (an agent's identity
+// token) puts a digest of it in the key instead.
 type Cache[T any] struct {
 	mu    sync.Mutex
-	m     map[[32]byte]entry[T]
+	m     map[string]entry[T]
 	wipe  func(T)
 	clone func(T) T
 	now   func() time.Time
@@ -36,7 +37,7 @@ type entry[T any] struct {
 
 // New returns an empty cache.
 func New[T any](clone func(T) T, wipe func(T)) *Cache[T] {
-	return &Cache[T]{m: map[[32]byte]entry[T]{}, clone: clone, wipe: wipe, now: time.Now}
+	return &Cache[T]{m: map[string]entry[T]{}, clone: clone, wipe: wipe, now: time.Now}
 }
 
 // SetNow replaces the clock, for tests.
@@ -46,13 +47,11 @@ func (c *Cache[T]) SetNow(now func() time.Time) {
 	c.now = now
 }
 
-func hash(key string) [32]byte { return sha256.Sum256([]byte(key)) }
-
 // Get returns a copy of the credential for key while it is fresh.
 func (c *Cache[T]) Get(key string) (T, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e, ok := c.m[hash(key)]
+	e, ok := c.m[key]
 	if !ok || !c.now().Before(e.until) {
 		var zero T
 		return zero, false
@@ -81,11 +80,23 @@ func (c *Cache[T]) Put(key, session string, v T, ttl time.Duration) {
 			c.clearLocked()
 		}
 	}
-	h := hash(key)
+	h := key
 	if old, ok := c.m[h]; ok {
 		c.wipe(old.v)
 	}
 	c.m[h] = entry[T]{v: v, until: until, session: session}
+}
+
+// Forget drops the credential for key, for one the store no longer
+// accepts.
+func (c *Cache[T]) Forget(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	h := key
+	if e, ok := c.m[h]; ok {
+		c.wipe(e.v)
+		delete(c.m, h)
+	}
 }
 
 // ForgetSession drops every credential tagged with session.

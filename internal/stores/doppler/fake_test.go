@@ -37,6 +37,12 @@ import (
 //     (${"a.b"}) and dynamic secrets are not modelled.
 //   - The ETag is a hash of the download body; Doppler's is opaque.
 //   - Rate limits, pagination and trusted IPs are not modelled.
+//   - OIDC authentication (POST /v3/auth/oidc) follows the API reference's
+//     request and response ({identity, token} to {success, token,
+//     expires_at}); the error status for a refused identity token is an
+//     assumption. The fake compares the token byte for byte instead of
+//     verifying a signature, and the token it issues is a service account
+//     token limited to the identity's configs.
 type fake struct {
 	t   *testing.T
 	srv *httptest.Server
@@ -57,6 +63,18 @@ type fake struct {
 	// hiddenConfigs refuses GET /v3/configs/config for these configs, as
 	// for a token that may read secrets but not describe the config.
 	hiddenConfigs map[string]bool
+	// oidc maps a service account identity ID to the identity token it
+	// accepts and the configs ("<project>/<config>") the token it issues
+	// may use; oidcLogins counts logins and oidcTTL is the issued token's
+	// lifetime.
+	oidc       map[string]fakeIdentity
+	oidcLogins int
+	oidcTTL    time.Duration
+}
+
+type fakeIdentity struct {
+	jwt     string
+	configs map[string]bool
 }
 
 type fakeToken struct {
@@ -64,6 +82,9 @@ type fakeToken struct {
 	project string // service tokens: the one config they open
 	config  string
 	write   bool
+	// only, when set, limits any token to these "<project>/<config>",
+	// as a service account's project roles do.
+	only map[string]bool
 }
 
 type fakeConfig struct {
@@ -107,6 +128,8 @@ func newFake(t *testing.T) (*fake, map[string]string) {
 		tokens:        map[string]*fakeToken{},
 		configs:       map[string]*fakeConfig{},
 		hiddenConfigs: map[string]bool{},
+		oidc:          map[string]fakeIdentity{},
+		oidcTTL:       time.Hour,
 	}
 	f.workplace.slug, f.workplace.name = "2faa85f6610102d983522", "Doppler University"
 	for _, c := range []fakeConfig{
@@ -135,6 +158,7 @@ func newFake(t *testing.T) (*fake, map[string]string) {
 	mux.HandleFunc("GET /v3/configs/config/secrets/names", f.auth(f.names))
 	mux.HandleFunc("GET /v3/configs/config/secrets/download", f.auth(f.download))
 	mux.HandleFunc("POST /v3/configs/config/secrets", f.auth(f.update))
+	mux.HandleFunc("POST /v3/auth/oidc", f.oidcLogin)
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.requests = append(f.requests, r.Method+" "+r.URL.Path)
@@ -202,6 +226,10 @@ func (f *fake) configFor(w http.ResponseWriter, project, config string, tok *fak
 		apiErr(w, http.StatusBadRequest, "Missing project")
 		return nil
 	}
+	if tok.only != nil && !tok.only[project+"/"+config] {
+		apiErr(w, http.StatusForbidden, "You do not have sufficient access to perform this action")
+		return nil
+	}
 	c := f.configs[project+"/"+config]
 	if c == nil {
 		apiErr(w, http.StatusNotFound, "Could not find requested config '"+config+"'")
@@ -212,6 +240,49 @@ func (f *fake) configFor(w http.ResponseWriter, project, config string, tok *fak
 		return nil
 	}
 	return c
+}
+
+// oidcLogin is POST /v3/auth/oidc: no bearer, the identity token in the
+// body.
+func (f *fake) oidcLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "" {
+		apiErr(w, http.StatusBadRequest, "OIDC authentication takes no bearer token")
+		return
+	}
+	var in struct {
+		Identity string `json:"identity"`
+		Token    string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		apiErr(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id, ok := f.oidc[in.Identity]
+	if !ok || id.jwt != in.Token {
+		apiErr(w, http.StatusUnauthorized, "Unable to authenticate with OIDC token")
+		return
+	}
+	f.oidcLogins++
+	tok := "dp.said." + randID(20)
+	f.tokens[tok] = &fakeToken{kind: "service_account", only: id.configs}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":    true,
+		"token":      tok,
+		"expires_at": time.Now().Add(f.oidcTTL).UTC().Format(time.RFC3339Nano),
+	})
+}
+
+// revoke makes the fake refuse every token it issued by OIDC.
+func (f *fake) revokeOIDC() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for k := range f.tokens {
+		if strings.HasPrefix(k, "dp.said.") {
+			delete(f.tokens, k)
+		}
+	}
 }
 
 func (f *fake) me(w http.ResponseWriter, _ *http.Request, tok *fakeToken) {

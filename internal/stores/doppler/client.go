@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -176,9 +177,16 @@ type response struct {
 	body   []byte
 }
 
-// send performs one authenticated HTTP exchange. Network errors and
-// timeouts are ErrUnavailable.
+// send performs one authenticated HTTP exchange with scrim's own token.
+// Network errors and timeouts are ErrUnavailable.
 func (c *client) send(ctx context.Context, method, u string, body *wire.Body, header http.Header) (response, error) {
+	return c.sendAs(ctx, method, u, body, header, secret.Value{})
+}
+
+// sendAs is send with the bearer as, a token held for an agent
+// (agent.go), or scrim's own token when as is zero. The caller keeps
+// ownership of as.
+func (c *client) sendAs(ctx context.Context, method, u string, body *wire.Body, header http.Header, as secret.Value) (response, error) {
 	var r io.Reader
 	if body != nil {
 		r = body.Reader()
@@ -196,9 +204,12 @@ func (c *client) send(ctx context.Context, method, u string, body *wire.Body, he
 		req.Header[k] = v
 	}
 	req.Header.Set("Accept", "application/json")
-	tok, err := c.bearer(ctx)
-	if err != nil {
-		return response{}, err
+	tok := copyValue(as)
+	if as.IsZero() {
+		var err error
+		if tok, err = c.bearer(ctx); err != nil {
+			return response{}, err
+		}
 	}
 	defer tok.Wipe()
 	_ = tok.Expose(func(b []byte) error {
@@ -234,7 +245,16 @@ func scrubURLError(err error) error {
 // which the caller wipes. involved are values in the request that Doppler
 // might echo in an error message.
 func (c *client) do(ctx context.Context, method, path string, q url.Values, body *wire.Body, involved []secret.Value) ([]byte, error) {
-	r, err := c.send(ctx, method, c.url(path, q), body, nil)
+	return c.doAs(ctx, method, path, q, body, involved, secret.Value{})
+}
+
+// doAs is do with the bearer as (sendAs). as is added to involved, so an
+// error never quotes it.
+func (c *client) doAs(ctx context.Context, method, path string, q url.Values, body *wire.Body, involved []secret.Value, as secret.Value) ([]byte, error) {
+	if !as.IsZero() {
+		involved = append(slices.Clone(involved), as)
+	}
+	r, err := c.sendAs(ctx, method, c.url(path, q), body, nil, as)
 	if err != nil {
 		return nil, err
 	}

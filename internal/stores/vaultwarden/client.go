@@ -72,24 +72,12 @@ func (c *client) endpoint(p string, q url.Values) string {
 }
 
 func (c *client) do(req *http.Request, out any) error {
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Bitwarden-Client-Name", "scrim")
-	req.Header.Set("Bitwarden-Client-Version", "2025.1.0")
-	req.Header.Set("Device-Type", deviceType)
-	resp, err := c.http.Do(req)
+	body, err := c.doRaw(req)
 	if err != nil {
-		return &netError{err: sanitizeURLError(err)}
+		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	// The body can hold the access token; what is kept is copied out of it.
 	defer secret.WipeBytes(body)
-	if err != nil {
-		return &netError{err: err}
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &apiError{Status: resp.StatusCode, Message: serverMessage(body)}
-	}
 	if out == nil || len(body) == 0 {
 		return nil
 	}
@@ -97,6 +85,31 @@ func (c *client) do(req *http.Request, out any) error {
 		return fmt.Errorf("decode %s response: %w", req.URL.Path, err)
 	}
 	return nil
+}
+
+// doRaw sends req and returns the body of a 2xx response, which the caller
+// owns. The body of an error response is wiped once its message is taken.
+func (c *client) doRaw(req *http.Request) ([]byte, error) {
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Bitwarden-Client-Name", "scrim")
+	req.Header.Set("Bitwarden-Client-Version", "2025.1.0")
+	req.Header.Set("Device-Type", deviceType)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, &netError{err: sanitizeURLError(err)}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	if err != nil {
+		secret.WipeBytes(body)
+		return nil, &netError{err: err}
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		msg := serverMessage(body)
+		secret.WipeBytes(body)
+		return nil, &apiError{Status: resp.StatusCode, Message: msg}
+	}
+	return body, nil
 }
 
 // sanitizeURLError drops the URL from a url.Error: query strings could carry
@@ -311,6 +324,29 @@ func (c *client) authed(ctx context.Context, s session, method, path string, q u
 		return terr
 	}
 	return err
+}
+
+// authedRaw is authed for a response the caller inspects and wipes: it
+// returns the raw body of a 2xx response.
+func (c *client) authedRaw(ctx context.Context, s session, method, path string, q url.Values) ([]byte, error) {
+	var (
+		body []byte
+		err  error
+	)
+	terr := s.token.Expose(func(tok []byte) error {
+		var req *http.Request
+		req, err = c.jsonRequest(ctx, method, path, q, string(tok), nil)
+		if err != nil {
+			return nil //nolint:nilerr // err is the outer variable, checked after Expose returns
+		}
+		body, err = c.doRaw(req)
+		return nil
+	})
+	if terr != nil {
+		secret.WipeBytes(body)
+		return nil, terr
+	}
+	return body, err
 }
 
 // revisionDate returns the account's revision date, which changes whenever
