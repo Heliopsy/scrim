@@ -73,9 +73,20 @@ async fn captured_request_is_byte_identical_to_what_upstream_received() {
     let bodies = files(&dir, ".request.body");
     assert_eq!(bodies.len(), 1);
     assert_eq!(std::fs::read(&bodies[0]).unwrap(), received.body.to_vec());
-    // The response is captured as received: placeholders, never values.
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    let resp = std::fs::read(&files(&dir, ".response.body")[0]).unwrap();
+    // The response is captured as received: placeholders, never values. The capture writer
+    // runs on its own task and may still be writing when the agent has the whole stream, so
+    // wait for the file to reach the stream's length (a slow Windows runner took over 100 ms).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let resp = loop {
+        let resp = files(&dir, ".response.body")
+            .first()
+            .map(|f| std::fs::read(f).unwrap())
+            .unwrap_or_default();
+        if resp.len() >= stream.len() || std::time::Instant::now() > deadline {
+            break resp;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    };
     assert_eq!(resp, stream.as_bytes());
     for f in std::fs::read_dir(&dir).unwrap() {
         let bytes = std::fs::read(f.unwrap().path()).unwrap();
