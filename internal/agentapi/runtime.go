@@ -18,6 +18,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/agenttools"
 	"github.com/heliopsy/scrim/internal/app"
+	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/entrypage"
 	"github.com/heliopsy/scrim/internal/identity"
 	"github.com/heliopsy/scrim/internal/identity/sessionstate"
@@ -171,9 +172,23 @@ func New(a *app.App, o Options) (*Runtime, error) {
 	}
 	resolver := &identity.Resolver{Peers: peers, Sessions: mgr, Kubernetes: kr, Certificates: cr}
 	api := &localapi.Server{Resolver: *resolver, Sessions: mgr, Tools: svc,
-		Auditor: auditor, Logger: a.Log, ServerVersion: version.Version}
+		Auditor: auditor, Logger: a.Log, ServerVersion: version.Version, OwnPaths: ownPaths(a.Config)}
 	return &Runtime{Socket: path, EntryURL: links.Base(), Service: svc, Sessions: mgr, Resolver: resolver,
 		api: api, page: page, sock: sockLn, entry: entryLn}, nil
+}
+
+// ownPaths lists the files and directories the current configuration makes
+// this scrim read secrets or key material from, for `scrim run`'s session
+// filesystem view. It follows reloads.
+func ownPaths(m *config.Manager) func() []localapi.OwnPath {
+	return func() []localapi.OwnPath {
+		own := m.Current().OwnPaths()
+		out := make([]localapi.OwnPath, 0, len(own))
+		for _, p := range own {
+			out = append(out, localapi.OwnPath{Path: p.Path, Origin: p.Origin})
+		}
+		return out
+	}
 }
 
 // SetEndpoints serves fn on GET /v1/endpoints, so `scrim run` under another

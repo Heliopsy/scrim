@@ -156,8 +156,9 @@ var (
 		RestartRequired: true,
 	})
 	KubeTokenFile = config.Register(config.Spec[string]{
-		Key:     "identity.kubernetes.token-file",
-		Default: kube.DefaultTokenFile,
+		Key:         "identity.kubernetes.token-file",
+		KeyMaterial: true,
+		Default:     kube.DefaultTokenFile,
 		Description: "scrim's own service account token, which authorises TokenReview calls (RBAC: create tokenreviews, " +
 			"for example by binding system:auth-delegator). Re-read on every call, since the kubelet rotates it.",
 		RestartRequired: true,

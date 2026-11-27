@@ -243,10 +243,11 @@ applied tool profiles (`~/.aws/credentials`, `~/.kube/config`, `~/.docker/config
 `~/.config/gh/hosts.yml`, ...; see [cli-tools.md](cli-tools.md)) and the patterns in
 `run.fs-view-hide` (default `.ssh/id_*` without `.ssh/id_*.pub`: ssh private keys, not their public
 halves). Only paths that exist are covered, and a session with none starts without any of this.
+The view also hides [scrim's own files](#scrims-own-files).
 
 Spec: `specs/credential-injection` ("Session filesystem view for fixed paths", "Filesystem view
 integrity", "Filesystem view selection", "Filesystem view fallback without namespaces", "Session home
-mirror"). Code: `internal/fsview`.
+mirror", "Session filesystem view hides scrim's own files"). Code: `internal/fsview`.
 
 | `run.fs-view` | What the agent gets |
 | --- | --- |
@@ -310,6 +311,49 @@ Not covered by the home mirror:
 - On macOS, credentials kept in the Keychain (git-credential-osxkeychain,
   docker-credential-osxkeychain, gh's keyring) are not files and are not covered.
 
+### scrim's own files
+
+When scrim runs as the same user as the agent (a user-level install, `scrim install --user`, or the
+daemon `scrim run` starts itself), that user can read scrim's own secrets: the file behind a
+Vaultwarden `unlock: file:...`, a `client-secret:`, notifier tokens, signing keys. `scrim run` asks
+the daemon which files it reads secrets or key material from (`GET /v1/own-paths` on the agent API,
+answered only to a local user that may mint sessions, never to a session) and hides each one the
+agent's user can read:
+
+- the target of every `file:` reference in scrim's configuration, settings and store fields alike;
+- scrim's config files;
+- the state directory (`$XDG_STATE_HOME/scrim`: CA keys, placeholder key, issuer keys, the SQLite
+  database), and those directories or files wherever their settings move them (`tool-proxy.ca.dir`,
+  `edge.ca.dir`, `redaction.placeholder-key-dir`, `identity.issuer.key-dir`, `state.sqlite.path`
+  with its `-wal`, `-shm` and `-journal` files, `proxy.capture.dir`);
+- token and credential files (`identity.kubernetes.token-file`, `nats.credentials-file`,
+  `edge-forwarder.client-key-file`, `edge-forwarder.token-file`);
+- store files: the file and sops stores' `root`, a Kubernetes store's `auth.kubeconfig`, and
+  `auth.*token-file` options.
+
+A file the agent's user cannot read, such as a system service's files under its own user, needs no
+cover and is skipped. The namespace view mounts the empty 0000 file or directory over each one,
+inside or outside the home. The home mirror can only leave out paths under `$HOME`; it does not hide
+them from a process that opens the absolute path (see its gaps below).
+
+`scrim run` refuses to start the agent (exit 125), naming the files, when the agent's user can read
+one of scrim's own files and the view cannot hide it: outside `$HOME` with the home mirror, or a
+directory that holds the session directory, the agent API socket or the scrim executable. The
+weakening setting `run.fs-view-allow-readable-own-files` starts the agent anyway and prints each
+file it leaves readable. The session directory, the CA bundle and the sockets stay reachable in every
+case.
+
+When a config file is hidden, `SCRIM_CONFIG` in the session points at an empty config file in the
+session directory, so `scrim mcp`, `scrim secret` and the credential helpers start; they reach the
+daemon through `SCRIM_API_SOCKET`. A daemon older than `scrim run` does not report its files: `scrim
+run` warns and starts the agent without hiding them.
+
+The view keeps a session away from these files; any other process of the same user can still read
+them. The fix is to run scrim as its own user: `sudo scrim install --system --agent-user $USER`
+([service.md](service.md)), whose files are mode 0600 under the `scrim` user, or to give secrets as
+systemd credentials (`cred:`). `scrim status` lists the readable files under "Filesystem view (scrim
+run)" and `scrim doctor` warns about them (`own-files`).
+
 ### Checking the view
 
 `scrim run --print-env` lists the view and every covered path:
@@ -319,6 +363,7 @@ filesystem view: namespace (user and mount namespace)
   /home/you/.aws/credentials  shows <session-dir>/profiles/aws/credentials  (aws)
   /home/you/.config/doctl/config.yaml  hidden  (doctl)
   /home/you/.ssh/id_ed25519  hidden  (run.fs-view-hide)
+  /home/you/.config/scrim/vw-master  hidden  (scrim's own: stores.vw.unlock)
 ```
 
 `scrim status` shows the view sessions get on this host under "Filesystem view (scrim run)", with
@@ -341,7 +386,9 @@ or give the scrim binary an AppArmor profile with `userns,`.
   see [providers](providers/README.md#claude-code-under-scrim-run));
 - the command is `caveman` (see below) or cannot be found;
 - the [filesystem view](#filesystem-view) cannot be set up, or `run.fs-view` is `namespace` and the
-  host has no unprivileged user namespaces.
+  host has no unprivileged user namespaces;
+- the agent's user can read one of [scrim's own files](#scrims-own-files) that the view cannot hide,
+  unless `run.fs-view-allow-readable-own-files` is set.
 
 Status 125 is the wrapper's own failure, as with `env` and `timeout`; any other status is the
 agent's. An agent killed by a signal gives 128 plus the signal number.

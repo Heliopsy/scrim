@@ -60,7 +60,8 @@ var (
 		},
 	})
 	KeyDirSetting = config.Register(config.Spec[string]{
-		Key: "identity.issuer.key-dir",
+		Key:         "identity.issuer.key-dir",
+		KeyMaterial: true,
 		Description: "Directory of the issuer's generated signing keys and their rotation state. " +
 			"Empty means $XDG_STATE_HOME/scrim/issuer (~/.local/state/scrim/issuer). Created with mode 0700. " +
 			"Not used with identity.issuer.signing-keys.",

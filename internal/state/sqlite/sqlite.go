@@ -61,7 +61,8 @@ func Migrations() ([]migrate.Migration, error) {
 // Settings of the SQLite backend.
 var (
 	PathSetting = config.Register(config.Spec[string]{
-		Key:             "state.sqlite.path",
+		Key:         "state.sqlite.path",
+		KeyMaterial: true, Companions: []string{"-wal", "-shm", "-journal"},
 		Default:         "",
 		Description:     "SQLite state file. Empty means $XDG_STATE_HOME/scrim/state.db (~/.local/state/scrim/state.db).",
 		Flag:            true,

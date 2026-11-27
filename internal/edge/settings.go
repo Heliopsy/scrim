@@ -91,6 +91,7 @@ var (
 	// TokenPath is the pod's projected service account token.
 	TokenPath = config.Register(config.Spec[string]{
 		Key:             "edge-forwarder.token-file",
+		KeyMaterial:     true,
 		RestartRequired: true,
 		Default:         "/var/run/secrets/scrim/token",
 		Description:     "Projected service account token for scrim's audience, read again for every connection and sent to the central scrim only.",
@@ -110,6 +111,7 @@ var (
 	// ClientKeyFile is the key of ClientCertFile.
 	ClientKeyFile = config.Register(config.Spec[string]{
 		Key:             "edge-forwarder.client-key-file",
+		KeyMaterial:     true,
 		RestartRequired: true,
 		Description:     "PEM private key of edge-forwarder.client-cert-file. It stays in the pod: the TLS handshake proves the forwarder holds it.",
 		Flag:            true,

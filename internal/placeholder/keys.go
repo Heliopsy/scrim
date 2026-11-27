@@ -40,6 +40,7 @@ var (
 	// KeyDir holds the generated key when no key is configured.
 	KeyDir = config.Register(config.Spec[string]{
 		Key:             "redaction.placeholder-key-dir",
+		KeyMaterial:     true,
 		Description:     "Directory of the generated placeholder key, used when redaction.placeholder-keys is empty. Empty means $XDG_STATE_HOME/scrim/keys (~/.local/state/scrim/keys).",
 		RestartRequired: true,
 	})

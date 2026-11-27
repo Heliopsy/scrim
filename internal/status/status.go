@@ -150,6 +150,10 @@ type RunView struct {
 	Fallback string `json:"fallback,omitempty"`
 	// Gaps are what the view does not cover.
 	Gaps []string `json:"gaps,omitempty"`
+	// ReadableOwn are scrim's own secret files (file: reference targets,
+	// key and state directories; "path (origin)") that this user, the user
+	// agents run as, can read: scrim runs as that user.
+	ReadableOwn []string `json:"readable_own_files,omitempty"`
 }
 
 // RunViewRefused is RunView.Mode when scrim run refuses to start agents.
