@@ -145,13 +145,29 @@ var UnknownFormats = []UnknownFormat{
 		b.WriteString(end)
 		return b.String(), "$ cat ~/.ssh/id_ed25519\n", "\n", []string{begin, end}
 	}},
+	{ID: "groq-api-key", Command: "cat .env", Expect: Redacted, Generate: func() (string, string, string, []string) {
+		return prefixed("gsk_", rs(alnum, 52), envHead+"GROQ_API_KEY=")()
+	}},
+	{ID: "xai-api-key", Command: "cat .env", Expect: Redacted, Generate: func() (string, string, string, []string) {
+		return prefixed("xai-", rs(alnum, 80), envHead+"XAI_API_KEY=")()
+	}},
+	{ID: "openrouter-api-key", Command: "cat .env", Expect: Redacted, Generate: func() (string, string, string, []string) {
+		return prefixed("sk-or-v1-", rs(hexLower, 64), envHead+"OPENROUTER_API_KEY=")()
+	}},
+	{ID: "aws-bedrock-api-key", Command: "cat .env", Expect: Redacted, Generate: func() (string, string, string, []string) {
+		// "ABSK" and the base64 of "BedrockAPIKey-", joined at run time.
+		return prefixed("ABSK"+"QmVkcm9ja0FQSUtleS", rs(b64chars, 110), envHead+"AWS_BEARER_TOKEN_BEDROCK=")()
+	}},
+	{ID: "tailscale-key", Command: "cat .env", Expect: Redacted, Generate: func() (string, string, string, []string) {
+		return prefixed("tskey-auth-", "k"+rs(alnum, 10)+"CNTRL-"+rs(alnum, 32), envHead+"TS_AUTHKEY=")()
+	}},
 	{ID: "random-password", Command: "cat .env", Expect: Limitation,
-		Note: "limitation: a secret in no store and in no known format is not matched (redaction.detectors.enable: [generic-secret-assignment] covers literal assignments, off by default)",
+		Note: "limitation: a secret in no store and in no known format is not matched by default (redaction.detectors.entropy.enabled covers values after a key name that says secret, off by default)",
 		Generate: func() (string, string, string, []string) {
 			return mixed(alnum, 20), envHead + "SESSION_SECRET=", "\n", nil
 		}},
 	{ID: "base64-encoded-token", Command: "kubectl get secret billing -o yaml", Expect: Limitation,
-		Note: "limitation: detectors match a format as written; an encoded value that is in no store is not decoded",
+		Note: "limitation: detectors match a format as written by default (redaction.detectors.encoded decodes base64, hex and percent-encoding, off by default)",
 		Generate: func() (string, string, string, []string) {
 			tok := "ghp_" + rs(alnum, 36)
 			return base64.StdEncoding.EncodeToString([]byte(tok)), "apiVersion: v1\nkind: Secret\ndata:\n  token: ", "\n", nil

@@ -268,6 +268,32 @@ open keep their route until they close. `scrim status` shows the proxy in use un
 Not proxied: PostgreSQL, Valkey and NATS connections (they are not HTTP), plugins on Unix sockets,
 and Kubernetes TokenReview, which talks to the in-cluster API server directly.
 
+## Fallback detectors
+
+The fallback detectors replace secrets no store holds: the pattern rules
+(`redaction.detectors.enabled`, `.disable`, `.enable`) recognise known formats, two opt-in
+settings widen them, and `scrim status` shows what is in force under the `fallback detectors`
+protection (`scrim doctor` repeats it as the `redaction: detectors` check).
+
+| Setting | Default | Cost on one core, 1 MB agent request | False positives |
+| --- | --- | --- | --- |
+| pattern rules | on | 0.8 to 1.0 ms | none on the repository corpus (10 MB) or generated agent bodies beyond the fake credentials it holds on purpose |
+| `redaction.detectors.encoded` | off | +0.5 to 0.65 ms; redactor throughput 810 to 530 MB/s | none on the same corpora |
+| `redaction.detectors.entropy.enabled`, `context: key-name` | off | +2 to 2.5 ms | 0 per MB of generated bodies, 0.39 per MB of the repository (documented example credentials) |
+| `redaction.detectors.entropy.enabled`, `context: any` | off | +1 to 3.5 ms | 892 per MB of generated bodies (hex ids, base64 data), 8 per MB of the repository |
+
+Measured with the `detect` group of the `scrim-redact` benchmarks and its `entropy_false_positive_rates`
+test on an Intel Xeon W-2295. Encoded forms are off because they cost a third of the redactor's
+throughput, below the latency gate's floor. Entropy is off because, even with a key name, values
+that look random but must go back as they are (session ids in tests, signed URLs, nonces under a
+`token` name) would become placeholders that never resolve; the key-name context already skips
+pagination, sync and anti-forgery token names.
+
+With `encoded`, base64 runs of at least 24 characters (up to 16 KiB), hex runs of at least 40
+digits and percent-encoded spans of up to 4 KiB are decoded when their first bytes are text, and
+the characters that encode a match are replaced. Encodings of encodings and base64 wrapped across
+lines are not decoded.
+
 ## Weakening settings
 
 A setting that weakens a security invariant is named for what it weakens (for example
@@ -469,6 +495,12 @@ is out of date.
 | [`redaction.detectors.disable`](#redactiondetectorsdisable) | list | `[]` | hot |
 | [`redaction.detectors.enable`](#redactiondetectorsenable) | list | `[]` | hot |
 | [`redaction.detectors.enabled`](#redactiondetectorsenabled) | bool | `true` | hot |
+| [`redaction.detectors.encoded`](#redactiondetectorsencoded) | bool | `false` | hot |
+| [`redaction.detectors.entropy.context`](#redactiondetectorsentropycontext) | string | `key-name` | hot |
+| [`redaction.detectors.entropy.enabled`](#redactiondetectorsentropyenabled) | bool | `false` | hot |
+| [`redaction.detectors.entropy.min-classes`](#redactiondetectorsentropymin-classes) | int | `0` | hot |
+| [`redaction.detectors.entropy.min-length`](#redactiondetectorsentropymin-length) | int | `0` | hot |
+| [`redaction.detectors.entropy.threshold`](#redactiondetectorsentropythreshold) | float | `0` | hot |
 | [`redaction.limit-to-agent-identity`](#redactionlimit-to-agent-identity) | bool | `false` | restart required |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
@@ -2902,7 +2934,7 @@ Images, PDFs and other binary parts of provider requests. scan decodes each part
 
 #### `redaction.detectors.disable`
 
-Fallback pattern rules to turn off, by name: aws-access-key-id, aws-secret-access-key, github-token, github-fine-grained-token, anthropic-api-key, openai-api-key, gitlab-token, slack-token, slack-webhook-url, stripe-key, stripe-webhook-secret, google-api-key, google-oauth-client-secret, npm-token, pypi-token, docker-hub-token, huggingface-token, twilio-credential, sendgrid-api-key, azure-storage-key, azure-shared-access-key, azure-ad-client-secret, digitalocean-token, shopify-token, atlassian-api-token, database-url-password, hashicorp-vault-token, doppler-token, onepassword-service-account-token, grafana-token, sentry-token, linear-api-key, postman-api-key, age-secret-key, databricks-token, jwt, private-key.
+Fallback pattern rules to turn off, by name: aws-access-key-id, aws-secret-access-key, github-token, github-fine-grained-token, anthropic-api-key, openai-api-key, gitlab-token, slack-token, slack-webhook-url, stripe-key, stripe-webhook-secret, google-api-key, google-oauth-client-secret, npm-token, pypi-token, docker-hub-token, huggingface-token, twilio-credential, sendgrid-api-key, azure-storage-key, azure-shared-access-key, azure-ad-client-secret, digitalocean-token, shopify-token, atlassian-api-token, database-url-password, hashicorp-vault-token, doppler-token, onepassword-service-account-token, grafana-token, sentry-token, linear-api-key, postman-api-key, age-secret-key, databricks-token, groq-api-key, xai-api-key, perplexity-api-key, openrouter-api-key, deepseek-api-key, langfuse-secret-key, elevenlabs-api-key, replicate-api-token, langsmith-api-key, pinecone-api-key, tavily-api-key, aws-bedrock-api-key, google-oauth-access-token, heroku-api-key, notion-token, tailscale-key, sourcegraph-token, planetscale-token, supabase-key, contentful-token, new-relic-key, dynatrace-token, mapbox-secret-token, prefect-api-key, posthog-personal-api-key, square-token, discord-webhook-url, telegram-bot-token, jwt, private-key.
 
 | | |
 |---|---|
@@ -2933,6 +2965,79 @@ Run the fallback pattern rules, which replace secrets in known formats (cloud ke
 | Type | bool |
 | Default | `true` |
 | Environment | `SCRIM_REDACTION_DETECTORS_ENABLED` |
+| Flag | none |
+| Reload | hot |
+
+#### `redaction.detectors.encoded`
+
+Also run the fallback pattern rules over the decoded form of base64 runs, hex runs and percent-encoded text (a token in a Kubernetes secret, a base64 .env file, an escaped query string) and replace the characters that encode a match. Off by default: it costs about 0.5 ms per MB of request on one core, a third of the redactor's throughput.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_REDACTION_DETECTORS_ENCODED` |
+| Flag | none |
+| Reload | hot |
+
+#### `redaction.detectors.entropy.context`
+
+Which tokens the entropy detector looks at: key-name, values after a key name that says secret; any, every token (hashes and base64 data trip it, so it needs a longer and more random token).
+
+| | |
+|---|---|
+| Type | string |
+| Default | `key-name` |
+| Environment | `SCRIM_REDACTION_DETECTORS_ENTROPY_CONTEXT` |
+| Flag | none |
+| Reload | hot |
+| Values | `key-name`, `any` |
+
+#### `redaction.detectors.entropy.enabled`
+
+Replace high-entropy values that no store holds and no pattern rule knows, such as random passwords and API keys without a prefix. With the default key-name context only values assigned to a key name that says secret (token, secret, password, api_key, a name ending in key or auth, Bearer) are looked at. Off by default: pagination cursors, nonces and test values that look random would become placeholders the agent cannot send back.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_REDACTION_DETECTORS_ENTROPY_ENABLED` |
+| Flag | none |
+| Reload | hot |
+
+#### `redaction.detectors.entropy.min-classes`
+
+How many character classes a value must mix: lower case, upper case, digits and, with the key-name context, symbols. 0 takes the default, 3.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `0` |
+| Environment | `SCRIM_REDACTION_DETECTORS_ENTROPY_MIN_CLASSES` |
+| Flag | none |
+| Reload | hot |
+
+#### `redaction.detectors.entropy.min-length`
+
+Shortest value the entropy detector considers, in bytes, at least 8. 0 takes the context's default: 16 for key-name, 32 for any.
+
+| | |
+|---|---|
+| Type | int |
+| Default | `0` |
+| Environment | `SCRIM_REDACTION_DETECTORS_ENTROPY_MIN_LENGTH` |
+| Flag | none |
+| Reload | hot |
+
+#### `redaction.detectors.entropy.threshold`
+
+Minimum Shannon entropy of a value, in bits per byte. 0 takes the context's default: 3.5 for key-name, 4.3 for any.
+
+| | |
+|---|---|
+| Type | float |
+| Default | `0` |
+| Environment | `SCRIM_REDACTION_DETECTORS_ENTROPY_THRESHOLD` |
 | Flag | none |
 | Reload | hot |
 
