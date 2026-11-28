@@ -164,6 +164,14 @@ an emulator in podman. State backends follow the same shape with `state.Register
   Precedence: flag, environment, config file, default.
 - A setting that weakens a security invariant is named for what it weakens and logs a warning at
   start-up.
+- The settings reference in `docs/configuration.md` and `schema/config-v1.json` are generated
+  from the registry: a change to a setting runs `just config-docs` (checked by
+  `TestGeneratedConfigArtifactsUpToDate` in `internal/cli`). The CLI reference in
+  `docs/reference/cli/` is generated from the command tree: a change to a command, flag or help
+  text runs `just cli-docs`.
+- `go test ./test/e2e/docs/doclint/` (`just docs-lint`) checks the docs offline: links, `scrim`
+  commands and flags, setting keys and variables, versions and the CLI reference. A doc you fix
+  that has an entry in its `known-violations.txt` drops the entry.
 
 ## Commits
 

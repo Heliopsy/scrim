@@ -169,9 +169,9 @@ func MustLoadDefaults(r *Registry) *Config {
 // are not settings (SCRIM_CONFIG, SCRIM_DP_FD, placeholders).
 //
 // A variable extending the name of a map setting sets one entry of it:
-// SCRIM_PROXY_UPSTREAM_ANTHROPIC sets the `anthropic` entry of
-// `proxy.upstream`, merged into the map from lower layers. The entry name is
-// the rest of the variable lower-cased with `_` as `-`; entries whose names
+// SCRIM_AUDIT_LOKI_LABELS_ENV sets the `env` entry of `audit.loki.labels`,
+// merged into the map from lower layers. The entry name is the rest of the
+// variable lower-cased with `_` as `-`; entries whose names
 // hold other characters are set through the whole-map variable, which
 // replaces the map. Whole-map variables apply before entry variables, and
 // entry variables in name order, so the result does not depend on the order

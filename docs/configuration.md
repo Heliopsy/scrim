@@ -53,9 +53,11 @@ the same key twice in one file is an error.
 ### Where scrim looks
 
 1. the file given with `--config`
-2. otherwise `SCRIM_CONFIG`, which may hold several paths separated by `:`, applied in order
-3. otherwise the first file that exists of `$XDG_CONFIG_HOME/scrim/config.yaml`,
-   `~/.config/scrim/config.yaml` and `/etc/scrim/config.yaml`
+2. otherwise `SCRIM_CONFIG`, which may hold several paths separated by `:` (`;` on Windows), applied
+   in order
+3. otherwise the first file that exists of `$XDG_CONFIG_HOME/scrim/config.yaml` (only when
+   `XDG_CONFIG_HOME` is an absolute path), `~/.config/scrim/config.yaml` (when `HOME` is set) and
+   `/etc/scrim/config.yaml`
 
 A path given explicitly must exist. When no file is found, defaults, the environment and flags
 apply.
@@ -98,8 +100,8 @@ Lists take a JSON array, or comma-separated items with `\,` for a literal comma 
 backslash:
 
 ```sh test env
-SCRIM_PROXY_NO_PROXY='["127.0.0.1","localhost"]'
-SCRIM_PROXY_NO_PROXY='127.0.0.1,localhost'
+SCRIM_NETWORK_UPSTREAM_PROXY_NO_PROXY='["127.0.0.1","localhost"]'
+SCRIM_NETWORK_UPSTREAM_PROXY_NO_PROXY='127.0.0.1,localhost'
 ```
 
 Maps take a JSON object or `key=value` pairs separated by commas. One entry of a map is set by
@@ -107,11 +109,12 @@ adding its name to the variable, lower-cased words with `_` for `-`; it merges i
 the lower layers, while the whole-map variable replaces it:
 
 ```sh test env
-SCRIM_PROXY_UPSTREAM='{"anthropic":"http://127.0.0.1:9000"}'
-SCRIM_PROXY_UPSTREAM_ANTHROPIC=http://127.0.0.1:9000
+SCRIM_AUDIT_LOKI_LABELS='{"env":"prod","team":"platform"}'
+SCRIM_AUDIT_LOKI_LABELS_ENV=prod
 ```
 
-The JSON forms round-trip every value a file can hold.
+The JSON forms round-trip every value a file can hold. A `SCRIM_` variable that names no setting,
+and is not under a [collection](#collections)'s prefix, is ignored without a warning.
 
 ## Collections
 
@@ -297,9 +300,9 @@ lines are not decoded.
 ## Weakening settings
 
 A setting that weakens a security invariant is named for what it weakens (for example
-`redaction.allow-unredacted-on-error`), defaults to the safe value, is logged as a warning at
-start-up and after every reload while active, and is listed under weakened protections in
-`scrim status`.
+`redaction.allow-empty-targets` or `run.allow-unredacted-start`), defaults to the safe value, is
+logged as a warning at start-up and after every reload while active, and is listed under weakened
+protections in `scrim status`.
 
 ## Settings reference
 
