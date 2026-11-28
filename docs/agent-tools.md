@@ -11,8 +11,8 @@ Both are thin clients of the control plane's [local agent API](#local-agent-api)
 is comes from the transport, never from a tool argument; see [identity.md](identity.md).
 
 No tool takes a value as an argument, and no result, error or progress message contains one. A
-result that refers to a secret carries its reference (`bao://kv/agents/github#token`) and, once the
-redaction core is wired in, its placeholder. Values move around the model instead of through it:
+result that refers to a secret carries its reference (`bao://kv/agents/github#token`) and its
+placeholder. Values move around the model instead of through it:
 
 | Tool | How the value moves |
 | --- | --- |
@@ -24,24 +24,35 @@ redaction core is wired in, its placeholder. Values move around the model instea
 
 ## Running the agent API
 
-The tools need the control plane's local API. Start it with:
+The tools need the control plane's local API, which the daemon serves: `scrim proxy`
+([running.md](running.md)), a service from `scrim install` ([service.md](service.md)), or the
+daemon `scrim run` starts for its session when none runs.
 
 ```sh test daemon
-scrim api serve
+scrim proxy
 ```
 
-It listens on `$XDG_RUNTIME_DIR/scrim/api.sock` (setting `api.socket`) and serves the human entry
-page on a free loopback port (setting `entry.listen`). Check what identity a process gets:
+It listens on `$XDG_RUNTIME_DIR/scrim/api.sock` (setting `api.socket`; the system service uses
+`/run/scrim/api.sock`) and serves the human entry page on a free loopback port (setting
+`entry.listen`). Check what identity a process gets:
 
 ```sh test proxied
 scrim api whoami
 ```
 
+`scrim api serve` runs the agent API and the entry page alone, without the data plane. Results then
+carry no placeholders, written values do not reach a redactor, and the routes that need the daemon
+(`/v1/endpoints`, `/v1/redact`, `/v1/exec`, the ssh-agent routes) answer `not_found` or
+`unavailable`. It also cannot run beside a `scrim proxy` on the same state database or socket. Use
+the daemon instead.
+
 ## MCP setup
 
 `scrim mcp` reads `SCRIM_API_SOCKET` (or `--api-socket`) to find the API and
 `SCRIM_SESSION_TOKEN` when it runs inside `scrim run`. Both are optional for a single user on one
-machine: without a token the caller is identified by its Unix user alone.
+machine: without the socket setting it uses this user's socket, or the system service's
+`/run/scrim/api.sock` when only that exists, and without a token the caller is identified by its
+Unix user alone.
 
 ### Claude Code
 
@@ -113,7 +124,7 @@ every path:
 ```
 
 Codes: `invalid`, `unauthenticated`, `forbidden`, `denied`, `needs_approval`, `not_found`,
-`conflict`, `unavailable`, `internal`. Messages never quote a value or a dependency's error text.
+`conflict`, `unavailable`, `rate_limited`, `internal`. Messages never quote a value or a dependency's error text.
 
 ### secrets_list
 
@@ -230,10 +241,13 @@ Output is read up to 1 MiB; values are at most 64 KiB.
 ### secret_ask_human
 
 Asks a person for a value the agent cannot get itself. scrim opens an ask, sends the person a
-one-time link to the local entry page through the configured notifiers (by default, printed on the
-terminal running `scrim api serve`), and waits up to `wait_seconds` (default 120 for MCP) for the
+one-time link to the local entry page, and waits up to `wait_seconds` (default 120 for MCP) for the
 answer. The agent gets `stored`, `declined`, `timed_out`, or `pending` with an `id` to poll with
 `approval_status`. It never gets the link.
+
+The link is printed by the daemon that serves the agent API: on the terminal of `scrim run` when
+it started the daemon for the session, otherwise in the log of `scrim proxy` (for a service, its
+journal). Configured notifiers, such as ntfy, do not carry it.
 
 ```json
 {"name": "secret_ask_human", "arguments": {"ref": "bao://kv/agents/hcloud",
@@ -391,6 +405,7 @@ HTTP/1.1 with JSON on the Unix socket, every route under `/v1`, every response c
 | Route | Tool |
 | --- | --- |
 | `GET /v1/version` | (open) API and server version |
+| `GET /v1/endpoints` | (open) readiness, base URL, forward proxy, bypass list, upstream proxy and public CA, nothing secret (`scrim run` with the system service) |
 | `GET /v1/whoami` | the caller's identity |
 | `POST /v1/sessions` | mint a session token (`scrim run`) |
 | `DELETE /v1/sessions/self` | end the caller's session |
@@ -409,6 +424,8 @@ HTTP/1.1 with JSON on the Unix socket, every route under `/v1`, every response c
 | `POST /v1/exec` | `secret_exec`, the [exec broker](exec-broker.md) |
 | `GET /v1/databases` | `database_list` |
 | `POST /v1/databases/query` | `database_query` |
+| `POST /v1/ssh/keys` | the public keys the session's [ssh-agent](ssh-agent.md) offers |
+| `POST /v1/ssh/sign` | an ssh signature, after a policy decision; may wait for an approval |
 
 The caller is identified from the socket's peer credentials and, when present, the
 `Authorization: Bearer` session token. Unmapped users are refused. JSON bodies with unknown fields
@@ -445,9 +462,5 @@ call fails.
 ## Current limits
 
 - MCP over HTTP is not served yet; only stdio.
-- Placeholders are empty in results until the redaction core provides them, and values stored
-  through the tools join the redaction set through the store watch, not directly.
-- The interim approval adapter creates grants for allowed requests and pending approvals for asks;
-  deciding approvals (`scrim approve`, signed links) comes with the approvals service.
 - Writing one field of a multi-field secret replaces the secret's fields in stores that do not
   merge fields.
