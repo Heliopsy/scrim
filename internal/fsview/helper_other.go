@@ -25,13 +25,21 @@ func Probe(context.Context, string) Availability {
 	return Availability{Reason: runtime.GOOS + " has no user or mount namespaces"}
 }
 
+// ProbeNetwork reports that this platform has no network namespaces.
+func ProbeNetwork(context.Context, string) Availability {
+	return Availability{Reason: runtime.GOOS + " has no unprivileged network namespaces"}
+}
+
 // Launch is not used on this platform.
 type Launch struct{}
 
 // Wrap always fails: the namespace view exists on Linux only.
-func Wrap(*exec.Cmd, string, *Plan) (*Launch, error) {
-	return nil, errors.New("the namespace filesystem view needs Linux")
+func Wrap(*exec.Cmd, string, *Plan, *Network) (*Launch, error) {
+	return nil, errors.New("the namespace filesystem view and network namespace need Linux")
 }
+
+// Listeners is never reached.
+func (*Launch) Listeners() []Listener { return nil }
 
 // Started is never reached.
 func (*Launch) Started() error { return nil }

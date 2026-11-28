@@ -119,8 +119,8 @@ An empty `route` on a refusal is a request no route matched; `route` and `provid
 | `scrim_guard_repairs_total` | counter | provider, rule, agent | guard repairs, from events |
 | `scrim_guard_refusals_total` | counter | provider, agent | guard refusals, from events |
 | `scrim_detector_fallback_hits_total` | counter | provider, rule, agent | fallback detector hits, from events |
-| `scrim_store_up` | gauge | store | 1 when the store answered its last check |
-| `scrim_store_degraded` | gauge | store | 1 when the last refresh failed and values may be stale |
+| `scrim_store_up` | gauge | store | 1 while the store is healthy: loaded, not locked, and refreshed successfully within `refresh.staleness` (15m by default); set on each refresh attempt, see [ScrimStoreUnreachable](#scrimstoreunreachable) |
+| `scrim_store_degraded` | gauge | store | 1 when the last refresh failed (the last known values stay redacted) or a redact target holds no value |
 | `scrim_store_values_loaded` | gauge | store | values held for redaction |
 | `scrim_store_last_refresh_timestamp_seconds` | gauge | store | last successful refresh |
 | `scrim_store_staleness_seconds` | gauge | store | seconds since the last successful refresh, at scrape time |
@@ -129,7 +129,7 @@ An empty `route` on a refusal is a request no route matched; `route` and `provid
 | `scrim_approvals_requested_total` | counter | rule | approvals requested |
 | `scrim_approvals_settled_total` | counter | rule, outcome (`approved`, `denied`, `expired`), via | approvals decided |
 | `scrim_approvals_wait_seconds` | histogram | rule, outcome | request to decision |
-| `scrim_approvals_notifications_total` | counter | notifier, result | notifications sent |
+| `scrim_approvals_notifications_total` | counter | notifier, result (`ok`, `error`) | notifications sent |
 | `scrim_approvals_pending` | gauge | | approvals waiting now |
 | `scrim_approvals_oldest_pending_age_seconds` | gauge | | age of the oldest, 0 when none |
 | `scrim_grants_active` | gauge | | grants usable now |
@@ -145,8 +145,8 @@ An empty `route` on a refusal is a request no route matched; `route` and `provid
 | `scrim_snapshot_version` | gauge | | last version applied |
 | `scrim_config_reloads_total` | counter | result (`applied`, `unchanged`, `rejected`) | configuration reloads |
 | `scrim_config_weakened_settings` | gauge | setting | 1 per weakening setting in effect |
-| `scrim_audit_delivered_total` | counter | sink | audit entries written |
-| `scrim_audit_dropped_total` | counter | sink | audit entries lost |
+| `scrim_audit_delivered_total` | counter | sink (`state`) | data plane audit events written to the database audit log |
+| `scrim_audit_dropped_total` | counter | sink (`dataplane`, `state`) | data plane audit events lost: `dataplane` counts events the data plane dropped before the control plane read them, `state` batches the state backend could not write |
 | `scrim_audit_sink_delivered_total` | counter | sink (`otlp`, `loki`, `kafka`) | entries an external audit sink accepted |
 | `scrim_audit_sink_dropped_total` | counter | sink, reason (`queue_full`, `rejected`, `shutdown`) | entries an external sink never received; they are in the database audit log |
 | `scrim_audit_sink_refused_total` | counter | sink | entries whose operation was refused because a `block` sink had no room in time |
@@ -156,7 +156,9 @@ An empty `route` on a refusal is a request no route matched; `route` and `provid
 | `scrim_audit_sink_queue_capacity` | gauge | sink | `audit.<sink>.queue-size` |
 | `scrim_audit_sink_up` | gauge | sink | 1 when the last write succeeded |
 | `scrim_ratelimit_decisions_total` | counter | backend, class (`agent-api`, `approvals`, `asks`), result (`allowed`, `limited`, `error`) | rate-limit decisions; `error` refuses |
-| `scrim_events_listener_up` | gauge | | 1 while the events backend's listener or subscription is connected |
+| `scrim_events_listener_up` | gauge | | 1 while the events backend's listener or subscription is connected (`postgres`, `valkey`, `nats`), 0 while the outbox is polled |
+| `scrim_events_delivered_total` | counter | kind | outbox events this replica delivered to its subscribers |
+| `scrim_events_last_id` | gauge | | newest outbox event ID this replica delivered; replicas whose values stay apart are not reading the outbox |
 | `scrim_state_up` | gauge | backend | 1 when the state backend answered |
 | `scrim_state_transaction_seconds` | histogram | backend, kind (`view`, `update`) | state transactions |
 | `scrim_ca_certificate_not_after_timestamp_seconds` | gauge | generation (`current`, `previous`) | tool-proxy CA expiry |
@@ -188,8 +190,8 @@ In Kubernetes, a `ServiceMonitor` or `PodMonitor` from the Helm chart does the s
 [`deploy/monitoring/grafana/scrim-dashboard.json`](../deploy/monitoring/grafana/scrim-dashboard.json)
 (uid `scrim-overview`) has rows for overview, requests, added latency against the 5 ms budget, body
 sizes, redaction and guard, responses, upstreams, the tool proxy, listeners, stores, approvals and
-sessions, and the control plane. Import it in the Grafana UI, or apply the ConfigMap next to it,
-which carries the sidecar label `grafana_dashboard: "1"`. See
+sessions, the control plane, and audit sinks, rate limits and events. Import it in the Grafana UI,
+or apply the ConfigMap next to it, which carries the sidecar label `grafana_dashboard: "1"`. See
 [`deploy/monitoring/README.md`](../deploy/monitoring/README.md).
 
 ## Alerts
@@ -201,7 +203,8 @@ validates both and runs the rule tests; CI runs it on every change.
 ### ScrimDown
 
 Critical. Prometheus cannot scrape scrim for 2 minutes. Check that `scrim proxy` runs
-(`systemctl --user status scrim`, `kubectl get pods`), that `metrics.enabled` is true and
+(`systemctl status scrim` for the system unit, `systemctl --user status scrim` for the user unit,
+`kubectl get pods` in Kubernetes), that `metrics.enabled` is true and
 `metrics.listen` is what the scrape config targets, and that a token is configured on both sides
 for a remote listener (401 in the target's last error means a wrong token).
 
@@ -252,13 +255,27 @@ pressure; a large placeholder set or very large chunks also show here.
 
 ### ScrimStoreDegraded
 
-Critical. A store's last refresh failed and it is past its staleness limit for 5 minutes: changes
-there do not reach redaction or injection. `scrim status` names the store and the last error.
+Critical. A store's last refresh failed, or one of its redact targets holds no value, for 5
+minutes. The values loaded before stay in redaction, but secrets added or rotated in the store since
+the last good refresh are not redacted or injected yet. An empty target is usually a misspelt name
+or a glob that matches nothing, accepted at start-up only with `redaction.allow-empty-targets`.
+`scrim status` names the store and the last error.
 
 ### ScrimStoreUnreachable
 
-Warning. A store has not answered its checks for 10 minutes. Check network, credentials and the
-store itself; values already loaded stay in force until they expire.
+Warning. A store has not refreshed successfully for longer than `refresh.staleness` (15 minutes by
+default), or has been unloaded or locked for 5 minutes. The first condition reads
+`scrim_store_staleness_seconds`, which is computed at scrape time, so the alert fires on the first
+evaluation after the staleness limit passes, the moment injection from the store starts refusing.
+It does not wait for `scrim_store_up`, which only changes on the next refresh attempt (every
+`refresh.interval` while the store fails, up to 5 minutes later with the defaults).
+
+The rule compares against 900 s, the default staleness. The setting is not exported as a metric, so
+if you set `stores.<name>.refresh.staleness` to something else, change the threshold in
+`rules/scrim.rules.yaml` (or add a rule per store) to match.
+
+Check network, credentials and the store itself. Loaded values stay in redaction; injection refuses
+values not confirmed within `refresh.staleness`.
 
 ### ScrimStoreStale
 
@@ -285,9 +302,11 @@ still in force. `scrim status` shows the problems; fix the file and send SIGHUP 
 
 ### ScrimAuditDropping
 
-Warning. Audit entries were dropped in 15 minutes. Check the state backend (`scrim_state_up`,
-transaction latency) and `scrim_dataplane_events_dropped_total`, which counts events lost before
-they reached the control plane.
+Warning. Data plane audit events were dropped in 15 minutes. `sink="state"`: the state backend
+could not write a batch; check `scrim_state_up`, transaction latency and the daemon log for "data
+plane events could not be audited". `sink="dataplane"`: the data plane dropped events because the
+control plane did not read them fast enough, the events `scrim_dataplane_events_dropped_total`
+also counts; look for CPU pressure or a slow state backend.
 
 ### ScrimAuditSinkDropping
 

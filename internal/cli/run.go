@@ -68,6 +68,7 @@ func (Commands) Run(e *Env) *cobra.Command {
 				FSView: agentrun.FSViewOptions{Mode: fsview.Setting.Get(cfg), Hide: fsview.Hide.Get(cfg),
 					AllowReadableOwn: fsview.AllowReadableOwn.Get(cfg)},
 				SSHAgent: agentrun.SSHAgent.Get(cfg),
+				Network:  agentrun.NetworkOptions{Mode: agentrun.Network.Get(cfg)},
 			}
 			if log, err := obs.LoggerFromConfig(e.Stderr, cfg, nil); err == nil {
 				o.Log = obs.WithComponent(log, "run")
@@ -193,6 +194,7 @@ func writePlan(w io.Writer, p *agentrun.Plan, format string) error {
 		_, _ = fmt.Fprintf(w, "\nsession files (in <session-dir>, removed when the agent exits)\n  %s\n", strings.Join(files, "\n  "))
 	}
 	writeView(w, p.FSView)
+	writeNetwork(w, p.Network)
 	if len(p.Warnings) > 0 {
 		_, _ = fmt.Fprintf(w, "\nwarnings\n  %s\n", strings.Join(p.Warnings, "\n  "))
 	}
@@ -230,6 +232,23 @@ func writeView(w io.Writer, v *fsview.Plan) {
 		_, _ = fmt.Fprintf(w, "  NOT hidden: %s\n", x)
 	}
 	for _, g := range v.Gaps {
+		_, _ = fmt.Fprintf(w, "  not covered: %s\n", g)
+	}
+}
+
+// writeNetwork prints the agent's network.
+func writeNetwork(w io.Writer, n *agentrun.NetworkPlan) {
+	if n == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "\nnetwork: %s\n", n.Summary())
+	for _, b := range n.Bridges {
+		_, _ = fmt.Fprintf(w, "  reachable  %s  (%s)\n", b.Addr, b.What)
+	}
+	for _, m := range n.Masked {
+		_, _ = fmt.Fprintf(w, "  masked     %s\n", m)
+	}
+	for _, g := range n.Gaps {
 		_, _ = fmt.Fprintf(w, "  not covered: %s\n", g)
 	}
 }

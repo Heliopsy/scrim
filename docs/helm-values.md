@@ -4,9 +4,9 @@
 same commit as Chart.yaml, so the release pull request needs no helm-docs run. Keep one version per
 line, followed by a character that cannot continue a semver (not "-"). -->
 <!-- x-release-please-start-version -->
-![Version](https://img.shields.io/static/v1?label=Version&message=1.2.0&color=informational&style=flat-square)
+![Version](https://img.shields.io/static/v1?label=Version&message=1.3.0&color=informational&style=flat-square)
 ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square)
-![AppVersion](https://img.shields.io/static/v1?label=AppVersion&message=1.2.0&color=informational&style=flat-square)
+![AppVersion](https://img.shields.io/static/v1?label=AppVersion&message=1.3.0&color=informational&style=flat-square)
 <!-- x-release-please-end -->
 
 Keeps secret values away from LLM providers while AI agents keep working
@@ -19,7 +19,7 @@ file: change values.yaml and run `deploy/helm/scrim/ci/verify.sh --generate`. Th
 
 <!-- x-release-please-start-version -->
 ```sh
-helm install scrim oci://ghcr.io/heliopsy/charts/scrim --version 1.2.0 \
+helm install scrim oci://ghcr.io/heliopsy/charts/scrim --version 1.3.0 \
   -n scrim --create-namespace -f my-values.yaml
 helm test scrim -n scrim
 ```
@@ -114,9 +114,9 @@ kubernetes-replicator (`global.replication`).
 | upstreamProxy.noProxy | list | `[]` | Destinations reached directly: host names (with their subdomains), `.domain`, IP addresses and CIDR ranges, each with an optional `:port`, or `*`. |
 | upstreamProxy.inClusterDirect | bool | `true` | Also reach in-cluster Services directly: adds `.svc` and `.<global.clusterDomain>` to noProxy. Add Service and pod CIDRs to noProxy for destinations given by address. |
 | upstreamProxy.username | string | `""` | User name for the proxy (Basic Proxy-Authorization), with the password in the Secret slot `upstream-proxy` (key `password`): secrets.existing.upstream-proxy or an ExternalSecret. In sidecar mode the same Secret (name and key) must exist in every agent namespace. |
-| ca | object | See the keys below. | Interception CA: the tool proxy signs leaves for bound hosts with it; agents trust its certificate. The key never leaves scrim's pods. |
+| ca | object | See the keys below. | Interception CA: the tool proxy signs leaves for bound hosts with it; agents trust its certificate. The key stays in the release namespace in central mode; sidecar mode copies it into every agent namespace. scrim gets it as an operator CA and never rotates it (docs/kubernetes.md, "CA expiry and rotation"). |
 | ca.create | bool | `true` | Generate a CA with Helm on first install and keep it (Secret with helm.sh/resource-policy: keep, reused on upgrade through lookup). Ed25519, PKCS#8. Ignored when existingSecret is set. |
-| ca.validityDays | int | `730` | Validity of a generated CA in days. |
+| ca.validityDays | int | `730` | Validity of a generated CA in days. Neither Helm nor scrim renews it: rotate it by hand before it expires (docs/kubernetes.md, "CA expiry and rotation"). |
 | ca.existingSecret | string | `""` | Existing kubernetes.io/tls Secret with the CA: `tls.crt` and a PKCS#8 `tls.key` (cert-manager: privateKey.encoding PKCS8). scrim never rotates it. |
 | ca.certificate | string | `""` | PEM certificate of existingSecret, published to agents. Empty reads it from the Secret with lookup at install time (not available to `helm template`). |
 | ca.extraTrustedCerts | string | `""` | Extra PEM certificates appended to the agents' ca-bundle.pem (for cluster services agents reach outside the proxy). |
@@ -242,7 +242,7 @@ kubernetes-replicator (`global.replication`).
 | edge.databases | object | `{}` | Databases to forward: the name of a database in `config.databases` to the loopback port agent containers connect to, for example `{app: 5432}`. |
 | edge.ca | object | See the keys below. | The edge CA: its own key pair, used only to issue the edge listener's certificate, so the interception CA's key cannot impersonate central scrim to the forwarders. Published to agent namespaces as `scrim-edge-ca.pem` in the `ca.configMapName` ConfigMap and mounted only into the forwarder. |
 | edge.ca.create | bool | `true` | Generate the edge CA with Helm on first install and keep it (Secret `<fullname>-edge-ca` with helm.sh/resource-policy: keep, reused on upgrade through lookup). Ed25519, PKCS#8. Helm cannot add name constraints; use existingSecret for a CA constrained to the edge names. Ignored when existingSecret is set. |
-| edge.ca.validityDays | int | `730` | Validity of a generated edge CA in days. |
+| edge.ca.validityDays | int | `730` | Validity of a generated edge CA in days. Neither Helm nor scrim renews it: rotate it by hand before it expires (docs/kubernetes.md, "CA expiry and rotation"). |
 | edge.ca.existingSecret | string | `""` | Existing kubernetes.io/tls Secret with the edge CA: `tls.crt` and a PKCS#8 `tls.key` (cert-manager: privateKey.encoding PKCS8, nameConstraints for the Service names). Never the interception CA's Secret. scrim never rotates it. |
 | edge.ca.certificate | string | `""` | PEM certificate of existingSecret, published to the forwarders. Empty reads it from the Secret with lookup at install time (not available to `helm template`). |
 | edge.ca.legacyInterceptionCertificate | bool | `false` | Upgrade window from a release whose forwarders trust the interception CA: central scrim serves forwarders that do not announce the edge CA a certificate from the interception CA, so agent pods started before the upgrade keep working until they restart. Weakens the separation of the two CAs; turn it off once every agent pod has restarted. |

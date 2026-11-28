@@ -22,6 +22,34 @@
         },
         {
           "type": "generic",
+          "path": "docs/install.md"
+        },
+        {
+          "type": "generic",
+          "path": "docs/deploy/argocd.md"
+        },
+        {
+          "type": "generic",
+          "path": "docs/deploy/containers.md"
+        },
+        {
+          "type": "generic",
+          "path": "docs/deploy/helm.md"
+        },
+        {
+          "type": "generic",
+          "path": "docs/deploy/kubernetes.md"
+        },
+        {
+          "type": "generic",
+          "path": "docs/deploy/vm.md"
+        },
+        {
+          "type": "generic",
+          "path": "docs/deploy/workstation.md"
+        },
+        {
+          "type": "generic",
           "path": "deploy/examples/ansible/roles/scrim/defaults/main.yml"
         },
         {

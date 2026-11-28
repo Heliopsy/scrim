@@ -9,9 +9,15 @@ free self-hosted edition, so no paid custom roles are needed.
 
 ## Capabilities
 
-| Kind        | read | list | watch | write | generate | dynamic |
-|-------------|------|------|-------|-------|----------|---------|
-| `infisical` | yes  | yes  | yes   | yes   | no       | no      |
+<!-- BEGIN GENERATED STORE CAPABILITIES kinds=infisical -->
+
+| Kind | read | list | watch | write | glob | dynamic | per-agent check | `identity.store-login` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `infisical` | yes | yes | yes | yes | no | no | yes | `infisical-oidc` |
+
+The columns are explained under [Capabilities](README.md#capabilities).
+
+<!-- END GENERATED STORE CAPABILITIES -->
 
 Watch polls; see [Watch and refresh](#watch-and-refresh).
 

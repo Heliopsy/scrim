@@ -87,11 +87,12 @@ The Application turns on the server-side diff (`argocd.argoproj.io/compare-optio
 ServerSideDiff=true`). Kyverno fills in defaults on the chart's injection policies, and the
 default client-side diff then shows them OutOfSync after every sync.
 
+<!-- x-release-please-start-version -->
 ```yaml
 sources:
   - repoURL: ghcr.io/heliopsy/charts
     chart: scrim
-    targetRevision: 1.0.0
+    targetRevision: 1.2.0
     helm:
       valueFiles:
         - $values/scrim/helm/values.yaml
@@ -100,10 +101,11 @@ sources:
     targetRevision: main
     ref: values
 ```
+<!-- x-release-please-end -->
 
 To take the chart from git instead, replace the first source's `chart` with `path:
 deploy/helm/scrim`, its `repoURL` with `https://github.com/Heliopsy/scrim` and `targetRevision`
-with a release tag such as `v1.0.0`.
+with the release tag, the chart version with a `v` in front.
 
 ## Kustomize Application and ApplicationSet
 

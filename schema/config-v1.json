@@ -2586,6 +2586,19 @@
           "x-scrim-restart-required": false,
           "x-scrim-weakening": false
         },
+        "network": {
+          "default": "open",
+          "description": "The agent's network under scrim run: open (the host's network; proxy and base URL settings steer clients that honour them through scrim) or proxy-only (Linux: a network namespace with loopback only, in which scrim's LLM base URL and forward proxy are the only reachable addresses, so a command that ignores HTTPS_PROXY or dials a provider directly fails; scrim run refuses to start the agent when the namespace cannot be created). See docs/run.md.",
+          "enum": [
+            "open",
+            "proxy-only"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_RUN_NETWORK",
+          "x-scrim-flag": "--run-network",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
         "placeholder-env": {
           "default": true,
           "description": "Export each declared catalog placeholder that resolves for the session as an environment variable of the same name holding the placeholder, for example SCRIM_ACME_KEY=SCRIM_ACME_KEY.",
