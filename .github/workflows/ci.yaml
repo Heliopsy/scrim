@@ -1204,7 +1204,8 @@ jobs:
       - run: scripts/monitoring-check.sh
 
   # The files it checks are set in .markdownlint-cli2.yaml, the rules in
-  # .markdownlint.yaml; `just md` runs the same thing locally.
+  # .markdownlint.yaml; `just md` runs the same thing locally. `just docs-lint`
+  # checks the docs against the tree and the code, offline.
   markdown:
     name: Markdown
     runs-on: ho-z10
@@ -1214,8 +1215,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+          # The version check accepts any v* tag as a released version.
+          fetch-tags: true
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: 26
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version-file: go.mod
       - uses: ./.github/actions/setup-just
       - run: just md
+      # Links and anchors, commands, setting keys and release versions named in
+      # the docs, and the generated CLI reference (test/e2e/docs/doclint).
+      - run: just docs-lint
