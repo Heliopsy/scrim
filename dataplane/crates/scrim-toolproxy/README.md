@@ -5,8 +5,16 @@ commands, files and configuration; this proxy swaps in the real credential only 
 the hosts that credential is bound to, and redacts known values out of every response, so the agent
 sees placeholders back.
 
+`scrim-dataplane` builds one `ToolProxy`, feeds it the credentials of each snapshot and serves it
+on the `FORWARD_PROXY`, `TOOL_PROXY`, `TRANSPARENT` and `SNI` listeners. Provider hosts are handed
+to `scrim-llm` through the `InterceptHandler`; known values are redacted with the `scrim-redact`
+core; injection decisions come from `scrim-policy` through `InjectionPolicy`. Upstream connections
+go through `scrim-upstream-proxy` when a corporate proxy is configured and resolve names with
+`scrim-dns`, so a DNS override never points scrim back at itself.
+
 Spec: `openspec/specs/credential-injection` and the forward-proxy requirement in
-`specs/interception`.
+`specs/interception`. Docs: [CLI tools and credentials](../../../docs/cli-tools.md),
+[interception](../../../docs/interception.md), [CA](../../../docs/ca.md).
 
 ## What it does
 
@@ -79,6 +87,7 @@ alias and never contain a value.
 | `body_too_large` | 413 | body over the buffering limit needs rewriting |
 | `resigning_unsupported` | 422 | signed request scrim cannot re-sign (SigV4 not signed with a scrim access key id placeholder, HTTP signatures, OAuth 1) or unknown digest |
 | `upgrade_unsupported` | 501 | WebSocket and other upgrades toward hosts the LLM proxy does not claim |
+| `bad_request` | 400 | not a proxy request scrim can handle |
 | `misdirected_request` | 421 | Host or SNI differs from the CONNECT target |
 | `upstream_unavailable` | 502 | upstream unreachable or failed TLS verification |
 | `response_withheld` | 502 | response could not be scanned |
@@ -99,17 +108,23 @@ std::fs::write(ca_path, proxy.ca().trust_bundle_pem())?;
 proxy.serve(listener, shutdown).await?;
 ```
 
+Other entry points: `ToolProxy::serve_connection` and `serve_connection_with_certificate` (one
+accepted connection, the latter from a TLS listener that verified a client certificate),
+`ToolProxy::serve_transparent` (one connection of a `TRANSPARENT` or `SNI` listener, routed by
+server name or `Host`), `ToolProxy::handle` (one request toward a known destination, after the
+connection layer).
+
 Seams for other work: `Redactor` (the `scrim-redact` matcher; `ValueRedactor` is a small exact
 stand-in), `RequestSigner` (signature schemes other than AWS SigV4, which is built in),
-`ToolProxy::handle` (transparent listeners),
 `InjectionPolicy` (`Snapshot::injection`): once per credential a request uses, after every binding
 and location check and before anything is substituted, it decides allow or deny and may wait for
 an approval. Every request carries a `ClientInfo` extension: the client's address and the session
 it named as the user of `Proxy-Authorization: Basic` on the proxy connection (the password is
 never read).
 
-Settings (`ToolProxySettings`): `toolproxy.max_buffered_body_bytes` (32 MiB),
-`toolproxy.max_decoded_body_bytes` (128 MiB), `toolproxy.captured_values_capacity` (1024).
+Limits (`ToolProxySettings`): `max_buffered_body_bytes` (32 MiB), `max_decoded_body_bytes`
+(128 MiB), `captured_values_capacity` (1024). These are builder fields, not scrim settings: the
+data plane builds the proxy with the defaults and no configuration key changes them.
 
 ## Limitations
 
@@ -123,16 +138,22 @@ Settings (`ToolProxySettings`): `toolproxy.max_buffered_body_bytes` (32 MiB),
 
 ## Tests
 
-`cargo test -p scrim-toolproxy`: unit tests per module, `tests/proxy.rs` against in-process fake
-upstreams (HTTP/1.1, HTTP/2, every coding, capture, rotation, pinning), `tests/sigv4.rs` (an
-upstream that checks every SigV4 signature with the real secret), `tests/clientcert.rs` (an
-upstream that requires a client certificate), and `tests/clients.rs` with curl, git clone and push
-over HTTPS (`git http-backend`), Python `requests` and Node `fetch`, each skipped when the tool is
-missing.
+`cargo test -p scrim-toolproxy` (in `dataplane/`) runs:
 
-End to end, ignored by default: `test/e2e/toolproxy-aws.sh` (the aws CLI against LocalStack in
-rootless podman: `sts get-caller-identity`, `s3 cp`, `s3 ls`, a presigned URL, an unbound region)
-and `test/e2e/toolproxy-kube.sh` (kubectl with certificate authentication against a kind cluster).
+- unit tests per module;
+- `tests/proxy.rs` against in-process fake upstreams (HTTP/1.1, HTTP/2, every coding, capture,
+  rotation, pinning);
+- `tests/transparent.rs`: transparent and SNI connections, routed by server name or `Host`;
+- `tests/sigv4.rs`: an upstream that checks every SigV4 signature with the real secret;
+- `tests/clientcert.rs`: an upstream that requires a client certificate;
+- `tests/clients.rs` with curl, git clone and push over HTTPS (`git http-backend`), Python
+  `requests` and Node `fetch`, each skipped when the tool is missing;
+- `tests/fuzz_seeds.rs`: the committed `sigv4` fuzz seeds match what AWS's test suite gives.
+
+End to end, ignored by default: `tests/e2e_aws.rs`, run by `test/e2e/toolproxy-aws.sh` (the aws
+CLI against LocalStack in rootless podman: `sts get-caller-identity`, `s3 cp`, `s3 ls`, a
+presigned URL, an unbound region), and `tests/e2e_kube.rs`, run by `test/e2e/toolproxy-kube.sh`
+(kubectl with certificate authentication against a kind cluster).
 
 Fuzzing (`fuzz/`, nightly): `cargo +nightly fuzz run sigv4` (parsers, chunk re-signer, and the
 sign, verify, re-sign round trip on arbitrary requests).
