@@ -10,9 +10,15 @@ Vaultwarden password vault, use the [Vaultwarden](vaultwarden.md) adapter.
 
 ## Capabilities
 
-| Kind  | read | list | watch | write | generate | dynamic |
-|-------|------|------|-------|-------|----------|---------|
-| `bws` | yes  | yes  | yes   | yes   | no       | no      |
+<!-- BEGIN GENERATED STORE CAPABILITIES kinds=bws -->
+
+| Kind | read | list | watch | write | glob | dynamic | per-agent check | `identity.store-login` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `bws` | yes | yes | yes | yes | yes | no | yes | none |
+
+The columns are explained under [Capabilities](README.md#capabilities).
+
+<!-- END GENERATED STORE CAPABILITIES -->
 
 Listing accepts globs (`APP_*`). Watch polls; see [Watch](#watch).
 

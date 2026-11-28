@@ -47,9 +47,15 @@ by their exact names needs the correct names too.
 
 ## Capabilities
 
-| read | list | watch | write | generate | dynamic |
-|------|------|-------|-------|----------|---------|
-| yes  | yes  | yes   | yes   | no       | no      |
+<!-- BEGIN GENERATED STORE CAPABILITIES kinds=openbao -->
+
+| Kind | read | list | watch | write | glob | dynamic | per-agent check | `identity.store-login` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `openbao` | yes | yes | yes | yes | no | no | yes | `kubernetes`, `jwt` |
+
+The columns are explained under [Capabilities](README.md#capabilities).
+
+<!-- END GENERATED STORE CAPABILITIES -->
 
 - **List** walks a folder recursively and returns names and metadata only (version, times,
   [labels](#labels)), never values. Soft-deleted and destroyed secrets are left out; a version
