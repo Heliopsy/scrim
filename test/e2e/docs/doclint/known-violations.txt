@@ -1,0 +1,38 @@
+# Known documentation problems the doclint checks allow until the docs are
+# fixed. One per line:
+#
+#   check | file | subject | reason
+#
+# A failing check prints the key ("check | file | subject") of each new
+# violation. An entry that no longer matches anything fails the test: delete
+# it in the change that fixes the doc. "audit N" is the item of the 2026-11
+# docs audit that covers the problem.
+
+# Commands and flags.
+command | README.md | scrim install --transparent without --system | audit 9
+command | README.md | scrim install --dns without --system | audit 9
+command | docs/interception.md | scrim install --transparent without --system | audit 9
+command | docs/interception.md | scrim install --ebpf without --system | audit 9
+command | docs/interception.md | scrim install --dns without --system | audit 9
+command | docs/running.md | scrim install --transparent without --system | audit 9
+command | docs/running.md | scrim install --dns without --system | audit 9
+command | docs/leak-assurance.md | scrim install --transparent without --system | audit 9
+command | .github/ISSUE_TEMPLATE/bug_report.md | scrim share | audit top 10 item 9: no such command
+
+# Setting keys and variables.
+setting | docs/configuration.md | SCRIM_PROXY_NO_PROXY | audit 10: the key is network.upstream-proxy.no-proxy
+setting | docs/configuration.md | SCRIM_PROXY_UPSTREAM | audit 11: proxy.upstream is five scalar keys, not a map
+setting | docs/configuration.md | redaction.allow-unredacted-on-error | audit 12: not a setting
+setting | docs/leak-assurance.md | redaction.json_depth | audit 13: internal Rust field
+
+# Release versions.
+
+# Not problems: names the checks cannot tell apart from one. These stay.
+command | docs/ca.md | scrim interception | the CA subject "scrim interception CA ...", not a command
+setting | docs/cli-tools.md | SCRIM_PROD_CLUSTER | a placeholder name the example declares
+setting | docs/stores/local.md | SCRIM_SECRET_NPM_TOKEN | a variable under the example's SCRIM_SECRET_ prefix
+
+# Intentional: the path is in nono's repository, whose webhook protocol scrim
+# implements (audit 1.8).
+coderefs | internal/notify/webhook/webhook.go | docs/protocols/approval-webhook-v1.md | nono's repository, not scrim's
+coderefs | internal/notify/webhook/testdata/nono-approval-status-v1.json | docs/protocols/approval-webhook-v1.md | nono's repository, not scrim's

@@ -82,6 +82,12 @@ lint:
 md:
     npx --yes markdownlint-cli2@0.24.2
 
+# Offline checks of the docs against the tree and the code (test/e2e/docs/doclint): links and
+# anchors, `scrim` commands and flags, setting keys and SCRIM_* variables, release versions and
+# the generated CLI reference. Known violations are listed in its known-violations.txt.
+docs-lint:
+    go test -count=1 ./test/e2e/docs/doclint/
+
 # Alert rules, their tests, the Prometheus configs and the dashboard (deploy/monitoring).
 monitoring:
     scripts/monitoring-check.sh
@@ -158,6 +164,10 @@ ebpf-install-vm-test:
 config-docs:
     go run . config schema > schema/config-v1.json
     go run . config docs --update docs/configuration.md
+
+# Regenerate the CLI reference (docs/reference/cli) from the command tree.
+cli-docs:
+    SCRIM_CLI_DOCS=update go test -count=1 -run TestCLIReference ./test/e2e/docs/doclint/
 
 # The checker, fake provider, matrix and scenarios against the pass-through and naive stand-ins
 # (also part of `just test`).
