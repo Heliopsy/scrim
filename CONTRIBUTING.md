@@ -1,7 +1,29 @@
 # Contributing to scrim
 
-See "Building from source" in the README for toolchains. `just check` runs every gate CI runs
-except CodeQL and Scorecard; run it before pushing. Coding rules are in [AGENTS.md](AGENTS.md).
+See "Building from source" in the README for toolchains. Coding rules are in [AGENTS.md](AGENTS.md).
+
+## Before you push
+
+`just check` runs the fast gates: formatting, `go vet`, golangci-lint and clippy, Markdown lint,
+the Rust and Go tests (`just test`), OpenSpec validation, generated protobuf and eBPF code,
+govulncheck and cargo-deny (when installed), dependency freshness and the monitoring assets. Run it
+before pushing.
+
+CI runs more than that. These jobs only run there, or need a recipe of their own locally:
+
+- documented shell blocks (`just docs-test`, below);
+- containers and clusters: store conformance, database proxies, ssh-agent, scale backends and
+  audit sinks, ntfy, the end-to-end matrices (`just e2e-matrix <store>`), tool clients, tool
+  profiles and agent CLIs, the Helm chart (`just helm-test`) and the chart and edge forwarder on
+  kind;
+- the eBPF kernel and install tests in VMs (`just ebpf-vm-test`, `just ebpf-install-vm-test`);
+- the macOS and Windows builds and their tests;
+- the latency gate and the regression report against the last release;
+- pinned checksums (`just pin-sums-check`) and gitleaks;
+- the separate workflows: leak suite (`just leak`), fuzzing, OpenSpec, deploy examples, CodeQL
+  and Scorecard.
+
+Run the ones your change touches.
 
 ## Specs come first
 

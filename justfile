@@ -1,7 +1,9 @@
 # scrim: Go control plane at the repository root, Rust data plane in dataplane/.
 #
-# `just check` is the pre-push gate and runs what CI runs, minus CodeQL and
-# Scorecard. `just build` produces bin/scrim with the data plane embedded.
+# `just check` is the pre-push gate: the fast checks CI runs. The container,
+# cluster, VM, platform and latency jobs run only in CI or through their own
+# recipes (CONTRIBUTING.md). `just build` produces bin/scrim with the data
+# plane embedded.
 
 module  := "github.com/heliopsy/scrim"
 binary  := "scrim"
