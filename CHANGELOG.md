@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.3.0](https://github.com/Heliopsy/scrim/compare/v1.2.0...v1.3.0) (2026-11-28)
+
+
+### Features
+
+* Codex and OpenCode agent drivers, OpenCode preset for scrim run ([#179](https://github.com/Heliopsy/scrim/issues/179)) ([b86f9ac](https://github.com/Heliopsy/scrim/commit/b86f9acd926b3f39688bad5be5b507996b83f104))
+* **identity:** check agent writes with the agent's own store identity ([#191](https://github.com/Heliopsy/scrim/issues/191)) ([9d7b3ae](https://github.com/Heliopsy/scrim/commit/9d7b3ae7b74a355b9ea5cefd1189a70c1b266d0f))
+* **identity:** check client certificates with OCSP and serve the TLS tool proxy in the chart ([#178](https://github.com/Heliopsy/scrim/issues/178)) ([6f7f147](https://github.com/Heliopsy/scrim/commit/6f7f1471dccb608b4cdb2192b032e80558e9e0c6))
+* **identity:** per-agent store identity for Doppler, 1Password, Bitwarden Secrets Manager and Vaultwarden ([#176](https://github.com/Heliopsy/scrim/issues/176)) ([f36c21c](https://github.com/Heliopsy/scrim/commit/f36c21c2c6cf4935c0afaff4770898ad0330036f))
+* **llm:** restore Gemini Live and Realtime transcripts over WebSocket ([#174](https://github.com/Heliopsy/scrim/issues/174)) ([ea57969](https://github.com/Heliopsy/scrim/commit/ea57969ac8f7b5d6ff3c9158556c435773544901))
+* **redaction:** detect 28 more token formats, encoded forms and keyed entropy ([#182](https://github.com/Heliopsy/scrim/issues/182)) ([2f229b5](https://github.com/Heliopsy/scrim/commit/2f229b594cdc302901b306bd1de4cd1d1b6be489))
+* **redaction:** fetch, scan and inline attachments referenced by URL ([#193](https://github.com/Heliopsy/scrim/issues/193)) ([99a8a41](https://github.com/Heliopsy/scrim/commit/99a8a41b724143e463fbce076cf471428d79a686))
+* **run:** hide scrim's own secret files from scrim run sessions ([#189](https://github.com/Heliopsy/scrim/issues/189)) ([425ab81](https://github.com/Heliopsy/scrim/commit/425ab8199d8485835af277059fef39e131242bb0))
+* **run:** proxy-only agent network without root (run.network) ([#190](https://github.com/Heliopsy/scrim/issues/190)) ([df7516e](https://github.com/Heliopsy/scrim/commit/df7516e3573817b2d8ed539988ecfa34ce737fad))
+
+
+### Bug Fixes
+
+* **guard:** decode the backslash cell GNU od -c prints ([#201](https://github.com/Heliopsy/scrim/issues/201)) ([6c59d3e](https://github.com/Heliopsy/scrim/commit/6c59d3e6e78f828db4a7c983293aade17720bad0))
+* regenerate the certificate checks service and the toolproxy fuzz lockfile after [#175](https://github.com/Heliopsy/scrim/issues/175) ([#181](https://github.com/Heliopsy/scrim/issues/181)) ([dec6b38](https://github.com/Heliopsy/scrim/commit/dec6b385e766bfb36ef32c0ecd277cfedf841b4b))
+* zero gRPC boundary buffers and shorten credential strings ([#175](https://github.com/Heliopsy/scrim/issues/175)) ([9c25693](https://github.com/Heliopsy/scrim/commit/9c25693d42ad82dc0f1728d2eed6308b190cc47d))
+
 ## [1.2.0](https://github.com/Heliopsy/scrim/compare/v1.1.0...v1.2.0) (2026-11-25)
 
 

@@ -94,3 +94,26 @@ func ReservedBy(r *config.Registry) func(string) bool {
 		return false
 	}
 }
+
+// Values of run.network.
+const (
+	// NetworkOpen leaves the agent on the host's network: the proxy and
+	// base URL settings steer well-behaved clients through scrim.
+	NetworkOpen = "open"
+	// NetworkProxyOnly starts the agent in a network namespace of its own
+	// in which only scrim's listeners are reachable.
+	NetworkProxyOnly = "proxy-only"
+)
+
+// Network picks the agent's network.
+var Network = config.Register(config.Spec[string]{
+	Key:     "run.network",
+	Default: NetworkOpen,
+	Enum:    []string{NetworkOpen, NetworkProxyOnly},
+	Description: "The agent's network under scrim run: open (the host's network; proxy and base URL settings steer " +
+		"clients that honour them through scrim) or proxy-only (Linux: a network namespace with loopback only, in which " +
+		"scrim's LLM base URL and forward proxy are the only reachable addresses, so a command that ignores HTTPS_PROXY " +
+		"or dials a provider directly fails; scrim run refuses to start the agent when the namespace cannot be created). " +
+		"See docs/run.md.",
+	Flag: true,
+})

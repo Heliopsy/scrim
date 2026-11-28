@@ -243,10 +243,11 @@ applied tool profiles (`~/.aws/credentials`, `~/.kube/config`, `~/.docker/config
 `~/.config/gh/hosts.yml`, ...; see [cli-tools.md](cli-tools.md)) and the patterns in
 `run.fs-view-hide` (default `.ssh/id_*` without `.ssh/id_*.pub`: ssh private keys, not their public
 halves). Only paths that exist are covered, and a session with none starts without any of this.
+The view also hides [scrim's own files](#scrims-own-files).
 
 Spec: `specs/credential-injection` ("Session filesystem view for fixed paths", "Filesystem view
 integrity", "Filesystem view selection", "Filesystem view fallback without namespaces", "Session home
-mirror"). Code: `internal/fsview`.
+mirror", "Session filesystem view hides scrim's own files"). Code: `internal/fsview`.
 
 | `run.fs-view` | What the agent gets |
 | --- | --- |
@@ -310,6 +311,57 @@ Not covered by the home mirror:
 - On macOS, credentials kept in the Keychain (git-credential-osxkeychain,
   docker-credential-osxkeychain, gh's keyring) are not files and are not covered.
 
+### scrim's own files
+
+When scrim runs as the same user as the agent (a user-level install, `scrim install --user`, or the
+daemon `scrim run` starts itself), that user can read scrim's own secrets: the file behind a
+Vaultwarden `unlock: file:...`, a `client-secret:`, notifier tokens, signing keys. `scrim run` asks
+the daemon which files it reads secrets or key material from (`GET /v1/own-paths` on the agent API,
+answered only to a local user that may mint sessions, never to a session) and hides each one the
+agent's user can read:
+
+- the target of every `file:` reference in scrim's configuration, settings and store fields alike;
+- scrim's config files;
+- the state directory (`$XDG_STATE_HOME/scrim`: CA keys, placeholder key, issuer keys, the SQLite
+  database), and those directories or files wherever their settings move them (`tool-proxy.ca.dir`,
+  `edge.ca.dir`, `redaction.placeholder-key-dir`, `identity.issuer.key-dir`, `state.sqlite.path`
+  with its `-wal`, `-shm` and `-journal` files, `proxy.capture.dir`);
+- token and credential files (`identity.kubernetes.token-file`, `nats.credentials-file`,
+  `edge-forwarder.client-key-file`, `edge-forwarder.token-file`);
+- store files: the file and sops stores' `root`, a Kubernetes store's `auth.kubeconfig`, and
+  `auth.*token-file` options.
+
+A path counts only while the configuration makes scrim read it. A setting whose feature is off is not
+one of scrim's own files, even at a non-empty default: `identity.kubernetes.token-file` only with
+`identity.kubernetes.enabled`, the `edge-forwarder.*` files only with `edge-forwarder.central` set
+(the token file only without a client certificate), `state.sqlite.path` only with the sqlite backend,
+`identity.issuer.key-dir` only with `identity.issuer.url` set and no `identity.issuer.signing-keys`,
+and `redaction.placeholder-key-dir` only without `redaction.placeholder-keys`. So a pod's own service
+account token is not hidden, and does not make `scrim run` refuse, unless scrim uses it.
+
+A file the agent's user cannot read, such as a system service's files under its own user, needs no
+cover and is skipped. The namespace view mounts the empty 0000 file or directory over each one,
+inside or outside the home. The home mirror can only leave out paths under `$HOME`; it does not hide
+them from a process that opens the absolute path (see its gaps below).
+
+`scrim run` refuses to start the agent (exit 125), naming the files, when the agent's user can read
+one of scrim's own files and the view cannot hide it: outside `$HOME` with the home mirror, or a
+directory that holds the session directory, the agent API socket or the scrim executable. The
+weakening setting `run.fs-view-allow-readable-own-files` starts the agent anyway and prints each
+file it leaves readable. The session directory, the CA bundle and the sockets stay reachable in every
+case.
+
+When a config file is hidden, `SCRIM_CONFIG` in the session points at an empty config file in the
+session directory, so `scrim mcp`, `scrim secret` and the credential helpers start; they reach the
+daemon through `SCRIM_API_SOCKET`. A daemon older than `scrim run` does not report its files: `scrim
+run` warns and starts the agent without hiding them.
+
+The view keeps a session away from these files; any other process of the same user can still read
+them. The fix is to run scrim as its own user: `sudo scrim install --system --agent-user $USER`
+([service.md](service.md)), whose files are mode 0600 under the `scrim` user, or to give secrets as
+systemd credentials (`cred:`). `scrim status` lists the readable files under "Filesystem view (scrim
+run)" and `scrim doctor` warns about them (`own-files`).
+
 ### Checking the view
 
 `scrim run --print-env` lists the view and every covered path:
@@ -319,6 +371,7 @@ filesystem view: namespace (user and mount namespace)
   /home/you/.aws/credentials  shows <session-dir>/profiles/aws/credentials  (aws)
   /home/you/.config/doctl/config.yaml  hidden  (doctl)
   /home/you/.ssh/id_ed25519  hidden  (run.fs-view-hide)
+  /home/you/.config/scrim/vw-master  hidden  (scrim's own: stores.vw.unlock)
 ```
 
 `scrim status` shows the view sessions get on this host under "Filesystem view (scrim run)", with
@@ -326,6 +379,113 @@ the fallback reason and its gaps, and `scrim doctor` checks it (`run-fs-view`): 
 fallback, `home` or `off`, a failure when `run.fs-view` is `namespace` and the host has none. To get
 the namespace view on Ubuntu, either `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`
 or give the scrim binary an AppArmor profile with `userns,`.
+
+## Agent network
+
+By default (`run.network: open`) the agent shares your network. The base URLs and proxy variables
+steer every client that honours them through scrim, but a command that ignores them, clears its
+environment or dials a provider's address itself goes straight out. `run.network: proxy-only`
+(flag `--run-network proxy-only`, variable `SCRIM_RUN_NETWORK`) closes that on Linux, without root:
+the agent and every process it starts run in a network namespace of their own in which scrim's
+listeners are the only reachable addresses.
+
+Spec: `specs/interception` ("Proxy-only agent network"). Code: `internal/run/network.go`,
+`internal/fsview/helper_linux.go`.
+
+| `run.network` | What the agent gets |
+| --- | --- |
+| `open` (default) | Your network. Clients that honour the base URLs and `HTTPS_PROXY` go through scrim; others go direct. |
+| `proxy-only` | A network namespace with loopback only. The LLM base URL and the forward proxy answer at their usual addresses; nothing else is reachable. |
+
+How it works: the [namespace helper](#namespace-view-linux) is started in a new network namespace
+as well as the user and mount namespaces. It brings loopback up, binds a listening socket at the
+address of scrim's LLM base URL and at the address of the forward proxy (the same `127.0.0.1:port`
+as outside, so the environment `scrim run` sets does not change), and hands those sockets to
+`scrim run` over a Unix socket before it executes the agent. `scrim run` accepts on them from
+outside the namespace and splices each connection to scrim's real listener. The agent never holds
+the sockets, and no process in the namespace can reach the host's network: there is no route, and
+the resolver in `/etc/resolv.conf` is unreachable from it, so names do not resolve either. The
+forward proxy resolves names itself, from the hostname in each `CONNECT`, so `curl`, git over HTTPS,
+package managers and SDKs that honour `HTTPS_PROXY` work as before and scrim's tool proxy sees
+every request they make. This is the approach rootless podman uses, without pasta or
+slirp4netns: the namespace needs no virtual interface or user-space TCP stack, because the only
+destinations are scrim's own listeners. Nothing new has to be installed.
+
+The local agent API, `scrim mcp` and scrim's ssh-agent use Unix sockets in the filesystem, which a
+network namespace does not separate, so they keep working. The same is true of other programs'
+Unix sockets, and some of those would act outside the namespace for the agent. `scrim run` covers
+these for the agent:
+
+- sockets that run commands: the D-Bus session bus and the systemd user manager
+  (`$XDG_RUNTIME_DIR/bus`, `$XDG_RUNTIME_DIR/systemd/private`, also under `/run/user/<uid>`),
+  rootless podman and docker (`$XDG_RUNTIME_DIR/podman`, `$XDG_RUNTIME_DIR/docker.sock`), the
+  docker daemon (`/run/docker.sock`) and tmux (`/tmp/tmux-<uid>`);
+- name resolvers, since a looked-up name carries data out in its labels: the system bus
+  (`/run/dbus/system_bus_socket`, through which systemd-resolved and NetworkManager answer),
+  systemd-resolved's directory (`/run/systemd/resolve`, its varlink sockets and the stub
+  `resolv.conf`), nscd (`/run/nscd`) and avahi (`/run/avahi-daemon`, mDNS). A lookup through the C
+  library then fails at once instead of reaching a resolver. systemd's user database
+  (`/run/systemd/userdb`) is left alone, so user lookups keep working;
+- display servers, through which a process could type into a terminal outside: X11
+  (`/tmp/.X11-unix`) and every `$XDG_RUNTIME_DIR/wayland-*` present when the session starts.
+  `DISPLAY` and `WAYLAND_DISPLAY` are removed from the agent's environment.
+
+A socket is covered by `/dev/null`, a directory by an empty read-only tmpfs, in the agent's mount
+namespace only, after the [filesystem view](#filesystem-view) is mounted; a path inside a
+directory the view hides (for example one of [scrim's own files](#scrims-own-files)) is unreachable
+already and left as it is. Abstract Unix sockets belong to the network namespace and are
+unreachable already.
+
+What fails under `proxy-only`, by design:
+
+- A command that ignores `HTTPS_PROXY` (`curl --noproxy '*'`, `env -i curl ...`, a client that
+  hard-codes an address): its connection fails with "connection refused" or "network unreachable",
+  or its name does not resolve.
+- ssh, and so git over ssh: there is no route to port 22 and no `ProxyCommand` is set up. Use HTTPS
+  remotes; their credentials come from [tool profiles](#tool-profiles) and go through the forward
+  proxy.
+- scrim's database proxies and chained local upstreams such as caveman are not reachable from the
+  session. A chained upstream is scrim's upstream, not the agent's.
+- Anything that needs a display or a bus: GUI programs, the clipboard, desktop notifications, the
+  Secret Service keyring, NetworkManager's CLI (`nmcli`), `resolvectl`, and tmux, podman or docker
+  commands, inside the session.
+- Rootless podman inside the session, for the reasons in [Namespace view](#namespace-view-linux).
+
+`scrim run` refuses to start the agent (status 125) in `proxy-only` mode when:
+
+- the host cannot create the namespace (no unprivileged user namespaces, see
+  [Checking the view](#checking-the-view) for the Ubuntu setting), or the helper does not run;
+- a listener cannot be bound inside the namespace or a socket cannot be covered;
+- scrim's LLM base URL or forward proxy listens on an address that is not loopback;
+- the platform is not Linux. macOS has no unprivileged network namespaces: `proxy-only` is not
+  supported there, and `open` with [managed agent settings](interception.md#managed-agent-settings-enforcement-add-on)
+  is the closest thing;
+- scrim is unavailable, even with `run.allow-unredacted-start`: that setting would start the agent
+  with no way out, or an open one, and `proxy-only` promises neither.
+
+Not covered by `proxy-only`:
+
+- Unix sockets of other programs running outside the session that accept commands or connections
+  (screen, an IDE or editor server, an ssh `ControlMaster` socket, a container engine at a path
+  not listed above). Hide such paths with [`run.fs-view-hide`](#filesystem-view) or run the agent
+  as its own user.
+- What the forward proxy itself allows: a tunnel to a host scrim does not intercept still leaves
+  through scrim, and tool policy decides what it may carry.
+
+`scrim run --print-env` lists the network:
+
+```text
+network: proxy-only (network namespace with loopback only; 2 of scrim's listeners reachable)
+  reachable  127.0.0.1:9790  (LLM base URL)
+  reachable  127.0.0.1:9791  (forward proxy)
+  masked     /run/user/1000/bus
+  ...
+```
+
+`scrim status` shows it under "Agent network (scrim run)", and `scrim doctor` checks it
+(`run-network`): a failure when `run.network` is `proxy-only` and the host cannot create the
+namespace, and a passing note when it is `open` that says whether `proxy-only` would work here. The
+default is `open` for compatibility; it may change to `proxy-only` in a later release.
 
 ## Failing closed
 
@@ -341,7 +501,10 @@ or give the scrim binary an AppArmor profile with `userns,`.
   see [providers](providers/README.md#claude-code-under-scrim-run));
 - the command is `caveman` (see below) or cannot be found;
 - the [filesystem view](#filesystem-view) cannot be set up, or `run.fs-view` is `namespace` and the
-  host has no unprivileged user namespaces.
+  host has no unprivileged user namespaces;
+- the agent's user can read one of [scrim's own files](#scrims-own-files) that the view cannot hide,
+  unless `run.fs-view-allow-readable-own-files` is set;
+- `run.network` is `proxy-only` and the [agent network](#agent-network) cannot be set up.
 
 Status 125 is the wrapper's own failure, as with `env` and `timeout`; any other status is the
 agent's. An agent killed by a signal gives 128 plus the signal number.
@@ -436,6 +599,20 @@ set
   that does not run) and `run.fs-view: off` as a control are covered too. The namespace tests skip
   without user namespaces unless `SCRIM_TEST_REQUIRE_USERNS=1`, which the `e2e-profiles` CI job sets.
   `TestStatusRunFSViewOnThisHost` runs on macOS in CI and checks that status lists the fallback.
+- `internal/run/network_linux_test.go` (`TestRunNetworkProxyOnly`) runs the small agent under
+  `run.network: proxy-only`: its provider requests through the base URL and its tool call through
+  the forward proxy work and reach the provider redacted, while dialling the tool server's address
+  itself and fetching with the proxy switched off, by address or by name, fail. The same agent with
+  `open` reaches them, so the failures come from the namespace. `TestRunNetworkRefusals` covers the
+  refusals, and `TestRunNetworkMasksResolversAndDisplays` dials a Wayland socket planted in the
+  runtime directory and the host's system bus, resolved, nscd, avahi and X11 sockets where they
+  exist (they answer with `open` and fail with `proxy-only`), checks that a `getent hosts` lookup
+  fails at once and that `DISPLAY` and `WAYLAND_DISPLAY` are removed. `internal/fsview`
+  (`TestNetworkNamespace`) covers the helper: the handed-over listener
+  answers inside the namespace, another loopback listener of the host and the masked sockets do
+  not. `SCRIM_TEST_RUN_NETWORK=proxy-only` runs `TestClaudeCodeThroughScrimRun` and
+  `TestCodexThroughScrimRun` in the namespace. These skip without user namespaces unless
+  `SCRIM_TEST_REQUIRE_USERNS=1`, which CI sets.
 - These tests stand a verbatim redactor in for scrim's data plane: they test the wrapper, not the
   redactor. `TestRunPrintEnvWithRealDaemon` (in `internal/cli`, with `SCRIM_TEST_DATAPLANE`) runs
   `scrim run --print-env` against a daemon started in process with the real data plane, and
@@ -478,7 +655,16 @@ set
     header. `TestOpenCodeSessionProviders` runs it on the openai (Responses API) and google
     (Gemini) providers too. `SCRIM_E2E_OPENCODE` names the native `opencode` binary (from the `opencode-ai` npm
     package). CI installs the three agents at pinned versions into the runner's temporary
-    directory and runs it with `SCRIM_E2E_REQUIRE_TOOLS=1`.
+    directory and runs it with `SCRIM_E2E_REQUIRE_TOOLS=1`, then runs the three agent sessions
+    again with `SCRIM_E2E_RUN_NETWORK=proxy-only`, which sets `run.network: proxy-only` for every
+    `scrim run` of the suite.
+  - `e2e-tools` also runs `TestProxyOnlyNetwork`: real curl under `scrim run --run-network
+    proxy-only` calls the tool API through `HTTPS_PROXY` (the API gets the real token, the session
+    sees the placeholder) and the fake provider through the base URL (it gets the secret as a
+    placeholder), while curl with `--noproxy '*'` by hostname, by the provider's address, and
+    `env -i curl` all fail. The same script with `--run-network open` reaches both hosts directly. CI also runs
+    the whole `TestTools` suite (curl, git over HTTPS, Node.js, Python) with
+    `SCRIM_E2E_RUN_NETWORK=proxy-only`.
 
   Each needs unprivileged user namespaces; on Ubuntu 24.04 with AppArmor's restriction on, run
   `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` first.
@@ -494,8 +680,10 @@ backend only one of them can hold the state file, so a second concurrent `scrim 
 
 ## Limitations
 
-- The wrapper relies on the agent honouring the variables and arguments it is given. It does not
-  stop an agent that ignores them; the transparent, managed-settings and Kubernetes modes enforce.
+- With `run.network: open` (the default) the wrapper relies on the agent honouring the variables
+  and arguments it is given. It does not stop an agent that ignores them; `run.network: proxy-only`
+  (Linux), the transparent, managed-settings and Kubernetes modes enforce. See
+  [Agent network](#agent-network) for what `proxy-only` leaves open.
 - Claude Code on Bedrock, Mantle, Claude Platform on AWS, Foundry and Vertex needs a
   [provider route](providers/README.md); Claude on Google Cloud operated by Anthropic is refused.
 - Codex with a custom `model_provider` in its configuration talks to that provider's own base URL,

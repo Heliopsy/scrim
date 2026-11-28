@@ -64,7 +64,11 @@ proxy:
   upstream: {anthropic: "$SCRIM_LEAK_UPSTREAM", openai: "$SCRIM_LEAK_UPSTREAM", gemini: "$SCRIM_LEAK_UPSTREAM"}
 api: {socket: $dir/api.sock}
 admin: {url: "unix:$dir/admin.sock"}
-redaction: {placeholder-key-dir: $dir/keys}
+# The fake provider also serves the files the remote-* rows reference by URL;
+# it listens on loopback, which remote attachment fetches refuse by default.
+redaction:
+  placeholder-key-dir: $dir/keys
+  remote-attachments-allowed-networks: [127.0.0.1/32]
 tool-proxy: {ca: {dir: $dir/ca}}
 notify: {terminal: {enabled: false}}
 YAML

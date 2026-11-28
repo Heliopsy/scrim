@@ -119,6 +119,34 @@ type Store interface {
 	Write(ctx context.Context, id identity.Identity, w Write) (Written, error)
 }
 
+// WriteAccess checks, after scrim's rules allowed a write, that the
+// caller's own store identity may make it (specs/agent-identity "Agent
+// writes are checked as the agent"). A nil WriteAccess writes with scrim's
+// own store identity once the rules allow it.
+type WriteAccess interface {
+	// CheckWrite returns how the write was checked, a *WriteRefusedError
+	// when the store or scrim's identity settings refuse it, and any other
+	// error when the check itself failed.
+	CheckWrite(ctx context.Context, id identity.Identity, op Operation) (WriteCheck, error)
+}
+
+// WriteCheck records how a write was checked, for audit: which store
+// identity (agentstore source: static, federated, kubernetes, shared, none)
+// and how (checked, unchecked, skipped, shared).
+type WriteCheck struct {
+	Identity string
+	Check    string
+}
+
+// WriteRefusedError is a write the agent's own store identity may not make.
+// Reason names the store, reference and cause, never a value; it is shown to
+// the caller.
+type WriteRefusedError struct{ Reason string }
+
+func (e *WriteRefusedError) Error() string {
+	return "refused by the agent's store identity: " + e.Reason
+}
+
 // ErrExists is returned by a Store when the reference already holds a value
 // and Overwrite is false.
 var ErrExists = errors.New("agenttools: a secret already exists at the reference")
@@ -146,6 +174,10 @@ type AuditEntry struct {
 	GrantID    string    `json:"grant_id,omitempty"`
 	// Detail is a short, value-free note such as a refusal reason.
 	Detail string `json:"detail,omitempty"`
+	// StoreIdentity and WriteCheck say how a write was checked against the
+	// agent's own store identity ([WriteCheck]).
+	StoreIdentity string `json:"store_identity,omitempty"`
+	WriteCheck    string `json:"store_write_check,omitempty"`
 }
 
 // Audit outcomes.

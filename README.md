@@ -155,7 +155,8 @@ read on your machine (see [What scrim does not protect](#what-scrim-does-not-pro
 - Chaining through a context-compression proxy, with redaction first.
 - Images, PDFs and other attachments are decoded and scanned, metadata and document text included,
   and a request whose attachment holds a secret is refused (`redaction.binary`; text in pixels is
-  not read, see [docs/limitations.md](docs/limitations.md#redaction)).
+  not read, see [docs/limitations.md](docs/limitations.md#redaction)). Attachments referenced by
+  URL are fetched by scrim, scanned and sent inline (`redaction.remote-attachments`).
 
 ### Credential injection
 

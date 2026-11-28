@@ -63,7 +63,9 @@ func kubeFindings(cfg *config.Config) []status.Finding {
 
 func storeIdentityFindings(cfg *config.Config) []status.Finding {
 	const check = "identity: store identity per agent"
-	c, err := agentstore.New(agentstore.Options{Login: agentstore.Login.Get(cfg), Credentials: agentstore.Credentials.Get(cfg)})
+	c, err := agentstore.New(agentstore.Options{Login: agentstore.Login.Get(cfg), Credentials: agentstore.Credentials.Get(cfg),
+		Kinds: storeconfig.Kinds(cfg), SkipWriteChecks: agentstore.SkipWriteChecks.Get(cfg),
+		RefuseUncheckedWrites: agentstore.RefuseUncheckedWrites.Get(cfg)})
 	if err != nil {
 		return []status.Finding{{Check: check, Outcome: status.Fail, Message: err.Error(),
 			Fix: "fix identity.store-login or identity.store-credentials"}}
@@ -102,6 +104,27 @@ func storeIdentityFindings(cfg *config.Config) []status.Finding {
 			if r.Agent == "*" {
 				f.Fix = "agents not listed are refused for this store"
 			}
+		}
+		out = append(out, f)
+	}
+	return append(out, writeFindings(c)...)
+}
+
+// writeFindings report, per store with per-agent identity, whether agents'
+// writes are checked with the agent's own identity (specs/agent-identity
+// "Agent writes are checked as the agent").
+func writeFindings(c *agentstore.Checker) []status.Finding {
+	const check = "identity: store identity per agent"
+	var out []status.Finding
+	for _, store := range c.Governed() {
+		f := status.Finding{Check: check, Outcome: status.Pass, Message: "store " + store + ": " + c.WritePolicy(store)}
+		switch {
+		case !c.CanCheckWrites(store) && !c.RefusesUncheckedWrites(store):
+			f.Outcome = status.Warn
+			f.Fix = "add " + store + " to " + agentstore.RefuseUncheckedWrites.Name() + " to refuse agents' writes to it, or limit store.write and secret.gen rules for it"
+		case c.CanCheckWrites(store) && c.SkipsWriteChecks():
+			f.Outcome = status.Warn
+			f.Fix = "turn off " + agentstore.SkipWriteChecks.Name()
 		}
 		out = append(out, f)
 	}

@@ -66,6 +66,7 @@ import (
 	"github.com/heliopsy/scrim/internal/status"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/refresh"
+	"github.com/heliopsy/scrim/internal/stores/storeconfig"
 	"github.com/heliopsy/scrim/internal/version"
 )
 
@@ -395,7 +396,10 @@ func Start(ctx context.Context, o Options) (_ *Daemon, err error) {
 		Resolve: func(ctx context.Context, ref config.SecretRef) (secret.Value, error) {
 			return a.Config.Current().ResolveRef(ctx, ref)
 		},
-		RequireIssuer: true,
+		RequireIssuer:         true,
+		Kinds:                 storeconfig.Kinds(cfg),
+		SkipWriteChecks:       agentstore.SkipWriteChecks.Get(cfg),
+		RefuseUncheckedWrites: agentstore.RefuseUncheckedWrites.Get(cfg),
 		Adapter: func(name string) (stores.Adapter, bool) {
 			for _, ad := range a.Stores.Adapters() {
 				if ad.Name() == name {
