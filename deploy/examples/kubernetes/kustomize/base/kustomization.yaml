@@ -19,4 +19,4 @@ configMapGenerator:
       - config.yaml
 images:
   - name: ghcr.io/heliopsy/scrim
-    newTag: 1.3.0 # x-release-please-version
+    newTag: 1.4.0 # x-release-please-version

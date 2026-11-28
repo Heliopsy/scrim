@@ -33,7 +33,7 @@ Verify the image and pin its digest:
 
 <!-- x-release-please-start-version -->
 ```sh
-cosign verify ghcr.io/heliopsy/scrim:1.2.0 \
+cosign verify ghcr.io/heliopsy/scrim:1.4.0 \
   --certificate-identity-regexp '^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(heads/main|tags/v.+)$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   | jq -r '.[0].critical.image."docker-manifest-digest"'
@@ -215,8 +215,8 @@ Change the tag (or digest) and recreate the container; the volume keeps the stat
 
 <!-- x-release-please-start-version -->
 ```sh
-podman pull ghcr.io/heliopsy/scrim:1.2.0
-podman rm -f scrim && IMAGE=ghcr.io/heliopsy/scrim:1.2.0 ./run.sh   # podman run
+podman pull ghcr.io/heliopsy/scrim:1.4.0
+podman rm -f scrim && IMAGE=ghcr.io/heliopsy/scrim:1.4.0 ./run.sh   # podman run
 podman auto-update                                                    # Quadlet on a minor-series tag
 podman kube play --replace scrim.yaml                                 # after editing the image
 podman compose up -d                                                  # after editing the image

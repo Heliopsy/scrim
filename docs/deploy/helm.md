@@ -25,7 +25,7 @@ keyless by the release workflow. Check the signature before installing
 
 <!-- x-release-please-start-version -->
 ```sh
-VERSION=1.2.0
+VERSION=1.4.0
 cosign verify "ghcr.io/heliopsy/charts/scrim:$VERSION" \
   --certificate-identity-regexp '^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
@@ -149,7 +149,7 @@ directly gets no connection.
 
 <!-- x-release-please-start-version -->
 ```sh
-helm --kube-context "$CONTEXT" upgrade scrim oci://ghcr.io/heliopsy/charts/scrim --version 1.2.0 \
+helm --kube-context "$CONTEXT" upgrade scrim oci://ghcr.io/heliopsy/charts/scrim --version 1.4.0 \
   -n scrim --reuse-values
 helm --kube-context "$CONTEXT" -n scrim history scrim
 helm --kube-context "$CONTEXT" -n scrim rollback scrim <revision>

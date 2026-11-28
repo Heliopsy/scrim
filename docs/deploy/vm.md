@@ -68,7 +68,7 @@ systemd allows for a network service. The config
 
 <!-- x-release-please-start-version -->
 ```sh
-sudo env VERSION=1.2.0 PREFIX=/usr/local bash deploy/examples/workstation/install.sh   # cosign on root's PATH
+sudo env VERSION=1.4.0 PREFIX=/usr/local bash deploy/examples/workstation/install.sh   # cosign on root's PATH
 
 cd deploy/examples/systemd/system
 sudo install -m 0644 scrim.sysusers.conf /etc/sysusers.d/scrim.conf
@@ -166,7 +166,7 @@ and look in `/var/lib/scrim/capture`; remove the drop-in afterwards.
 
 <!-- x-release-please-start-version -->
 ```sh
-sudo env VERSION=1.2.0 PREFIX=/usr/local bash deploy/examples/workstation/install.sh
+sudo env VERSION=1.4.0 PREFIX=/usr/local bash deploy/examples/workstation/install.sh
 sudo systemctl restart scrim
 sudo mv /usr/local/bin/scrim.prev /usr/local/bin/scrim && sudo systemctl restart scrim   # roll back
 ```
@@ -249,7 +249,7 @@ ansible-playbook playbook.yml --ask-vault-pass
 
 <!-- x-release-please-start-version -->
 ```sh
-ansible-playbook playbook.yml -e scrim_version=1.2.0   # upgrade
+ansible-playbook playbook.yml -e scrim_version=1.4.0   # upgrade
 ansible-playbook playbook.yml -e scrim_version=<the previous version>   # roll back
 ansible-playbook playbook.yml -e scrim_state=absent    # uninstall, keep config and state
 ansible-playbook playbook.yml -e scrim_state=absent -e scrim_purge=true

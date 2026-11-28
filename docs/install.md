@@ -57,7 +57,7 @@ and optionally the [GitHub CLI](https://cli.github.com/) for the provenance chec
 <!-- docs-test: skip: downloads a published release from GitHub -->
 
 ```sh
-VERSION=1.2.0
+VERSION=1.4.0
 OS=linux        # linux, darwin or windows (see Windows below)
 ARCH=amd64      # amd64 or arm64
 BASE=https://github.com/Heliopsy/scrim/releases/download/v$VERSION
@@ -152,7 +152,7 @@ Download and verify the archive the same way, from Git Bash or WSL with the comm
 <!-- docs-test: skip: PowerShell on Windows, downloads a published release -->
 
 ```powershell
-$VERSION = "1.2.0"; $ARCH = "amd64"   # or arm64
+$VERSION = "1.4.0"; $ARCH = "amd64"   # or arm64
 $BASE = "https://github.com/Heliopsy/scrim/releases/download/v$VERSION"
 $ARCHIVE = "scrim_${VERSION}_windows_${ARCH}.tar.gz"
 foreach ($f in $ARCHIVE, "checksums.txt", "checksums.txt.sigstore.json") {
@@ -235,7 +235,7 @@ against the registry:
 <!-- docs-test: skip: verifies the published image online -->
 
 ```sh
-IMAGE=ghcr.io/heliopsy/scrim:1.2.0
+IMAGE=ghcr.io/heliopsy/scrim:1.4.0
 ID='^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(heads/main|tags/v.+)$'
 ISSUER=https://token.actions.githubusercontent.com
 
@@ -300,7 +300,7 @@ The data plane image runs stateless and needs no volume:
 <!-- docs-test: skip: runs the published image -->
 
 ```sh
-podman run --rm --read-only --cap-drop=all ghcr.io/heliopsy/scrim-dataplane:1.2.0 --version
+podman run --rm --read-only --cap-drop=all ghcr.io/heliopsy/scrim-dataplane:1.4.0 --version
 ```
 <!-- x-release-please-end -->
 
@@ -357,7 +357,7 @@ target musl; on Debian and Ubuntu install `musl-tools`.
 ```sh
 git clone https://github.com/Heliopsy/scrim
 cd scrim
-git checkout v1.2.0
+git checkout v1.4.0
 just release-build linux-amd64       # dist/bin/linux-amd64/{scrim,scrim-dataplane}
 ```
 <!-- x-release-please-end -->
@@ -375,7 +375,7 @@ To compare a local build with a release:
 
 ```sh
 just release-build linux-amd64
-tar -xzf "scrim_1.2.0_linux_amd64.tar.gz" -O ./scrim | sha256sum
+tar -xzf "scrim_1.4.0_linux_amd64.tar.gz" -O ./scrim | sha256sum
 sha256sum dist/bin/linux-amd64/scrim
 ```
 <!-- x-release-please-end -->
