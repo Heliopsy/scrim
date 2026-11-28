@@ -42,6 +42,13 @@ Spec: `openspec/specs/llm-proxy`, plus the base-URL and forward-proxy parts of
   request with `secret_in_binary`; a part that cannot be decoded within the bounds refuses it with
   `unscannable_content`. Text documents (`text/plain` file parts and the like) are redacted and
   encoded again. `Block` refuses any binary part, `Pass` forwards them unscanned.
+- **Remote attachments.** The codecs also list the attachments a request only references (image
+  and document URLs, provider file IDs, storage locations). Under `RemoteMode::Inline` (the
+  default) the `remote` module fetches each URL through the upstream proxy, from public addresses
+  only unless allowed, splices it into the body in the provider's inline form and the body is
+  prepared again, so the binary policy applies to it. File IDs pass only when the upload was
+  scanned on the same route; anything else that cannot be fetched refuses the request with
+  `remote_attachment`.
 - **Response side.** SSE events are framed without copying, and each content block keeps at most
   `max_len - 1` held bytes for a placeholder split across events. Text resolves under the display
   policy, tool arguments under the per-tool policy (`ToolMode::Buffered` hands the policy complete
@@ -104,12 +111,12 @@ OpenAI). 422 is the redaction-failed status.
 
 | Code | Status |
 | --- | --- |
-| `malformed_body`, `redactor_failed`, `guard_failed`, `guard_refused`, `unscannable_content`, `secret_in_binary` | 422 |
+| `malformed_body`, `redactor_failed`, `guard_failed`, `guard_refused`, `unscannable_content`, `secret_in_binary`, `remote_attachment` | 422 |
 | `not_ready` (with `Retry-After: 1`) | 503 |
 | `no_route` | 404 |
 | `body_too_large` | 413 |
 | `unsupported_encoding` (compressed request body) | 415 |
-| `chain_unavailable`, `upstream_unavailable` | 502 |
+| `chain_unavailable`, `upstream_unavailable`, `attachment_unavailable` | 502 |
 | `capture_failed` | 500 |
 | `policy_denied` (the request gate refused it) | 403 |
 | `upgrade_unsupported` (a protocol upgrade other than a WebSocket handshake, refused before anything else) | 501 |

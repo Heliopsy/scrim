@@ -26,10 +26,11 @@ use std::collections::BTreeMap;
 
 use super::{
     DeltaOut, Edits, Plan, PlanError, StreamBlock, StreamCodec, StreamLimits, feed_delta,
-    flush_block, keep_allowlisted, restore_json_source, restore_string,
+    flush_block, keep_allowlisted, members_except, restore_json_source, restore_string,
 };
 use crate::engine::RestoreSite;
 use crate::json::{self, Doc, Kind, Value};
+use crate::remote::{Add, Edit, Target};
 use crate::restore::{Ctx, TextKind};
 use crate::sse;
 
@@ -194,8 +195,60 @@ pub(crate) fn plan_content(plan: &mut Plan, content: Value<'_, '_>) -> Result<()
         // the provider never read different function calls or responses.
         member(part, "functionCall", "function_call")?;
         member(part, "functionResponse", "function_response")?;
-        member(part, "fileData", "file_data")?;
+        if let Some(fd) = member(part, "fileData", "file_data")? {
+            plan_file_data(plan, part, fd)?;
+        }
     }
+    Ok(())
+}
+
+/// A `fileData` part: a Files API file, a Cloud Storage object, a `YouTube` video, or a URL
+/// (Gemini fetches public `http(s)` URLs itself). URLs are inlined as an `inlineData` part.
+fn plan_file_data(
+    plan: &mut Plan,
+    part: Value<'_, '_>,
+    fd: Value<'_, '_>,
+) -> Result<(), PlanError> {
+    let Some(uri) = member(fd, "fileUri", "file_uri")?.and_then(|u| u.as_str()) else {
+        return Ok(());
+    };
+    let declared = member(fd, "mimeType", "mime_type")?
+        .and_then(|m| m.as_str())
+        .map(std::borrow::Cow::into_owned);
+    let lower = uri.to_ascii_lowercase();
+    let host = lower.split_once("://").map_or("", |(_, r)| {
+        r.split(['/', '?', '#']).next().unwrap_or_default()
+    });
+    let host = host.rsplit('@').next().unwrap_or_default();
+    let target = if let Some(id) = crate::remote::files::gemini_file_id(&uri) {
+        Target::FileId(id)
+    } else if lower.starts_with("gs://") {
+        Target::Unfetchable("Cloud Storage URI")
+    } else if [
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com",
+        "youtu.be",
+    ]
+    .contains(&host)
+    {
+        Target::Unfetchable("YouTube URI")
+    } else {
+        Target::Url(uri.into_owned())
+    };
+    let edit = if matches!(target, Target::Url(_)) {
+        Edit::Rebuild {
+            span: part.span(),
+            keep: members_except(part, &["fileData", "file_data"]),
+            add: Add::GeminiInline {
+                snake: part.get("file_data")?.is_some(),
+                declared,
+            },
+        }
+    } else {
+        Edit::None
+    };
+    plan.reference(target, edit);
     Ok(())
 }
 

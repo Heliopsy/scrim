@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -617,5 +618,45 @@ func TestBinaryPolicySetting(t *testing.T) {
 		if weakened := len(cfg.Weakened()) > 0; weakened != (v == "pass") {
 			t.Errorf("%q: weakened = %v", v, cfg.Weakened())
 		}
+	}
+}
+
+func TestRemoteAttachmentsSetting(t *testing.T) {
+	for v, want := range map[string]pb.RemoteAttachments{
+		"":       pb.RemoteAttachments_REMOTE_ATTACHMENTS_INLINE,
+		"inline": pb.RemoteAttachments_REMOTE_ATTACHMENTS_INLINE,
+		"refuse": pb.RemoteAttachments_REMOTE_ATTACHMENTS_REFUSE,
+		"pass":   pb.RemoteAttachments_REMOTE_ATTACHMENTS_PASS,
+	} {
+		yaml := ""
+		if v != "" {
+			yaml = "redaction:\n  remote-attachments: " + v + "\n"
+		}
+		cfg := buildConfig(t, yaml)
+		if got := remoteAttachments(RemoteAttachments.Get(cfg)); got != want {
+			t.Errorf("%q: %v, want %v", v, got, want)
+		}
+		if weakened := len(cfg.Weakened()) > 0; weakened != (v == "pass") {
+			t.Errorf("%q: weakened = %v", v, cfg.Weakened())
+		}
+	}
+}
+
+func TestRemoteAllowedNetworksSetting(t *testing.T) {
+	cfg := buildConfig(t, "redaction:\n  remote-attachments-allowed-networks: [10.0.0.0/8, \"fd00::1\"]\n")
+	if got := RemoteAllowedNetworks.Get(cfg); !slices.Equal(got, []string{"10.0.0.0/8", "fd00::1"}) {
+		t.Fatalf("networks = %v", got)
+	}
+	w := cfg.Weakened()
+	if len(w) != 1 || w[0].Setting.Key != "redaction.remote-attachments-allowed-networks" {
+		t.Fatalf("weakened = %v", w)
+	}
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	body := "apiVersion: " + config.APIVersion + "\nkind: Config\nredaction:\n  remote-attachments-allowed-networks: [example.com]\n"
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Build(config.Options{Registry: config.Default, ConfigPaths: []string{p}, Environ: []string{}}); err == nil {
+		t.Fatal("a host name is not a network")
 	}
 }

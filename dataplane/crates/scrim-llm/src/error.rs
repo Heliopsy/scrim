@@ -12,6 +12,8 @@
 //! | `guard_refused`        | 422    | the guard found a value it could not repair            |
 //! | `unscannable_content`  | 422    | binary part under `block`, or undecodable under `scan` |
 //! | `secret_in_binary`     | 422    | `scan` found a secret value inside a binary part       |
+//! | `remote_attachment`    | 422    | an attachment reference the remote policy refuses      |
+//! | `attachment_unavailable` | 502  | an attachment referenced by URL could not be fetched   |
 //! | `unsupported_encoding` | 415    | compressed request body                                |
 //! | `body_too_large`       | 413    | body over `proxy.limits.max-request-body`              |
 //! | `capture_failed`       | 500    | capture mode could not record the outgoing request     |
@@ -73,13 +75,14 @@ impl Refusal {
             | RefusalReason::GuardFailed
             | RefusalReason::GuardRefused
             | RefusalReason::UnscannableContent
-            | RefusalReason::SecretInBinary => StatusCode::UNPROCESSABLE_ENTITY,
+            | RefusalReason::SecretInBinary
+            | RefusalReason::RemoteAttachment => StatusCode::UNPROCESSABLE_ENTITY,
             RefusalReason::UnsupportedEncoding => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             RefusalReason::BodyTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             RefusalReason::CaptureFailed => StatusCode::INTERNAL_SERVER_ERROR,
-            RefusalReason::ChainUnavailable | RefusalReason::UpstreamUnavailable => {
-                StatusCode::BAD_GATEWAY
-            }
+            RefusalReason::ChainUnavailable
+            | RefusalReason::UpstreamUnavailable
+            | RefusalReason::AttachmentUnavailable => StatusCode::BAD_GATEWAY,
             RefusalReason::PolicyDenied => StatusCode::FORBIDDEN,
             RefusalReason::UpgradeUnsupported => StatusCode::NOT_IMPLEMENTED,
         }
@@ -120,6 +123,13 @@ impl Refusal {
                 "scrim: request refused, an image, document or other attachment contains a secret \
                  value, and an attachment cannot be redacted without corrupting it; remove the \
                  secret from the attachment"
+            }
+            RefusalReason::RemoteAttachment => {
+                "scrim: request refused, it references an attachment by URL or file ID that \
+                 scrim cannot scan; send the content inline, or see redaction.remote-attachments"
+            }
+            RefusalReason::AttachmentUnavailable => {
+                "scrim: an attachment referenced by URL could not be fetched to scan it"
             }
             RefusalReason::UnsupportedEncoding => {
                 "scrim: compressed request bodies cannot be redacted"
