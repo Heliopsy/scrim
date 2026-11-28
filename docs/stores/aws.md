@@ -14,13 +14,25 @@ never call AWS: they ask scrim, which enforces write-only toward agents itself.
 
 ## Capabilities
 
-| Kind    | read | list | watch | write | generate | dynamic |
-|---------|------|------|-------|-------|----------|---------|
-| `awssm` | yes  | yes  | yes   | yes   | no       | no      |
-| `ssm`   | yes  | yes  | yes   | yes   | no       | no      |
+<!-- BEGIN GENERATED STORE CAPABILITIES kinds=awssm,ssm -->
+
+| Kind | read | list | watch | write | glob | dynamic | per-agent check | `identity.store-login` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `awssm` | yes | yes | yes | yes | yes | no | yes | `aws-web-identity` |
+| `ssm` | yes | yes | yes | yes | yes | no | yes | `aws-web-identity` |
+
+The columns are explained under [Capabilities](README.md#capabilities).
+
+<!-- END GENERATED STORE CAPABILITIES -->
 
 Both also match names by a trailing `*` (`aws-sm://app/db-*`), which AWS filters on its side. Watch
 polls; see [Watch and refresh](#watch-and-refresh).
+
+An agent's own AWS identity is checked only by token exchange: with `identity.store-login` set to
+`aws-web-identity`, scrim assumes the agent's role with a token its issuer signs, and reads the
+secret as that role (value wiped) before it injects or restores it. A static credential per agent
+(`identity.store-credentials`) is refused as unsupported
+([Agent identity](../identity.md#store-identity-per-agent)).
 
 ## References
 

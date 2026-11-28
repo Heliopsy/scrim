@@ -32,13 +32,19 @@ Version selectors (`?version=`) are refused: Kubernetes keeps no history of a Se
 
 ## Capabilities
 
-| Kind | read | list | watch | write | generate | dynamic | glob |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `kubernetes` | yes | yes | yes | with `writable: true` | no | no | yes |
+<!-- BEGIN GENERATED STORE CAPABILITIES kinds=kubernetes -->
+
+| Kind | read | list | watch | write | glob | dynamic | per-agent check | `identity.store-login` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `kubernetes` | yes | yes | yes | with `writable: true` | yes | no | no | none |
+
+The columns are explained under [Capabilities](README.md#capabilities).
+
+<!-- END GENERATED STORE CAPABILITIES -->
 
 Without `writable: true` the adapter does not declare write, and a write or generate is refused
 before any API call: `store k8s: write k8s://prod/new: operation not supported by this store:
-kubernetes source is read-only; set writable: true to allow writes`.
+store k8s is read-only`.
 
 ## Configuration
 

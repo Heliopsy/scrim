@@ -7,12 +7,18 @@ other store's. scrim never writes to these files.
 
 ## Capabilities
 
-| Kind | read | list | watch | write | generate | dynamic | glob |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `sops` | yes | yes | yes | no | no | no | yes |
+<!-- BEGIN GENERATED STORE CAPABILITIES kinds=sops -->
+
+| Kind | read | list | watch | write | glob | dynamic | per-agent check | `identity.store-login` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `sops` | yes | yes | yes | no | yes | no | no | none |
+
+The columns are explained under [Capabilities](README.md#capabilities).
+
+<!-- END GENERATED STORE CAPABILITIES -->
 
 A write or generate targeting the source is refused before anything is touched, with an error such
-as `store team: write team://app/new.yaml: operation not supported by this store: sops source is
+as `store team: write team://app/new.yaml: operation not supported by this store: store team is
 read-only`. Edit the files with `sops` itself and let scrim pick up the change, or pick a writable
 store as the default target of rules that capture or generate secrets.
 

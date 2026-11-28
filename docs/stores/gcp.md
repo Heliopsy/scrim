@@ -9,11 +9,22 @@ write-only toward agents itself.
 
 ## Capabilities
 
-| Kind    | read | list | watch | write | generate | dynamic | glob |
-|---------|------|------|-------|-------|----------|---------|------|
-| `gcpsm` | yes  | yes  | yes   | yes   | no       | no      | yes  |
+<!-- BEGIN GENERATED STORE CAPABILITIES kinds=gcpsm -->
+
+| Kind | read | list | watch | write | glob | dynamic | per-agent check | `identity.store-login` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `gcpsm` | yes | yes | yes | yes, not with `read-only: true` | yes | no | yes | `gcp-workload-identity` |
+
+The columns are explained under [Capabilities](README.md#capabilities).
+
+<!-- END GENERATED STORE CAPABILITIES -->
 
 Write is dropped with `read-only: true`. Watch polls; see [Watch and refresh](#watch-and-refresh).
+
+An agent's own Google identity, from `gcp-workload-identity` token exchange or a static access
+token per agent, is checked before an injection or restore with `testIamPermissions` for
+`secretmanager.versions.access`. No value is read with the agent's token
+([Agent identity](../identity.md#store-identity-per-agent)).
 
 ## References
 

@@ -69,12 +69,50 @@ the signed request or the key.
 The values are also ordinary store values: if one shows up in a prompt or a tool result it is
 redacted like any other secret, and as a credential it is never restored into a response.
 
+## Routes
+
+Every provider request goes through a route, served at `/<name>` on the LLM base URL
+(`http://127.0.0.1:9790/<name>` by default). Through the forward proxy or a transparent listener,
+a request is matched to a route by its host. The built-in routes are always there; a cloud
+provider route adds one per `providers` instance, and a host goes to the first route that names it.
+
+<!-- BEGIN GENERATED PROVIDER ROUTES: run `go test ./internal/daemon -run TestProviderRouteDocs -update` -->
+
+Built-in routes, served without configuration:
+
+| Route | Gate `provider` | Hosts (forward proxy, transparent) | Upstream setting | Default upstream |
+| --- | --- | --- | --- | --- |
+| `/anthropic` | `anthropic` | `api.anthropic.com` | `proxy.upstream.anthropic` | `https://api.anthropic.com` |
+| `/openai` | `openai` | `api.openai.com` | `proxy.upstream.openai` | `https://api.openai.com` |
+| `/gemini` | `gemini` | `generativelanguage.googleapis.com` | `proxy.upstream.gemini` | `https://generativelanguage.googleapis.com` |
+| `/chatgpt` | `openai` | `chatgpt.com` | `proxy.upstream.chatgpt` | `https://chatgpt.com` |
+| `/chatgpt-ab` | `openai` | `ab.chatgpt.com` | `proxy.upstream.chatgpt-ab` | `https://ab.chatgpt.com` |
+
+Cloud provider kinds:
+
+| Kind | Gate `provider` |
+| --- | --- |
+| `anthropic-aws` | `anthropic` |
+| `bedrock` | `bedrock` |
+| `bedrock-mantle` | `anthropic` |
+| `foundry` | `anthropic` |
+| `vertex` | `vertex` |
+
+<!-- END GENERATED PROVIDER ROUTES -->
+
+`chatgpt` and `chatgpt-ab` carry Codex signed in with ChatGPT, reached through the forward proxy.
+Nothing on `ab.chatgpt.com` is a documented API, so every body there is redacted as generic JSON.
+
 ## Who may use a route
 
-The request gate decides as for any provider request: `op == "llm.forward"` with `provider` set
-to `bedrock` for Bedrock routes and `anthropic` for the others. A deployment that serves several
-teams should allow cloud routes only to the sessions that need them, since scrim's credentials,
-not the agent's, pay for the request.
+The request gate decides as for any provider request: `op == "llm.forward"`, with `provider` set
+as in the tables above. Among the cloud routes that means `bedrock` for Bedrock, `vertex` for
+Vertex AI, and `anthropic` for Bedrock Mantle, Claude Platform on AWS and Foundry, the same name
+the built-in `/anthropic` route has. The gate sees the provider name and the caller, not the route,
+so a rule cannot allow the Anthropic API while denying those three. A cloud route's requests are
+paid with scrim's credentials, not the agent's: on a deployment that serves several teams, deny
+`bedrock` and `vertex` to the sessions that do not need them, and configure a Mantle, Claude
+Platform on AWS or Foundry route only where every agent allowed the Anthropic API may use it too.
 
 ## Claude Code under scrim run
 
@@ -97,6 +135,15 @@ two configurations in step.
 
 Other agents point their SDK's base URL at `http://127.0.0.1:9790/<name>` (plus `/anthropic` for
 Foundry, `/v1` for Vertex) and turn their own signing off.
+
+### Managed settings
+
+`scrim install --managed-settings` pins Claude Code to the built-in `/anthropic` route: its managed
+settings allow only `customEndpoint` and set `ANTHROPIC_BASE_URL`
+([interception.md](../interception.md#claude-code)). Claude Code then refuses to start in its
+Bedrock, Mantle, Claude Platform on AWS, Foundry and Vertex modes, so on that machine the cloud
+routes cannot serve Claude Code, under `scrim run` or not. Other agents can still use them. To run
+Claude Code through a cloud route, leave out `--managed-settings` and start it with `scrim run`.
 
 ## Minted tokens
 

@@ -11,12 +11,22 @@ through the secret Key Vault keeps for each certificate, read-only, labelled `az
 
 ## Capabilities
 
-| Kind   | read | list | watch | write | generate | dynamic |
-|--------|------|------|-------|-------|----------|---------|
-| `azkv` | yes  | yes  | yes   | yes   | no       | no      |
+<!-- BEGIN GENERATED STORE CAPABILITIES kinds=azkv -->
+
+| Kind | read | list | watch | write | glob | dynamic | per-agent check | `identity.store-login` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `azkv` | yes | yes | yes | yes, not with `read-only: true` | yes | no | yes | `azure-federated` |
+
+The columns are explained under [Capabilities](README.md#capabilities).
+
+<!-- END GENERATED STORE CAPABILITIES -->
 
 Watch polls; see [Watch and refresh](#watch-and-refresh). Listing also takes globs (`kv://APP-*`).
 With `read-only: true` the store declares no write.
+
+An agent's own Entra ID identity, from `azure-federated` token exchange or a static access token
+per agent, is checked before an injection or restore by reading the secret as that identity, with
+the value wiped ([Agent identity](../identity.md#store-identity-per-agent)).
 
 ## References
 
