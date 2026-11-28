@@ -55,6 +55,12 @@ const (
 // that needs another adds it here.
 var SecretFields = []string{"token", "role-id", "secret-id", "client-id", "client-secret", "password", "unlock", "age-identity", "credentials", "certificate", "access-key-id", "secret-access-key", "jwt"}
 
+// KeyMaterialFields are adapter options whose value is the path of a file or
+// directory holding secrets or credentials: the file and sops stores' root,
+// a kubeconfig, and token files for Kubernetes, JWT and workload identity
+// auth. An adapter that adds such an option adds it here.
+var KeyMaterialFields = []string{"root", "auth.kubeconfig", "auth.kubernetes.token-file", "auth.jwt.token-file", "auth.token-file"}
+
 // AllowEmptyTargets lets scrim start while a redact target loads no value.
 var AllowEmptyTargets = config.Register(config.Spec[bool]{
 	Key:             refresh.AllowEmptyTargetsKey,
@@ -73,12 +79,16 @@ var Collection = config.RegisterCollection(config.CollectionSpec{
 		"`redact` lists references and prefixes loaded into the redaction set, `refresh.*` tunes " +
 		"refresh and outage handling, `labels` derives policy labels from the store's own labels " +
 		"(docs/policy.md, \"Labels from stores\"), and every other field is the adapter's own. See docs/stores.",
-	FieldSchemas:    map[string]map[string]any{FieldLabels: labelsSchema},
-	SecretFields:    SecretFields,
-	RequiredFields:  []string{FieldKind},
-	RestartRequired: true,
-	Validate:        func(inst config.Instance) error { return Validate(stores.DefaultRegistry, inst) },
-	ValidateAll:     checkCredentialGraph,
+	FieldSchemas: map[string]map[string]any{FieldLabels: labelsSchema},
+	SecretFields: SecretFields,
+	// Paths of files scrim reads secrets or credentials from, hidden from
+	// `scrim run` sessions (config.OwnPaths). Credentials given as file:
+	// references are listed through SecretFields.
+	KeyMaterialFields: KeyMaterialFields,
+	RequiredFields:    []string{FieldKind},
+	RestartRequired:   true,
+	Validate:          func(inst config.Instance) error { return Validate(stores.DefaultRegistry, inst) },
+	ValidateAll:       checkCredentialGraph,
 })
 
 // labelsSchema is the JSON schema of the labels field.
@@ -516,4 +526,16 @@ func Resolved(ctx context.Context, cfg *config.Config, reg *stores.Registry, key
 		return nil, nil, err
 	}
 	return n, done, nil
+}
+
+// Kinds maps each configured store instance to its adapter kind, from
+// configuration alone (an instance without a kind is left out).
+func Kinds(cfg *config.Config) map[string]string {
+	out := map[string]string{}
+	for _, ci := range Collection.Get(cfg) {
+		if k, ok := ci.Fields[FieldKind].(string); ok && k != "" {
+			out[ci.Name] = k
+		}
+	}
+	return out
 }

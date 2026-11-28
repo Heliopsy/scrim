@@ -425,6 +425,8 @@ is out of date.
 | [`identity.kubernetes.token-file`](#identitykubernetestoken-file) | string | `/var/run/secrets/kubernetes.io/serviceaccount/token` | restart required |
 | [`identity.kubernetes.unmapped`](#identitykubernetesunmapped) | string | `derive` | restart required |
 | [`identity.peers`](#identitypeers) | map | `{}` | restart required |
+| [`identity.refuse-unchecked-writes`](#identityrefuse-unchecked-writes) | list | `[]` | restart required |
+| [`identity.skip-agent-write-checks`](#identityskip-agent-write-checks) | bool | `false` | restart required |
 | [`identity.store-credentials`](#identitystore-credentials) | map | `{}` | restart required |
 | [`identity.store-login`](#identitystore-login) | map | `{}` | restart required |
 | [`interception.ebpf.cgroups`](#interceptionebpfcgroups) | list | `[]` | hot |
@@ -504,14 +506,18 @@ is out of date.
 | [`redaction.limit-to-agent-identity`](#redactionlimit-to-agent-identity) | bool | `false` | restart required |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
+| [`redaction.remote-attachments`](#redactionremote-attachments) | string | `inline` | hot |
+| [`redaction.remote-attachments-allowed-networks`](#redactionremote-attachments-allowed-networks) | list | `[]` | hot |
 | [`restore.allow-reveal-credentials`](#restoreallow-reveal-credentials) | list | `[]` | hot |
 | [`restore.allow-shell-data-commands`](#restoreallow-shell-data-commands) | list | `[]` | hot |
 | [`restore.builtin-tools`](#restorebuiltin-tools) | bool | `true` | hot |
 | [`restore.display-mode`](#restoredisplay-mode) | string | `values` | hot |
 | [`run.allow-unredacted-start`](#runallow-unredacted-start) | bool | `false` | hot |
 | [`run.fs-view`](#runfs-view) | string | `auto` | hot |
+| [`run.fs-view-allow-readable-own-files`](#runfs-view-allow-readable-own-files) | bool | `false` | hot |
 | [`run.fs-view-hide`](#runfs-view-hide) | list | `[".ssh/id_*","!.ssh/id_*.pub"]` | hot |
 | [`run.mcp`](#runmcp) | bool | `true` | hot |
+| [`run.network`](#runnetwork) | string | `open` | hot |
 | [`run.placeholder-env`](#runplaceholder-env) | bool | `true` | hot |
 | [`run.profiles`](#runprofiles) | list | `["auto"]` | hot |
 | [`run.scan-interval`](#runscan-interval) | duration | `10s` | hot |
@@ -2093,6 +2099,31 @@ Agents by local user or group: agent name to space-separated selectors uid:N, us
 | Flag | none |
 | Reload | restart required |
 
+#### `identity.refuse-unchecked-writes`
+
+Stores with per-agent identity that cannot tell whether an agent's identity may write without writing (awssm, ssm, azkv, infisical, doppler, onepassword), by instance name, that refuse agents' writes instead of making them with scrim's own identity once scrim's rules allow them. `*` names every such store. Empty by default.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_IDENTITY_REFUSE_UNCHECKED_WRITES` |
+| Flag | none |
+| Reload | restart required |
+
+#### `identity.skip-agent-write-checks`
+
+Write agents' secrets (secret_gen, secret_capture, secret_ask_human, `scrim secret put`) with scrim's own store identity once scrim's rules allow them, without asking the agent's own store identity first, also on stores that can answer (openbao, vault, gcpsm, bws, vaultwarden). Off by default: a store with per-agent identity that can check a write refuses one the agent's identity may not make, and refuses agents without an identity of their own.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_IDENTITY_SKIP_AGENT_WRITE_CHECKS` |
+| Flag | none |
+| Reload | restart required |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
 #### `identity.store-credentials`
 
 Static per-agent store credentials: `<store>/<agent>` to a reference (env:, file:, cred: or a store reference) of a store token held for that agent. The fallback for agents without Kubernetes passthrough; a store listed here refuses agents that have none.
@@ -2920,7 +2951,7 @@ Start even when a store's redact target matches no secret on the first load. Off
 
 #### `redaction.binary`
 
-Images, PDFs and other binary parts of provider requests. scan decodes each part and scans it and the text it carries (image metadata, PDF text, SVG) with the redactor and the guard, and refuses the request when it finds a secret value or cannot decode the part within its bounds; block refuses every request with a binary part; pass forwards them unscanned and audits it. Parts referenced by URL are not fetched or scanned.
+Images, PDFs and other binary parts of provider requests. scan decodes each part and scans it and the text it carries (image metadata, PDF text, SVG) with the redactor and the guard, and refuses the request when it finds a secret value or cannot decode the part within its bounds; block refuses every request with a binary part; pass forwards them unscanned and audits it. Parts referenced by URL follow redaction.remote-attachments.
 
 | | |
 |---|---|
@@ -3078,6 +3109,33 @@ Directory of the generated placeholder key, used when redaction.placeholder-keys
 | Flag | none |
 | Reload | restart required |
 
+#### `redaction.remote-attachments`
+
+Attachments a provider request references instead of carrying: image and document URLs, provider file IDs, Cloud Storage and S3 locations. inline fetches each URL itself (through network.upstream-proxy, never to a non-public address), scans the content under redaction.binary and sends it to the provider inline in place of the URL, so the model sees exactly what was scanned; refuse refuses requests with a URL; pass forwards references unfetched and audits it, and the provider fetches content scrim never sees. Under inline and refuse a file ID passes only when its upload went through scrim on the same route and was scanned; other references scrim cannot fetch are refused.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `inline` |
+| Environment | `SCRIM_REDACTION_REMOTE_ATTACHMENTS` |
+| Flag | `--redaction-remote-attachments` |
+| Reload | hot |
+| Weakening | **yes** when set to `pass`: logged at start-up and on reload while active, listed in `scrim status` |
+| Values | `inline`, `refuse`, `pass` |
+
+#### `redaction.remote-attachments-allowed-networks`
+
+Networks (an IP address or CIDR range) that redaction.remote-attachments inline may fetch from although they are private, loopback, link-local or otherwise not public, for an internal file server. Cloud metadata addresses are link-local: allowing 169.254.0.0/16 lets an agent's request make scrim read them.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_REDACTION_REMOTE_ATTACHMENTS_ALLOWED_NETWORKS` |
+| Flag | none |
+| Reload | hot |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
+
 ### restore
 
 #### `restore.allow-reveal-credentials`
@@ -3148,7 +3206,7 @@ Start the agent anyway when scrim cannot start, its data plane is not ready or n
 
 #### `run.fs-view`
 
-Session filesystem view for credential files at fixed home paths: auto (a user and mount namespace where the host allows it, the home mirror elsewhere), namespace (refuse to start the agent without one), home (HOME points at a mirror of the home directory without the real credential files) or off. See docs/run.md.
+Session filesystem view for credential files at fixed home paths and scrim's own secret files: auto (a user and mount namespace where the host allows it, the home mirror elsewhere), namespace (refuse to start the agent without one), home (HOME points at a mirror of the home directory without the real credential files) or off. See docs/run.md.
 
 | | |
 |---|---|
@@ -3158,6 +3216,19 @@ Session filesystem view for credential files at fixed home paths: auto (a user a
 | Flag | `--run-fs-view` |
 | Reload | hot |
 | Values | `auto`, `namespace`, `home`, `off` |
+
+#### `run.fs-view-allow-readable-own-files`
+
+Start scrim run sessions even when the filesystem view cannot hide some of scrim's own secret files (file: reference targets, config files, key and state directories) that the agent's user can read: outside $HOME with the home mirror, or above a path the session needs. Off, scrim run refuses to start the agent. See docs/run.md.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `false` |
+| Environment | `SCRIM_RUN_FS_VIEW_ALLOW_READABLE_OWN_FILES` |
+| Flag | `--run-fs-view-allow-readable-own-files` |
+| Reload | hot |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
 
 #### `run.fs-view-hide`
 
@@ -3182,6 +3253,19 @@ Register scrim mcp with the agent for this session (Claude Code --mcp-config, Co
 | Environment | `SCRIM_RUN_MCP` |
 | Flag | `--run-mcp` |
 | Reload | hot |
+
+#### `run.network`
+
+The agent's network under scrim run: open (the host's network; proxy and base URL settings steer clients that honour them through scrim) or proxy-only (Linux: a network namespace with loopback only, in which scrim's LLM base URL and forward proxy are the only reachable addresses, so a command that ignores HTTPS_PROXY or dials a provider directly fails; scrim run refuses to start the agent when the namespace cannot be created). See docs/run.md.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `open` |
+| Environment | `SCRIM_RUN_NETWORK` |
+| Flag | `--run-network` |
+| Reload | hot |
+| Values | `open`, `proxy-only` |
 
 #### `run.placeholder-env`
 

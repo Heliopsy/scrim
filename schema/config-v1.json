@@ -1289,6 +1289,25 @@
           "x-scrim-restart-required": true,
           "x-scrim-weakening": false
         },
+        "refuse-unchecked-writes": {
+          "default": [],
+          "description": "Stores with per-agent identity that cannot tell whether an agent's identity may write without writing (awssm, ssm, azkv, infisical, doppler, onepassword), by instance name, that refuse agents' writes instead of making them with scrim's own identity once scrim's rules allow them. `*` names every such store. Empty by default.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_IDENTITY_REFUSE_UNCHECKED_WRITES",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": false
+        },
+        "skip-agent-write-checks": {
+          "default": false,
+          "description": "Write agents' secrets (secret_gen, secret_capture, secret_ask_human, `scrim secret put`) with scrim's own store identity once scrim's rules allow them, without asking the agent's own store identity first, also on stores that can answer (openbao, vault, gcpsm, bws, vaultwarden). Off by default: a store with per-agent identity that can check a write refuses one the agent's identity may not make, and refuses agents without an identity of their own.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_IDENTITY_SKIP_AGENT_WRITE_CHECKS",
+          "x-scrim-restart-required": true,
+          "x-scrim-weakening": true
+        },
         "store-credentials": {
           "additionalProperties": {
             "type": "string"
@@ -2241,7 +2260,7 @@
         },
         "binary": {
           "default": "scan",
-          "description": "Images, PDFs and other binary parts of provider requests. scan decodes each part and scans it and the text it carries (image metadata, PDF text, SVG) with the redactor and the guard, and refuses the request when it finds a secret value or cannot decode the part within its bounds; block refuses every request with a binary part; pass forwards them unscanned and audits it. Parts referenced by URL are not fetched or scanned.",
+          "description": "Images, PDFs and other binary parts of provider requests. scan decodes each part and scans it and the text it carries (image metadata, PDF text, SVG) with the redactor and the guard, and refuses the request when it finds a secret value or cannot decode the part within its bounds; block refuses every request with a binary part; pass forwards them unscanned and audits it. Parts referenced by URL follow redaction.remote-attachments.",
           "enum": [
             "scan",
             "block",
@@ -2402,6 +2421,34 @@
           "x-scrim-collection": true,
           "x-scrim-env": "SCRIM_REDACTION_PLACEHOLDER_KEYS",
           "x-scrim-restart-required": false
+        },
+        "remote-attachments": {
+          "default": "inline",
+          "description": "Attachments a provider request references instead of carrying: image and document URLs, provider file IDs, Cloud Storage and S3 locations. inline fetches each URL itself (through network.upstream-proxy, never to a non-public address), scans the content under redaction.binary and sends it to the provider inline in place of the URL, so the model sees exactly what was scanned; refuse refuses requests with a URL; pass forwards references unfetched and audits it, and the provider fetches content scrim never sees. Under inline and refuse a file ID passes only when its upload went through scrim on the same route and was scanned; other references scrim cannot fetch are refused.",
+          "enum": [
+            "inline",
+            "refuse",
+            "pass"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_REDACTION_REMOTE_ATTACHMENTS",
+          "x-scrim-flag": "--redaction-remote-attachments",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true,
+          "x-scrim-weakening-values": [
+            "pass"
+          ]
+        },
+        "remote-attachments-allowed-networks": {
+          "default": [],
+          "description": "Networks (an IP address or CIDR range) that redaction.remote-attachments inline may fetch from although they are private, loopback, link-local or otherwise not public, for an internal file server. Cloud metadata addresses are link-local: allowing 169.254.0.0/16 lets an agent's request make scrim read them.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_REDACTION_REMOTE_ATTACHMENTS_ALLOWED_NETWORKS",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true
         }
       },
       "type": "object"
@@ -2486,7 +2533,7 @@
         },
         "fs-view": {
           "default": "auto",
-          "description": "Session filesystem view for credential files at fixed home paths: auto (a user and mount namespace where the host allows it, the home mirror elsewhere), namespace (refuse to start the agent without one), home (HOME points at a mirror of the home directory without the real credential files) or off. See docs/run.md.",
+          "description": "Session filesystem view for credential files at fixed home paths and scrim's own secret files: auto (a user and mount namespace where the host allows it, the home mirror elsewhere), namespace (refuse to start the agent without one), home (HOME points at a mirror of the home directory without the real credential files) or off. See docs/run.md.",
           "enum": [
             "auto",
             "namespace",
@@ -2498,6 +2545,15 @@
           "x-scrim-flag": "--run-fs-view",
           "x-scrim-restart-required": false,
           "x-scrim-weakening": false
+        },
+        "fs-view-allow-readable-own-files": {
+          "default": false,
+          "description": "Start scrim run sessions even when the filesystem view cannot hide some of scrim's own secret files (file: reference targets, config files, key and state directories) that the agent's user can read: outside $HOME with the home mirror, or above a path the session needs. Off, scrim run refuses to start the agent. See docs/run.md.",
+          "type": "boolean",
+          "x-scrim-env": "SCRIM_RUN_FS_VIEW_ALLOW_READABLE_OWN_FILES",
+          "x-scrim-flag": "--run-fs-view-allow-readable-own-files",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true
         },
         "fs-view-hide": {
           "default": [
@@ -2519,6 +2575,19 @@
           "type": "boolean",
           "x-scrim-env": "SCRIM_RUN_MCP",
           "x-scrim-flag": "--run-mcp",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": false
+        },
+        "network": {
+          "default": "open",
+          "description": "The agent's network under scrim run: open (the host's network; proxy and base URL settings steer clients that honour them through scrim) or proxy-only (Linux: a network namespace with loopback only, in which scrim's LLM base URL and forward proxy are the only reachable addresses, so a command that ignores HTTPS_PROXY or dials a provider directly fails; scrim run refuses to start the agent when the namespace cannot be created). See docs/run.md.",
+          "enum": [
+            "open",
+            "proxy-only"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_RUN_NETWORK",
+          "x-scrim-flag": "--run-network",
           "x-scrim-restart-required": false,
           "x-scrim-weakening": false
         },

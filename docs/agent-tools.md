@@ -157,6 +157,23 @@ scrim secret request bao://kv/agents/hetzner --duration 30m --reason "deploy the
 A grant lets scrim use the secret for the agent (for example inject it toward its bound host). It
 never shows the agent the value.
 
+### Writes and the agent's store identity
+
+`secret_gen`, `secret_capture`, `secret_ask_human` and `scrim secret put` write. scrim's rules
+decide first (`store.write`, `secret.gen`, `secret.ask`). For a store with per-agent identity
+([identity.md](identity.md#store-identity-per-agent)) that can check a write (`openbao`, `vault`,
+`gcpsm`, `bws`, `vaultwarden`), scrim then asks the agent's own store identity whether it may write
+there and refuses the write when it may not, or when the agent has no identity for that store:
+
+```json
+{"code": "denied", "message": "refused by the agent's store identity: store vw: write vw://TeamA/New?org=Acme: permission denied by store: the agent's own account may not add items to this collection"}
+```
+
+Stores that cannot check a write without writing (`awssm`, `ssm`, `azkv`, `infisical`, `doppler`,
+`onepassword`) take it with scrim's own identity once the rules allow it, unless
+`identity.refuse-unchecked-writes` names them. Stores without per-agent identity are written with
+scrim's own identity, as before. `identity.skip-agent-write-checks` (weakening) turns the check off.
+
 ### secret_gen
 
 Generates a value inside scrim and stores it. `format` is `chars` (default), `hex`, `base64`,
@@ -183,8 +200,8 @@ A reference without `#field` writes the field `value`.
 
 Runs a command without a shell, takes a value from its standard output and stores it. Extraction:
 the whole output (trimmed), `json_path` (`.token`, `.data[0].key`, `["odd key"]`) or `pattern`
-(first capture group of a regular expression). Policy is checked before the command runs, so a
-token-creating command is not run only to have its output refused.
+(first capture group of a regular expression). Policy and the agent's store identity are checked
+before the command runs, so a token-creating command is not run only to have its output refused.
 
 The command runs in the tool process, as the agent. Standard input is empty, standard error is
 discarded, and the output is never returned: a failure reports the exit status only.
@@ -379,6 +396,7 @@ HTTP/1.1 with JSON on the Unix socket, every route under `/v1`, every response c
 | `DELETE /v1/sessions/self` | end the caller's session |
 | `DELETE /v1/sessions/{id}` | revoke a session of the same user |
 | `PUT /v1/sessions/self/values` | add the values found in the session's project files to the redaction set (`scrim run`) |
+| `GET /v1/own-paths` | the files and directories scrim reads secrets or key material from, paths only, for a local user with `sessions:mint` (`scrim run`'s [filesystem view](run.md#scrims-own-files)); sessions are refused |
 | `GET /v1/secrets` | `secrets_list` |
 | `POST /v1/secrets/request` | `secret_request` |
 | `POST /v1/secrets/generate` | `secret_gen` |
@@ -418,7 +436,9 @@ oracle beyond that.
 ## Audit
 
 Every tool call writes an audit entry (action `tool.<name>`) with the agent, principal, user and
-process ID, reference, store, decision, rule and outcome. Refused credentials and unmapped callers
+process ID, reference, store, decision, rule and outcome. A write also records which store
+identity it was checked with (`store_identity`) and how (`store_write_check`: `checked`,
+`unchecked`, `skipped` or `shared`). Refused credentials and unmapped callers
 are audited as action `tool.auth`. No entry holds a value. If the audit entry cannot be written, the
 call fails.
 

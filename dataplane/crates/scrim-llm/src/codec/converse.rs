@@ -86,10 +86,17 @@ fn plan_blocks(plan: &mut Plan, content: Value<'_, '_>, depth: usize) -> Result<
         ] {
             if let Some(m) = b.get(kind)?
                 && let Some(src) = m.get("source")?
-                && let Some(bytes) = src.get("bytes")?
             {
-                let format = m.get_str("format")?.unwrap_or_default();
-                plan.binary(bytes, &format!("{prefix}/{format}"));
+                if let Some(bytes) = src.get("bytes")? {
+                    let format = m.get_str("format")?.unwrap_or_default();
+                    plan.binary(bytes, &format!("{prefix}/{format}"));
+                }
+                if src.get("s3Location")?.is_some() {
+                    plan.reference(
+                        crate::remote::Target::Unfetchable("S3 location"),
+                        crate::remote::Edit::None,
+                    );
+                }
             }
         }
         if let Some(tr) = b.get("toolResult")?

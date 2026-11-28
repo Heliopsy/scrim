@@ -165,6 +165,16 @@ func (c *Client) Mint(ctx context.Context, in MintInput) (Minted, error) {
 	return Minted{Token: secret.New(raw), Session: out.Session}, nil
 }
 
+// OwnPaths lists the files and directories the daemon reads secrets or key
+// material from. Only a caller that may mint sessions gets an answer.
+func (c *Client) OwnPaths(ctx context.Context) ([]OwnPath, error) {
+	var out OwnPathsOutput
+	if err := c.do(ctx, http.MethodGet, "/own-paths", nil, nil, "", &out); err != nil {
+		return nil, err
+	}
+	return out.Paths, nil
+}
+
 // EndSession revokes the caller's own session.
 func (c *Client) EndSession(ctx context.Context) error {
 	return c.do(ctx, http.MethodDelete, "/sessions/self", nil, nil, "", nil)

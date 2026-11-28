@@ -32,6 +32,10 @@ const envViewPasswd = "SCRIM_RUN_TEST_PASSWD_HOME"
 // absolute path.
 const envViewReal = "SCRIM_RUN_TEST_REAL_FILE"
 
+// envViewOwn lists (like PATH) scrim's own files the fsview agent tries to
+// read by their absolute paths.
+const envViewOwn = "SCRIM_RUN_TEST_OWN_FILES"
+
 // viewReport is what the fsview test agent saw.
 type viewReport struct {
 	UID       int    `json:"uid"`
@@ -47,6 +51,11 @@ type viewReport struct {
 	Nested    string `json:"nested"`
 	XDGConfig string `json:"xdg_config"`
 	Agent     string `json:"agent"`
+	// Own maps each of envViewOwn's paths to what reading it gave.
+	Own map[string]string `json:"own,omitempty"`
+	// ScrimConfig is SCRIM_CONFIG in the session and what reading it gave.
+	ScrimConfig     string `json:"scrim_config"`
+	ScrimConfigData string `json:"scrim_config_data"`
 }
 
 // agentFSView reads the credential paths a tool would read and reports what
@@ -82,6 +91,15 @@ func agentFSView() int {
 	r.Notes = read(filepath.Join(home, "notes.txt"))
 	if p := os.Getenv(envViewReal); p != "" {
 		r.RealAWS = read(p)
+	}
+	if l := os.Getenv(envViewOwn); l != "" {
+		r.Own = map[string]string{}
+		for _, p := range filepath.SplitList(l) {
+			r.Own[p] = read(p)
+		}
+	}
+	if r.ScrimConfig = os.Getenv("SCRIM_CONFIG"); r.ScrimConfig != "" {
+		r.ScrimConfigData = read(r.ScrimConfig)
 	}
 	r.Unmount = tryUnmount(filepath.Join(home, ".aws/credentials"))
 	// A namespace of its own, where the agent holds every capability:
@@ -163,9 +181,17 @@ func viewProfiles(_ context.Context, _ string, sess profiles.Session) (*profiles
 
 // runView runs the fsview agent under scrim run with the given view and
 // returns what it saw and scrim run's stderr.
+// viewNetwork is run.network for runView; a test that sets it restores it.
+var viewNetwork string
+
 func runView(t *testing.T, home viewHome, fo FSViewOptions, extraEnv ...string) (viewReport, string, error) {
 	t.Helper()
-	h := newHarness(t, true)
+	return runViewWith(t, newHarness(t, true), home, fo, extraEnv...)
+}
+
+// runViewWith is runView against a harness the test set up.
+func runViewWith(t *testing.T, h *harness, home viewHome, fo FSViewOptions, extraEnv ...string) (viewReport, string, error) {
+	t.Helper()
 	env := baseEnv(t, append([]string{envAgent + "=fsview", envViewReal + "=" + filepath.Join(home.dir, ".aws/credentials")}, extraEnv...)...)
 	env = setEnv(env, "HOME", home.dir)
 	env = setEnv(env, "XDG_CONFIG_HOME", filepath.Join(home.dir, ".config"))
@@ -176,7 +202,7 @@ func runView(t *testing.T, home viewHome, fo FSViewOptions, extraEnv ...string) 
 	rt := t.TempDir()
 	err := Run(context.Background(), Options{
 		Command: []string{selfAgent(t)}, Environ: env, Daemon: h.daemon(), Stdout: &out, Stderr: &errb,
-		RuntimeDir: rt, Profiles: viewProfiles, FSView: fo,
+		RuntimeDir: rt, Profiles: viewProfiles, FSView: fo, Network: NetworkOptions{Mode: viewNetwork},
 	})
 	var r viewReport
 	if err == nil {
@@ -333,5 +359,61 @@ func TestFSViewPrintEnv(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home.dir, "..", "fsview")); err == nil {
 		t.Error("print-env wrote files")
+	}
+}
+
+// ownView plants scrim's own files of a user-level install, each holding
+// the decoy: a config file and a Vaultwarden unlock file under the home,
+// and a signing key outside it. It returns them as the daemon reports them
+// and the agent's environment entry that makes it read them.
+func ownView(t *testing.T, h *harness, home viewHome) (cfg, unlock, outside string, env string) {
+	t.Helper()
+	cfg = filepath.Join(home.dir, ".config/scrim/config.yaml")
+	unlock = filepath.Join(home.dir, ".config/scrim/vw-master")
+	outside = filepath.Join(t.TempDir(), "signing.key")
+	for _, p := range []string{cfg, unlock, outside} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("secret: "+home.decoy+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.setOwn(localapi.OwnPath{Path: cfg, Origin: "config file"}, localapi.OwnPath{Path: unlock, Origin: "stores.vw.unlock"},
+		localapi.OwnPath{Path: outside, Origin: "approvals.signing-key"})
+	return cfg, unlock, outside, envViewOwn + "=" + strings.Join([]string{cfg, unlock, outside}, string(os.PathListSeparator))
+}
+
+// TestFSViewHomeMirrorOwnFiles: the home mirror cannot hide scrim's own
+// file outside $HOME, so the agent is not started; with the weakening
+// setting it starts, the files under $HOME are left out of the mirror and
+// the one outside is reported, not hidden.
+func TestFSViewHomeMirrorOwnFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no session filesystem view")
+	}
+	home := plantHome(t, t.TempDir())
+	h := newHarness(t, true)
+	cfg, unlock, outside, env := ownView(t, h, home)
+	_, stderr, err := runViewWith(t, h, home, FSViewOptions{Mode: fsview.ModeHome, PasswdHome: home.dir}, env)
+	if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), outside) || !strings.Contains(err.Error(), fsview.AllowReadableOwn.Name()) {
+		t.Fatalf("want a refusal naming %s, got %v\n%s", outside, err, stderr)
+	}
+	r, stderr, err := runViewWith(t, h, home, FSViewOptions{Mode: fsview.ModeHome, PasswdHome: home.dir, AllowReadableOwn: true}, env)
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, stderr)
+	}
+	if !strings.Contains(stderr, "NOT hidden") || !strings.Contains(stderr, outside) {
+		t.Errorf("the exposed file is not reported: %q", stderr)
+	}
+	// The documented gap of the mirror: absolute paths still lead to the
+	// real files, under $HOME as well.
+	for _, p := range []string{cfg, unlock, outside} {
+		if !strings.Contains(r.Own[p], home.decoy) {
+			t.Errorf("%s by its absolute path = %q; the gap the docs list is gone, update them", p, r.Own[p])
+		}
+	}
+	if r.ScrimConfig == "" || r.ScrimConfigData == "" || strings.Contains(r.ScrimConfigData, home.decoy) {
+		t.Errorf("SCRIM_CONFIG = %q (%q), want the session's empty config", r.ScrimConfig, r.ScrimConfigData)
 	}
 }

@@ -16,6 +16,7 @@ package stores
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/heliopsy/scrim/internal/secret"
@@ -277,4 +278,33 @@ type AgentAccess interface {
 	// ref, an error of kind [ErrPermission] when the store refuses it, and
 	// another kind when the check itself failed. Errors never hold a value.
 	AgentCan(ctx context.Context, cred AgentCredential, op Op, ref Ref) error
+}
+
+var writeChecks struct {
+	sync.RWMutex
+	kinds map[string]bool
+}
+
+// DeclareAgentWriteCheck declares that adapters of kind answer
+// [AgentAccess.AgentCan] for [OpWrite] without writing, so scrim asks the
+// agent's own store identity before an agent's write
+// (specs/agent-identity "Agent writes are checked as the agent"). An
+// adapter that cannot tell without writing does not declare it and refuses
+// OpWrite in AgentCan as [ErrUnsupported]. Call it from the adapter's init,
+// next to [Register].
+func DeclareAgentWriteCheck(kind string) {
+	writeChecks.Lock()
+	defer writeChecks.Unlock()
+	if writeChecks.kinds == nil {
+		writeChecks.kinds = map[string]bool{}
+	}
+	writeChecks.kinds[kind] = true
+}
+
+// ChecksAgentWrites reports whether kind was declared with
+// [DeclareAgentWriteCheck].
+func ChecksAgentWrites(kind string) bool {
+	writeChecks.RLock()
+	defer writeChecks.RUnlock()
+	return writeChecks.kinds[kind]
 }

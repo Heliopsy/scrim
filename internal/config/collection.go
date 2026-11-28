@@ -56,6 +56,11 @@ type CollectionSpec struct {
 	// FieldSchemas are JSON schemas of further instance fields, for the
 	// generated schema.
 	FieldSchemas map[string]map[string]any
+	// KeyMaterialFields are the dotted leaf paths (`root`,
+	// `auth.kubernetes.token-file`) whose value, in any instance, is the
+	// path of a file or directory scrim reads secrets or key material from
+	// (see [Config.OwnPaths]).
+	KeyMaterialFields []string
 }
 
 // Collection is a handle to a registered collection.
@@ -120,6 +125,7 @@ func RegisterCollectionIn(r *Registry, spec CollectionSpec) (Collection, error) 
 	s.Description = strings.TrimSpace(spec.Description)
 	s.SecretFields = slices.Clone(spec.SecretFields)
 	s.RequiredFields = slices.Clone(spec.RequiredFields)
+	s.KeyMaterialFields = slices.Clone(spec.KeyMaterialFields)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()

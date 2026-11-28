@@ -17,6 +17,9 @@ type Content struct {
 	Before  string
 	Value   string
 	After   string
+	// FilesURL is where the fake provider serves the files a request
+	// references (see Request.Files), set by the runner.
+	FilesURL string
 }
 
 // Text is the whole tool output.
@@ -47,6 +50,9 @@ type Request struct {
 	// so a proxy that refuses it has forwarded nothing.
 	WS       bool
 	Messages []Frame
+	// Files are held at the fake provider before the request is sent, for a
+	// request that references them by URL or file ID (Content.FilesURL).
+	Files []fp.File
 }
 
 // Frame is one WebSocket message: a text frame, or a binary one.
@@ -583,6 +589,26 @@ var Placements = []Placement{
 		Note: "the scan binary policy inflates PDF streams and reads their strings",
 		Build: func(api fp.API, c Content, mode Escape) []Request {
 			return attachment(api, "application/pdf", pdfWithText(c.Text()), mode)
+		}},
+	{ID: "remote-image-url", Desc: "text in the metadata of an image the request references by URL", Expect: Withheld,
+		Note: "remote attachments inline: scrim fetches the image, scans it and refuses (WebSocket messages with a URL are refused)",
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			return remoteAttachment(api, c, mode, remoteImage, fp.File{Name: "scrim-leak-image.png", MediaType: "image/png", Data: pngWithText("Comment", c.Text())})
+		}},
+	{ID: "remote-document-url", Desc: "text in a PDF the request references by URL", Expect: Withheld,
+		Note: "remote attachments inline: scrim fetches the PDF, scans it and refuses",
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			return remoteAttachment(api, c, mode, remoteDocument, fp.File{Name: "scrim-leak-document.pdf", MediaType: "application/pdf", Data: pdfWithText(c.Text())})
+		}},
+	{ID: "remote-text-url", Desc: "a plain-text file the request references by URL", Expect: Guard,
+		Note: "remote attachments inline: scrim fetches the text, redacts it and sends it inline; refused where the fetch is not allowed",
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			return remoteAttachment(api, c, mode, remoteDocument, fp.File{Name: "scrim-leak-notes.txt", MediaType: "text/plain", Data: []byte(c.Text())})
+		}},
+	{ID: "remote-file-id", Desc: "a file the request references by a provider file ID, uploaded without scrim", Expect: Withheld,
+		Note: "remote attachments: a file ID passes only when scrim scanned its upload on the route",
+		Build: func(api fp.API, c Content, mode Escape) []Request {
+			return remoteAttachment(api, c, mode, remoteFileID, fp.File{Name: "file-scrimleak01", MediaType: "application/pdf", Data: pdfWithText(c.Text())})
 		}},
 	{ID: "image-pixels", Desc: "the value as an image's pixel data (rendered text in a screenshot)", Expect: Limitation,
 		Note: "limitation: pixel data is not decoded and text in an image is not recognised (no OCR)",

@@ -200,8 +200,10 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 		Listeners: cloneListeners(b.Listeners),
 		Routes:    routes(cfg),
 		Redaction: &pb.RedactionSettings{
-			MinValueLength: uint32(MinValueLength.Get(cfg)), //nolint:gosec // validated to 1..1024
-			Binary:         binaryPolicy(BinaryPolicy.Get(cfg)),
+			MinValueLength:        uint32(MinValueLength.Get(cfg)), //nolint:gosec // validated to 1..1024
+			Binary:                binaryPolicy(BinaryPolicy.Get(cfg)),
+			RemoteAttachments:     remoteAttachments(RemoteAttachments.Get(cfg)),
+			RemoteAllowedNetworks: slices.Clone(RemoteAllowedNetworks.Get(cfg)),
 		},
 		CaptureRules: captureRulesPB(cfg),
 		Policy:       &pb.Policy{DefaultEffect: pb.Effect_EFFECT_DENY},
@@ -661,6 +663,20 @@ func ProviderHosts(cfg *config.Config) []string {
 		}
 	}
 	return out
+}
+
+// remoteAttachments maps `redaction.remote-attachments` to the snapshot's
+// enum. An unknown value (the registry's enum rules it out) maps to inline, the
+// safe default.
+func remoteAttachments(v string) pb.RemoteAttachments {
+	switch v {
+	case "refuse":
+		return pb.RemoteAttachments_REMOTE_ATTACHMENTS_REFUSE
+	case "pass":
+		return pb.RemoteAttachments_REMOTE_ATTACHMENTS_PASS
+	default:
+		return pb.RemoteAttachments_REMOTE_ATTACHMENTS_INLINE
+	}
 }
 
 // binaryPolicy maps `redaction.binary` to the snapshot's enum. An unknown value
