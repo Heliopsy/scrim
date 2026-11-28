@@ -14,7 +14,7 @@ guard behind the LLM proxy, built with the data plane's default configuration.
 | --- | --- | --- |
 | Proxy overhead, pass-through engine | `proxy_overhead/passthrough/<size>` | What the LLM proxy adds on its own (codec plan, segmenting at verbatim spans, copying, guard hand-off) for Anthropic Messages bodies of about 100 KB, 1 MB and 4 MB |
 | Proxy overhead, production engine | `proxy_overhead/engine/<size>` | The same with the production engine wired in (1,000 secrets, hits), less the time spent inside its redactor and guard |
-| Added request latency, first sight | `request/<secrets>/<size>/<hits\|clean>` | `outgoing::prepare` with the production engine: redaction of every segment, then the guard over the outgoing bytes. 10, 1,000 and 10,000 secrets, on the redaction benchmark's bodies (prose, code, logs, env files and base64 blobs, one hit per 4 KiB). The guard's verdict cache is cleared before every sample, so every byte is checked and the cache's own cost is included |
+| Added request latency, first sight | `request/<secrets>/<size>/<hits\|clean>` | `outgoing::prepare` with the production engine: redaction of every segment, then the guard over the outgoing bytes. 10, 1,000 and 10,000 secrets, on the redaction benchmark's bodies (prose, code, logs, env files and base64 blobs, one hit per 4 KiB). The caches (guard verdicts, redactor segments, codec plans) are cleared before every sample, so every byte is planned, redacted and checked, and the caches' own cost is included |
 | Added request latency, next turn | `turn/<secrets>/1MB` | `outgoing::prepare` on an agent's next request right after the previous one: a 1 MB conversation built from the same messages, sent again with Claude Code's `cache_control` marker moved to the new last message and one exchange added (user text, assistant text and tool call, tool result) |
 | Redaction core | `core/protect/<secrets>/1MB/<hits\|clean>`, `core/redact_throughput/<secrets>/1MB`, `core/restore_chunk` | `scrim-redact` on its own, as its criterion benchmarks measure it: `Snapshot::protect` per request, single-thread redaction throughput, `BlockRestorer` per streamed text chunk |
 | Streamed chunks | `chunk/engine` | Time added per chunk while the proxy restores a 20,000-event Anthropic stream with the production placeholders, chunked at event and mid-event boundaries |
@@ -91,14 +91,21 @@ measured from a few runs on it.
 
 The spec's targets for added request latency (5 ms for 1 MB with 1,000 secrets, 10 ms with 10,000)
 apply to the next-turn measurement (`engine.next_turn_p99_ms`), which is what an agent sends: every
-request of a conversation repeats the ones before it. On ho-z10 it takes 3.9 to 8.8 ms at the
-median and 4.7 to 12 ms at p99 across runs, so its budgets are 10 ms (10 and 1,000 secrets) and
-12 ms (10,000), above the 5 ms target. About 1 ms of it is the guard; the rest is the codec's JSON plan and the
-redactor over the whole body, which are not cached. On a Xeon W-2295 workstation the same
-measurement is 3.7 to 5 ms at the median. A body seen for the first time has its own budgets
-(`engine.request_p99_ms` 40 ms, `core.protect_p99_ms` 30 ms): every byte goes through the guard's
-decoders, 7.6 to 21 ms at the median on ho-z10 (it was 24 to 29 ms before the decoder prefilters).
-[limitations.md](limitations.md#implementation) lists this.
+request of a conversation repeats the ones before it. Three caches keep that request from doing the
+previous one's work again: the guard's verdict cache, the redactor's segment cache and the codec
+plan cache (below). With them the next turn's budgets are the spec's targets for 10 and 1,000
+secrets (5 ms) and 7 ms for 10,000. On a Xeon W-2295 workstation, pinned to one core and measured
+against the same code without the redactor and plan caches, the next turn went from 3.3, 3.8 and 4.2
+ms to 2.0, 2.2 and 2.6 ms at the median (p99 3.7, 4.2 and 4.8 ms to 2.1, 2.5 and 3.0 ms) for 10,
+1,000 and 10,000 secrets. On ho-z10 the first run with the caches measured p50 4.1, 4.8 and 5.1 ms
+and p99 6.9, 7.0 and 8.4 ms while the runner ran 1.45 times slower than its reference (budgets
+stretched by that factor); unstretched that is about p99 4.8 ms at 1,000 secrets, so the 5 ms target
+holds on a quiet runner and not yet with margin on a loaded one. A body seen for the first time has
+its own budgets (`engine.request_p99_ms` 40 ms, `core.protect_p99_ms` 30 ms): every byte goes
+through the guard's decoders, 7.6 to 21 ms at the median on ho-z10 (it was 24 to 29 ms before the
+decoder prefilters). Filling the caches costs a first request about 1 ms per MB more (hashing what
+the next turn looks up), about 0.35 ms of it in the codec plan, which the proxy overhead measurement
+includes. [limitations.md](limitations.md#implementation) lists this.
 
 ## Guard verdict cache
 
@@ -119,9 +126,58 @@ new snapshot push) starts an empty one. A set with a value containing `,{` canno
 occurrences confined to a segment, and its guard does not cache. Bodies under 32 KiB are checked
 whole. `redaction.guard-cache: false` turns it off ([configuration.md](configuration.md#redactionguard-cache)).
 
-On the next-turn measurement the guard takes about 0.7 ms of the 3.7 to 5 ms on the workstation
-(finding the cuts, BLAKE3 over the body, the new segments); the rest is the codec plan and the
-redactor over the whole body.
+Hashing a few kilobytes at a time runs BLAKE3 at a fraction of its speed on tens of kilobytes, so
+the cache hashes runs of about eight segments first. A segment ends a run when its length and last
+16 bytes say so (or the run reaches 64 KiB), so the same segments group the same way wherever the
+body changed before them, and a run's ends are cuts like any other. Only the segments of a run not
+found whole are hashed and looked up one by one, so a new turn still has only its new segments
+checked. On the next-turn measurement the guard takes about 0.55 ms on the workstation (finding the
+cuts, BLAKE3 over the runs, the new segments).
+
+## Redactor segment cache
+
+The redactor cuts a body at the same kind of boundary (`X},{Y`, without the guard's dump-column
+rule) and keeps the hash of every segment in which it replaced nothing; a later body copies those
+segments as they are and redacts the rest. A segment with a replacement is never remembered by its
+bytes. Redacting the segments one by one gives the bytes redacting the body whole gives, provided
+no compiled pattern contains `,{` (otherwise the set does not cache) and no detector match can
+cross the cut: a rule whose pattern can match a `,` or a `{` (today the database URL password, found
+by parsing each rule's regular expression at build) rules out cuts within its longest match after
+one of its anchors, and so do an AWS access key id within the window its secret is searched in and
+a private key header within 16 KiB. The entropy detector and the encoded forms read runs without an
+anchor and turn the cache off, as do format-preserving placeholders and values that lie inside
+other values. `redact_cache.rs` gives the argument per rule; property tests check that segments,
+the cold cache, the warm cache and the whole body produce the same bytes and report the same hits
+in the same order (`redact_cache_tests.rs`), including values, tokens, URLs, key blocks and
+placeholders on both sides of a cut.
+
+A segment's 64-bit probe (its length and its first and last 32 bytes, mixed) is looked up before
+it is hashed, so a segment the cache never held (a new one, or one with a replacement) costs no
+BLAKE3 hash. Segments with replacements still save the detectors, which take more than half of the
+redactor's time: their matches are replaced first, and the hash of that output together with where
+its placeholders sit says whether the detectors found nothing over it before. That output holds
+placeholders, not values, like the bytes the guard hashes. The redaction benchmark's bodies hide a
+value in every tool result, so about three quarters of a next turn's bytes are in segments with a
+replacement; there the redactor takes about 1.5 ms per MB instead of 2.
+
+Both sets hold hashes and probes only, at most 65,536 entries each per redaction set, dropped with
+the snapshot. Bodies under 32 KiB are redacted whole. `redaction.redactor-cache: false` turns this
+cache and the plan cache off ([configuration.md](configuration.md#redactionredactor-cache)).
+
+## Codec plan cache
+
+The codec's plan (which spans of a request stay verbatim: signed thinking, redacted thinking, binary
+parts) needs a strict parse of the whole body, about 1 ms per MB. A message's plan depends on its
+bytes only, so the LLM proxy remembers runs of elements of the request's `messages`, `system` and
+`tools` arrays (Anthropic Messages): the BLAKE3 hash of a run's bytes, its length and its verbatim
+spans as offsets into it. A run ends at an element its last bytes pick, at 64 KiB, at an element
+with binary parts or attachment references (never remembered) and at the end of the array. On a
+later body the parser steps over a run it finds at an element start without reading it, and the plan
+adds the remembered spans; the bytes around skipped runs are still checked for valid UTF-8 before
+any JSON error is reported, as a full parse does. Plans and errors are the same with the cache on or
+off (`plan_cache_tests.rs`, with turns edited, reordered and duplicated). The cache holds at most a
+quarter of `redaction.redactor-cache`'s entries, belongs to the snapshot and follows that setting.
+On the next-turn measurement planning takes about 0.3 ms instead of 1.
 
 ## Regression check
 

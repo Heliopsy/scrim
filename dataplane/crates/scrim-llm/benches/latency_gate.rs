@@ -260,6 +260,10 @@ impl Redactor for TimedRedactor {
             .fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
         r
     }
+
+    fn plan_cache(&self) -> Option<&scrim_llm::codec::PlanCache> {
+        self.0.plan_cache()
+    }
 }
 
 /// Adds the time spent in the wrapped guard to a shared counter.
@@ -272,6 +276,16 @@ impl Guard for TimedGuard {
         self.1
             .fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
         r
+    }
+}
+
+/// Forgets what the caches remember (guard verdicts, redactor segments, codec plans), so the
+/// next request through `snap` is seen for the first time.
+fn forget(core: &rc::Snapshot, snap: &Snapshot) {
+    core.guard().clear_cache();
+    core.redactor().clear_cache();
+    if let Some(p) = snap.redactor.plan_cache() {
+        p.clear();
     }
 }
 
@@ -796,7 +810,7 @@ fn main() {
     // ---- Proxy overhead with the production engine.
     if want("overhead") {
         println!(
-            "\n## Proxy overhead, production engine\n\nThe same with the production engine wired in (1,000 secrets, one hit per ~4 KB tool result), less the time spent inside its redactor and guard.\n\n| body | p50 | p99 | budget (p99) | dropped |\n|---|---|---|---|---|"
+            "\n## Proxy overhead, production engine\n\nThe same with the production engine wired in (1,000 secrets, one hit per ~4 KB tool result), less the time spent inside its redactor and guard. The codec plan cache is cleared before every sample, so each body is planned in full and remembered.\n\n| body | p50 | p99 | budget (p99) | dropped |\n|---|---|---|---|---|"
         );
         let (eng1k_timed, spent) = timed(&engine(core1k, 1000));
         for &size in sizes {
@@ -806,6 +820,11 @@ fn main() {
                 outgoing::prepare(&eng1k_timed, Api::AnthropicMessages, &body).unwrap();
             }
             let r = sampler.run(per_round(size, false), ms, || {
+                // The proxy's own cache is cleared, so every body is planned in full; the
+                // engine's time, caches or not, is subtracted.
+                if let Some(p) = eng1k_timed.redactor.plan_cache() {
+                    p.clear();
+                }
                 spent.store(0, Ordering::Relaxed);
                 let t = Instant::now();
                 let o = outgoing::prepare(&eng1k_timed, Api::AnthropicMessages, &body).unwrap();
@@ -835,7 +854,7 @@ fn main() {
     // ---- Added request latency through the proxy, production engine.
     if want("request") {
         println!(
-            "\n## Added request latency, production engine\n\n`outgoing::prepare` with the `scrim-redact` redactor and guard, on the redaction benchmark's request bodies (prose, code, logs, env files, base64 blobs; one hit per 4 KiB). Each body is seen for the first time: the guard's verdict cache is cleared before every sample, so every byte is checked and the cache's own cost (cuts, hashes) is included.\n\n| secrets | body | hits | p50 | p99 | budget (p99) | dropped |\n|---|---|---|---|---|---|---|"
+            "\n## Added request latency, production engine\n\n`outgoing::prepare` with the `scrim-redact` redactor and guard, on the redaction benchmark's request bodies (prose, code, logs, env files, base64 blobs; one hit per 4 KiB). Each body is seen for the first time: the caches (guard verdicts, redactor segments, codec plans) are cleared before every sample, so every byte is planned, redacted and checked, and the caches' own cost (cuts, hashes) is included.\n\n| secrets | body | hits | p50 | p99 | budget (p99) | dropped |\n|---|---|---|---|---|---|---|"
         );
         for (n, set, c) in &cores {
             let (n, set) = (*n, set.as_slice());
@@ -848,8 +867,8 @@ fn main() {
                         outgoing::prepare(&snap, Api::AnthropicMessages, &body).unwrap();
                     }
                     let r = sampler.run(per_round(size, false), ms, || {
-                        // First sight: the guard's verdict cache holds nothing of this body.
-                        c.guard().clear_cache();
+                        // First sight: no cache holds anything of this body.
+                        forget(c, &snap);
                         let t = Instant::now();
                         let o = outgoing::prepare(&snap, Api::AnthropicMessages, &body).unwrap();
                         let d = t.elapsed();
@@ -882,7 +901,7 @@ fn main() {
     // ---- An agent's next turn: the previous request again plus a new exchange.
     if want("turn") {
         println!(
-            "\n## Next turn of a conversation, production engine\n\n`outgoing::prepare` on turn N+1 of a conversation right after turn N: turn N is a 1 MB Anthropic Messages body (the redaction benchmark's messages, with hits), turn N+1 repeats it, moves the `cache_control` marker to its new last message as Claude Code does, and adds one exchange (user text, assistant text and tool call, tool result). The guard's verdict cache is cleared before turn N, which is not timed.\n\n| secrets | turn N | turn N+1 | new bytes | p50 | p99 | budget (p99) | dropped |\n|---|---|---|---|---|---|---|---|"
+            "\n## Next turn of a conversation, production engine\n\n`outgoing::prepare` on turn N+1 of a conversation right after turn N: turn N is a 1 MB Anthropic Messages body (the redaction benchmark's messages, with hits), turn N+1 repeats it, moves the `cache_control` marker to its new last message as Claude Code does, and adds one exchange (user text, assistant text and tool call, tool result). The caches (guard verdicts, redactor segments, codec plans) are cleared before turn N, which is not timed.\n\n| secrets | turn N | turn N+1 | new bytes | p50 | p99 | budget (p99) | dropped |\n|---|---|---|---|---|---|---|---|"
         );
         for (n, set, c) in &cores {
             let (n, set) = (*n, set.as_slice());
@@ -890,12 +909,12 @@ fn main() {
             let (prev, next) = next_turn(n, set, 1 << 20);
             let new_bytes = next.len() - prev.len();
             for _ in 0..2 {
-                c.guard().clear_cache();
+                forget(c, &snap);
                 outgoing::prepare(&snap, Api::AnthropicMessages, &prev).unwrap();
                 outgoing::prepare(&snap, Api::AnthropicMessages, &next).unwrap();
             }
             let r = sampler.run(per_round(1 << 20, false), ms, || {
-                c.guard().clear_cache();
+                forget(c, &snap);
                 std::hint::black_box(
                     outgoing::prepare(&snap, Api::AnthropicMessages, &prev).unwrap(),
                 );
@@ -932,7 +951,7 @@ fn main() {
     // ---- The redaction core on its own.
     if want("core") {
         println!(
-            "\n## Redaction core (`scrim-redact`)\n\n`Snapshot::protect` per 1 MB request seen for the first time (redaction and guard, both split over threads for large bodies, as the tool proxy runs them), `Redactor::redact` throughput on one core, and `BlockRestorer` per streamed text chunk.\n\n| measurement | secrets | p50 | p99 | budget | dropped |\n|---|---|---|---|---|---|"
+            "\n## Redaction core (`scrim-redact`)\n\n`Snapshot::protect` per 1 MB request seen for the first time (redaction and guard, both split over threads for large bodies, as the tool proxy runs them), `Redactor::redact` throughput on one core without its segment cache, and `BlockRestorer` per streamed text chunk.\n\n| measurement | secrets | p50 | p99 | budget | dropped |\n|---|---|---|---|---|---|"
         );
         for (n, set, c) in &cores {
             let size = 1 << 20;
@@ -944,6 +963,7 @@ fn main() {
                 }
                 let r = sampler.run(per_round(size, false), ms, || {
                     c.guard().clear_cache();
+                    c.redactor().clear_cache();
                     let t = Instant::now();
                     let len = c.protect(&body, &mut ws).unwrap().bytes.len();
                     let d = t.elapsed();
@@ -972,7 +992,9 @@ fn main() {
             let mut out = Vec::with_capacity(body.len() * 2);
             let r = sampler.run(per_round(size, true).min(100), 1.0, || {
                 let t = Instant::now();
-                c.redactor().redact(&body, &mut out).unwrap();
+                c.redactor()
+                    .redact_whole_with(&body, &mut out, &mut |_| {})
+                    .unwrap();
                 t.elapsed()
             });
             let mbps: Vec<f64> = r.p50.iter().map(|s| body.len() as f64 / 1e6 / s).collect();
@@ -1096,7 +1118,7 @@ fn main() {
             let body = redact_bench_body(size, 1000, set1k, true);
             let n = per_round(size, false);
             let off = sampler.run(n, ms, || {
-                core1k.guard().clear_cache();
+                forget(core1k, &snap1k);
                 let t = Instant::now();
                 let o = outgoing::prepare(&snap1k, Api::AnthropicMessages, &body).unwrap();
                 let d = t.elapsed();
@@ -1104,7 +1126,7 @@ fn main() {
                 d
             });
             let on = sampler.run(n, ms, || {
-                core1k.guard().clear_cache();
+                forget(core1k, &snap1k);
                 let t = Instant::now();
                 let rm = metrics.route("anthropic", "anthropic");
                 rm.body_bytes(body.len());

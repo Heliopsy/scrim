@@ -450,11 +450,10 @@ latency under 5 ms for a 1 MB body with 1,000 secrets and under 10 ms with 10,00
 per streamed chunk. The latency gate measures the production engine and fails CI and the release
 when a value misses its budget in `dataplane/crates/scrim-llm/benches/budget.json` in two runs;
 its comparison with the previous release's published results is a report, not a gate. An agent's
-next request resends the whole conversation, and the guard keeps hashes of the parts it found
-clean, so it checks only what is new: the request targets apply to that next-turn measurement. On
-the reference runner it takes 4.7 to 12 ms at p99 across runs, so the 5 ms target is not met
-reliably; most of it is the codec's JSON plan and the redactor. A 1 MB body seen for the first
-time takes 10 to 27 ms
+next request resends the whole conversation, so the guard, the redactor and the codec plan keep
+hashes of what they already went through (never bytes or values) and only the new parts are parsed,
+redacted and checked: the request targets apply to that next-turn measurement, whose budgets are the
+spec's targets. A 1 MB body seen for the first time takes 10 to 27 ms at p99 on the reference runner
 ([docs/performance.md](docs/performance.md), [docs/limitations.md](docs/limitations.md#implementation)).
 
 Each release attaches the numbers measured for it: `scrim_<version>_results_latency-gate.md` and

@@ -22,6 +22,8 @@ use std::sync::Arc;
 
 use scrim_redact as rc;
 
+use crate::codec::PlanCache;
+
 use crate::engine::{
     BinaryPolicy, EngineError, Guard, GuardVerdict, PlaceholderMatch, Placeholders, RedactReport,
     Redactor, RemotePolicy, Resolved, RestorePolicy, ScopedRedaction, SecretRef, SecretValue,
@@ -31,6 +33,8 @@ use crate::engine::{
 struct Inner {
     snap: Arc<rc::Snapshot>,
     refs: HashMap<rc::EntryId, SecretRef>,
+    /// Plans of conversation elements seen under this snapshot.
+    plan_cache: Option<PlanCache>,
 }
 
 impl Inner {
@@ -82,8 +86,12 @@ impl CoreEngine {
         snap: Arc<rc::Snapshot>,
         refs: impl IntoIterator<Item = (rc::EntryId, SecretRef)>,
     ) -> Self {
+        // The plan cache follows `redaction.redactor-cache`, a quarter of its size: it holds
+        // whole messages, the redactor's segments are content blocks.
+        let entries = snap.redactor().cache_entries();
         Self {
             inner: Arc::new(Inner {
+                plan_cache: (entries > 0).then(|| PlanCache::new((entries / 4).max(1))),
                 snap,
                 refs: refs.into_iter().collect(),
             }),
@@ -134,12 +142,10 @@ impl Redactor for CoreRedactor {
         let inner = &self.0;
         let mut ids: Vec<rc::EntryId> = Vec::new();
         let mut detectors: Vec<String> = Vec::new();
-        // The core writes into a cleared buffer; the trait appends.
-        let mut seg = Vec::new();
         let stats = inner
             .snap
             .redactor()
-            .redact_with(input, &mut seg, &mut |hit| match hit {
+            .redact_append_with(input, out, &mut |hit| match hit {
                 rc::Hit::Known { meta, .. } => {
                     if !ids.contains(&meta.id) {
                         ids.push(meta.id);
@@ -152,12 +158,15 @@ impl Redactor for CoreRedactor {
                 }
             })
             .map_err(|e| EngineError::new(e.to_string()))?;
-        out.extend_from_slice(&seg);
         Ok(RedactReport {
             replacements: usize::try_from(stats.total()).unwrap_or(usize::MAX),
             refs: ids.into_iter().map(|id| inner.reference_of(id)).collect(),
             detectors,
         })
+    }
+
+    fn plan_cache(&self) -> Option<&PlanCache> {
+        self.0.plan_cache.as_ref()
     }
 }
 

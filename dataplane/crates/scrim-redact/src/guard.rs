@@ -220,6 +220,14 @@ pub struct GuardScratch {
     seg_cuts: Vec<usize>,
     seg_keys: Vec<Key>,
     seg_known: Vec<bool>,
+    /// Runs of segments (first, end) and their keys and cache answers.
+    seg_runs: Vec<(usize, usize)>,
+    run_keys: Vec<Key>,
+    run_known: Vec<bool>,
+    /// Segments of runs not known, their keys and cache answers.
+    seg_idx: Vec<usize>,
+    seg_sub: Vec<Key>,
+    seg_sub_known: Vec<bool>,
 }
 
 /// Buffers of one worker, which checks one region of the body.
@@ -700,8 +708,10 @@ impl Guard {
         let mut cuts = std::mem::take(&mut s.seg_cuts);
         let mut keys = std::mem::take(&mut s.seg_keys);
         let mut known = std::mem::take(&mut s.seg_known);
+        let mut runs = std::mem::take(&mut s.seg_runs);
+        let mut run_keys = std::mem::take(&mut s.run_keys);
+        let mut run_known = std::mem::take(&mut s.run_known);
         cuts.clear();
-        keys.clear();
         guard_cache::cuts(bytes, &mut cuts);
         let seg = |i: usize| {
             let a = if i == 0 { 0 } else { cuts[i - 1] };
@@ -709,11 +719,41 @@ impl Guard {
             (a, b)
         };
         let n = cuts.len() + 1;
-        keys.extend((0..n).map(|i| {
-            let (a, b) = seg(i);
-            *blake3::hash(&bytes[a..b]).as_bytes()
-        }));
-        cache.lookup(&keys, &mut known);
+        // Runs of segments first, hashed whole; the segments of a run not known are looked up
+        // one by one, so only the segments not seen before are checked.
+        runs.clear();
+        guard_cache::runs(bytes, &cuts, &mut runs);
+        run_keys.clear();
+        run_keys.extend(
+            runs.iter()
+                .map(|&(f, e)| *blake3::hash(&bytes[seg(f).0..seg(e - 1).1]).as_bytes()),
+        );
+        cache.lookup(&run_keys, &mut run_known);
+        keys.clear();
+        keys.resize(n, [0; 32]);
+        known.clear();
+        known.resize(n, true);
+        for (&(f, e), _) in runs.iter().zip(&run_known).filter(|(_, k)| !**k) {
+            for i in f..e {
+                keys[i] = *blake3::hash(&bytes[seg(i).0..seg(i).1]).as_bytes();
+            }
+        }
+        let mut idx = std::mem::take(&mut s.seg_idx);
+        let mut sub = std::mem::take(&mut s.seg_sub);
+        let mut sub_known = std::mem::take(&mut s.seg_sub_known);
+        idx.clear();
+        for (&(f, e), _) in runs.iter().zip(&run_known).filter(|(_, k)| !**k) {
+            idx.extend(f..e);
+        }
+        sub.clear();
+        sub.extend(idx.iter().map(|&i| keys[i]));
+        cache.lookup(&sub, &mut sub_known);
+        for (&i, &k) in idx.iter().zip(&sub_known) {
+            known[i] = k;
+        }
+        s.seg_idx = idx;
+        s.seg_sub = sub;
+        s.seg_sub_known = sub_known;
         let mut clean = true;
         let mut hits = std::mem::take(&mut s.recheck);
         let mut i = 0;
@@ -722,7 +762,7 @@ impl Guard {
                 i += 1;
                 continue;
             }
-            // A run of segments not seen before, checked as one piece.
+            // Segments not seen before, next to each other, checked as one piece.
             let a = seg(i).0;
             while i < n && !known[i] {
                 i += 1;
@@ -733,17 +773,23 @@ impl Guard {
             clean = hits.is_empty();
         }
         s.recheck = hits;
-        if clean && known.iter().any(|k| !k) {
-            cache.insert(
-                keys.iter()
-                    .zip(&known)
-                    .filter(|(_, k)| !**k)
-                    .map(|(k, _)| *k),
-            );
+        if clean && run_known.iter().any(|k| !k) {
+            let new_runs = run_keys.iter().zip(&run_known).filter(|(_, k)| !**k);
+            let new_segs = runs
+                .iter()
+                .zip(&run_known)
+                .filter(|(_, k)| !**k)
+                .flat_map(|(&(f, e), _)| f..e)
+                .filter(|&i| !known[i])
+                .map(|i| keys[i]);
+            cache.insert(new_runs.map(|(k, _)| *k).chain(new_segs));
         }
         s.seg_cuts = cuts;
         s.seg_keys = keys;
         s.seg_known = known;
+        s.seg_runs = runs;
+        s.run_keys = run_keys;
+        s.run_known = run_known;
         clean
     }
 

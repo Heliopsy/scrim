@@ -9,8 +9,11 @@ use zeroize::Zeroizing;
 use crate::detect::{DetectorConfig, Detectors};
 use crate::error::{BuildError, Error};
 use crate::guard::{Guard, GuardFinding, GuardInput, GuardScratch, Verdict};
+use crate::guard_cache::{Key, SegmentCache};
 use crate::matcher::{Cursor, Engine, EngineChoice, EngineKind, Match, PatternSet, build_engine};
 use crate::placeholder::{Keyring, MAX_PLACEHOLDER_LEN, write_placeholder};
+use crate::redact_cache;
+use crate::redact_cache::ProbeCache;
 use crate::restore::{Resolver, ResolverEntry, Shaped};
 use crate::secret::{Entry, EntryId, EntryMeta, RefSlug, ValueClass};
 use crate::shape::shaped_placeholder_for;
@@ -61,6 +64,11 @@ pub struct Config {
     /// turn resends the conversation) has only its new segments checked. 0 turns the cache
     /// off. The verdicts are the same either way; only BLAKE3 hashes are kept, never bytes.
     pub guard_cache_entries: usize,
+    /// `redaction.redactor-cache` (default on, 65,536 segments): how many segment hashes the
+    /// redactor keeps of segments in which it replaced nothing, so a body that repeats an earlier
+    /// one has only its other segments redacted. 0 turns the cache off. The output is the same
+    /// either way; only BLAKE3 hashes are kept, never bytes, values or positions.
+    pub redact_cache_entries: usize,
 }
 
 impl Default for Config {
@@ -77,6 +85,7 @@ impl Default for Config {
             parallel_threads: 4,
             parallel_min_bytes: 512 << 10,
             guard_cache_entries: 1 << 16,
+            redact_cache_entries: 1 << 16,
         }
     }
 }
@@ -116,6 +125,43 @@ impl Stats {
     /// Total replacements.
     pub fn total(&self) -> u32 {
         self.credential + self.display + self.detected
+    }
+
+    fn add(&mut self, o: Self) {
+        self.credential += o.credential;
+        self.display += o.display;
+        self.detected += o.detected;
+    }
+}
+
+impl Hit<'_> {
+    /// Start and end offsets in the input.
+    pub fn span(&self) -> (usize, usize) {
+        match *self {
+            Self::Known { start, end, .. } | Self::Detected { start, end, .. } => (start, end),
+        }
+    }
+
+    /// The same hit `by` bytes further into the input.
+    fn shifted(self, by: usize) -> Self {
+        match self {
+            Self::Known {
+                meta,
+                variant,
+                start,
+                end,
+            } => Self::Known {
+                meta,
+                variant,
+                start: start + by,
+                end: end + by,
+            },
+            Self::Detected { rule, start, end } => Self::Detected {
+                rule,
+                start: start + by,
+                end: end + by,
+            },
+        }
     }
 }
 
@@ -167,6 +213,91 @@ pub struct Redactor {
     parallel_min: usize,
     /// Set when some value lies inside a longer one (see [`Nested`]).
     nested: Option<Nested>,
+    /// Hashes of segments in which nothing was replaced (see [`crate::redact_cache`]); `None`
+    /// when the cache is off or this snapshot cannot use it.
+    cache: Option<ProbeCache>,
+    /// Hashes of first-phase outputs of segments with replacements over which the detectors found
+    /// nothing (see [`crate::redact_cache`]); with `cache`.
+    det_cache: Option<SegmentCache>,
+    /// `redaction.redactor-cache` as configured (entries, 0 when off).
+    cache_entries: usize,
+}
+
+/// What the first phase of [`Redactor::redact_segments`] made of a run, in order: input ranges
+/// copied as they are (the detectors have not run over them yet) and the replaced matches.
+/// Positions only, so the buffer is kept between calls.
+#[derive(Clone, Copy)]
+enum Piece {
+    Gap {
+        input: (usize, usize),
+        out: usize,
+    },
+    Replaced {
+        input: (usize, usize),
+        out: (usize, usize),
+        /// Entry index and form of the match, for its [`Hit`].
+        owner: u32,
+        variant: Variant,
+    },
+}
+
+fn piece_start(p: &Piece) -> usize {
+    match *p {
+        Piece::Gap { input, .. } | Piece::Replaced { input, .. } => input.0,
+    }
+}
+
+fn piece_end(p: &Piece) -> usize {
+    match *p {
+        Piece::Gap { input, .. } | Piece::Replaced { input, .. } => input.1,
+    }
+}
+
+/// Where input position `x` of a run lands in its first-phase output, from the pieces around it.
+/// Matches never cross a segment cut, so a cut is inside a gap or at a piece's end.
+fn out_pos(pieces: &[Piece], x: usize) -> usize {
+    for p in pieces {
+        match *p {
+            Piece::Gap { input: (f, t), out } if f <= x && x <= t => return out + (x - f),
+            Piece::Replaced {
+                input: (f, t),
+                out: (a, b),
+                ..
+            } if x == f || x == t => return if x == f { a } else { b },
+            _ => {}
+        }
+    }
+    pieces.last().map_or(0, |p| match *p {
+        Piece::Gap { input: (f, t), out } => out + (t - f),
+        Piece::Replaced { out: (_, b), .. } => b,
+    })
+}
+
+/// Buffers of the two phases over a run of segments.
+#[derive(Default)]
+struct PhaseScratch {
+    /// First-phase output of a run (request bytes with placeholders; wiped after each call).
+    orun: Vec<u8>,
+    pieces: Vec<Piece>,
+    spans: Vec<(usize, usize)>,
+    dkeys: Vec<Option<(Key, usize, usize)>>,
+    dknown: Vec<bool>,
+    dlist: Vec<Key>,
+    danswers: Vec<bool>,
+    clean_now: Vec<Key>,
+}
+
+/// Buffers of the segmented redaction, reused per thread. They hold positions and hashes only.
+#[derive(Default)]
+struct SegScratch {
+    phase: PhaseScratch,
+    pem: Vec<usize>,
+    cuts: Vec<usize>,
+    probes: Vec<u64>,
+    keys: Vec<Key>,
+    maybe: Vec<bool>,
+    known: Vec<bool>,
+    hit: Vec<bool>,
 }
 
 /// Values that lie inside longer values (`test` inside `sk-test-...`, ASCII case ignored).
@@ -281,6 +412,8 @@ thread_local! {
     /// Guard buffers for [`Redactor::widen`], reused per thread and wiped after every use.
     static WIDEN_SCRATCH: std::cell::RefCell<GuardScratch> =
         std::cell::RefCell::new(GuardScratch::new());
+    /// Buffers of [`Redactor::redact_segments`].
+    static SEG_SCRATCH: std::cell::RefCell<SegScratch> = std::cell::RefCell::default();
 }
 
 /// A replacement decided by [`Redactor::widen`]: input range and entry index.
@@ -419,7 +552,59 @@ impl Redactor {
         out: &mut Vec<u8>,
         on_hit: &mut dyn FnMut(Hit<'_>),
     ) -> Result<Stats, Error> {
+        out.clear();
         self.redact_core(input, out, &mut |h| on_hit(h), None)
+    }
+
+    /// Like [`Redactor::redact_with`], but appends to `out` instead of clearing it first.
+    pub fn redact_append_with(
+        &self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        on_hit: &mut dyn FnMut(Hit<'_>),
+    ) -> Result<Stats, Error> {
+        self.redact_core(input, out, &mut |h| on_hit(h), None)
+    }
+
+    /// [`Redactor::redact_with`] without the segment cache: the whole input is redacted. The
+    /// output is the same; tests compare the two.
+    pub fn redact_whole_with(
+        &self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        on_hit: &mut dyn FnMut(Hit<'_>),
+    ) -> Result<Stats, Error> {
+        out.clear();
+        self.redact_whole(input, out, &mut |h| on_hit(h), None)
+    }
+
+    /// Whether the segment cache is in use for this redactor.
+    pub fn caches(&self) -> bool {
+        self.cache.is_some()
+    }
+
+    /// The configured size of the segment cache (`redaction.redactor-cache`), 0 when it is off,
+    /// whether or not this snapshot can use it. Callers size caches of their own that follow the
+    /// same setting with it.
+    pub fn cache_entries(&self) -> usize {
+        self.cache_entries
+    }
+
+    /// Forgets every segment remembered, so the next redaction sees every body for the first
+    /// time (benchmarks of the first request of a conversation).
+    pub fn clear_cache(&self) {
+        if let Some(c) = &self.cache {
+            c.clear();
+        }
+        if let Some(c) = &self.det_cache {
+            c.clear();
+        }
+    }
+
+    /// Segments remembered.
+    #[cfg(test)]
+    pub(crate) fn cache_len(&self) -> usize {
+        self.cache.as_ref().map_or(0, ProbeCache::len)
     }
 
     /// [`Redactor::redact`] for [`Snapshot::protect`]: on bodies of at least
@@ -430,10 +615,258 @@ impl Redactor {
         out: &mut Vec<u8>,
         ms: &mut MatchScratch,
     ) -> Result<Stats, Error> {
+        out.clear();
         self.redact_core(input, out, &mut |_| {}, Some(ms))
     }
 
+    /// Appends the redaction of `input` to `out`, with the segment cache when it applies.
     fn redact_core<'r>(
+        &'r self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        on_hit: &mut dyn FnMut(Hit<'r>),
+        ms: Option<&mut MatchScratch>,
+    ) -> Result<Stats, Error> {
+        if let Some(cache) = &self.cache
+            && input.len() >= redact_cache::MIN_BYTES
+            && input.len() <= self.max_input
+        {
+            return SEG_SCRATCH.with(|cell| match cell.try_borrow_mut() {
+                Ok(mut s) => self.redact_segments(cache, input, out, on_hit, ms, &mut s),
+                // Re-entered on the same thread (never expected): use fresh buffers.
+                Err(_) => {
+                    self.redact_segments(cache, input, out, on_hit, ms, &mut SegScratch::default())
+                }
+            });
+        }
+        self.redact_whole(input, out, on_hit, ms)
+    }
+
+    /// The segmented redaction (see [`crate::redact_cache`]): segments known to hold nothing are
+    /// copied, runs of the others are redacted as one piece each, and the segments of those in
+    /// which nothing was replaced are remembered.
+    fn redact_segments<'r>(
+        &'r self,
+        cache: &ProbeCache,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        on_hit: &mut dyn FnMut(Hit<'r>),
+        mut ms: Option<&mut MatchScratch>,
+        s: &mut SegScratch,
+    ) -> Result<Stats, Error> {
+        s.cuts.clear();
+        redact_cache::cuts(input, &self.detectors, &mut s.pem, &mut s.cuts);
+        let cuts = &s.cuts;
+        let n = cuts.len() + 1;
+        let seg = |i: usize| {
+            let a = if i == 0 { 0 } else { cuts[i - 1] };
+            let b = cuts.get(i).copied().unwrap_or(input.len());
+            (a, b)
+        };
+        // Probes first; only segments whose probe the cache holds are hashed now.
+        s.probes.clear();
+        s.probes
+            .extend((0..n).map(|i| redact_cache::probe(&input[seg(i).0..seg(i).1])));
+        cache.candidates(&s.probes, &mut s.maybe);
+        s.keys.clear();
+        s.keys.extend((0..n).map(|i| {
+            if s.maybe[i] {
+                *blake3::hash(&input[seg(i).0..seg(i).1]).as_bytes()
+            } else {
+                [0; 32]
+            }
+        }));
+        cache.confirm(&s.probes, &s.keys, &s.maybe, &mut s.known);
+        s.hit.clear();
+        s.hit.resize(n, false);
+        out.reserve(input.len() + input.len() / 16 + MAX_PLACEHOLDER_LEN);
+        let det_cache = self.det_cache.as_ref();
+        let PhaseScratch {
+            orun,
+            pieces,
+            spans,
+            dkeys,
+            dknown,
+            dlist,
+            danswers,
+            clean_now,
+        } = &mut s.phase;
+        let mut st = Stats::default();
+        let mut i = 0;
+        while i < n {
+            if s.known[i] {
+                let (a, b) = seg(i);
+                out.extend_from_slice(&input[a..b]);
+                i += 1;
+                continue;
+            }
+            // A run of segments not known: its matches are replaced as in one piece, then the
+            // detectors run per segment, except over a segment whose output (with where its
+            // placeholders sit) is known to hold nothing for them.
+            let first = i;
+            while i < n && !s.known[i] {
+                i += 1;
+            }
+            let (a, b) = (seg(first).0, seg(i - 1).1);
+            let run = &input[a..b];
+            // The bytes of the last run are overwritten before the next one is written.
+            let used = orun.len();
+            orun.clear();
+            orun.resize(used, 0);
+            orun.clear();
+            pieces.clear();
+            st.add(self.redact_pass(
+                run,
+                orun,
+                &mut |_| {},
+                ms.as_deref_mut(),
+                &[],
+                None,
+                Some(pieces),
+            )?);
+            // Each segment's pieces and, with replacements, its detector key.
+            let mut at = 0;
+            spans.clear();
+            dkeys.clear();
+            for j in first..i {
+                let (ra, rb) = (seg(j).0 - a, seg(j).1 - a);
+                while at < pieces.len()
+                    && piece_end(&pieces[at]) <= ra
+                    && piece_end(&pieces[at]) < rb
+                {
+                    at += 1;
+                }
+                let mut to = at;
+                while to < pieces.len() && piece_start(&pieces[to]) < rb {
+                    to += 1;
+                }
+                spans.push((at, to));
+                let replaced = pieces[at..to]
+                    .iter()
+                    .any(|p| matches!(p, Piece::Replaced { .. }));
+                dkeys.push(match det_cache {
+                    Some(_) if replaced => {
+                        let (oa, ob) = (out_pos(&pieces[at..to], ra), out_pos(&pieces[at..to], rb));
+                        let mut h = blake3::Hasher::new();
+                        h.update(&orun[oa..ob]);
+                        for p in &pieces[at..to] {
+                            if let Piece::Replaced { out: (x, y), .. } = *p {
+                                h.update(&u64::try_from(x - oa).unwrap_or(u64::MAX).to_le_bytes());
+                                h.update(&u64::try_from(y - oa).unwrap_or(u64::MAX).to_le_bytes());
+                            }
+                        }
+                        Some((*h.finalize().as_bytes(), oa, ob))
+                    }
+                    _ => None,
+                });
+                at = to.saturating_sub(1);
+            }
+            dknown.clear();
+            if let Some(dc) = det_cache {
+                dlist.clear();
+                dlist.extend(dkeys.iter().flatten().map(|k| k.0));
+                dc.lookup(dlist, danswers);
+                let mut it = danswers.iter().copied();
+                dknown.extend(
+                    dkeys
+                        .iter()
+                        .map(|k| k.is_some() && it.next().unwrap_or(false)),
+                );
+            } else {
+                dknown.resize(i - first, false);
+            }
+            clean_now.clear();
+            for (k, j) in (first..i).enumerate() {
+                let (ra, rb) = (seg(j).0 - a, seg(j).1 - a);
+                let (pa, pb) = spans[k];
+                let mut found = false;
+                if dknown[k]
+                    && let Some((_, oa, ob)) = dkeys[k]
+                {
+                    out.extend_from_slice(&orun[oa..ob]);
+                    for p in &pieces[pa..pb] {
+                        if let Some(hit) = self.piece_hit(p) {
+                            on_hit(hit.shifted(a));
+                        }
+                    }
+                    s.hit[j] = true;
+                    continue;
+                }
+                let mut detected = false;
+                for p in &pieces[pa..pb] {
+                    match *p {
+                        Piece::Gap { input: (f, t), .. } => {
+                            let (f, t) = (f.max(ra), t.min(rb));
+                            self.gap(run, f, t, out, &mut st, &mut |h| {
+                                detected = true;
+                                on_hit(h.shifted(a));
+                            });
+                        }
+                        Piece::Replaced { out: (x, y), .. } => {
+                            out.extend_from_slice(&orun[x..y]);
+                            if let Some(hit) = self.piece_hit(p) {
+                                on_hit(hit.shifted(a));
+                            }
+                            found = true;
+                        }
+                    }
+                }
+                if found || detected {
+                    s.hit[j] = true;
+                }
+                if found
+                    && !detected
+                    && let Some((key, _, _)) = dkeys[k]
+                {
+                    clean_now.push(key);
+                }
+            }
+            if let Some(dc) = det_cache
+                && !clean_now.is_empty()
+            {
+                dc.insert(clean_now.drain(..));
+            }
+        }
+        // The first phase held detector matches not yet replaced: overwrite them.
+        let used = orun.len();
+        orun.clear();
+        orun.resize(used, 0);
+        orun.clear();
+        // Remember the segments redacted now in which nothing was replaced.
+        let fresh = |i: &usize| !s.known[*i] && !s.hit[*i];
+        if (0..n).any(|i| fresh(&i)) {
+            cache.insert((0..n).filter(fresh).map(|i| {
+                let key = if s.maybe[i] {
+                    s.keys[i]
+                } else {
+                    *blake3::hash(&input[seg(i).0..seg(i).1]).as_bytes()
+                };
+                (s.probes[i], key)
+            }));
+        }
+        Ok(st)
+    }
+
+    /// The hit a replaced piece stands for.
+    fn piece_hit(&self, p: &Piece) -> Option<Hit<'_>> {
+        match *p {
+            Piece::Replaced {
+                input: (start, end),
+                owner,
+                variant,
+                ..
+            } => Some(Hit::Known {
+                meta: &self.entries[owner as usize].meta,
+                variant,
+                start,
+                end,
+            }),
+            Piece::Gap { .. } => None,
+        }
+    }
+
+    /// Appends the redaction of the whole of `input` to `out`.
+    fn redact_whole<'r>(
         &'r self,
         input: &[u8],
         out: &mut Vec<u8>,
@@ -441,11 +874,12 @@ impl Redactor {
         mut ms: Option<&mut MatchScratch>,
     ) -> Result<Stats, Error> {
         if self.nested.is_none() {
-            return self.redact_pass(input, out, on_hit, ms, &[], None);
+            return self.redact_pass(input, out, on_hit, ms, &[], None, None);
         }
         // Hits are held back until it is known whether a second pass replaces them.
         let mut hits: Vec<Hit<'r>> = Vec::new();
         let mut inner = Vec::new();
+        let base = out.len();
         let st = self.redact_pass(
             input,
             out,
@@ -453,6 +887,7 @@ impl Redactor {
             ms.as_deref_mut(),
             &[],
             Some(&mut inner),
+            None,
         )?;
         let widen = if inner.is_empty() {
             Vec::new()
@@ -466,8 +901,9 @@ impl Redactor {
             return Ok(st);
         }
         // The first output cut a longer value apart; it never leaves this function.
-        zeroize::Zeroize::zeroize(out);
-        self.redact_pass(input, out, on_hit, ms, &widen, None)
+        zeroize::Zeroize::zeroize(&mut out[base..]);
+        out.truncate(base);
+        self.redact_pass(input, out, on_hit, ms, &widen, None, None)
     }
 
     /// Asks the guard what it reads around each match of a nested value (`inner`, input ranges)
@@ -535,6 +971,7 @@ impl Redactor {
     /// One pass over `input`. Matches overlapping a `widen` range are replaced together with it
     /// by that range's value. With `inner`, records every match of a nested value as
     /// `(start, end, reach)`.
+    #[allow(clippy::too_many_arguments, reason = "one pass, three optional roles")]
     fn redact_pass<'r>(
         &'r self,
         input: &[u8],
@@ -543,11 +980,11 @@ impl Redactor {
         ms: Option<&mut MatchScratch>,
         widen: &[Widen],
         mut inner: Option<&mut Vec<(usize, usize, u32)>>,
+        mut pieces: Option<&mut Vec<Piece>>,
     ) -> Result<Stats, Error> {
         if input.len() > self.max_input {
             return Err(Error::InputTooLarge);
         }
-        out.clear();
         out.reserve(input.len() + input.len() / 16 + MAX_PLACEHOLDER_LEN);
         let mut st = Stats::default();
         let mut cur = match ms {
@@ -581,7 +1018,7 @@ impl Redactor {
                     None => {}
                 }
                 let start = start.max(pos);
-                self.gap(input, pos, start, out, &mut st, on_hit);
+                self.gap_or_piece(input, pos, start, out, &mut st, on_hit, &mut pieces);
                 let e = &self.entries[w.owner as usize];
                 out.extend_from_slice(&e.placeholder);
                 match e.meta.class {
@@ -604,25 +1041,35 @@ impl Redactor {
                 && ps >= pos
             {
                 // Inside a genuine placeholder from an earlier turn: keep it byte for byte.
-                self.gap(input, pos, pe, out, &mut st, on_hit);
+                self.gap_or_piece(input, pos, pe, out, &mut st, on_hit, &mut pieces);
                 pos = pe;
                 cur.seek(pe);
                 continue;
             }
-            self.gap(input, pos, m.start, out, &mut st, on_hit);
+            self.gap_or_piece(input, pos, m.start, out, &mut st, on_hit, &mut pieces);
             let info = self.set.info[m.pattern as usize];
             let e = &self.entries[info.owner as usize];
+            let out_from = out.len();
             out.extend_from_slice(&e.placeholder);
             match e.meta.class {
                 ValueClass::Credential => st.credential += 1,
                 ValueClass::Display => st.display += 1,
             }
-            on_hit(Hit::Known {
+            let hit = Hit::Known {
                 meta: &e.meta,
                 variant: info.variant,
                 start: m.start,
                 end: m.end,
-            });
+            };
+            match pieces.as_deref_mut() {
+                Some(p) => p.push(Piece::Replaced {
+                    input: (m.start, m.end),
+                    out: (out_from, out.len()),
+                    owner: info.owner,
+                    variant: info.variant,
+                }),
+                None => on_hit(hit),
+            }
             if let (Some(inner), Some(nested)) = (inner.as_deref_mut(), &self.nested) {
                 let o = info.owner as usize;
                 let reach = nested.reach[o];
@@ -642,8 +1089,34 @@ impl Redactor {
             }
             pos = m.end;
         }
-        self.gap(input, pos, input.len(), out, &mut st, on_hit);
+        self.gap_or_piece(input, pos, input.len(), out, &mut st, on_hit, &mut pieces);
         Ok(st)
+    }
+
+    /// [`Self::gap`], or with `pieces` (the first phase of [`Self::redact_segments`]) a copy of
+    /// the gap without the detectors, recorded for them to run later.
+    #[allow(clippy::too_many_arguments)]
+    fn gap_or_piece<'r>(
+        &'r self,
+        input: &[u8],
+        from: usize,
+        to: usize,
+        out: &mut Vec<u8>,
+        st: &mut Stats,
+        on_hit: &mut dyn FnMut(Hit<'r>),
+        pieces: &mut Option<&mut Vec<Piece>>,
+    ) {
+        match pieces.as_deref_mut() {
+            Some(p) if from < to => {
+                p.push(Piece::Gap {
+                    input: (from, to),
+                    out: out.len(),
+                });
+                out.extend_from_slice(&input[from..to]);
+            }
+            Some(_) => {}
+            None => self.gap(input, from, to, out, st, on_hit),
+        }
     }
 
     /// Reports every replacement [`Redactor::redact`] would make, in order, as
@@ -1197,6 +1670,13 @@ impl Snapshot {
             engine: kind,
             shape_fallback,
         };
+        // See `redact_cache` for why each of these keeps the cache off.
+        let cache = (config.redact_cache_entries > 0
+            && nested.is_none()
+            && !resolver.has_shaped()
+            && detectors.segmentable()
+            && !(0..set.len() as u32).any(|i| memchr::memmem::find(set.get(i), b",{").is_some()))
+        .then(|| ProbeCache::new(config.redact_cache_entries));
         let det_slugs = crate::detect::builtin_rule_names()
             .into_iter()
             .chain(std::iter::once(crate::detect::ENTROPY_RULE))
@@ -1219,6 +1699,11 @@ impl Snapshot {
             parallel_min: config.parallel_min_bytes,
             set,
             nested,
+            det_cache: cache
+                .as_ref()
+                .map(|_| SegmentCache::new(config.redact_cache_entries)),
+            cache,
+            cache_entries: config.redact_cache_entries,
         };
         Ok(Self {
             redactor,

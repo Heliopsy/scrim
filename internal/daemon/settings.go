@@ -202,6 +202,15 @@ var (
 			"at most 65,536 per redaction set, cleared when the set changes), so an agent's next turn, which resends the " +
 			"conversation, has only its new parts checked. Verdicts are the same either way; off checks every byte of every request.",
 	})
+	// RedactorCache turns the redactor's segment cache and the codec plan cache on or off.
+	RedactorCache = config.Register(config.Spec[bool]{
+		Key:     "redaction.redactor-cache",
+		Default: true,
+		Description: "Remember which parts of a request body the redactor replaced nothing in, which parts' detector scan " +
+			"found nothing, and the plan of conversation messages already parsed (BLAKE3 hashes, short probes and offsets only, " +
+			"never bytes or values, at most 65,536 per redaction set, cleared when the set changes), so an agent's next turn " +
+			"has only its new parts parsed, redacted and scanned. The output is the same either way; off redacts every byte of every request.",
+	})
 	// BinaryPolicy is what the LLM proxy does with binary content parts.
 	BinaryPolicy = config.Register(config.Spec[string]{
 		Key:     "redaction.binary",

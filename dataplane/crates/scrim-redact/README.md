@@ -161,9 +161,21 @@ over threads the decoders and the fragment search run on threads of their own.
 `X},{Y` (`X` one of `"`, `]`, `}`; `Y` one of `"`, `}`; no `|`, colon and space, or `\u` escape on the line
 before), where no occurrence in any view can cross, keeps the BLAKE3 hash of each segment of a body
 it found clean (at most `guard_cache_entries`, 65,536 by default, least recently used out), and
-checks only runs of segments it has not seen. Any finding runs the whole check, which decides. The
-module documentation gives the argument per view; `guard_cache_tests.rs` checks that cached and
-whole checks agree on next turns. A set with a value containing `,{` does not cache.
+checks only runs of segments it has not seen. Segments are hashed in runs of about eight (a segment
+ends a run by its length and last bytes, so runs regroup the same way after a change), and only the
+segments of a run not known whole are hashed one by one. Any finding runs the whole check, which
+decides. The module documentation gives the argument per view; `guard_cache_tests.rs` checks that
+cached and whole checks agree on next turns. A set with a value containing `,{` does not cache.
+
+**Redactor segment cache (`redact_cache.rs`).** `Redactor::redact` cuts bodies of 32 KiB and more at
+`X},{Y`, copies segments it replaced nothing in before (found by a 64-bit probe, confirmed by
+BLAKE3) and redacts runs of the others as one piece each: matches first, then the detectors per
+segment, skipped where the hash of the matched output and its placeholder positions says they found
+nothing before. A cut is not used within a rule's longest match after an anchor of a rule whose
+pattern can match `,` or `{` (found by parsing the patterns), near an AWS key id or within 16 KiB
+after a private key header. Off for sets with a pattern containing `,{`, entropy or encoded forms,
+format-preserving placeholders or nested values, and with `redact_cache_entries` 0.
+`redact_cache_tests.rs` checks segments, cold and warm cache against the whole body.
 
 **Detectors (`detect.rs`).** Pattern rules for AWS access keys, GitHub (classic and fine-grained),
 Anthropic, OpenAI, GitLab, Slack, Stripe, Google API keys, npm tokens, JWTs and private key blocks

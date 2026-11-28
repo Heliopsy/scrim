@@ -24,6 +24,7 @@ redact = ["dep:scrim-redact"]
 [dependencies]
 arc-swap = "1.7"
 base64 = "0.23"
+blake3 = "1.8.8"
 bytes = "1"
 crc32fast = "1.5"
 flate2 = "1"

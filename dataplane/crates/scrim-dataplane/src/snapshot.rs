@@ -183,6 +183,14 @@ fn invalid(why: impl Into<String>) -> Rejected {
     Rejected::Invalid(why.into())
 }
 
+/// Entries of a redaction cache: the default size unless the control plane turned it off.
+fn cache_entries(
+    r: Option<&v1::RedactionSettings>,
+    off: impl Fn(&v1::RedactionSettings) -> bool,
+) -> usize {
+    if r.is_some_and(off) { 0 } else { 1 << 16 }
+}
+
 /// Validates `snap` against the version in force and builds every part. On error nothing is
 /// published and `snap`'s secret bytes are zeroed when it drops. `hooks` are where the
 /// decisions send asks and events.
@@ -219,11 +227,8 @@ pub fn build(mut snap: v1::Snapshot, applied: u64, hooks: &Hooks) -> Result<Buil
     let config = rc::Config {
         min_len: usize::try_from(min_value_length).unwrap_or(usize::MAX),
         detectors: detector_config(snap.redaction.as_ref()),
-        guard_cache_entries: if snap.redaction.as_ref().is_some_and(|r| r.guard_cache_off) {
-            0
-        } else {
-            rc::Config::default().guard_cache_entries
-        },
+        guard_cache_entries: cache_entries(snap.redaction.as_ref(), |r| r.guard_cache_off),
+        redact_cache_entries: cache_entries(snap.redaction.as_ref(), |r| r.redactor_cache_off),
         ..rc::Config::default()
     };
     let core = Arc::new(
@@ -1108,6 +1113,23 @@ mod tests {
         assert!(caches(Some(v1::RedactionSettings::default())));
         assert!(!caches(Some(v1::RedactionSettings {
             guard_cache_off: true,
+            ..Default::default()
+        })));
+    }
+
+    /// `redaction.redactor-cache` reaches the redactor: on by default, off when the control
+    /// plane says so.
+    #[test]
+    fn redactor_cache_setting_applies() {
+        let caches = |r: Option<v1::RedactionSettings>| {
+            let mut s = snap(1);
+            s.redaction = r;
+            ok(s).applied.redaction.redactor().cache_entries() > 0
+        };
+        assert!(caches(None));
+        assert!(caches(Some(v1::RedactionSettings::default())));
+        assert!(!caches(Some(v1::RedactionSettings {
+            redactor_cache_off: true,
             ..Default::default()
         })));
     }

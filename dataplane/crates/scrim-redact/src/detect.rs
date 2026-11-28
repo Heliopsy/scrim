@@ -245,15 +245,21 @@ const AWS_KEY_ID_RULE: &str = "aws-access-key-id";
 const AWS_SECRET_RULE: &str = "aws-secret-access-key";
 const GENERIC_RULE: &str = "generic-secret-assignment";
 
+/// Anchors of the access key id rule.
+const AWS_KEY_ID_ANCHORS: &[&str] = &[
+    "AKIA", "ASIA", "ABIA", "ACCA", "AGPA", "AIDA", "AROA", "ANPA", "ANVA", "AIPA",
+];
+
+/// Length of an access key id.
+const AWS_KEY_ID_LEN: usize = 20;
+
 const RULES: &[Rule] = &[
     Rule {
         name: AWS_KEY_ID_RULE,
-        anchors: &[
-            "AKIA", "ASIA", "ABIA", "ACCA", "AGPA", "AIDA", "AROA", "ANPA", "ANVA", "AIPA",
-        ],
+        anchors: AWS_KEY_ID_ANCHORS,
         start: Start::At,
         pattern: r"A[A-Z]{3}[A-Z2-7]{16}",
-        max_len: 20,
+        max_len: AWS_KEY_ID_LEN,
         left: Edge::Token,
         right: Edge::Token,
         default_on: true,
@@ -1066,7 +1072,7 @@ const RULES: &[Rule] = &[
 /// Private key blocks are found by code, not a regex: the body is too long for a bounded
 /// repetition and may be JSON-escaped (`\n`) or literal.
 const PRIVATE_KEY_RULE: &str = "private-key";
-const PEM_BEGIN: &str = "-----BEGIN ";
+pub(crate) const PEM_BEGIN: &str = "-----BEGIN ";
 const PEM_MAX: usize = 16 * 1024;
 
 /// How far after an access key id, on the same line, its secret is looked for.
@@ -1127,6 +1133,61 @@ pub(crate) struct Detectors {
     max_back: usize,
     entropy: Option<EntropyConfig>,
     encoded: bool,
+    /// Anchors of the enabled rules whose pattern can match a `,` or a `{`, with how far before
+    /// and after a segment cut one of them rules the cut out (see [`Self::cut_ok`]).
+    crossing: Vec<Crossing>,
+}
+
+/// The anchors of a rule whose match could contain the `,{` of a segment cut, and the window
+/// around a cut in which one of them rules it out: from `before` bytes before it to `after`
+/// bytes after it.
+struct Crossing {
+    anchors: &'static [&'static str],
+    before: usize,
+    after: usize,
+}
+
+/// Whether the regular expression `pattern` (bytes mode, as [`Detectors::build`] compiles it)
+/// can match a `,` or a `{`: it holds one as a literal or in a class. An over-approximation, so
+/// a rule it misses cannot exist.
+fn may_match_comma_or_brace(pattern: &str) -> bool {
+    use regex_syntax::hir::{Class, Hir, HirKind};
+    fn walk(h: &Hir) -> bool {
+        let hit = |b: u32| b == u32::from(b',') || b == u32::from(b'{');
+        match h.kind() {
+            HirKind::Empty | HirKind::Look(_) => false,
+            HirKind::Literal(l) => l.0.iter().any(|&b| hit(u32::from(b))),
+            HirKind::Class(Class::Bytes(c)) => c
+                .ranges()
+                .iter()
+                .any(|r| (u32::from(r.start())..=u32::from(r.end())).any(hit)),
+            HirKind::Class(Class::Unicode(c)) => c
+                .ranges()
+                .iter()
+                .any(|r| (u32::from(r.start())..=u32::from(r.end().min('\u{7f}'))).any(hit)),
+            HirKind::Repetition(r) => walk(&r.sub),
+            HirKind::Capture(c) => walk(&c.sub),
+            HirKind::Concat(v) | HirKind::Alternation(v) => v.iter().any(walk),
+        }
+    }
+    regex_syntax::ParserBuilder::new()
+        .utf8(false)
+        .build()
+        .parse(&format!("(?-u:{pattern})"))
+        // A pattern this parser rejects fails `Regex::new` first; count it as crossing anyway.
+        .map_or(true, |h| walk(&h))
+}
+
+/// Names of the built-in rules whose pattern can match a `,` or a `{`.
+#[cfg(test)]
+pub(crate) fn crossing_rule_names() -> Vec<&'static str> {
+    let mut v: Vec<&str> = RULES
+        .iter()
+        .filter(|r| may_match_comma_or_brace(r.pattern))
+        .map(|r| r.name)
+        .collect();
+    v.dedup();
+    v
 }
 
 /// A detection: `[start, end)` and the rule name.
@@ -1256,7 +1317,15 @@ impl Detectors {
                 && (default_on || cfg.enabled_rules.iter().any(|e| e == n))
         };
         let mut rules = Vec::new();
+        let mut crossing = Vec::new();
         for r in RULES.iter().filter(|r| on(r.name, r.default_on)) {
+            if may_match_comma_or_brace(r.pattern) {
+                crossing.push(Crossing {
+                    anchors: r.anchors,
+                    before: r.max_len + 1,
+                    after: r.start.reach() + 1,
+                });
+            }
             let re =
                 Regex::new(&format!("^(?-u:{})", r.pattern)).map_err(|_| BuildError::Automaton)?;
             let group = re.capture_names().any(|n| n == Some("v"));
@@ -1292,7 +1361,62 @@ impl Detectors {
             max_back,
             entropy: cfg.entropy.clone(),
             encoded: cfg.encoded,
+            crossing,
         })
+    }
+
+    /// Whether the detectors allow cutting bodies into segments that are scanned on their own
+    /// (the redactor's segment cache, see `redact_cache`): neither the entropy detector nor the
+    /// encoded forms are on. Both read runs of bytes without an anchor, so no window around a
+    /// cut can be checked for them.
+    pub(crate) fn segmentable(&self) -> bool {
+        self.entropy.is_none() && !self.encoded
+    }
+
+    /// Whether position `p` of `b`, where `b[p - 2..p + 1]` is `},{`, may cut `b` into two
+    /// segments that the detectors scan on their own with the same detections as `b` whole.
+    /// `pem` lists the positions of private key headers in `b`, ascending.
+    ///
+    /// A rule whose pattern matches neither `,` nor `{` cannot match across the cut, end at it
+    /// or start at it, and what it reads around a match (the byte before or after it, a key
+    /// name scanned back from its anchor) stays on the match's side of the cut. The rest is
+    /// ruled out by window: an anchor of a rule that can match `,` or `{` within its longest
+    /// match before the cut (or its start's reach after it); an access key id within the
+    /// window in which its secret is searched next to it; a private key header within
+    /// [`PEM_MAX`] before the cut.
+    pub(crate) fn cut_ok(&self, b: &[u8], p: usize, pem: &[usize]) -> bool {
+        for c in &self.crossing {
+            let w = &b[p.saturating_sub(c.before)..b.len().min(p + c.after)];
+            if c.anchors
+                .iter()
+                .any(|a| memchr::memmem::find(w, a.as_bytes()).is_some())
+            {
+                return false;
+            }
+        }
+        if self.aws_neighbour {
+            let lo = p.saturating_sub(AWS_KEY_ID_LEN + AWS_NEIGHBOUR_WINDOW + 1);
+            if memchr::memchr_iter(b'A', &b[lo..p]).any(|i| {
+                AWS_KEY_ID_ANCHORS
+                    .iter()
+                    .any(|a| b[lo + i..].starts_with(a.as_bytes()))
+            }) {
+                return false;
+            }
+        }
+        if self.pem {
+            let k = pem.partition_point(|&q| q < p);
+            if k > 0 && pem[k - 1] + PEM_MAX + 1 >= p {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Whether private key blocks are detected (the caller then lists [`PEM_BEGIN`] positions
+    /// for [`Self::cut_ok`]).
+    pub(crate) fn pem(&self) -> bool {
+        self.pem
     }
 
     /// Longest span any enabled detector can match.

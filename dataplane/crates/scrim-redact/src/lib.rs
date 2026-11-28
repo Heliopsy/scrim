@@ -105,6 +105,9 @@ mod guard_tests;
 mod guard_tx;
 mod matcher;
 mod placeholder;
+mod redact_cache;
+#[cfg(test)]
+mod redact_cache_tests;
 mod redactor;
 mod restore;
 mod secret;

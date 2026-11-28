@@ -137,6 +137,13 @@ pub trait Redactor: Send + Sync {
     /// The output must be deterministic for a given snapshot so that an unchanged conversation
     /// prefix redacts to the same bytes on every request (prompt-cache stability).
     fn redact(&self, input: &[u8], out: &mut Vec<u8>) -> Result<RedactReport, EngineError>;
+
+    /// The codec plan cache that goes with this redactor's snapshot (see
+    /// [`crate::codec::PlanCache`]), if it keeps one. A new snapshot comes with a new redactor,
+    /// so the cache never outlives the values it was built under.
+    fn plan_cache(&self) -> Option<&crate::codec::PlanCache> {
+        None
+    }
 }
 
 /// The guard's verdict over the exact outgoing bytes.

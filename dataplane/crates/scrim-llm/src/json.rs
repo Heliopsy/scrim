@@ -59,6 +59,25 @@ struct Node {
     next_sibling: u32,
     key_escaped: bool,
     escaped: bool,
+    /// Skipped unparsed ([`Skip`]): an object the caller already knows.
+    opaque: bool,
+}
+
+/// Lets the caller skip objects it already knows while a document is parsed: the elements of
+/// the arrays that are members of the root object named in `members` (`messages` of a provider
+/// request). At such an element, `skip` gets the index of the member name and the element's
+/// start offset, and returns the length of a complete JSON object that starts there, which
+/// the parser then steps over without reading it, or `None` to parse it. The node is marked
+/// [`Value::is_opaque`] and has no children.
+///
+/// The caller is responsible for the length: only bytes that parsed as one object before may be
+/// skipped (the plan cache knows them by hash), and an object's validity does not depend on
+/// what surrounds it.
+pub(crate) struct Skip<'h> {
+    /// Root members whose array elements may be skipped.
+    pub members: &'h [&'h str],
+    /// Length of the known object at an element start, if any.
+    pub skip: &'h mut dyn FnMut(usize, usize) -> Option<usize>,
 }
 
 /// A parsed document: the source bytes plus a node arena.
@@ -94,8 +113,53 @@ impl<'a> Doc<'a> {
             src,
             pos: 0,
             nodes: Vec::with_capacity(src.len() / 32 + 4),
+            members: &[],
+            skip: None,
+            role: None,
         };
         p.parse_document()?;
+        Ok(Doc {
+            src,
+            nodes: p.nodes,
+        })
+    }
+
+    /// [`Doc::parse`], stepping over the objects `skip` already knows. The result, error
+    /// included, is the one [`Doc::parse`] gives: a skipped object is bytes that parsed before,
+    /// so they are valid UTF-8 and only the bytes around them are checked, before any JSON
+    /// error is reported, as [`Doc::parse`] checks the encoding first.
+    pub(crate) fn parse_skipping(src: &'a [u8], skip: &mut Skip<'_>) -> Result<Self, JsonError> {
+        if src.len() >= NONE as usize {
+            return Err(JsonError {
+                offset: 0,
+                reason: "document too large",
+            });
+        }
+        let mut p = Parser {
+            src,
+            pos: 0,
+            nodes: Vec::with_capacity(src.len() / 256 + 4),
+            members: skip.members,
+            skip: Some(&mut *skip.skip),
+            role: None,
+        };
+        let parsed = p.parse_document();
+        // Every byte outside the skipped objects, in order.
+        let mut from = 0;
+        let skipped = p.nodes.iter().filter(|n| n.opaque);
+        for (a, b) in skipped
+            .map(|n| (n.start as usize, n.end as usize))
+            .chain(std::iter::once((src.len(), src.len())))
+        {
+            if let Err(e) = std::str::from_utf8(&src[from..a]) {
+                return Err(JsonError {
+                    offset: from + e.valid_up_to(),
+                    reason: "invalid UTF-8",
+                });
+            }
+            from = b;
+        }
+        parsed?;
         Ok(Doc {
             src,
             nodes: p.nodes,
@@ -121,6 +185,12 @@ impl<'d, 'a> Value<'d, 'a> {
     /// The value's kind.
     pub fn kind(&self) -> Kind {
         self.node().kind
+    }
+
+    /// Whether the value was stepped over unparsed ([`Skip`]): it is an object, and its
+    /// members are not available.
+    pub(crate) fn is_opaque(&self) -> bool {
+        self.node().opaque
     }
 
     /// Byte span of the whole value in the source (strings include their quotes).
@@ -260,10 +330,14 @@ fn as_utf8(b: &[u8]) -> &str {
     std::str::from_utf8(b).unwrap_or_default()
 }
 
-struct Parser<'a> {
+struct Parser<'a, 'h> {
     src: &'a [u8],
     pos: usize,
     nodes: Vec<Node>,
+    members: &'h [&'h str],
+    skip: Option<&'h mut dyn FnMut(usize, usize) -> Option<usize>>,
+    /// While inside an array whose elements may be skipped: its node and the member index.
+    role: Option<(u32, usize)>,
 }
 
 enum Frame {
@@ -271,7 +345,7 @@ enum Frame {
     Array { node: u32, last: u32 },
 }
 
-impl Parser<'_> {
+impl Parser<'_, '_> {
     fn err<T>(&self, reason: &'static str) -> Result<T, JsonError> {
         Err(JsonError {
             offset: self.pos,
@@ -301,8 +375,40 @@ impl Parser<'_> {
             next_sibling: NONE,
             key_escaped: false,
             escaped: false,
+            opaque: false,
         });
         idx
+    }
+
+    /// At an element start of a skippable array: steps over a known object, returning its node.
+    fn try_skip(&mut self, stack: &[Frame], start: usize) -> Option<u32> {
+        let (node, role) = self.role?;
+        if stack.len() != 2
+            || !matches!(stack.last(), Some(Frame::Array { node: n, .. }) if *n == node)
+        {
+            return None;
+        }
+        let skip = self.skip.as_mut()?;
+        let len = skip(role, start)?;
+        let end = start
+            .checked_add(len)
+            .filter(|&e| e <= self.src.len() && len >= 2)?;
+        let idx = self.push(Kind::Object, start);
+        let n = &mut self.nodes[idx as usize];
+        n.end = end as u32;
+        n.opaque = true;
+        self.pos = end;
+        Some(idx)
+    }
+
+    /// When an array opens as a member of the root object, whether its elements may be skipped.
+    fn role_of(&self, stack: &[Frame], key: Option<(u32, u32, bool)>) -> Option<usize> {
+        let (ks, ke, esc) = key?;
+        if esc || stack.len() != 1 || !matches!(stack.first(), Some(Frame::Object { .. })) {
+            return None;
+        }
+        let k = &self.src[ks as usize..ke as usize];
+        self.members.iter().position(|m| m.as_bytes() == k)
     }
 
     #[allow(
@@ -320,13 +426,29 @@ impl Parser<'_> {
             let Some(&c) = self.src.get(self.pos) else {
                 return self.err("unexpected end of input");
             };
+            let skipped = if c == b'{' && self.role.is_some() {
+                self.try_skip(&stack, start)
+            } else {
+                None
+            };
             let idx = match c {
+                _ if skipped.is_some() => {
+                    let idx = skipped.unwrap_or(NONE);
+                    self.attach(&mut stack, idx, pending_key.take());
+                    idx
+                }
                 b'{' | b'[' => {
                     if stack.len() >= MAX_DEPTH {
                         return self.err("nesting too deep");
                     }
                     let kind = if c == b'{' { Kind::Object } else { Kind::Array };
                     let idx = self.push(kind, start);
+                    if c == b'['
+                        && self.skip.is_some()
+                        && let Some(role) = self.role_of(&stack, pending_key)
+                    {
+                        self.role = Some((idx, role));
+                    }
                     self.attach(&mut stack, idx, pending_key.take());
                     self.pos += 1;
                     stack.push(if c == b'{' {
