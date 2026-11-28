@@ -503,6 +503,7 @@ is out of date.
 | [`redaction.detectors.entropy.min-classes`](#redactiondetectorsentropymin-classes) | int | `0` | hot |
 | [`redaction.detectors.entropy.min-length`](#redactiondetectorsentropymin-length) | int | `0` | hot |
 | [`redaction.detectors.entropy.threshold`](#redactiondetectorsentropythreshold) | float | `0` | hot |
+| [`redaction.guard-cache`](#redactionguard-cache) | bool | `true` | hot |
 | [`redaction.limit-to-agent-identity`](#redactionlimit-to-agent-identity) | bool | `false` | restart required |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
@@ -3069,6 +3070,18 @@ Minimum Shannon entropy of a value, in bits per byte. 0 takes the context's defa
 | Type | float |
 | Default | `0` |
 | Environment | `SCRIM_REDACTION_DETECTORS_ENTROPY_THRESHOLD` |
+| Flag | none |
+| Reload | hot |
+
+#### `redaction.guard-cache`
+
+Remember which parts of a request body the guard found clean (BLAKE3 hashes only, never bytes or values, at most 65,536 per redaction set, cleared when the set changes), so an agent's next turn, which resends the conversation, has only its new parts checked. Verdicts are the same either way; off checks every byte of every request.
+
+| | |
+|---|---|
+| Type | bool |
+| Default | `true` |
+| Environment | `SCRIM_REDACTION_GUARD_CACHE` |
 | Flag | none |
 | Reload | hot |
 

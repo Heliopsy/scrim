@@ -179,12 +179,15 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   constrained one with `edge.ca.existingSecret` ([edge-forwarder.md](edge-forwarder.md#the-edge-ca)).
   While `edge.legacy-interception-certificate` is on during an upgrade, forwarders from 1.0 still
   trust the interception CA for the edge listener.
-- **Added request latency is above the performance spec's targets for large bodies.** The spec
-  aims for 5 ms on a 1 MB body with 1,000 secrets and 10 ms with 10,000; the guard takes about
-  25 ms per 1 MB at the median and up to about 40 ms at p99 on the reference runner, and 2 to 4 ms
-  per 100 KB. The latency gate holds the production engine to budgets set from what it does today,
-  and the regression check fails a release that got slower than the previous one, but neither
-  makes it meet the spec's targets ([performance.md](performance.md#budgets)).
+- **Added request latency is above the performance spec's 5 ms target on the reference runner.**
+  The target (5 ms on a 1 MB body with 1,000 secrets, 10 ms with 10,000) is measured on an agent's
+  next turn, where the guard's verdict cache skips what it checked one request earlier. On ho-z10
+  that takes 4.7 to 12 ms at p99 across runs, mostly the codec's JSON plan and the redactor over
+  the whole body; the budgets are 10 and 12 ms. A 1 MB body seen for the first time, any body with
+  `redaction.guard-cache` off, and the first request after a snapshot push (which starts an empty
+  cache) go through every decoder: 10 to 27 ms at p99 on ho-z10. The latency gate fails a change
+  that misses a budget in two runs; its comparison with the previous release is report only
+  ([performance.md](performance.md#budgets)).
 - **The performance gate measures on a shared runner.** The latency gate drops samples during which
   the measuring thread waited for a CPU, but not those where one of the guard's worker threads did;
   those measurements rely on the median over rounds. The runner's clock speed varies between runs
