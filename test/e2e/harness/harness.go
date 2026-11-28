@@ -427,6 +427,11 @@ func (d *Daemon) Env(extra ...string) []string {
 	if v := os.Getenv("XDG_RUNTIME_DIR"); v != "" {
 		env = append(env, "XDG_RUNTIME_DIR="+v)
 	}
+	// SCRIM_E2E_RUN_NETWORK=proxy-only runs every scrim run of the suite in
+	// the agent network namespace (CI runs the agent sessions both ways).
+	if v := os.Getenv("SCRIM_E2E_RUN_NETWORK"); v != "" {
+		env = append(env, "SCRIM_RUN_NETWORK="+v)
+	}
 	return append(env, extra...)
 }
 

@@ -15,6 +15,15 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   key. scrim locks and wipes its own copies, but that does not stop a debugger. Give scrim a
   dedicated user (`scrim install --system`) and a dedicated store identity that only holds agent
   secrets.
+- **The agent's user, when scrim runs as that user.** A user-level scrim (`scrim install --user`,
+  or the daemon `scrim run` starts) keeps its secrets in files that user can read: the targets of
+  `file:` references (a Vaultwarden `unlock:` master password, client secrets, tokens), its CA and
+  placeholder keys, its state database. `scrim run` hides them from the session
+  ([run.md](run.md#scrims-own-files)), but only in the namespace view; the home mirror hides them
+  only from tools that go through `HOME`, and an agent started outside `scrim run`, or any other
+  process of that user, reads them. `scrim doctor` warns about them (`own-files`). Run scrim as its
+  own user: `sudo scrim install --system --agent-user $USER` ([service.md](service.md)), or give
+  secrets as systemd credentials (`cred:`).
 - **The agent's own disk.** Transcripts, memory and history files hold whatever the agent read, in
   clear: a `cat .env` is in the local transcript even though the provider only saw placeholders.
   scrim protects the wire to the provider, not the agent's files. Keep agent state on an encrypted
@@ -50,9 +59,15 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   OCR), audio or video content, or PDF text drawn with fonts whose encoding needs a ToUnicode map to
   read. A screenshot of a terminal showing a secret reaches the provider. Keep secrets off screen
   when the agent takes screenshots.
-- **Attachments referenced by URL are not fetched.** An `image_url` with an `https:` URL, an
-  uploaded file ID or a Gemini `fileData` URI is passed on as text; the provider fetches the content
-  and scrim never sees it.
+- **Attachments referenced by URL are fetched by scrim, other references are refused.** Under the
+  default `redaction.remote-attachments: inline`, scrim fetches an image or document URL itself,
+  scans it and sends it inline. It sends no credentials, so a URL that needs the agent's own
+  authentication fails (presigned URLs work), and it fetches only from public addresses unless
+  `redaction.remote-attachments-allowed-networks` names the network. Through an upstream proxy, the
+  proxy resolves names scrim cannot. A provider file ID passes only when its upload went through
+  scrim on the same route and replica since the last restart; Cloud Storage and S3 locations,
+  YouTube URIs and other file IDs are refused, and so is any reference in a WebSocket message.
+  `pass` forwards references unfetched (weakening, reported by `scrim status` and `scrim doctor`).
 - **Attachments scrim cannot decode are refused.** Encrypted PDFs, archives other than gzip and
   ZIP with deflate, and parts past the scan bounds (64 MiB decoded or inflated, 100,000 objects,
   nesting depth 4, 2 seconds plus 250 ms per MiB) are refused under `scan` with
@@ -68,9 +83,21 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
 
 - **The wrapper, base URL and forward proxy modes rely on the agent using the settings it is
   given.** They stop accidents, not an agent or a prompt-injected command that sets out to reach
-  the provider directly. Transparent mode, Kubernetes injection with a NetworkPolicy and managed
-  agent settings enforce; DNS override is bypassed by connecting to an address; hooks see tool
-  results and prompts, never the model traffic. [interception.md](interception.md) has the table.
+  the provider directly. `scrim run` with `run.network: proxy-only` (Linux, no root), transparent
+  mode, Kubernetes injection with a NetworkPolicy and managed agent settings enforce; DNS override
+  is bypassed by connecting to an address; hooks see tool results and prompts, never the model
+  traffic. [interception.md](interception.md) has the table.
+- **`run.network: proxy-only` is off by default, Linux only, and leaves Unix sockets open.** The
+  default `open` keeps the gap above. `proxy-only` needs unprivileged user namespaces and is not
+  available on macOS or Windows. Inside it, a process can still ask a program running outside the
+  session to act for it over a Unix socket in the filesystem: the session and system buses, the
+  systemd user manager, the host's name resolvers (systemd-resolved, nscd, avahi), X11 and Wayland,
+  podman, docker and tmux sockets are covered, others (screen, editor servers, ssh `ControlMaster`
+  sockets) are not. Because the system bus is masked, tools that talk to system services over it
+  (`nmcli`, `resolvectl`, `timedatectl`, desktop notifications, the keyring) do not work inside the
+  session, nor do GUI programs or the clipboard. ssh and git over ssh cannot connect, and scrim's
+  database proxies and chained upstreams are not reachable from the session
+  ([run.md](run.md#agent-network)).
 - **MCP-only use intercepts nothing.** The agent's model requests go straight to the provider.
 - **WebSocket restore covers the Realtime and Gemini Live protocols.** Client messages on every
   provider route are redacted and guarded like request bodies. Placeholders in provider messages
@@ -200,12 +227,14 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   `keyring`, `kubernetes`, plugins) refuses every use. 1Password takes Connect tokens only, not
   service account tokens. Vaultwarden needs an account per agent (a seat each on bitwarden.com).
   [identity.md](identity.md#stores-without-a-token-exchange)
-- **Agent writes are not checked against the agent's own store identity.** The per-agent check runs
-  before a value is used (injection, restore). `secret_gen`, `secret_capture` and `scrim secret put`
-  write with scrim's own store identity once scrim's rules allow them. Where a store could check a
-  write (OpenBao, Vault, Google, Bitwarden Secrets Manager, Vaultwarden) the adapter can answer it,
-  but nothing asks yet; AWS, Azure Key Vault, Infisical, Doppler and 1Password Connect cannot say
-  whether an identity may write without writing.
+- **Agent writes to some stores cannot be checked against the agent's own store identity.** AWS,
+  Azure Key Vault, Infisical, Doppler and 1Password Connect cannot say whether an identity may write
+  without writing, so `secret_gen`, `secret_capture`, `secret_ask_human` and `scrim secret put` into
+  them are written with scrim's own store identity once scrim's rules allow them, and `scrim doctor`
+  warns about it. `identity.refuse-unchecked-writes` refuses agents' writes to such stores instead.
+  Where the check runs (OpenBao, Vault, Google, Bitwarden Secrets Manager, Vaultwarden), the value
+  is still written by scrim's identity after the agent's identity said it may write.
+  [identity.md](identity.md#what-is-checked)
 - **Some per-agent checks read the value as the agent.** AWS, Azure Key Vault, Infisical and Doppler
   have no call that says whether an identity may read a secret, so the check reads it with the
   agent's credential and wipes it unread.

@@ -23,11 +23,12 @@ use crate::error::Refusal;
 use crate::eventstream::{self, EventStreamRestorer};
 use crate::head;
 use crate::metrics::{LlmMetrics, RouteMetrics, Stage, UpstreamError};
-use crate::outgoing::{self, Outgoing};
+use crate::outgoing::{self, Outgoing, Prepared};
+use crate::remote::{self, fetch::Fetcher, files, files::FileIds};
 use crate::restore::{Ctx, RestoreStats};
 use crate::route::{Route, RouteError, RouteTable};
 use crate::stream::{ChunkRestore, SseRestorer};
-use crate::upstream::{TlsError, UpstreamClient, build_client, build_ws_client};
+use crate::upstream::{TlsError, UpstreamClient, build_client, build_ws_client, tls_config};
 
 /// Proxy construction failed.
 #[derive(Debug, thiserror::Error)]
@@ -55,6 +56,10 @@ pub struct Proxy {
     pub(crate) capture: Option<Arc<Capture>>,
     pub(crate) metrics: Option<Arc<LlmMetrics>>,
     pub(crate) tokens: Arc<crate::token::TokenCache>,
+    /// Fetches attachments referenced by URL (`redaction.remote-attachments: inline`).
+    fetcher: Arc<Fetcher>,
+    /// File IDs whose upload scrim scanned, per route.
+    files: Arc<FileIds>,
 }
 
 impl std::fmt::Debug for Proxy {
@@ -266,6 +271,11 @@ impl Proxy {
         let routes = RouteTable::new(&cfg.routes)?;
         let client = build_client(&cfg)?;
         let ws_client = build_ws_client(&cfg)?;
+        let fetcher = Fetcher::new(
+            Arc::new(tls_config(&cfg)?),
+            cfg.upstream_proxy.clone(),
+            cfg.connect_timeout(),
+        );
         let capture = cfg.capture.as_ref().map(Capture::open).transpose()?;
         if let Some(c) = &capture {
             tracing::warn!(dir = %c.dir().display(), "capture mode is on: outgoing requests and responses are written to disk");
@@ -280,6 +290,8 @@ impl Proxy {
             capture,
             metrics: None,
             tokens: Arc::default(),
+            fetcher: Arc::new(fetcher),
+            files: Arc::default(),
         })
     }
 
@@ -426,12 +438,14 @@ impl Proxy {
             .metrics
             .as_ref()
             .map(|m| m.route(&route.name, route.provider.name()));
-        let (mut out, began) = match self
+        let (mut out, began, scanned_upload) = match self
             .prepare(
                 &snap,
+                route,
                 api,
                 count_tokens,
-                &parts.headers,
+                rest,
+                &parts,
                 body,
                 rm.as_deref(),
             )
@@ -485,6 +499,9 @@ impl Proxy {
         match self.forward(&target, &out).await {
             Ok((upstream_resp, record, chain_skipped)) => {
                 self.audit_forwarded(route, &snap, &out, chain_skipped, rm.as_deref());
+                if scanned_upload {
+                    return self.respond_upload(route, upstream_resp, record).await;
+                }
                 self.respond(route, api, snap, upstream_resp, record, rm)
                     .await
             }
@@ -497,24 +514,38 @@ impl Proxy {
         }
     }
 
-    /// Reads the body within the limit, then redacts and guards it. With metrics, also returns
-    /// when the checks began (after the body was read), for the total added latency.
+    /// Reads the body within the limit, then redacts and guards it, fetching and inlining the
+    /// attachments it references by URL first when the remote policy says so. A Files API
+    /// upload has its file scanned too; the third value says whether it was, so the
+    /// answer's file ID can be remembered. With metrics, also returns when the checks began
+    /// (after the body was read), for the total added latency.
+    #[allow(clippy::too_many_arguments)]
     async fn prepare<B>(
         &self,
         snap: &Arc<Snapshot>,
+        route: &Route,
         api: Api,
         count_tokens: bool,
-        headers: &HeaderMap,
+        rest: &str,
+        parts: &http::request::Parts,
         body: B,
         rm: Option<&RouteMetrics>,
-    ) -> Result<(Outgoing, Option<Instant>), Refusal>
+    ) -> Result<(Outgoing, Option<Instant>, bool), Refusal>
     where
         B: Body<Data = Bytes> + Send + 'static,
         B::Error: Into<BoxError>,
     {
+        let headers = &parts.headers;
         if !is_identity(headers) {
             return Err(Refusal::new(RefusalReason::UnsupportedEncoding, ""));
         }
+        let upload = files::upload(
+            route.provider,
+            &parts.method,
+            rest,
+            parts.uri.query(),
+            headers,
+        );
         let body = match Limited::new(body, self.cfg.limits.max_request_body)
             .collect()
             .await
@@ -548,28 +579,139 @@ impl Proxy {
                     stages: outgoing::Stages::default(),
                 },
                 began,
+                false,
             ));
         }
-        let run = move |s: &Snapshot, body: &[u8]| {
+        let scanned_upload = match upload {
+            Some(u) => self.scan_upload(snap, u, headers, &body).await?,
+            None => false,
+        };
+        let known_files = self.files.clone();
+        let route_name = route.name.clone();
+        let run = move |s: &Snapshot, body: &[u8], fetched: bool| -> Result<Prepared, Refusal> {
             if count_tokens {
-                outgoing::prepare_bedrock_count_tokens(s, body, timed)
-            } else {
-                outgoing::prepare_timed(s, api, body, timed)
+                return outgoing::prepare_bedrock_count_tokens(s, body, timed).map(Prepared::Done);
+            }
+            let known = |id: &str| known_files.contains(&route_name, id);
+            let cx = remote::Context {
+                known: &known,
+                can_fetch: true,
+                fetched,
+            };
+            outgoing::prepare_refs(s, body, timed, cx, |b| codec::plan(api, b))
+        };
+        let first = {
+            let (run, s, b) = (run.clone(), snap.clone(), body.clone());
+            self.offload(body.len(), move || run(&s, &b, false)).await?
+        };
+        let out = match first {
+            Prepared::Done(o) => o,
+            Prepared::Fetch(refs) => {
+                let inlined = Bytes::from(self.fetcher.inline(snap, &body, &refs).await?);
+                tracing::debug!(
+                    references = refs.len(),
+                    "attachments referenced by URL fetched and inlined"
+                );
+                let s = snap.clone();
+                let len = inlined.len();
+                match self.offload(len, move || run(&s, &inlined, true)).await? {
+                    Prepared::Done(o) => o,
+                    Prepared::Fetch(_) => {
+                        return Err(Refusal::new(
+                            RefusalReason::RemoteAttachment,
+                            "still a reference after inlining",
+                        ));
+                    }
+                }
             }
         };
-        if body.len() < self.cfg.limits.offload_threshold {
-            return run(snap, &body).map(|o| (o, began));
+        Ok((out, began, scanned_upload))
+    }
+
+    /// Scans the file of a Files API upload; whether it was scanned (see
+    /// [`outgoing::scan_upload`]). A body without the file where `upload` says is not scanned.
+    async fn scan_upload(
+        &self,
+        snap: &Arc<Snapshot>,
+        upload: files::Upload,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<bool, Refusal> {
+        if files::file(&upload, headers, body).is_none() {
+            return Ok(false);
         }
-        let s = snap.clone();
-        tokio::task::spawn_blocking(move || run(&s, &body))
-            .await
-            .unwrap_or_else(|_| {
-                Err(Refusal::new(
-                    RefusalReason::RedactorFailed,
-                    "redaction task failed",
-                ))
-            })
-            .map(|o| (o, began))
+        let (s, b, h) = (snap.clone(), body.clone(), headers.clone());
+        self.offload(body.len(), move || {
+            let (mt, file) = files::file(&upload, &h, &b).unwrap_or_default();
+            outgoing::scan_upload(&s, &mt, file)
+        })
+        .await
+    }
+
+    /// Runs `f` here for a small body, on the blocking pool for one of `len` bytes at or over
+    /// the offload threshold.
+    async fn offload<T: Send + 'static>(
+        &self,
+        len: usize,
+        f: impl FnOnce() -> Result<T, Refusal> + Send + 'static,
+    ) -> Result<T, Refusal> {
+        if len < self.cfg.limits.offload_threshold {
+            return f();
+        }
+        tokio::task::spawn_blocking(f).await.unwrap_or_else(|_| {
+            Err(Refusal::new(
+                RefusalReason::RedactorFailed,
+                "redaction task failed",
+            ))
+        })
+    }
+
+    /// Answers a Files API upload whose file scrim scanned: the answer is read (up to
+    /// [`files::MAX_ANSWER`]) and the file ID in it remembered for the route, then passed on
+    /// unchanged.
+    async fn respond_upload(
+        &self,
+        route: &Route,
+        resp: Response<hyper::body::Incoming>,
+        record: Option<Record>,
+    ) -> Response<ProxyBody> {
+        let (mut parts, mut body) = resp.into_parts();
+        let tee = match record {
+            Some(r) => r.response(parts.status, &parts.headers).await,
+            None => None,
+        };
+        strip(&mut parts.headers, STRIP_RESPONSE);
+        if !(parts.status.is_success() && is_identity(&parts.headers)) {
+            let b = Restoring::new(body, None, tee, None, None);
+            return Response::from_parts(parts, BodyExt::boxed_unsync(b));
+        }
+        let mut buf = Vec::new();
+        while let Some(frame) = body.frame().await {
+            match frame {
+                Ok(f) => {
+                    if let Ok(d) = f.into_data() {
+                        buf.extend_from_slice(&d);
+                        if buf.len() > files::MAX_ANSWER {
+                            let b = Restoring::new(body, Some(Bytes::from(buf)), tee, None, None);
+                            return Response::from_parts(parts, BodyExt::boxed_unsync(b));
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "upstream response body failed");
+                    return bad_gateway();
+                }
+            }
+        }
+        if let Some(id) = files::answer_id(route.provider, &buf) {
+            self.files.insert(&route.name, &id);
+        }
+        let raw = Bytes::from(buf);
+        if let Some(t) = tee {
+            t.write(&raw);
+            drop(t.close());
+        }
+        Response::from_parts(parts, full(raw))
     }
 
     /// Captures and sends the redacted request: to the chained upstream first when one is

@@ -3,18 +3,35 @@
 package matrix
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	fp "github.com/heliopsy/scrim/internal/testing/fakeprovider"
 )
 
-// LocalUpstream is an in-process fake provider.
-type LocalUpstream struct{ Server *fp.Server }
+// LocalUpstream is an in-process fake provider. URL is where it listens
+// (http://host:port), for rows that reference files it holds.
+type LocalUpstream struct {
+	Server *fp.Server
+	URL    string
+}
+
+// FilesURL implements Upstream.
+func (l LocalUpstream) FilesURL() string {
+	if l.URL == "" {
+		return ""
+	}
+	return strings.TrimRight(l.URL, "/") + fp.FilesPath
+}
+
+// Attach implements Upstream.
+func (l LocalUpstream) Attach(_ context.Context, f fp.File) error { l.Server.Attach(f); return nil }
 
 // Reset implements Upstream.
 func (l LocalUpstream) Reset(context.Context) error { l.Server.Reset(); return nil }
@@ -35,6 +52,28 @@ func (r RemoteUpstream) client() *http.Client {
 		return r.Client
 	}
 	return http.DefaultClient
+}
+
+// FilesURL implements Upstream.
+func (r RemoteUpstream) FilesURL() string { return strings.TrimRight(r.BaseURL, "/") + fp.FilesPath }
+
+// Attach implements Upstream.
+func (r RemoteUpstream) Attach(ctx context.Context, f fp.File) error {
+	q := url.Values{"name": {f.Name}, "type": {f.MediaType}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(r.BaseURL, "/")+"/_fake/attach?"+q.Encode(), bytes.NewReader(f.Data))
+	if err != nil {
+		return err
+	}
+	resp, err := r.client().Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("attach: status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // Reset implements Upstream.

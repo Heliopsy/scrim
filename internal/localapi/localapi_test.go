@@ -406,7 +406,7 @@ func TestUnknownCallersAreRefused(t *testing.T) {
 		context.WithValue(bg, peerKey, identity.Peer{UID: 4242, PID: 9}),
 		bg, // no peer credentials at all
 	} {
-		for _, path := range []string{"/v1/secrets", "/v1/grants"} {
+		for _, path := range []string{"/v1/secrets", "/v1/grants", "/v1/own-paths"} {
 			req := httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil)
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, req)
@@ -462,5 +462,31 @@ func TestSocketPathFromEnvironment(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", "")
 	if !strings.HasSuffix(DefaultSocketPath(), fmt.Sprintf("scrim-%d/api.sock", os.Getuid())) {
 		t.Fatal(DefaultSocketPath())
+	}
+}
+
+// TestOwnPaths: the mapped local user that mints sessions gets the
+// daemon's own paths; a session (the agent) is refused, and so is a caller
+// no rule maps.
+func TestOwnPaths(t *testing.T) {
+	want := []OwnPath{{Path: "/home/u/.config/scrim/vw-master", Origin: "stores.vw.unlock"}}
+	h := startWith(t, func(s *Server) { s.OwnPaths = func() []OwnPath { return want } })
+	got, err := h.peer.OwnPaths(bg)
+	if err != nil || len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("own paths = %+v, %v", got, err)
+	}
+	m, err := h.peer.Mint(bg, MintInput{Name: "agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := NewClient(h.socket, m.Token)
+	defer sc.Close()
+	if _, err := sc.OwnPaths(bg); codeOf(t, err) != agenttools.CodeForbidden {
+		t.Fatalf("a session listed scrim's own paths: %v", err)
+	}
+	// Unset, the route answers with an empty list, not "no such route".
+	h2 := start(t)
+	if got, err := h2.peer.OwnPaths(bg); err != nil || len(got) != 0 {
+		t.Fatalf("own paths without a source = %+v, %v", got, err)
 	}
 }
