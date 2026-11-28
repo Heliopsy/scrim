@@ -9,11 +9,15 @@ Everything is synthetic. No real secrets, no calls to real LLM providers.
 
 ```sh
 just bench-quick   # ~6 min
-just bench-full    # ~30 min, produced the numbers below
+just bench-full    # ~30 min, the run behind the decision
 just crosscheck    # correctness only
 ```
 
-<!-- RESULTS -->
+Results: `just report` writes [results/summary.md](results/summary.md). The committed summary is
+the `bench-full` run that decided the language split (design D1 in
+`openspec/changes/archive/2026-11-24-scrim-v1/design.md`). The benchmark is a one-off and is not
+run in CI; scrim's own performance numbers and gates are in
+[docs/performance.md](../../docs/performance.md).
 
 ## Method
 

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package notify is the contract for approval notifiers (specs/
-// policy-approvals "Notifiers"): ntfy, Telegram, webhook, terminal, tix.
+// policy-approvals "Notifiers"). The implementations are in the
+// subpackages: ntfy, webhook, terminal and out-of-process plugins.
 //
 // A notifier only delivers. Decisions come back through scrim's own
 // single-use signed links or `scrim approve`, never through the notifier's

@@ -1,8 +1,19 @@
 # scrim-dataplane
 
-The scrim data plane binary (design D1, D8, D11, D12). The control plane starts it as a child,
-hands it one end of a socketpair (`--fd <n>` or `SCRIM_DP_FD`) and talks gRPC over it
-(`proto/scrim/dataplane/v1`). It exits when the control plane's end closes.
+The scrim data plane binary (design D1, D8, D11, D12). The Go control plane
+(`internal/dataplane`) starts it as a child and talks gRPC to it over one connection
+(`proto/scrim/dataplane/v1`, types from `scrim-proto`): on Unix one end of a socketpair inherited as
+`--fd <n>` or `SCRIM_DP_FD` (the control plane passes 3), on Windows its stdin and stdout
+(`--stdio` or `SCRIM_DP_STDIO=1`, accepted on Unix too). It exits when the control plane's end
+closes. It wires the other crates together: `scrim-redact` (redaction core), `scrim-llm` (LLM
+proxy), `scrim-toolproxy` (forward and tool proxy), `scrim-policy` (decisions), `scrim-upstream-proxy`
+(outbound connections through a corporate proxy), `scrim-dns` (loop-safe resolution in DNS
+override mode) and `scrim-metrics`. Nobody runs it by hand; `--version` is the only thing it does
+without a control plane.
+
+Docs: [architecture](../../../docs/architecture.md), [interception](../../../docs/interception.md),
+[policy](../../../docs/policy.md#how-the-data-plane-decides),
+[monitoring](../../../docs/monitoring.md#how-the-data-planes-metrics-get-there).
 
 ## What it wires together
 
@@ -23,18 +34,31 @@ refuse with 503 `not_ready`.
 
 Entry `i` of `values` is entry id `i` in the core. A slug that is not a valid placeholder slug is
 derived from the slug, name or reference. Without keys and values an ephemeral random key stands
-in. Routes: the snapshot's (`anthropic` and `openai` providers; an empty `path_prefix` becomes
-`/<name>`; `chain` sends the redacted request to a chained proxy), or the built-in
-`/anthropic` and `/openai` routes when the snapshot has none.
+in. Routes: the snapshot's (providers `anthropic`, `openai`, `gemini`, `bedrock` and `vertex`; an
+empty `path_prefix` becomes `/<name>`; `chain` sends the redacted request to a chained proxy;
+`auth` names the references for AWS SigV4, a header, a Google service account or metadata server,
+or an Entra client secret), or, when the snapshot has none, the built-in `/anthropic`, `/openai`,
+`/gemini`, `/chatgpt` and `/chatgpt-ab` routes (`scrim_llm::config::default_routes`).
+`Snapshot.upstream_proxy` goes into a `scrim_upstream_proxy::ProxyHandle` that both proxies'
+connectors read, so a reload that changes the proxy applies to the next connection.
 
 ## Listeners
 
 | Kind | Address | Served by |
 | --- | --- | --- |
 | `BASE_URL` | `host:port` | LLM proxy |
-| `UNIX` | socket path, mode 0600, removed when the listener stops | LLM proxy |
+| `UNIX` | socket path, mode 0600, removed when the listener stops | LLM proxy (not on Windows: reported unbound) |
 | `FORWARD_PROXY`, `TOOL_PROXY` | `host:port` | tool proxy; hosts of the LLM routes go to the LLM proxy (`LlmIntercept`) |
-| `TRANSPARENT` | | not implemented, reported unbound |
+| `TRANSPARENT` | `host:port` | connections redirected by nftables (Linux, `SO_ORIGINAL_DST`); the TLS server name or `Host` picks the route (`ToolProxy::serve_transparent`) |
+| `SNI` | `host:port` | TLS for provider names resolved to scrim (DNS override), routed by server name like `TRANSPARENT`; its address is registered with `scrim_dns` so upstream lookups never return it |
+
+A `BASE_URL`, `FORWARD_PROXY` or `TOOL_PROXY` listener with `tls` set accepts TLS only and requires
+a client certificate (`mtls.rs`): chained to the snapshot's trust anchors, valid, and not revoked
+by a current CRL, or checked over OCSP by the control plane (`certchecks.rs`). A refused
+certificate is an `EVENT_KIND_CLIENT_CERTIFICATE_REFUSED` event. `TRANSPARENT` and `SNI` listeners
+with `block_unrouted` close connections to hosts scrim does not route instead of passing them
+through. A listener that cannot be bound reports itself unbound with the reason, which keeps the
+data plane not ready.
 
 ## Decisions
 
@@ -72,8 +96,9 @@ Unix socket peer (base-URL Unix listener), the session named as the user of
 password is never read) or the `x-scrim-session` header (base URL; stripped before forwarding). A
 request with none is an unknown caller (`agent.known` false), decided locally. A request with any
 is one the data plane cannot place: its agent fields are unknown to the table, so a rule on them
-goes to the control plane with `AskCaller` (session id, peer uid, gid, pid) to resolve and verify,
-and a restore rule on them keeps the placeholder.
+goes to the control plane with `AskCaller` (session id, peer uid, gid, pid, and the client
+certificate chain on a TLS listener) to resolve and verify, and a restore rule on them keeps the
+placeholder.
 
 ## Events and status
 
@@ -88,16 +113,32 @@ below the floor (not protected) and the decision engine.
 
 | Variable | Meaning |
 | --- | --- |
-| `SCRIM_DP_FD` | inherited socket, if `--fd` is not given |
+| `SCRIM_DP_FD` | inherited socket (Unix), if `--fd` is not given |
+| `SCRIM_DP_STDIO` | `1` or `true`: gRPC over stdin and stdout, if `--stdio` is not given |
 | `SCRIM_DP_MLOCK` | `auto` (default), `require` or `off` |
 | `SCRIM_DP_LOG` | log filter, default `info`; JSON lines on stderr |
 | `SCRIM_DP_EXTRA_CA_FILE` | extra PEM roots for upstream TLS, both proxies |
+| `SCRIM_DP_CAPTURE_DIR` | capture mode: every provider request as sent and response as received is written here (not group or world accessible); off when unset |
+| `SCRIM_DP_CAPTURE_RETENTION_SECS` | how long capture files are kept, default 7 days |
+| `SCRIM_DP_METRICS` | `1` or `true`: aggregate metrics for the control plane's `Metrics` call (`metrics.enabled`); off otherwise |
+
+Arguments win over the environment; naming both a descriptor and stdio in the arguments, or both
+in the environment, is refused.
 
 ## Tests
 
-`tests/boundary.rs` drives the gRPC service in process. `tests/e2e.rs` starts the real binary
-with a socketpair, pushes a snapshot with generated secrets, a decision table and restore settings,
-and sends traffic through every listener kind:
+```sh
+cd dataplane
+cargo test -p scrim-dataplane
+```
+
+`tests/boundary.rs` drives the gRPC service in process. `tests/stdio.rs` starts the real binary
+with `--stdio`, as on Windows, and checks EOF on stdin shuts it down. `tests/mtls.rs` covers the TLS
+listeners: valid, untrusted, expired, revoked and missing client certificates, stale CRLs, trust
+changes without rebinding, an operator's listener certificate, OCSP through the control plane and
+revoked intermediates. `tests/e2e.rs` starts the real binary with a socketpair, pushes a snapshot
+with generated secrets, a decision table and restore settings, and sends traffic through the
+listener kinds it serves:
 
 - Anthropic Messages over TCP, the Unix socket and `CONNECT` to `api.anthropic.com`: the provider
   gets placeholders only; the display value comes back restored in text, the credential never, and
@@ -106,14 +147,18 @@ and sends traffic through every listener kind:
   single-quoted word; the credential kept in another Bash call and in text.
 - Injection toward the credential's bound host (injected, the echo redacted back), toward another
   host (`unbound_destination`), and on a path a deny rule covers (`policy_denied`, nothing sent).
+- Placeholders toward a bound host that resolve to nothing (`credential_unavailable`).
 - An ask rule round-tripping over the `Asks` stream: answered allow (injected, the ask carries the
   request, rule, deadline and the session named on the proxy connection), then deny (asked again,
   no grant cached), then no answer (denied after the ask timeout), then the stream closed (denied
   at once). A provider request naming a session a deny rule could match is asked about and refused.
 - Break-glass: redaction continues, nothing is restored or injected.
+- Provider routes and tool hosts through an upstream `CONNECT` proxy with credentials, TLS
+  verified inside the tunnel, `NO_PROXY` destinations direct, a refused password failing closed.
 - Refusal before the first snapshot, and a race of applies against readers checking every engine
   sees one version.
 
 Events, asks, refusal bodies and the binary's stderr are checked for the values (raw, JSON-escaped
 and base64). Socket files live in a short temporary directory, so long worktree paths stay under
-the Unix socket path limit.
+the Unix socket path limit. The Go side's boundary tests (`internal/dataplane`, run with
+`SCRIM_TEST_DATAPLANE` set by `just test`) launch this binary too.
