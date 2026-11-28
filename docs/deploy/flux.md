@@ -102,7 +102,7 @@ dev cluster only:
 | Object | Does |
 | --- | --- |
 | ImageRepository `scrim` | lists the tags of `ghcr.io/heliopsy/scrim` every hour, ignoring signature and digest tags |
-| ImagePolicy `scrim` | the newest release tag in `>=1.0.0 <2.0.0`; pre-releases and the moving `1.0` and `latest` tags are filtered out |
+| ImagePolicy `scrim` | the newest release tag in `>=1.0.0 <2.0.0`; pre-releases and the moving minor-series and `latest` tags are filtered out |
 | ImageUpdateAutomation `scrim-dev` | rewrites the line marked `{"$imagepolicy": "flux-system:scrim:tag"}` under `scrim/overlays/dev` and pushes the commit to `main` |
 
 The marker is already in the dev overlay:
@@ -110,8 +110,12 @@ The marker is already in the dev overlay:
 ```yaml
 images:
   - name: ghcr.io/heliopsy/scrim
-    newTag: 1.0.0 # {"$imagepolicy": "flux-system:scrim:tag"}
+    newTag: 0.1.0 # {"$imagepolicy": "flux-system:scrim:tag"}
 ```
+
+The committed tag is older than the policy's range. The first automation run replaces it with the
+newest release the ImagePolicy selects; until that commit lands, dev runs the old tag, so set it to
+the current release when you copy the overlay into fleet.
 
 The deploy key bootstrap created must have write access for the automation to push.
 
@@ -164,7 +168,8 @@ scrim`.
 - Upgrade: dev by image automation, staging and prod by pull request; the Helm path by the
   OCIRepository's semver range (a new release) or a changed range.
 - Roll back: revert the commit. For the Helm path, a failed upgrade rolls back by itself; to go
-  back on purpose, pin the chart (`ref.tag: "1.0.0"`) and commit.
+  back on purpose, replace the OCIRepository's `ref.semver` with `ref.tag` set to the version to stay
+  on, and commit.
 - Pause: `flux --context "$CONTEXT" suspend kustomization scrim` (and `resume`).
 - Uninstall: remove `clusters/<env>/scrim.yaml` from fleet and commit. `prune: true` deletes what
   the Kustomization applied, the namespace included.

@@ -11,7 +11,9 @@ Files: [`deploy/examples/workstation/`](../../deploy/examples/workstation/).
 
 ## Prerequisites
 
-- Linux or macOS, amd64 or arm64.
+- Linux or macOS, amd64 or arm64, for `install.sh` and the commands below. Windows is supported
+  with fewer features: install with the PowerShell steps in
+  [install.md](../install.md#windows), which lists what runs there.
 - `curl`, `tar`, `sha256sum` (or `shasum` on macOS) and
   [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) 2.4 or later.
 - `~/.local/bin` on your `PATH`.
@@ -23,19 +25,24 @@ signature over `checksums.txt` against the release workflow's identity, checks t
 the signed checksums and installs the binary into `~/.local/bin`. Nothing is installed when either
 check fails.
 
+<!-- x-release-please-start-version -->
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/Heliopsy/scrim/main/deploy/examples/workstation/install.sh
 less install.sh                      # read it before you run it
-VERSION=1.0.0 bash install.sh
+VERSION=1.2.0 bash install.sh
 ```
 
 The last lines it prints:
 
 ```text
 Verified OK
-scrim_1.0.0_linux_amd64.tar.gz: OK
-scrim 1.0.0 (commit: <commit>, built: <date>, linux/amd64)
+scrim_1.2.0_linux_amd64.tar.gz: OK
+scrim 1.2.0 (commit: <commit>, built: <date>, linux/amd64)
 ```
+<!-- x-release-please-end -->
+
+Without `VERSION`, the script installs the release it was last updated for, which on `main` is the
+latest one.
 
 `PREFIX=/usr/local` installs into `/usr/local/bin` instead (run it with `sudo`). The steps are the
 same as in [install.md](../install.md), which also covers the provenance check.
@@ -65,8 +72,8 @@ catalog:
 ```
 
 The env store reads secrets from scrim's own environment, so the example works without a secret
-store. The target names the variable; from 0.2.0 on, `local://SCRIM_SECRET_*` also works and
-redacts every variable with that prefix (0.1.0 read it as one variable named `SCRIM_SECRET_*`).
+store. The target names the variable; `local://SCRIM_SECRET_*` also works and redacts every
+variable with that prefix.
 A redact target that loads nothing stops `scrim proxy` at start-up with an error naming it, so
 export the variable before starting scrim. For daily use, point a store at OpenBao, Infisical or
 Vaultwarden ([stores](../stores/README.md)) and redact a folder of it.
@@ -104,8 +111,11 @@ scrim run -- codex
 session token for that one process. `scrim run --print-env -- claude` shows all of it without
 starting anything; [run.md](../run.md) has the full list per agent.
 
-To keep scrim running between agents, run it as a user service ([vm.md](vm.md#user-service)). Then
-`scrim run` uses that daemon and leaves it running when the agent exits.
+To keep scrim running between agents, run it as a service. On Linux, `scrim install --user`
+([service.md](../service.md)) or the plain user unit in [vm.md](vm.md#user-service) does that;
+`scrim run` then uses that daemon and leaves it running when the agent exits. macOS has no
+installer yet: run `scrim proxy` from a launchd agent of your own. On Windows, start `scrim proxy`
+from a shell.
 
 ## Verify
 
@@ -155,10 +165,14 @@ you are done.
 
 ## Upgrade and roll back
 
+Fetch the current `install.sh` as above and run it with the new version:
+
+<!-- x-release-please-start-version -->
 ```sh
-VERSION=1.0.1 bash install.sh        # keeps the old binary as ~/.local/bin/scrim.prev
+VERSION=1.2.0 bash install.sh        # keeps the old binary as ~/.local/bin/scrim.prev
 mv ~/.local/bin/scrim.prev ~/.local/bin/scrim   # roll back
 ```
+<!-- x-release-please-end -->
 
 State in `~/.local/state/scrim` (SQLite, placeholder key, CA) carries over. A newer scrim migrates
 the SQLite schema forward and an older one refuses a newer schema, so after a rollback across a
