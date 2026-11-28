@@ -345,9 +345,35 @@ func (l Links) EntryURL(tok string) (string, error) { return l.Base + "/entry/" 
 // TokenOf returns the token at the end of an entry URL.
 func TokenOf(url string) string { return url[strings.LastIndexByte(url, '/')+1:] }
 
+// Writes is the agent's own store identity: it refuses writes under
+// RefusePrefix and fails the check under FailPrefix; everything else may be
+// written.
+type Writes struct {
+	mu           sync.Mutex
+	RefusePrefix string
+	FailPrefix   string
+	Calls        []agenttools.Operation
+}
+
+// CheckWrite implements agenttools.WriteAccess.
+func (w *Writes) CheckWrite(_ context.Context, _ identity.Identity, op agenttools.Operation) (agenttools.WriteCheck, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.Calls = append(w.Calls, op)
+	switch {
+	case w.RefusePrefix != "" && strings.HasPrefix(op.Ref, w.RefusePrefix):
+		return agenttools.WriteCheck{Identity: "static", Check: "checked"},
+			&agenttools.WriteRefusedError{Reason: "store bao: write " + op.Ref + ": the agent's own identity may not write this path"}
+	case w.FailPrefix != "" && strings.HasPrefix(op.Ref, w.FailPrefix):
+		return agenttools.WriteCheck{Identity: "static"}, errors.New("store unreachable")
+	}
+	return agenttools.WriteCheck{Identity: "static", Check: "checked"}, nil
+}
+
 // Env is a Service wired to fakes.
 type Env struct {
 	Service   *agenttools.Service
+	Writes    *Writes
 	Policy    *Policy
 	Approvals *Approvals
 	Store     *Store
@@ -367,8 +393,9 @@ func NewEnv(t testing.TB) *Env {
 		Store:     NewStore(),
 		Audit:     &Audit{},
 		Notifier:  &Notifier{},
+		Writes:    &Writes{},
 	}
-	svc, err := agenttools.New(agenttools.Deps{Policy: e.Policy, Approvals: ap, Catalog: e.Store, Store: e.Store,
+	svc, err := agenttools.New(agenttools.Deps{Policy: e.Policy, Approvals: ap, Catalog: e.Store, Store: e.Store, Writes: e.Writes,
 		Auditor: e.Audit, Notifier: e.Notifier, Links: Links{Base: "http://127.0.0.1:1"}})
 	if err != nil {
 		t.Fatal(err)

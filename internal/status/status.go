@@ -129,6 +129,9 @@ type Report struct {
 	// RunView is the filesystem view `scrim run` gives its sessions on
 	// this host.
 	RunView *RunView `json:"run_fs_view,omitempty"`
+	// RunNetwork is the agent network `scrim run` gives its sessions on
+	// this host (run.network).
+	RunNetwork *RunNetwork `json:"run_network,omitempty"`
 	// UpstreamProxy is where scrim's own outbound connections go: the
 	// upstream proxy as scheme://host:port (never its credentials),
 	// "direct", or why the configured one cannot be used.
@@ -150,7 +153,29 @@ type RunView struct {
 	Fallback string `json:"fallback,omitempty"`
 	// Gaps are what the view does not cover.
 	Gaps []string `json:"gaps,omitempty"`
+	// ReadableOwn are scrim's own secret files (file: reference targets,
+	// key and state directories; "path (origin)") that this user, the user
+	// agents run as, can read: scrim runs as that user.
+	ReadableOwn []string `json:"readable_own_files,omitempty"`
 }
+
+// RunNetwork is the agent network of `scrim run` on this host
+// (specs/interception, "Proxy-only agent network").
+type RunNetwork struct {
+	// Requested is run.network: open or proxy-only.
+	Requested string `json:"requested"`
+	// Available reports whether this host can give an agent a network
+	// namespace of its own, which proxy-only needs.
+	Available bool `json:"available"`
+	// Reason is why it cannot.
+	Reason string `json:"reason,omitempty"`
+	// Gaps are what the mode does not stop.
+	Gaps []string `json:"gaps,omitempty"`
+}
+
+// Refused reports whether scrim run refuses to start agents: proxy-only on
+// a host without the namespace.
+func (n *RunNetwork) Refused() bool { return n != nil && n.Requested == "proxy-only" && !n.Available }
 
 // RunViewRefused is RunView.Mode when scrim run refuses to start agents.
 const RunViewRefused = "refused"
@@ -300,6 +325,8 @@ type Sources struct {
 	AgentModes []AgentMode
 	// RunView is scrim run's filesystem view on this host, if checked.
 	RunView *RunView
+	// RunNetwork is scrim run's agent network on this host, if checked.
+	RunNetwork *RunNetwork
 }
 
 // Collect gathers a report and derives the degraded list.
@@ -377,6 +404,7 @@ func Collect(ctx context.Context, src Sources) Report {
 	}
 	addEBPF(&r)
 	r.RunView = src.RunView
+	r.RunNetwork = src.RunNetwork
 	r.Degraded = derive(r)
 	return r
 }
@@ -425,6 +453,9 @@ func derive(r Report) []Component {
 	}
 	if v := r.RunView; v != nil && v.Mode == RunViewRefused {
 		out = append(out, Component{Name: "run-fs-view", Reason: "run.fs-view is namespace and this host has none, so scrim run refuses to start agents: " + v.Fallback})
+	}
+	if n := r.RunNetwork; n.Refused() {
+		out = append(out, Component{Name: "run-network", Reason: "run.network is proxy-only and this host cannot create the agent's network namespace, so scrim run refuses to start agents: " + n.Reason})
 	}
 	if !r.DataPlane.Running || !r.DataPlane.Healthy {
 		out = append(out, Component{Name: "data-plane", Reason: orDefault(r.DataPlane.Detail, "not running or unhealthy")})

@@ -17,6 +17,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/heliopsy/scrim/internal/agentapi"
+	"github.com/heliopsy/scrim/internal/agentstore"
+	"github.com/heliopsy/scrim/internal/agenttools"
+	"github.com/heliopsy/scrim/internal/agenttools/agenttoolstest"
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/status"
@@ -631,6 +635,10 @@ func TestVaultwarden(t *testing.T) {
 	t.Run("AgentIdentity", func(t *testing.T) {
 		testAgentIdentity(t, srv)
 	})
+
+	t.Run("AgentWriteIdentity", func(t *testing.T) {
+		testAgentWriteIdentity(t, srv)
+	})
 }
 
 // agentKey is an agent's credential as identity.store-credentials holds it
@@ -723,5 +731,101 @@ func testAgentIdentity(t *testing.T, srv *vwtest.Server) {
 				t.Fatalf("error %q holds a secret", err)
 			}
 		}
+	}
+}
+
+// testAgentWriteIdentity, end to end through the agent tools: agent B's own
+// account has read-only access to collection "TeamA", so its secret_gen
+// into TeamA is refused although scrim's rules allow it and scrim's own
+// account could write there; agent A, whose account may edit TeamA,
+// writes (specs/agent-identity "Agent writes are checked as the agent").
+func testAgentWriteIdentity(t *testing.T, srv *vwtest.Server) {
+	e := newEnv(t, srv, bwcrypto.DefaultPBKDF2())
+	org := e.account.CreateOrg(t, "AcmeWriters", "TeamA")
+	accA := srv.Register(t, bwcrypto.DefaultPBKDF2())
+	accB := srv.Register(t, bwcrypto.DefaultPBKDF2())
+	e.account.AddMember(t, org, accA, vwtest.Access{CollectionID: org.CollectionID})
+	e.account.AddMember(t, org, accB, vwtest.Access{CollectionID: org.CollectionID, ReadOnly: true})
+
+	a := e.adapter(t, srv.URL, nil)
+	defer func() { _ = a.Close() }()
+	set := stores.NewSet()
+	if err := set.Add(a); err != nil {
+		t.Fatal(err)
+	}
+	keyFile := func(acc *vwtest.Account) string {
+		return "file:" + vwtest.WriteSecretFile(t, e.dir, agentKey(t, acc))
+	}
+	newService := func(t *testing.T, o agentstore.Options) (*agenttools.Service, *agenttoolstest.Audit) {
+		t.Helper()
+		o.Credentials = map[string]string{"vw/agent-a": keyFile(accA), "vw/agent-b": keyFile(accB)}
+		o.Lookup, o.Resolve, o.Kinds = set.Lookup, fileResolver, map[string]string{"vw": vaultwarden.Kind}
+		checker, err := agentstore.New(o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		audit := &agenttoolstest.Audit{}
+		st := agentapi.Stores{Set: set}
+		svc, err := agenttools.New(agenttools.Deps{
+			Policy:    &agenttoolstest.Policy{Rules: []agenttoolstest.Rule{{Prefix: "vw://", Effect: agenttools.EffectAllow}}},
+			Approvals: &agenttoolstest.Approvals{}, Catalog: st, Store: st, Auditor: audit,
+			Writes: agentapi.Writes{Checker: checker},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return svc, audit
+	}
+	ctx := vwtest.Ctx(t, 90*time.Second)
+	agentB, agentA := agenttoolstest.Agent("agent-b", 1001), agenttoolstest.Agent("agent-a", 1002)
+	exists := func(ref string) bool {
+		t.Helper()
+		s, err := a.Read(ctx, stores.MustParseRef(ref))
+		if errors.Is(err, stores.ErrNotFound) {
+			return false
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.Wipe()
+		return true
+	}
+
+	svc, audit := newService(t, agentstore.Options{})
+	const byB = "vw://TeamA/ByB?org=AcmeWriters"
+	_, err := svc.Generate(ctx, agentB, agenttools.GenInput{Ref: byB + "#password"})
+	if agenttools.CodeOf(err) != agenttools.CodeDenied || !strings.Contains(err.Error(), "may not add items to this collection") {
+		t.Fatalf("agent B, read-only on Team A: secret_gen = %v, want refused by its own account", err)
+	}
+	if exists("vw://TeamA/ByB") {
+		t.Fatal("the refused secret_gen created the item")
+	}
+	if last := audit.Last(); last.Outcome != agenttools.OutcomeDenied || last.StoreIdentity != agentstore.SourceStatic || last.WriteCheck != agentstore.WriteChecked {
+		t.Fatalf("audit = %+v", last)
+	}
+	for _, v := range []string{expose(t, accA.ClientSecret), expose(t, accB.ClientSecret)} {
+		if strings.Contains(err.Error(), v) {
+			t.Fatal("the refusal quotes an agent credential")
+		}
+	}
+	const byA = "vw://TeamA/ByA?org=AcmeWriters"
+	if _, err := svc.Generate(ctx, agentA, agenttools.GenInput{Ref: byA + "#password"}); err != nil {
+		t.Fatalf("agent A, who may edit Team A: %v", err)
+	}
+	if !exists("vw://TeamA/ByA") {
+		t.Fatal("agent A's secret_gen stored nothing")
+	}
+
+	// scrim's own account could make agent B's write: with the write check
+	// skipped, the same call stores the item.
+	svc, audit = newService(t, agentstore.Options{SkipWriteChecks: true})
+	if _, err := svc.Generate(ctx, agentB, agenttools.GenInput{Ref: byB + "#password"}); err != nil {
+		t.Fatalf("with identity.skip-agent-write-checks: %v", err)
+	}
+	if !exists("vw://TeamA/ByB") {
+		t.Fatal("scrim's own write stored nothing")
+	}
+	if last := audit.Last(); last.WriteCheck != agentstore.WriteSkipped {
+		t.Fatalf("audit = %+v", last)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -30,6 +31,18 @@ func buildScrim(t *testing.T) string {
 		t.Fatalf("building scrim: %v\n%s", err, out)
 	}
 	return bin
+}
+
+// testNetwork is run.network for the real agent CLIs:
+// SCRIM_TEST_RUN_NETWORK=proxy-only runs them in the agent network
+// namespace (CI runs both).
+func testNetwork(t *testing.T) string {
+	t.Helper()
+	mode := os.Getenv("SCRIM_TEST_RUN_NETWORK")
+	if mode == NetworkProxyOnly {
+		requireNetwork(t)
+	}
+	return mode
 }
 
 // agentEnv is a clean environment for a real agent CLI: an empty HOME so it
@@ -87,6 +100,7 @@ func TestClaudeCodeThroughScrimRun(t *testing.T) {
 			"DISABLE_TELEMETRY=1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"),
 		Dir: work, Daemon: h.daemon(), MCP: true, ScrimPath: scrim,
 		Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errb, RuntimeDir: t.TempDir(),
+		Network: NetworkOptions{Mode: testNetwork(t)},
 	})
 	if err != nil {
 		t.Fatalf("claude under scrim run: %v\nstdout: %s\nstderr: %s", err, out.String(), errb.String())
@@ -169,6 +183,7 @@ func TestCodexThroughScrimRun(t *testing.T) {
 		Environ: agentEnv(t, "OPENAI_API_KEY=fake-provider-key-not-a-seed"),
 		Dir:     work, Daemon: h.daemon(), MCP: true, ScrimPath: scrim,
 		Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errb, RuntimeDir: t.TempDir(),
+		Network: NetworkOptions{Mode: testNetwork(t)},
 	})
 	output := out.String() + errb.String()
 	if err != nil {

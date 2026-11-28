@@ -24,8 +24,8 @@ use scrim_redact as rc;
 
 use crate::engine::{
     BinaryPolicy, EngineError, Guard, GuardVerdict, PlaceholderMatch, Placeholders, RedactReport,
-    Redactor, Resolved, RestorePolicy, ScopedRedaction, SecretRef, SecretValue, Snapshot,
-    ValueClass,
+    Redactor, RemotePolicy, Resolved, RestorePolicy, ScopedRedaction, SecretRef, SecretValue,
+    Snapshot, ValueClass,
 };
 
 struct Inner {
@@ -119,6 +119,7 @@ impl CoreEngine {
             placeholders: Arc::new(CorePlaceholders(self.inner.clone())),
             policy,
             binary,
+            remote: RemotePolicy::default(),
             routes: None,
             gate: None,
         }

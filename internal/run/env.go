@@ -122,6 +122,8 @@ type Plan struct {
 	Warnings []string `json:"warnings,omitempty"`
 	// FSView is the session filesystem view (package fsview).
 	FSView *fsview.Plan `json:"fs_view,omitempty"`
+	// Network is the agent's network (run.network).
+	Network *NetworkPlan `json:"network,omitempty"`
 }
 
 // Input is what a plan is built from.

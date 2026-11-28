@@ -29,6 +29,13 @@ pub enum RefusalReason {
     /// The `scan` binary policy found a secret value inside a binary part, which cannot be
     /// redacted in place without corrupting it.
     SecretInBinary,
+    /// An attachment referenced by URL or file ID that the remote attachment policy does not
+    /// let through: `refuse`, a file ID scrim did not scan on upload, something scrim cannot
+    /// fetch, a URL that is not public or carries a secret value.
+    RemoteAttachment,
+    /// An attachment referenced by URL could not be fetched (unreachable, an error status, too
+    /// slow).
+    AttachmentUnavailable,
     /// Capture mode could not record the outgoing request.
     CaptureFailed,
     /// A configured chained upstream could not be reached and `on_unavailable` is `fail`.
@@ -59,6 +66,8 @@ impl RefusalReason {
             Self::GuardRefused => "guard_refused",
             Self::UnscannableContent => "unscannable_content",
             Self::SecretInBinary => "secret_in_binary",
+            Self::RemoteAttachment => "remote_attachment",
+            Self::AttachmentUnavailable => "attachment_unavailable",
             Self::CaptureFailed => "capture_failed",
             Self::ChainUnavailable => "chain_unavailable",
             Self::UpstreamUnavailable => "upstream_unavailable",

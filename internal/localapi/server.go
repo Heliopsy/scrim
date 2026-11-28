@@ -86,6 +86,23 @@ type Server struct {
 	// control plane's side of scrim's ssh-agent. Neither returns key
 	// material: public keys and signatures only.
 	SSH SSHAgent
+	// OwnPaths, when set, lists the files and directories this scrim reads
+	// secrets or key material from (config.OwnPaths), for GET
+	// /v1/own-paths: `scrim run` hides them from its sessions. Paths only,
+	// never content. Unset, the route answers with an empty list.
+	OwnPaths func() []OwnPath
+}
+
+// OwnPath is a file or directory the daemon reads secrets or key material
+// from. Origin names the setting, field or role that points at it.
+type OwnPath struct {
+	Path   string `json:"path"`
+	Origin string `json:"origin"`
+}
+
+// OwnPathsOutput is the answer of GET /v1/own-paths.
+type OwnPathsOutput struct {
+	Paths []OwnPath `json:"paths"`
 }
 
 // SSHAgent lists ssh-agent keys and signs for a caller (sshkeys.Keyring).
@@ -271,6 +288,7 @@ func (s *Server) Handler() http.Handler {
 	open("GET "+v+"/endpoints", s.endpoints)
 	mux.HandleFunc("GET "+v+"/whoami", s.whoami)
 	authed("POST "+v+"/sessions", s.mint)
+	authed("GET "+v+"/own-paths", s.ownPaths)
 	authed("DELETE "+v+"/sessions/self", s.revokeSelf)
 	authed("DELETE "+v+"/sessions/{id}", s.revoke)
 	authed("PUT "+v+"/sessions/self/values", s.sessionValues)
@@ -355,6 +373,14 @@ func (s *Server) authenticate(h func(http.ResponseWriter, *http.Request, identit
 				PID: id.Peer.PID, Tool: ToolAuth, Outcome: agenttools.OutcomeRefused, Detail: "unknown caller"})
 			writeError(w, agenttools.Errorf(agenttools.CodeUnauthenticated, "this local user is not mapped to an agent"))
 			return
+		}
+		if id.Source == identity.SourceKubernetes && r.Context().Value(callerKey) == nil && identity.KubernetesTokenFrom(r.Context()) == nil {
+			// Kept for the request, so a store write can log in as the
+			// pod's service account (Kubernetes passthrough).
+			if tok, _ := bearer(r); len(tok) > 0 {
+				defer secret.WipeBytes(tok)
+				r = r.WithContext(identity.WithKubernetesToken(r.Context(), tok))
+			}
 		}
 		h(w, r, id)
 	}
@@ -479,6 +505,21 @@ func (s *Server) mint(w http.ResponseWriter, r *http.Request, id identity.Identi
 		secret.WipeBytes(buf)
 		return err
 	})
+}
+
+// ownPaths answers only a caller that may mint sessions: the `scrim run`
+// that is about to start an agent. Sessions and agents never hold that
+// scope, so an agent cannot ask the daemon where its secrets live.
+func (s *Server) ownPaths(w http.ResponseWriter, _ *http.Request, id identity.Identity) {
+	if id.Source != identity.SourcePeer || !id.Has(identity.ScopeSessionsMint) {
+		writeError(w, agenttools.Errorf(agenttools.CodeForbidden, "only a mapped local user with %s can list scrim's own files", identity.ScopeSessionsMint))
+		return
+	}
+	out := OwnPathsOutput{Paths: []OwnPath{}}
+	if s.OwnPaths != nil {
+		out.Paths = append(out.Paths, s.OwnPaths()...)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) revokeSelf(w http.ResponseWriter, r *http.Request, id identity.Identity) {

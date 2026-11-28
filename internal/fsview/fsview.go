@@ -24,7 +24,13 @@
 //     names them and `scrim status` lists them.
 //
 // Covered paths are the fixed paths of the applied tool profiles
-// (profiles.Rendered.Paths) and the patterns in run.fs-view-hide.
+// (profiles.Rendered.Paths), the patterns in run.fs-view-hide, and scrim's
+// own files ([OwnPath]: the daemon's config files, the targets of its file:
+// references, its key and state directories) that the agent's user can
+// read. Own files are absolute paths: the namespace view hides them
+// wherever they are, the home mirror only under $HOME, and a readable one
+// it cannot hide refuses the view unless run.fs-view-allow-readable-own-files
+// says otherwise.
 //
 // The namespace is set up by the scrim executable itself, started again
 // under the name [HelperName] by [Wrap]: Go cannot run code between fork and
@@ -69,7 +75,7 @@ var (
 		Key:     "run.fs-view",
 		Default: ModeAuto,
 		Enum:    []string{ModeAuto, ModeNamespace, ModeHome, ModeOff},
-		Description: "Session filesystem view for credential files at fixed home paths: auto (a user and mount namespace " +
+		Description: "Session filesystem view for credential files at fixed home paths and scrim's own secret files: auto (a user and mount namespace " +
 			"where the host allows it, the home mirror elsewhere), namespace (refuse to start the agent without one), " +
 			"home (HOME points at a mirror of the home directory without the real credential files) or off. " +
 			"See docs/run.md.",
@@ -93,12 +99,30 @@ var (
 	})
 )
 
+// AllowReadableOwn lets the view start although it cannot hide some of
+// scrim's own files that the agent's user can read.
+var AllowReadableOwn = config.Register(config.Spec[bool]{
+	Key:       "run.fs-view-allow-readable-own-files",
+	Weakening: true,
+	Flag:      true,
+	Description: "Start scrim run sessions even when the filesystem view cannot hide some of scrim's own secret files " +
+		"(file: reference targets, config files, key and state directories) that the agent's user can read: outside " +
+		"$HOME with the home mirror, or above a path the session needs. Off, scrim run refuses to start the agent. See docs/run.md.",
+})
+
 // DefaultHide is run.fs-view-hide's default: ssh private keys, not their
 // public halves.
 var DefaultHide = []string{".ssh/id_*", "!.ssh/id_*.pub"}
 
 // HideOrigin names run.fs-view-hide as the origin of an entry.
 const HideOrigin = "run.fs-view-hide"
+
+// OwnPath is an absolute file or directory scrim itself reads secrets or
+// key material from, as the daemon reports it.
+type OwnPath struct {
+	Path   string
+	Origin string
+}
 
 // Path is a home-relative path to cover.
 type Path struct {
@@ -122,6 +146,8 @@ type Entry struct {
 	// Dir is true when Target is a directory.
 	Dir    bool   `json:"dir,omitempty"`
 	Origin string `json:"origin"`
+	// Own is set for one of scrim's own files, hidden wherever it is.
+	Own bool `json:"own,omitempty"`
 }
 
 // Hidden reports whether the entry hides its target.
@@ -152,6 +178,17 @@ type Input struct {
 	// SessionDir is the session directory; the view keeps its files in
 	// SessionDir/fsview.
 	SessionDir string
+	// Own are scrim's own files, hidden when the agent's user can read
+	// them (unreadable and missing ones are skipped).
+	Own []OwnPath
+	// Keep are paths the session needs (the session directory, the agent
+	// API socket, the scrim executable): an own path at or above one of
+	// them cannot be hidden.
+	Keep []string
+	// AllowReadableOwn starts the view although some readable own files
+	// cannot be hidden (run.fs-view-allow-readable-own-files, weakening);
+	// they are listed in Plan.Exposed.
+	AllowReadableOwn bool
 }
 
 // Plan is the view for one session. It holds paths only.
@@ -171,6 +208,9 @@ type Plan struct {
 	SessionHome string `json:"session_home,omitempty"`
 	// Gaps are what the view does not cover.
 	Gaps []string `json:"gaps,omitempty"`
+	// Exposed are scrim's own files the agent's user can read and the view
+	// does not hide, each with the reason; only with AllowReadableOwn.
+	Exposed []string `json:"exposed,omitempty"`
 
 	dir  string
 	home string
@@ -279,8 +319,9 @@ func Build(in Input) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	own, blocked := ownEntries(in.Own, in.Keep)
 	avail := Availability{Reason: "not checked"}
-	if in.Mode == ModeNamespace || (in.Mode == ModeAuto && len(nsEntries) > 0) {
+	if in.Mode == ModeNamespace || (in.Mode == ModeAuto && len(nsEntries)+len(own)+len(blocked) > 0) {
 		if in.Available != nil {
 			avail = in.Available()
 		} else {
@@ -294,18 +335,118 @@ func Build(in Input) (*Plan, error) {
 	p.Mode, p.Fallback = mode, fallback
 	switch mode {
 	case ModeNamespace:
-		p.Homes, p.Entries = homes, nsEntries
+		p.Homes, p.Entries = homes, mergeOwn(nsEntries, own)
 	case ModeHome:
 		p.Homes = []string{p.home}
 		if p.Entries, err = entries(p.Homes, in.Paths, in.Hide, true); err != nil {
 			return nil, err
 		}
+		var under []Entry
+		for _, e := range own {
+			rel, err := filepath.Rel(p.home, e.Target)
+			if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				blocked = append(blocked, e.Target+" ("+e.Origin+") is outside $HOME, and the home mirror only hides paths under it")
+				continue
+			}
+			e.Home = filepath.ToSlash(rel)
+			under = append(under, e)
+		}
+		p.Entries = mergeOwn(p.Entries, under)
 		if len(p.Entries) > 0 {
 			p.SessionHome = filepath.Join(p.dir, "home")
 		}
 	}
+	if len(blocked) > 0 && mode != ModeOff {
+		if !in.AllowReadableOwn {
+			return nil, fmt.Errorf("the agent's user can read scrim's own secret files that the %s view cannot hide: %s; "+
+				"run scrim as another user (sudo scrim install --system --agent-user $USER), use the namespace view, "+
+				"or set %s to start anyway", mode, strings.Join(blocked, "; "), AllowReadableOwn.Name())
+		}
+		p.Exposed = blocked
+	}
 	p.Gaps = Gaps(mode)
 	return p, nil
+}
+
+// ownEntries turns scrim's own files into hidden entries with absolute
+// targets: those that exist and that this user can read. One at or above a
+// path the session needs is returned in blocked instead, with the reason.
+func ownEntries(own []OwnPath, keep []string) (out []Entry, blocked []string) {
+	var keepReal []string
+	for _, k := range keep {
+		if k == "" || !filepath.IsAbs(k) {
+			continue
+		}
+		keepReal = append(keepReal, filepath.Clean(k))
+		if r, err := filepath.EvalSymlinks(k); err == nil {
+			keepReal = append(keepReal, r)
+		}
+	}
+	seen := map[string]bool{}
+	for _, o := range own {
+		if o.Path == "" || !filepath.IsAbs(o.Path) {
+			continue
+		}
+		target := filepath.Clean(o.Path)
+		if seen[target] {
+			continue
+		}
+		seen[target] = true
+		st, err := os.Stat(target)
+		if err != nil || !readable(target, st.IsDir()) {
+			continue
+		}
+		cands := []string{target}
+		if r, err := filepath.EvalSymlinks(target); err == nil && r != target {
+			cands = append(cands, r)
+		}
+		var needed string
+		for _, c := range cands {
+			for _, k := range keepReal {
+				if k == c || strings.HasPrefix(k, c+string(filepath.Separator)) || c == string(filepath.Separator) {
+					needed = k
+				}
+			}
+		}
+		if needed != "" {
+			blocked = append(blocked, target+" ("+o.Origin+") holds "+needed+", which the session needs")
+			continue
+		}
+		out = append(out, Entry{Target: target, Dir: st.IsDir(), Origin: o.Origin, Own: true})
+	}
+	return out, blocked
+}
+
+// mergeOwn adds own entries to entries: a target already covered keeps its
+// entry, an own entry inside a covered directory is dropped (the
+// directory's view already does not show it), and an entry inside a
+// hidden own directory is dropped (the directory is hidden whole).
+func mergeOwn(entries, own []Entry) []Entry {
+	if len(own) == 0 {
+		return entries
+	}
+	out := slices.Clone(entries)
+	for _, e := range own {
+		if !slices.ContainsFunc(out, func(x Entry) bool { return x.Target == e.Target }) {
+			out = append(out, e)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Target < out[j].Target })
+	kept := out[:0]
+	var dirs []Entry
+	for _, e := range out {
+		inside := slices.ContainsFunc(dirs, func(d Entry) bool {
+			return (d.Own || e.Own) && strings.HasPrefix(e.Target, d.Target+string(filepath.Separator))
+		})
+		if inside {
+			continue
+		}
+		if e.Dir {
+			dirs = append(dirs, e)
+		}
+		kept = append(kept, e)
+	}
+	return kept
 }
 
 // uniqueHomes returns the home directories to cover, one per real
@@ -579,4 +720,19 @@ func mirrorDir(real, mir, prefix string, covered map[string]Entry) error {
 		}
 	}
 	return nil
+}
+
+// Readable returns the own paths that exist and this process's user can
+// read, for `scrim status` and `scrim doctor`.
+func Readable(own []OwnPath) []OwnPath {
+	var out []OwnPath
+	for _, o := range own {
+		if !filepath.IsAbs(o.Path) {
+			continue
+		}
+		if st, err := os.Stat(o.Path); err == nil && readable(o.Path, st.IsDir()) {
+			out = append(out, o)
+		}
+	}
+	return out
 }

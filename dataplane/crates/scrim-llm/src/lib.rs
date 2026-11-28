@@ -58,6 +58,7 @@ mod jsonarray;
 pub mod metrics;
 pub mod outgoing;
 pub mod proxy;
+pub mod remote;
 mod restore;
 pub mod route;
 pub mod server;
@@ -76,11 +77,12 @@ pub use codec::Api;
 pub use config::{ChainConfig, OnUnavailable, Provider, ProxyConfig, RouteConfig};
 pub use engine::{
     Admission, BinaryPolicy, EngineError, Guard, GuardVerdict, KeepAll, PlaceholderMatch,
-    Placeholders, RedactReport, Redactor, RequestGate, RequestInfo, Resolved, RestoreDecision,
-    RestorePolicy, RestoreSite, ScopedRedaction, SecretRef, SecretValue, Snapshot, SnapshotCell,
-    SnapshotSource, ToolInputRestore, ToolMode, ValueClass,
+    Placeholders, RedactReport, Redactor, RemoteMode, RemotePolicy, RequestGate, RequestInfo,
+    Resolved, RestoreDecision, RestorePolicy, RestoreSite, ScopedRedaction, SecretRef, SecretValue,
+    Snapshot, SnapshotCell, SnapshotSource, ToolInputRestore, ToolMode, ValueClass,
 };
 pub use error::{ERROR_HEADER, Refusal};
 pub use metrics::LlmMetrics;
 pub use proxy::{BuildError, Proxy, SESSION_HEADER};
+pub use remote::Network;
 pub use stream::{ChunkRestore, SseRestorer, restore_json};

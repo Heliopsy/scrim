@@ -256,6 +256,11 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, agenttools.Errorf(agenttools.CodeNotFound, "this route is not served to agent pods"))
 		return
 	}
+	// Read before identify, which removes the header: kept for the
+	// request, so a store write can log in as the pod's service account
+	// (Kubernetes passthrough).
+	tok := bearer(r)
+	defer secret.WipeBytes(tok)
 	id, status, err := s.identify(r)
 	if err != nil {
 		writeError(w, status, err)
@@ -265,7 +270,11 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, agenttools.Errorf(agenttools.CodeUnavailable, "the agent API is not available"))
 		return
 	}
-	s.API.ServeHTTP(w, r.WithContext(localapi.WithCaller(r.Context(), id)))
+	ctx := localapi.WithCaller(r.Context(), id)
+	if id.Source == identity.SourceKubernetes {
+		ctx = identity.WithKubernetesToken(ctx, tok)
+	}
+	s.API.ServeHTTP(w, r.WithContext(ctx))
 }
 
 func (s *Server) sshAgent(w http.ResponseWriter, r *http.Request) {

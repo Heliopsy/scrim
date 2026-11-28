@@ -55,6 +55,7 @@ const Caps = stores.CapRead | stores.CapList | stores.CapWatch | stores.CapWrite
 
 func init() {
 	stores.DeclareMulti(Kind, multiAttrs...)
+	stores.DeclareAgentWriteCheck(Kind)
 	stores.Register(Kind, func(_ context.Context, inst stores.Instance) (stores.Adapter, error) {
 		return New(inst)
 	})
