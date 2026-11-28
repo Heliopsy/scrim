@@ -145,7 +145,8 @@ When the listener's connection drops, the replica logs a warning, sets `scrim_ev
 0, polls the outbox every `events.poll-interval` and reconnects with jittered backoff; it also
 checks an idle connection every 30 s, so one that died silently is noticed. `scrim_events_last_id`
 is the newest event a replica delivered and `scrim_events_delivered_total{kind}` counts deliveries;
-replicas whose `scrim_events_last_id` stays apart are not reading the outbox.
+replicas whose `scrim_events_last_id` stays apart are not reading the outbox. These metrics are listed
+with the others in [monitoring.md](monitoring.md#control-plane).
 
 Each replica records `config.reloaded` (an audit entry and an event) when it starts serving and
 after each reload. Its subject is `sha256:` and 16 hex digits over every setting's key and effective
