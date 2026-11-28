@@ -23,12 +23,14 @@ Every release from 0.2.0 on publishes the chart as `oci://ghcr.io/heliopsy/chart
 keyless by the release workflow. Check the signature before installing
 ([kubernetes.md](../kubernetes.md#install)):
 
+<!-- x-release-please-start-version -->
 ```sh
-VERSION=1.0.0
+VERSION=1.2.0
 cosign verify "ghcr.io/heliopsy/charts/scrim:$VERSION" \
   --certificate-identity-regexp '^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
+<!-- x-release-please-end -->
 
 ## Values files
 
@@ -133,7 +135,7 @@ the injected environment and reaches the provider through scrim:
 
 ```sh
 timeout 60 kubectl --context "$CONTEXT" -n agents run scrim-canary --rm -i --restart=Never \
-  --labels scrim.dev/inject=central --image=docker.io/curlimages/curl:8.17.0 -- \
+  --labels scrim.dev/inject=central --image=docker.io/curlimages/curl:8.23.0 -- \
   sh -c 'echo "$ANTHROPIC_BASE_URL"; curl -s -o /dev/null -w "%{http_code}\n" "$ANTHROPIC_BASE_URL/v1/messages" \
     -H "x-api-key: not-a-real-key" -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
     -d "{\"model\":\"claude-sonnet-4-5\",\"max_tokens\":16,\"messages\":[{\"role\":\"user\",\"content\":\"canary\"}]}"'
@@ -145,12 +147,14 @@ directly gets no connection.
 
 ## Upgrade and roll back
 
+<!-- x-release-please-start-version -->
 ```sh
-helm --kube-context "$CONTEXT" upgrade scrim oci://ghcr.io/heliopsy/charts/scrim --version 1.0.1 \
+helm --kube-context "$CONTEXT" upgrade scrim oci://ghcr.io/heliopsy/charts/scrim --version 1.2.0 \
   -n scrim --reuse-values
 helm --kube-context "$CONTEXT" -n scrim history scrim
 helm --kube-context "$CONTEXT" -n scrim rollback scrim <revision>
 ```
+<!-- x-release-please-end -->
 
 The chart's `appVersion` is the image tag unless `image.tag` or `image.digest` is set; pin
 `image.digest` to the digest `cosign verify` printed for production. From a checkout, `just
