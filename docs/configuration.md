@@ -268,6 +268,32 @@ open keep their route until they close. `scrim status` shows the proxy in use un
 Not proxied: PostgreSQL, Valkey and NATS connections (they are not HTTP), plugins on Unix sockets,
 and Kubernetes TokenReview, which talks to the in-cluster API server directly.
 
+## Fallback detectors
+
+The fallback detectors replace secrets no store holds: the pattern rules
+(`redaction.detectors.enabled`, `.disable`, `.enable`) recognise known formats, two opt-in
+settings widen them, and `scrim status` shows what is in force under the `fallback detectors`
+protection (`scrim doctor` repeats it as the `redaction: detectors` check).
+
+| Setting | Default | Cost on one core, 1 MB agent request | False positives |
+| --- | --- | --- | --- |
+| pattern rules | on | 0.8 to 1.0 ms | none on the repository corpus (10 MB) or generated agent bodies beyond the fake credentials it holds on purpose |
+| `redaction.detectors.encoded` | off | +0.5 to 0.65 ms; redactor throughput 810 to 530 MB/s | none on the same corpora |
+| `redaction.detectors.entropy.enabled`, `context: key-name` | off | +2 to 2.5 ms | 0 per MB of generated bodies, 0.39 per MB of the repository (documented example credentials) |
+| `redaction.detectors.entropy.enabled`, `context: any` | off | +1 to 3.5 ms | 892 per MB of generated bodies (hex ids, base64 data), 8 per MB of the repository |
+
+Measured with the `detect` group of the `scrim-redact` benchmarks and its `entropy_false_positive_rates`
+test on an Intel Xeon W-2295. Encoded forms are off because they cost a third of the redactor's
+throughput, below the latency gate's floor. Entropy is off because, even with a key name, values
+that look random but must go back as they are (session ids in tests, signed URLs, nonces under a
+`token` name) would become placeholders that never resolve; the key-name context already skips
+pagination, sync and anti-forgery token names.
+
+With `encoded`, base64 runs of at least 24 characters (up to 16 KiB), hex runs of at least 40
+digits and percent-encoded spans of up to 4 KiB are decoded when their first bytes are text, and
+the characters that encode a match are replaced. Encodings of encodings and base64 wrapped across
+lines are not decoded.
+
 ## Weakening settings
 
 A setting that weakens a security invariant is named for what it weakens (for example
