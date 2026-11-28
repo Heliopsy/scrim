@@ -5,9 +5,19 @@ and context-aware escaping of restored values (design D5). It decides what reach
 so it fails closed: anything it does not understand keeps the placeholder or goes to the control
 plane.
 
+`scrim-dataplane` builds a `Table` and a `RestoreEngine` from every snapshot
+(`scrim-dataplane/src/policy.rs`) and consults them for injection in `scrim-toolproxy` and for the
+forwarding gate and restore in `scrim-llm` (`LlmRestorePolicy`, feature `llm`). From
+`scrim-redact` it uses only public types: `RedactValues` reads values through its resolver, and
+`BlockPolicy` implements its `RestorePolicy`. The Go control plane compiles the CEL rules into the
+table (`internal/policy`); the evaluator here must decide exactly as the Go one does, which the
+conformance and differential tests check.
+
 Spec: `openspec/specs/policy-approvals` ("Data-plane decisions equal control-plane
 decisions", "Rules only restrict restore", "Restore request attributes") and `specs/redaction`
-("Resolution follows tool policy" through "Share and reveal").
+("Resolution follows tool policy" through "Display modes"). Docs:
+[policy](../../../docs/policy.md#how-the-data-plane-decides), [approvals](../../../docs/approvals.md),
+[architecture](../../../docs/architecture.md#request-path).
 
 The crate holds no secret values. The restore engine keeps metadata and a few bits per value
 (`ValueTraits`: which character classes it contains); values pass through a `ValueSource` for the
@@ -31,7 +41,7 @@ RestoreEngine::decide(&Caller, At, reference, ValueClass) -> Verdict
 RestoreEngine::needs_arguments(tool) -> bool     // buffer shell and edit tool calls
 RestoreEngine::restore_tool_input(&Caller, tool, arguments, &dyn ValueSource) -> Restored
 RestoreEngine::restore_text(&Caller, text, &dyn ValueSource) -> Restored
-RestoreEngine::reveal(text, &dyn ValueSource) -> Restored   // data-plane side of `scrim reveal`
+RestoreEngine::reveal(text, &dyn ValueSource) -> Restored   // no caller yet, see below
 RestoreEngine::block_policy(&Caller, At) -> BlockPolicy     // scrim_redact::RestorePolicy
 RedactValues { resolver: &scrim_redact::Resolver, index: &ValueIndex }  // a ValueSource
 LlmRestorePolicy::new(Arc<RestoreEngine>, Caller)           // scrim_llm::RestorePolicy (feature `llm`)
@@ -46,7 +56,8 @@ escape::ValueTraits::{of, raw_is_safe}
 
 Wiring notes for the data plane binary:
 
-- Build one `RestoreEngine` per applied snapshot (`from_snapshot`) and swap it with the snapshot.
+- Build one `RestoreEngine` per applied snapshot (`from_snapshot`, or `new` with a table already
+  built, as the data plane does) and swap it with the snapshot.
   A snapshot whose `policy` or `restore` fails validation should be rejected like any other.
 - scrim-llm: use `LlmRestorePolicy::new(engine, caller)` as `Snapshot.policy` (the data plane
   binds one per request through its request gate). It returns `ToolMode::Buffered` for shell and
@@ -102,7 +113,9 @@ For each placeholder in a response, in order:
    not consulted. `secret.labels` is always unknown here.
 
 `reveal` resolves display values, and credentials only when `reveal_credential_refs` names them;
-display mode and tool roles do not apply, break-glass does.
+display mode and tool roles do not apply, break-glass does. Nothing calls it yet: there is no CLI
+command or boundary call that reveals a text, so `restore.allow-reveal-credentials` has no effect
+today.
 
 ## Escaping
 
@@ -156,6 +169,7 @@ NUL bytes and non-UTF-8 values are never restored into a shell.
 
 ## Tests
 
+- Unit tests per module (`src/restore/tests.rs` for the restore engine).
 - `tests/conformance.rs`: every vector of `internal/policy/testdata/conformance.json` (145), plus
   break-glass and the Go rejection cases.
 - `tests/differential.rs`: property tests of the evaluator against an independent port of the Go
