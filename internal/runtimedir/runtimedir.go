@@ -13,7 +13,6 @@ package runtimedir
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -97,10 +96,4 @@ func checkChain(top, dir string, missingOK bool) error {
 		}
 	}
 	return nil
-}
-
-// errUnsafe builds the error for a directory scrim refuses.
-func errUnsafe(dir, why string) error {
-	return fmt.Errorf("refusing the scrim runtime directory %s: %s; another local user may have created it. "+
-		"Remove it, or set XDG_RUNTIME_DIR to a directory only this user can write", dir, why)
 }
