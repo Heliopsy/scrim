@@ -81,15 +81,20 @@ run for them.
 
 ## How agents find the service
 
-Nothing to configure. `scrim run`, `scrim mcp` and `scrim secret` look in this order:
+Nothing to configure. `scrim run` looks in this order:
 
-1. `admin.url` or `api.socket`, when set.
+1. `admin.url` or `api.socket`, when set: the daemon behind `admin.url` (by default this user's
+   admin socket), never the system service.
 2. This user's daemon: `$XDG_RUNTIME_DIR/scrim/admin.sock` (a user unit, a rootless Quadlet or a
    `scrim proxy` you started).
 3. The system service: `/run/scrim/api.sock`. Its admin socket accepts only the user `scrim` and
    root, so agents of other users ask the agent API instead (`GET /v1/endpoints`: readiness, the
    base URL, the forward proxy, the bypass list and the public CA, nothing secret).
-4. None of these: `scrim run` starts a private daemon for the run, as before.
+4. None of these: `scrim run` starts a private daemon for the run.
+
+`scrim mcp`, `scrim secret` and `scrim api whoami` use `api.socket` when it is set (inside
+`scrim run`, `SCRIM_API_SOCKET` sets it), otherwise this user's `$XDG_RUNTIME_DIR/scrim/api.sock`
+when it exists, otherwise `/run/scrim/api.sock`. They never start a daemon.
 
 A system service that does not answer or is not ready is an error, not a reason to start a private
 daemon. A user outside `scrim-agents` cannot read `/etc/scrim/config.yaml`, so every `scrim`
@@ -201,8 +206,9 @@ Service
   scrim.service: active (system service, manifest /etc/scrim/install.json)
 ```
 
-An installed service that is not active is listed under Degraded. Run as root, `scrim status`
-reports the system service's state in `/var/lib/scrim`.
+An installed service that is not active is listed under Degraded. Run as root on a host whose
+`/etc/scrim/install.json` records a system install, `scrim status` reports the system service's
+state in `/var/lib/scrim`; without that manifest it does not.
 
 ## Uninstall
 
@@ -353,7 +359,6 @@ again), the file system identical to the snapshot, and a second uninstall that d
 ## Not covered yet
 
 - Firefox profiles; Firefox uses its own store unless `security.enterprise_roots.enabled` is set.
-- Managed agent settings (task 13.4); install will record those the same way.
 - Transparent mode, eBPF and the DNS override on a Quadlet install: they need the system unit.
 - A launch agent on macOS.
 - Quadlet runs in the unit tests only; the VM test covers the system and user units.

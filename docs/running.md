@@ -48,16 +48,16 @@ restarts it with backoff and traffic is refused until it is back.
 | LLM proxy on a Unix socket | `proxy.socket` | off | Same routes, for clients that can use a socket. |
 | Forward proxy | `proxy.forward-listen` | `127.0.0.1:9791` | `HTTPS_PROXY=http://<addr>` (`scrim run` sets it with the CA for the child): provider hosts, including `chatgpt.com` and `ab.chatgpt.com` for Codex, go to the LLM proxy; other hosts to the tool proxy with credential injection. |
 | Tool proxy | `tool-proxy.listen` | off | HTTPS tool proxy alone. |
-| Transparent listener | `proxy.transparent-listen` | off | Linux. Connections redirected by nftables or eBPF, routed by TLS server name or Host header; `scrim install --transparent` sets `127.0.0.1:9793` and `[::1]:9793` ([interception.md](interception.md#3-transparent-machine-wide)). |
-| SNI listener | `proxy.sni-listen` | off | DNS override mode; `scrim install --dns` sets `127.0.83.1:443` ([interception.md](interception.md#4-dns-override)). |
+| Transparent listener | `proxy.transparent-listen` | off | Linux. Connections redirected by nftables or eBPF, routed by TLS server name or Host header; `scrim install --system --transparent` sets `127.0.0.1:9793` and `[::1]:9793` ([interception.md](interception.md#3-transparent-machine-wide)). |
+| SNI listener | `proxy.sni-listen` | off | DNS override mode; `scrim install --system --dns` sets `127.0.83.1:443` ([interception.md](interception.md#4-dns-override)). |
 | Database proxies | `databases.<name>.listen` | a Unix socket per database | PostgreSQL and MySQL clients log in without a password ([databases.md](databases.md)). |
 | Edge listener | `edge.listen` | off | TLS, for the edge forwarders in agent pods ([edge-forwarder.md](edge-forwarder.md)). |
 | Identity issuer | `identity.issuer.listen` | off | Discovery document and JWKS only, when scrim issues identity tokens ([identity.md](identity.md)). |
-| Agent API | `api.socket` | `$XDG_RUNTIME_DIR/scrim/api.sock` | Mode `api.permissions` (0600), group `api.group` (the system service: 0660, `scrim-agents`). Callers are identified by peer credentials and session tokens ([identity.md](identity.md)). |
+| Agent API | `api.socket` | `$XDG_RUNTIME_DIR/scrim/api.sock` (Windows: `%TEMP%\scrim\api.sock`) | Mode `api.permissions` (0600), group `api.group` (the system service: 0660, `scrim-agents`). Callers are identified by peer credentials and session tokens ([identity.md](identity.md)). |
 | Entry page | `entry.listen` | `127.0.0.1:0` | Where a human types a value for `secret_ask_human`. |
-| Admin API | `admin.url` | `unix:$XDG_RUNTIME_DIR/scrim/admin.sock` | Operator commands ([approvals.md](approvals.md)). |
+| Admin API | `admin.url` | `unix:$XDG_RUNTIME_DIR/scrim/admin.sock` (Windows: `%TEMP%\scrim\admin.sock`) | Operator commands ([approvals.md](approvals.md)). |
 | Decision links | `approvals.listen` | off | Only the decision endpoint, for `approvals.public-url` to point at through a TLS proxy. |
-| Per-session ssh-agent | `run.ssh-agent` | on under `scrim run` | `<session-dir>/ssh-agent.sock` as `SSH_AUTH_SOCK` ([ssh-agent.md](ssh-agent.md)). |
+| Per-session ssh-agent | `run.ssh-agent` | on under `scrim run`, not on Windows | `<session-dir>/ssh-agent.sock` as `SSH_AUTH_SOCK` ([ssh-agent.md](ssh-agent.md)). |
 | Metrics and health | `metrics.listen` (`127.0.0.1:9792`) | off; on with `metrics.enabled` or `--metrics` | `metrics.path`, `/healthz`, `/livez`, `/readyz`; health only when `metrics.listen` is set without the flag. See [monitoring.md](monitoring.md). |
 
 Listener addresses need a restart; a reload that changes one keeps the running listener and lists the
@@ -68,7 +68,8 @@ setting under pending restart in `scrim status`.
 On the Unix socket (the default) the operator is the peer: only the user scrim runs as, or root,
 is accepted, and approvals record `user:<name>` as the approver. The socket is mode 0600.
 
-A TCP admin listener (`admin.url: http://127.0.0.1:9792`) requires `admin.token`, a reference to a
+A TCP admin listener (`admin.url: http://127.0.0.1:9797`; pick a free port, 9792 is the metrics
+listener's default) requires `admin.token`, a reference to a
 token of at least 16 bytes; the daemon refuses to start without one. Clients send it as a bearer
 token (`scrim approve` reads the same setting). The daemon serves plain HTTP: put TLS in front of it
 if it leaves the host.
@@ -160,8 +161,9 @@ SIGINT or SIGTERM: the HTTP listeners stop accepting and finish in-flight reques
 data plane is stopped (held asks are denied), the sockets and `daemon.json` are removed, state is
 closed and every value and key in memory is wiped.
 
-SIGHUP, or a change to a config file while `config.watch` is on, reloads the configuration. An
-invalid reload is rejected and the previous configuration stays in force.
+SIGHUP, or a change to a config file while `config.watch` is on (the default), reloads the
+configuration. An invalid reload is rejected and the previous configuration stays in force. Windows
+has no SIGHUP: there a reload comes from `config.watch` or a restart.
 
 ## Running it as a service
 
