@@ -31,23 +31,23 @@ whose chart refuses to upgrade while a ClusterPolicy remains.
 
 | Resource | When | Purpose |
 | --- | --- | --- |
-| Deployment, Service, PodDisruptionBudget `<release>-scrim`, ServiceAccount `<release>-scrim-proxy` | `central.enabled` (default) | `scrim proxy` with the LLM base URL (9790), forward proxy (9791) and health/metrics (9792) |
+| Deployment, Service, PodDisruptionBudget `<fullname>`, ServiceAccount `<fullname>-proxy` | `central.enabled` (default) | `scrim proxy` with the LLM base URL (9790), forward proxy (9791) and health/metrics (9792) |
 | HorizontalPodAutoscaler | `central.autoscaling.enabled` | CPU and, with a metrics adapter, open data plane connections per replica |
-| ConfigMap `<release>-scrim-config` | central | `config.yaml` from `config`, `chart.yaml` with the settings the chart owns, `policy.yaml` from `policyRules` |
-| Secret `<release>-scrim-ca` | `ca.create` (default) | the interception CA, generated once and kept |
-| Secret `<release>-scrim-placeholder-keys` | `placeholderKeys.create` (default) | the placeholder key every replica shares |
+| ConfigMap `<fullname>-config` | central | `config.yaml` from `config`, `chart.yaml` with the settings the chart owns, `policy.yaml` from `policyRules` |
+| Secret `<fullname>-ca` | `ca.create` (default) | the interception CA, generated once and kept |
+| Secret `<fullname>-placeholder-keys` | `placeholderKeys.create` (default) | the placeholder key every replica shares |
 | ConfigMap `scrim-ca` | release namespace and every `agents.namespaces` entry | the CA certificate for agents: `scrim-ca.pem`, `ca-bundle.pem`, and the `scrim-exec` launcher with `identity.kubernetes.enabled` |
-| ConfigMap `<release>-scrim-agent-env` | every agent namespace, central | the agent environment, for `envFrom` without Kyverno |
+| ConfigMap `<fullname>-agent-env` | every agent namespace, central | the agent environment, for `envFrom` without Kyverno |
 | ConfigMaps and Secrets `*-sidecar-*`, `*-agent-env-sidecar` | every agent namespace, `sidecar.enabled` | the in-pod scrim's configuration, CA and keys |
-| MutatingPolicies `<release>-scrim-<namespace>-inject-central` and `-inject-sidecar`, ValidatingPolicy `<release>-scrim-<namespace>-require-prepared-namespace` | `kyverno.enabled` | inject labelled pods (pods only, never their controllers), refuse them outside the prepared namespaces |
+| MutatingPolicies `<fullname>-<namespace>-inject-central` and `-inject-sidecar`, ValidatingPolicy `<fullname>-<namespace>-require-prepared-namespace` | `kyverno.enabled` | inject labelled pods (pods only, never their controllers), refuse them outside the prepared namespaces |
 | NetworkPolicies | `networkPolicy.enabled` | scrim's ingress and egress, agent pods' egress |
 | ServiceMonitor, PodMonitor, PrometheusRule, dashboard ConfigMap | their `enabled` values, with `metrics.enabled` | Prometheus Operator and Grafana |
-| ClusterRole and ClusterRoleBinding `<release>-scrim-<namespace>-tokenreview` | `identity.kubernetes.enabled` (default) | create TokenReviews only, for scrim's service account and, in sidecar mode, the service accounts of the agent namespaces |
-| Service `<release>-scrim-issuer`, PersistentVolumeClaim `<release>-scrim-issuer-keys` | `identity.issuer.enabled`; the claim with `identity.issuer.keyStore.type: pvc` and no `existingClaim` | the issuer's discovery document and JWKS (public keys only) on `identity.issuer.port`, for an Ingress or Gateway to publish; the generated signing keys |
-| Secret `<release>-scrim-metrics` | `metrics.enabled`, no `secrets.existing.metrics` | the generated metrics bearer token, kept |
-| ExternalSecrets `<release>-scrim-<slot>` | `secrets.externalSecrets` | the Secret slots from your secret store |
-| ConfigMaps `<release>-scrim-<key>`, `extraObjects` | `extraConfigMaps`, `extraObjects` | your own objects, rendered through tpl |
-| Pods `<release>-scrim-test-*` | `tests.enabled` (default), on `helm test` | the LLM listener and forward proxy answer through the Service; `/readyz` with metrics on |
+| ClusterRole and ClusterRoleBinding `<fullname>-<namespace>-tokenreview` | `identity.kubernetes.enabled` (default) | create TokenReviews only, for scrim's service account and, in sidecar mode, the service accounts of the agent namespaces |
+| Service `<fullname>-issuer`, PersistentVolumeClaim `<fullname>-issuer-keys` | `identity.issuer.enabled`; the claim with `identity.issuer.keyStore.type: pvc` and no `existingClaim` | the issuer's discovery document and JWKS (public keys only) on `identity.issuer.port`, for an Ingress or Gateway to publish; the generated signing keys |
+| Secret `<fullname>-metrics` | `metrics.enabled`, no `secrets.existing.metrics` | the generated metrics bearer token, kept |
+| ExternalSecrets `<fullname>-<slot>` | `secrets.externalSecrets` | the Secret slots from your secret store |
+| ConfigMaps `<fullname>-<key>`, `extraObjects` | `extraConfigMaps`, `extraObjects` | your own objects, rendered through tpl |
+| Pods `<fullname>-test-*` | `tests.enabled` (default), on `helm test` | the LLM listener and forward proxy answer through the Service; `/readyz` with metrics on |
 
 ## Secrets are references
 
@@ -136,9 +136,24 @@ process started without it is an unknown caller: redaction applies, injection do
 ## Identity issuer
 
 `identity.issuer.enabled` makes central scrim an OpenID Connect issuer whose tokens stores trust
-for per-agent token exchange. Publish the Service `<release>-scrim-issuer` at `identity.issuer.url`
+for per-agent token exchange. Publish the Service `<fullname>-issuer` at `identity.issuer.url`
 over TLS. More than one replica needs `identity.issuer.signingKeys.existingSecret`; with generated
 keys in the default `emptyDir`, every new pod means new keys. See docs/kubernetes.md, "Identity issuer".
+
+## The CA
+
+The chart generates the interception CA (Ed25519, `ca.validityDays`, 730 days) and, with
+`edge.enabled`, the edge CA, or takes them from `ca.existingSecret` and `edge.ca.existingSecret`.
+scrim gets both as operator CAs and never rotates them, and neither does Helm: a pod that starts
+after the CA has expired refuses to run, and agents refuse every intercepted connection. Check the
+date and rotate by hand before then (docs/kubernetes.md, "CA expiry and rotation"). In sidecar mode
+the interception CA's key is copied into every agent namespace.
+
+## NetworkPolicy label
+
+The chart's NetworkPolicies select agent pods by `scrim.dev/inject` (`central` or `sidecar`), the
+same label the Kyverno policies use. The raw manifests in `deploy/examples/kubernetes` use
+`scrim.dev/agent: "true"`; a pod labelled for one setup is not covered by the other's policies.
 
 ## Built from the chart template
 
@@ -160,7 +175,7 @@ Where scrim differs from the template, and why:
 | Template | scrim | Why |
 | --- | --- | --- |
 | `secrets.values.<slot>`, `extraSecrets` and the registry pull Secret take values from values.yaml | left out | the chart takes no credential values at all (deployment spec, "Chart values hold no secrets"); use `secrets.existing`, ExternalSecrets or `secretMounts` |
-| every object named `<fullname>-<component>` | the Deployment, Service, PDB, HPA and NetworkPolicy keep `<fullname>` (`chart.std.workload`, `service`, `pdb`, `hpa` and `networkPolicy` take a `name`) | agents reach `http://<release>-scrim.<namespace>.svc`; the ServiceAccount is `<fullname>-proxy` |
+| every object named `<fullname>-<component>` | the Deployment, Service, PDB, HPA and NetworkPolicy keep `<fullname>` (`chart.std.workload`, `service`, `pdb`, `hpa` and `networkPolicy` take a `name`) | agents reach `http://<fullname>.<namespace>.svc`; the ServiceAccount is `<fullname>-proxy` |
 | `chart.std.hpa` scales on CPU and memory | also `extraMetrics` and `behavior` | the connections metric from a metrics adapter (`central.autoscaling.connections`) |
 | `networkPolicies.*`, an optional namespace-wide default deny | `networkPolicy.*`, per-pod policies for scrim and for agent pods in every agent namespace, no namespace-wide deny | agent pods must reach scrim and DNS only, which is stricter and narrower than a default deny in scrim's namespace; the release namespace is often shared |
 | ServiceMonitor and PodMonitor together fail the render | allowed; a ServiceMonitor without central scrim or a PodMonitor without sidecars fails | the ServiceMonitor scrapes central scrim and the PodMonitor the sidecars: they never scrape the same pod |

@@ -2,8 +2,9 @@
 
 The tool proxy terminates TLS toward the hosts a credential is bound to, so it can inject the
 credential at the network edge. It signs a certificate for each host with scrim's own certificate
-authority. Clients have to trust that CA; its private key never leaves the control plane except
-in the snapshot pushed to scrim's own data plane.
+authority. Clients have to trust that CA. Its private key stays with scrim: the control plane
+passes it only to scrim's own data plane, in the snapshot. In Kubernetes sidecar mode the Helm chart
+stores a copy of it in every agent namespace ([In Kubernetes](#in-kubernetes)).
 
 This CA does not authenticate scrim's edge listener. The edge forwarders verify central scrim
 against a separate edge CA with its own key, which issues nothing else and which no agent runtime
@@ -16,7 +17,8 @@ use.
 
 ## Where the CA lives
 
-By default scrim generates a P-256 CA and keeps it in `$XDG_STATE_HOME/scrim/ca`
+By default scrim generates a P-256 CA (the Helm chart generates its own, Ed25519, see
+[In Kubernetes](#in-kubernetes)) and keeps it in `$XDG_STATE_HOME/scrim/ca`
 (`~/.local/state/scrim/ca` when `XDG_STATE_HOME` is unset), or in `tool-proxy.ca.dir`:
 
 ```text
@@ -122,6 +124,22 @@ export GIT_SSL_CAINFO=~/.local/share/scrim/ca-bundle.pem
 The variables that replace the roots point at the combined bundle, so other HTTPS keeps working.
 When no system bundle is found, the combined bundle is not written and only
 `NODE_EXTRA_CA_CERTS` is printed.
+
+## In Kubernetes
+
+The Helm chart never lets scrim generate a CA per pod, since every replica and sidecar must sign
+with the same one. It generates an Ed25519 CA with Helm on first install, or takes
+`ca.existingSecret`, and passes it to scrim as `tool-proxy.ca.cert-file` and `tool-proxy.ca.key`.
+To scrim that is an operator CA, so everything in [Bringing your own CA](#bringing-your-own-ca)
+applies and nothing in [Rotation](#rotation) does: it is never rotated, a generated one expires
+after `ca.validityDays` (730 days), and scrim refuses to start once it has. The edge CA the chart
+generates is handled the same way. [kubernetes.md](kubernetes.md#ca-expiry-and-rotation) has the
+rotation steps.
+
+`scrim ca install` is not used there either. The chart publishes the certificate to agent pods in
+the `scrim-ca` ConfigMap, whose `ca-bundle.pem` holds the scrim CA and `ca.extraTrustedCerts` but no
+system roots: an agent pod reaches only scrim, so every TLS connection it makes ends at a scrim leaf
+([kubernetes.md](kubernetes.md#the-ca)).
 
 ## Not covered yet
 
