@@ -194,6 +194,14 @@ var (
 			return nil
 		},
 	})
+	// GuardCache turns the guard's verdict cache on or off.
+	GuardCache = config.Register(config.Spec[bool]{
+		Key:     "redaction.guard-cache",
+		Default: true,
+		Description: "Remember which parts of a request body the guard found clean (BLAKE3 hashes only, never bytes or values, " +
+			"at most 65,536 per redaction set, cleared when the set changes), so an agent's next turn, which resends the " +
+			"conversation, has only its new parts checked. Verdicts are the same either way; off checks every byte of every request.",
+	})
 	// BinaryPolicy is what the LLM proxy does with binary content parts.
 	BinaryPolicy = config.Register(config.Spec[string]{
 		Key:     "redaction.binary",

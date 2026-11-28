@@ -14,7 +14,8 @@ guard behind the LLM proxy, built with the data plane's default configuration.
 | --- | --- | --- |
 | Proxy overhead, pass-through engine | `proxy_overhead/passthrough/<size>` | What the LLM proxy adds on its own (codec plan, segmenting at verbatim spans, copying, guard hand-off) for Anthropic Messages bodies of about 100 KB, 1 MB and 4 MB |
 | Proxy overhead, production engine | `proxy_overhead/engine/<size>` | The same with the production engine wired in (1,000 secrets, hits), less the time spent inside its redactor and guard |
-| Added request latency | `request/<secrets>/<size>/<hits\|clean>` | `outgoing::prepare` with the production engine: redaction of every segment, then the guard over the outgoing bytes. 10, 1,000 and 10,000 secrets, on the redaction benchmark's bodies (prose, code, logs, env files and base64 blobs, one hit per 4 KiB) |
+| Added request latency, first sight | `request/<secrets>/<size>/<hits\|clean>` | `outgoing::prepare` with the production engine: redaction of every segment, then the guard over the outgoing bytes. 10, 1,000 and 10,000 secrets, on the redaction benchmark's bodies (prose, code, logs, env files and base64 blobs, one hit per 4 KiB). The guard's verdict cache is cleared before every sample, so every byte is checked and the cache's own cost is included |
+| Added request latency, next turn | `turn/<secrets>/1MB` | `outgoing::prepare` on an agent's next request right after the previous one: a 1 MB conversation built from the same messages, sent again with Claude Code's `cache_control` marker moved to the new last message and one exchange added (user text, assistant text and tool call, tool result) |
 | Redaction core | `core/protect/<secrets>/1MB/<hits\|clean>`, `core/redact_throughput/<secrets>/1MB`, `core/restore_chunk` | `scrim-redact` on its own, as its criterion benchmarks measure it: `Snapshot::protect` per request, single-thread redaction throughput, `BlockRestorer` per streamed text chunk |
 | Streamed chunks | `chunk/engine` | Time added per chunk while the proxy restores a 20,000-event Anthropic stream with the production placeholders, chunked at event and mid-event boundaries |
 | Metrics overhead | `request/1000/1MB/hits/metrics`, `chunk/engine/metrics` | The request and chunk paths with metrics on, against the same budgets |
@@ -88,11 +89,39 @@ list has its budgets compared as written: the calibration workload uses SHA inst
 lack, so its time compares one CPU with itself, not with another. A new runner CPU needs an entry
 measured from a few runs on it.
 
-The production engine does not meet the spec's initial targets for added request latency (5 ms for
-1 MB with 1,000 secrets, 10 ms with 10,000): the request takes about 25 ms per 1 MB at the median on
-ho-z10. Its budgets hold it to what it does today with room for the runner's spread, so a large
-slowdown fails at once; the regression check below reports a smaller one.
+The spec's targets for added request latency (5 ms for 1 MB with 1,000 secrets, 10 ms with 10,000)
+apply to the next-turn measurement (`engine.next_turn_p99_ms`), which is what an agent sends: every
+request of a conversation repeats the ones before it. On ho-z10 it takes 3.9 to 8.8 ms at the
+median and 4.7 to 12 ms at p99 across runs, so its budgets are 10 ms (10 and 1,000 secrets) and
+12 ms (10,000), above the 5 ms target. About 1 ms of it is the guard; the rest is the codec's JSON plan and the
+redactor over the whole body, which are not cached. On a Xeon W-2295 workstation the same
+measurement is 3.7 to 5 ms at the median. A body seen for the first time has its own budgets
+(`engine.request_p99_ms` 40 ms, `core.protect_p99_ms` 30 ms): every byte goes through the guard's
+decoders, 7.6 to 21 ms at the median on ho-z10 (it was 24 to 29 ms before the decoder prefilters).
 [limitations.md](limitations.md#implementation) lists this.
+
+## Guard verdict cache
+
+LLM APIs are stateless, so an agent's next request resends the whole conversation, and most of a
+1 MB body is bytes the guard checked one request earlier. The guard splits the outgoing bytes into
+segments where no occurrence of a value can cross (between two JSON objects, `X},{Y` with `X`
+closing a value and `Y` opening an object's body, and no dump line's ASCII column reaching over
+the boundary), keeps the BLAKE3 hash of every segment of a body it found clean, and on the next
+body checks only the segments it has not seen, each run of new segments as one piece. A finding
+anywhere falls back to checking the whole body, so verdicts, repairs and findings are the same as
+with the cache off; property tests check that on generated conversations with values hidden in the
+new turn, split across the boundary to the old one, and in every encoding the guard decodes
+(`guard_cache_tests.rs`).
+
+The cache holds hashes only, never bytes or values: at most 65,536 per redaction set (about 3 MB),
+least recently used first out. It belongs to the snapshot, so any change to the values (and any
+new snapshot push) starts an empty one. A set with a value containing `,{` cannot have its
+occurrences confined to a segment, and its guard does not cache. Bodies under 32 KiB are checked
+whole. `redaction.guard-cache: false` turns it off ([configuration.md](configuration.md#redactionguard-cache)).
+
+On the next-turn measurement the guard takes about 0.7 ms of the 3.7 to 5 ms on the workstation
+(finding the cuts, BLAKE3 over the body, the new segments); the rest is the codec plan and the
+redactor over the whole body.
 
 ## Regression check
 
@@ -180,7 +209,7 @@ SCRIM_PERF_JSON=/tmp/gate-a.json cargo bench --locked -p scrim-llm --bench laten
 
 - `SCRIM_LLM_BENCH_QUICK=1`: two rounds, fewer samples, no 4 MB bodies. Quick runs are not
   compared with full ones.
-- `SCRIM_PERF_ONLY=passthrough,overhead,request,core,chunk,metrics`: run only some sections.
+- `SCRIM_PERF_ONLY=passthrough,overhead,request,turn,core,chunk,metrics`: run only some sections.
 - `SCRIM_PERF_ROUNDS=N`: rounds per measurement.
 - `SCRIM_PERF_NO_FILTER=1`: keep every sample, to see what the filter drops.
 - `SCRIM_PERF_RUNNER=name`: the runner class recorded in the JSON (CI and the release set `ho-z10`).

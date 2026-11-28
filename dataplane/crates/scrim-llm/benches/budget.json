@@ -24,22 +24,29 @@
   "chunk_p99_us": 50.0,
   "websocket_message_p99_ms": 1.0,
   "engine": {
-    "comment": "Added request latency through the LLM proxy with the production engine (outgoing::prepare, scrim-redact redactor and guard) on the redaction benchmark's 1 MB bodies. The spec's initial targets are 5 ms (1,000 secrets) and 10 ms (10,000); the production guard does not meet them. Measured on ho-z10 (PR #153): p50 24 to 29 ms, p99 31 to 42 ms across 10, 1,000 and 10,000 secrets, with about a third of the samples dropped for run-queue delay because the guard's four worker threads share three CPUs. Budgets are about 1.5 times the highest p99 so the runner's spread does not fail the gate; a larger slowdown fails here, a smaller one fails the regression check. Tighten them as the guard gets faster.",
+    "comment": "Added request latency through the LLM proxy with the production engine (outgoing::prepare, scrim-redact redactor and guard). request_p99_ms: the redaction benchmark's 1 MB bodies seen for the first time (the guard's verdict cache is cleared before every sample). Before the guard's decoder prefilters (PR #153 on ho-z10): p50 24 to 29 ms, p99 31 to 42 ms across 10, 1,000 and 10,000 secrets, budget 60 ms. With them (PR #183 on ho-z10, Core Ultra 7 155U, three runs): p50 7.6 to 21 ms, p99 9.8 to 27 ms; budget 40 ms, about 1.5 times the highest p99. next_turn_p99_ms: an agent's next turn, the previous 1 MB request again with the cache_control marker moved and one new exchange, right after the previous one (performance spec, 'Added request latency budget'). PR #183 on ho-z10: before the cut search used memrchr3, p50 5.4 to 8.8 ms, p99 8.2 to 11.7 ms (slowdown 1.3); after, p50 3.9, 4.6 and 5.5 ms and p99 4.7, 6.8 and 7.8 ms for 10, 1,000 and 10,000 secrets, so the spec's initial 5 ms target for 1,000 secrets is not met reliably: about 1 ms of it is the guard (cuts, BLAKE3 over the body, the new segments), the rest the codec's JSON plan and the redactor over the whole body, which are not cached. On a Xeon W-2295 the same measurement is 3.7 to 5 ms at p50. Budgets 10 ms (10 and 1,000 secrets) and 12 ms (10,000) hold it there; tighten them as the plan and redaction get cheaper.",
     "request_p99_ms": {
       "1MB": {
-        "10": 60.0,
-        "1000": 60.0,
-        "10000": 60.0
+        "10": 40.0,
+        "1000": 40.0,
+        "10000": 40.0
+      }
+    },
+    "next_turn_p99_ms": {
+      "1MB": {
+        "10": 10.0,
+        "1000": 10.0,
+        "10000": 12.0
       }
     }
   },
   "core": {
-    "comment": "The redaction core on its own, as the scrim-redact benchmarks measure it: Snapshot::protect per 1 MB request with the default thread count, and single-thread Redactor::redact throughput (the per-core minimum of the performance spec). Measured on ho-z10 (PR #153): protect p99 21 to 47 ms; redact throughput 0.76 to 2.4 GB/s on one core. The runner's CPU (a 15 W laptop part) changes clock with load and heat, and one run measured half the throughput of the previous one for the same code. Budgets therefore sit well outside that range (protect 60 ms, throughput floors at about half the slowest run); the regression check, which compares relative to a calibration workload, catches smaller changes.",
+    "comment": "The redaction core on its own, as the scrim-redact benchmarks measure it: Snapshot::protect per 1 MB request with the default thread count, and single-thread Redactor::redact throughput (the per-core minimum of the performance spec). Measured on ho-z10 (PR #153): protect p99 21 to 47 ms; redact throughput 0.76 to 2.4 GB/s on one core. The runner's CPU (a 15 W laptop part) changes clock with load and heat, and one run measured half the throughput of the previous one for the same code. Budgets therefore sit well outside that range (protect 60 ms, throughput floors at about half the slowest run); the regression check, which compares relative to a calibration workload, catches smaller changes. protect_p99_ms set to 30 ms (from 60) in PR #183: with the guard's decoder prefilters ho-z10 measured protect p99 7.7 to 18.3 ms on a first-sight 1 MB body (cache cleared before every sample); 30 ms is about 1.5 times the highest.",
     "protect_p99_ms": {
       "1MB": {
-        "10": 60.0,
-        "1000": 60.0,
-        "10000": 60.0
+        "10": 30.0,
+        "1000": 30.0,
+        "10000": 30.0
       }
     },
     "redact_min_mbps": {

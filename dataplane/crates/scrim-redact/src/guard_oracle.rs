@@ -559,6 +559,7 @@ impl OracleGuard {
                         view,
                     });
                 },
+                false,
             );
         }
         s.json1 = json1;

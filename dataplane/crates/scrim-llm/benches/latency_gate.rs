@@ -593,6 +593,42 @@ fn redact_bench_body(size: usize, n: usize, set: &[String], hits: bool) -> Vec<u
     }
 }
 
+/// Two consecutive requests of one conversation: turn N, about `size` bytes, and turn N+1,
+/// which repeats it and adds one exchange (user text, assistant text and tool call, tool
+/// result). As Claude Code sends them, the last content block of the last message carries the
+/// `cache_control` marker, which moves to the new last message in turn N+1. Built from the
+/// redaction benchmark's messages, with hits, and serialised compactly as SDKs do.
+fn next_turn(n: usize, set: &[String], size: usize) -> (Vec<u8>, Vec<u8>) {
+    let full = fixtures::gen_body(
+        (size + (size >> 2)) as u64 + n as u64,
+        size + (size >> 2),
+        set,
+    )
+    .0;
+    let mut doc: Value = serde_json::from_slice(&full).unwrap();
+    let messages = doc["messages"].as_array().cloned().unwrap();
+    let render = |doc: &mut Value, upto: usize| {
+        let mut m = messages[..upto].to_vec();
+        if let Some(last) = m
+            .last_mut()
+            .and_then(|x| x["content"].as_array_mut())
+            .and_then(|c| c.last_mut())
+        {
+            last["cache_control"] = json!({"type": "ephemeral"});
+        }
+        doc["messages"] = Value::Array(m);
+        serde_json::to_vec(doc).unwrap()
+    };
+    // Turn N ends with a tool result (a user message), like an agent loop's requests.
+    let mut k = 3;
+    while k + 3 <= messages.len() && render(&mut doc, k + 3).len() <= size {
+        k += 3;
+    }
+    let prev = render(&mut doc, k);
+    let next = render(&mut doc, (k + 3).min(messages.len()));
+    (prev, next)
+}
+
 fn main() {
     let quick = std::env::var_os("SCRIM_LLM_BENCH_QUICK").is_some();
     let budget_path = std::env::var("SCRIM_LLM_BUDGET").unwrap_or_else(|_| {
@@ -677,7 +713,7 @@ fn main() {
         if quick { n.min(30) } else { n }
     };
 
-    // `SCRIM_PERF_ONLY=passthrough,overhead,request,core,chunk,metrics` runs some sections.
+    // `SCRIM_PERF_ONLY=passthrough,overhead,request,turn,core,chunk,metrics` runs some sections.
     let only = std::env::var("SCRIM_PERF_ONLY").ok();
     let want = |section: &str| {
         only.as_deref()
@@ -799,7 +835,7 @@ fn main() {
     // ---- Added request latency through the proxy, production engine.
     if want("request") {
         println!(
-            "\n## Added request latency, production engine\n\n`outgoing::prepare` with the `scrim-redact` redactor and guard, on the redaction benchmark's request bodies (prose, code, logs, env files, base64 blobs; one hit per 4 KiB).\n\n| secrets | body | hits | p50 | p99 | budget (p99) | dropped |\n|---|---|---|---|---|---|---|"
+            "\n## Added request latency, production engine\n\n`outgoing::prepare` with the `scrim-redact` redactor and guard, on the redaction benchmark's request bodies (prose, code, logs, env files, base64 blobs; one hit per 4 KiB). Each body is seen for the first time: the guard's verdict cache is cleared before every sample, so every byte is checked and the cache's own cost (cuts, hashes) is included.\n\n| secrets | body | hits | p50 | p99 | budget (p99) | dropped |\n|---|---|---|---|---|---|---|"
         );
         for (n, set, c) in &cores {
             let (n, set) = (*n, set.as_slice());
@@ -812,6 +848,8 @@ fn main() {
                         outgoing::prepare(&snap, Api::AnthropicMessages, &body).unwrap();
                     }
                     let r = sampler.run(per_round(size, false), ms, || {
+                        // First sight: the guard's verdict cache holds nothing of this body.
+                        c.guard().clear_cache();
                         let t = Instant::now();
                         let o = outgoing::prepare(&snap, Api::AnthropicMessages, &body).unwrap();
                         let d = t.elapsed();
@@ -841,10 +879,60 @@ fn main() {
         }
     }
 
+    // ---- An agent's next turn: the previous request again plus a new exchange.
+    if want("turn") {
+        println!(
+            "\n## Next turn of a conversation, production engine\n\n`outgoing::prepare` on turn N+1 of a conversation right after turn N: turn N is a 1 MB Anthropic Messages body (the redaction benchmark's messages, with hits), turn N+1 repeats it, moves the `cache_control` marker to its new last message as Claude Code does, and adds one exchange (user text, assistant text and tool call, tool result). The guard's verdict cache is cleared before turn N, which is not timed.\n\n| secrets | turn N | turn N+1 | new bytes | p50 | p99 | budget (p99) | dropped |\n|---|---|---|---|---|---|---|---|"
+        );
+        for (n, set, c) in &cores {
+            let (n, set) = (*n, set.as_slice());
+            let snap = engine(c, n);
+            let (prev, next) = next_turn(n, set, 1 << 20);
+            let new_bytes = next.len() - prev.len();
+            for _ in 0..2 {
+                c.guard().clear_cache();
+                outgoing::prepare(&snap, Api::AnthropicMessages, &prev).unwrap();
+                outgoing::prepare(&snap, Api::AnthropicMessages, &next).unwrap();
+            }
+            let r = sampler.run(per_round(1 << 20, false), ms, || {
+                c.guard().clear_cache();
+                std::hint::black_box(
+                    outgoing::prepare(&snap, Api::AnthropicMessages, &prev).unwrap(),
+                );
+                let t = Instant::now();
+                let o = outgoing::prepare(&snap, Api::AnthropicMessages, &next).unwrap();
+                let d = t.elapsed();
+                std::hint::black_box(o);
+                d
+            });
+            let b = budget_at(
+                &budget,
+                &["engine", "next_turn_p99_ms", "1MB", &n.to_string()],
+            );
+            println!(
+                "| {n} | {} KB | {} KB | {} KB | {:.3} ms | {:.3} ms | {} | {} |",
+                prev.len() >> 10,
+                next.len() >> 10,
+                new_bytes >> 10,
+                r.p50(),
+                r.p99(),
+                shown(b, "ms"),
+                dropped(&r)
+            );
+            report.latency(
+                &format!("turn/{n}/1MB"),
+                "ms",
+                &r,
+                b,
+                json!({"body_bytes": next.len(), "previous_bytes": prev.len(), "secrets": n, "hits": true, "body": "redact-bench conversation", "guard_cache": true}),
+            );
+        }
+    }
+
     // ---- The redaction core on its own.
     if want("core") {
         println!(
-            "\n## Redaction core (`scrim-redact`)\n\n`Snapshot::protect` per 1 MB request (redaction and guard, both split over threads for large bodies, as the tool proxy runs them), `Redactor::redact` throughput on one core, and `BlockRestorer` per streamed text chunk.\n\n| measurement | secrets | p50 | p99 | budget | dropped |\n|---|---|---|---|---|---|"
+            "\n## Redaction core (`scrim-redact`)\n\n`Snapshot::protect` per 1 MB request seen for the first time (redaction and guard, both split over threads for large bodies, as the tool proxy runs them), `Redactor::redact` throughput on one core, and `BlockRestorer` per streamed text chunk.\n\n| measurement | secrets | p50 | p99 | budget | dropped |\n|---|---|---|---|---|---|"
         );
         for (n, set, c) in &cores {
             let size = 1 << 20;
@@ -855,6 +943,7 @@ fn main() {
                     c.protect(&body, &mut ws).unwrap();
                 }
                 let r = sampler.run(per_round(size, false), ms, || {
+                    c.guard().clear_cache();
                     let t = Instant::now();
                     let len = c.protect(&body, &mut ws).unwrap().bytes.len();
                     let d = t.elapsed();
@@ -1007,6 +1096,7 @@ fn main() {
             let body = redact_bench_body(size, 1000, set1k, true);
             let n = per_round(size, false);
             let off = sampler.run(n, ms, || {
+                core1k.guard().clear_cache();
                 let t = Instant::now();
                 let o = outgoing::prepare(&snap1k, Api::AnthropicMessages, &body).unwrap();
                 let d = t.elapsed();
@@ -1014,6 +1104,7 @@ fn main() {
                 d
             });
             let on = sampler.run(n, ms, || {
+                core1k.guard().clear_cache();
                 let t = Instant::now();
                 let rm = metrics.route("anthropic", "anthropic");
                 rm.body_bytes(body.len());

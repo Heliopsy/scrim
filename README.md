@@ -448,12 +448,14 @@ The shipping matcher hashes each 8-byte window, so throughput stays near constan
 grows (design D13). The [performance spec](openspec/specs/performance/spec.md) targets p99 added
 latency under 5 ms for a 1 MB body with 1,000 secrets and under 10 ms with 10,000, and under 50 µs
 per streamed chunk. The latency gate measures the production engine and fails CI and the release
-when a value misses its budget in `dataplane/crates/scrim-llm/benches/budget.json`, or when it
-regressed against the previous release's published results. The proxy's own overhead and the
-per-chunk time meet the spec's targets; the guard does not yet meet the 5 ms and 10 ms request
-targets (about 25 ms per 1 MB at the median and 40 ms at p99 on the reference runner), so those
-budgets are set from what it does today ([docs/performance.md](docs/performance.md),
-[docs/limitations.md](docs/limitations.md#implementation)).
+when a value misses its budget in `dataplane/crates/scrim-llm/benches/budget.json` in two runs;
+its comparison with the previous release's published results is a report, not a gate. An agent's
+next request resends the whole conversation, and the guard keeps hashes of the parts it found
+clean, so it checks only what is new: the request targets apply to that next-turn measurement. On
+the reference runner it takes 4.7 to 12 ms at p99 across runs, so the 5 ms target is not met
+reliably; most of it is the codec's JSON plan and the redactor. A 1 MB body seen for the first
+time takes 10 to 27 ms
+([docs/performance.md](docs/performance.md), [docs/limitations.md](docs/limitations.md#implementation)).
 
 Each release attaches the numbers measured for it: `scrim_<version>_results_latency-gate.md` and
 `.json` (every measurement against its budget, with the machine it ran on),
