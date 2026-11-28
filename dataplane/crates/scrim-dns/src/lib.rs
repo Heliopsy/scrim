@@ -77,6 +77,30 @@ impl tower_service::Service<Name> for LoopSafeResolver {
     }
 }
 
+/// A resolver for hyper's `HttpConnector` that answers every name with addresses resolved and
+/// checked beforehand, so the connection goes to exactly those (a second lookup could answer
+/// differently: DNS rebinding).
+#[derive(Clone, Debug, Default)]
+pub struct FixedResolver(pub Vec<SocketAddr>);
+
+impl tower_service::Service<Name> for FixedResolver {
+    type Response = Addrs;
+    type Error = io::Error;
+    type Future = std::future::Ready<io::Result<Addrs>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, _name: Name) -> Self::Future {
+        std::future::ready(if self.0.is_empty() {
+            Err(io::Error::other("no checked address"))
+        } else {
+            Ok(self.0.clone().into_iter())
+        })
+    }
+}
+
 /// Resolves `host` (port 0 in the results), see the crate documentation.
 pub async fn resolve(host: &str) -> io::Result<Vec<SocketAddr>> {
     let system: Vec<SocketAddr> = tokio::net::lookup_host((host, 0)).await?.collect();

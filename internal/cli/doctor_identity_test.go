@@ -75,3 +75,66 @@ identity:
 		t.Fatal("doctor printed a credential")
 	}
 }
+
+// TestDoctorReportsAgentWriteChecks: per store with per-agent identity,
+// doctor says whether agents' writes are checked with the agent's own
+// identity, and warns where they are not.
+func TestDoctorReportsAgentWriteChecks(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "scrim.yaml")
+	yaml := "apiVersion: " + config.APIVersion + "\nkind: Config\n" + `
+stores:
+  vw:
+    kind: vaultwarden
+    url: https://vault.example.test
+    client-id: user.00000000-0000-0000-0000-000000000000
+    client-secret: env:SCRIM_TEST_VW_LAPTOP
+    unlock: env:SCRIM_TEST_VW_LAPTOP
+  dop:
+    kind: doppler
+    token: env:SCRIM_TEST_VW_LAPTOP
+  op:
+    kind: onepassword
+    address: http://op-connect.example.test:8080
+    token: env:SCRIM_TEST_VW_LAPTOP
+  plain:
+    kind: memory
+identity:
+  store-credentials:
+    vw/laptop: env:SCRIM_TEST_VW_LAPTOP
+    dop/laptop: env:SCRIM_TEST_VW_LAPTOP
+    op/laptop: env:SCRIM_TEST_VW_LAPTOP
+  refuse-unchecked-writes: [op]
+`
+	if err := os.WriteFile(p, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(env ...string) string {
+		cfg, err := config.Build(config.Options{ConfigPaths: []string{p}, SystemDir: dir, Environ: append(env, "SCRIM_TEST_VW_LAPTOP=never-printed")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var lines []string
+		for _, f := range storeIdentityFindings(cfg) {
+			lines = append(lines, string(f.Outcome)+" "+f.Message)
+		}
+		return strings.Join(lines, "\n")
+	}
+	got := run()
+	for _, want := range []string{
+		"pass store vw: agents' writes are checked with the agent's own identity",
+		"warn store dop: agents' writes are not checked against the agent's identity (the store cannot tell without writing)",
+		"pass store op: agents' writes are refused: the store cannot check the agent's identity (identity.refuse-unchecked-writes)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("doctor lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "store plain: agents' writes") {
+		t.Errorf("doctor reports writes for a store without per-agent identity:\n%s", got)
+	}
+	got = run("SCRIM_IDENTITY_SKIP_AGENT_WRITE_CHECKS=true")
+	if want := "warn store vw: agents' writes are not checked against the agent's identity (identity.skip-agent-write-checks)"; !strings.Contains(got, want) {
+		t.Errorf("doctor lacks %q:\n%s", want, got)
+	}
+}

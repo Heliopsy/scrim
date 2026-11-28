@@ -725,12 +725,14 @@ fn spaces(b: &[u8], p: usize) -> usize {
     b[p..].iter().take_while(|&&c| c == b' ').count()
 }
 
-/// One `od -c` cell (four columns, right-aligned) at `p`.
+/// One `od -c` cell (four columns, right-aligned) at `p`. A backslash is `   \` (GNU coreutils
+/// 9) or `  \\` (older versions); an escape (`  \n`) has two leading spaces, so neither is read
+/// as the other.
 fn od_cell(b: &[u8], p: usize) -> Option<u8> {
     let c = b.get(p..p + 4)?;
     match c {
         [b' ', b' ', b' ', b' '] => Some(b' '),
-        [b' ', b' ', b' ', x] if *x > b' ' && *x != b'\\' && *x < 0x7F => Some(*x),
+        [b' ', b' ', b' ', x] if *x > b' ' && *x < 0x7F => Some(*x),
         [b' ', b' ', b'\\', e] => Some(match e {
             b'0' => 0,
             b'a' => 7,
@@ -1352,14 +1354,20 @@ mod tests {
         s
     }
 
+    /// `od -c` with the backslash cell older coreutils print (`  \\`).
     fn od_c(v: &[u8]) -> String {
+        od_c_with(v, "  \\\\")
+    }
+
+    /// `od -c` with `bs` as the backslash cell: GNU coreutils 9 prints `   \`.
+    fn od_c_with(v: &[u8], bs: &str) -> String {
         let mut s = String::new();
         for (l, line) in v.chunks(16).enumerate() {
             s += &format!("{:07o}", l * 16);
             for &c in line {
                 s += &match c {
                     b'\n' => "  \\n".to_string(),
-                    b'\\' => "  \\\\".to_string(),
+                    b'\\' => bs.to_string(),
                     0x20..0x7f => format!("   {}", c as char),
                     c => format!(" {c:03o}"),
                 };
@@ -1474,6 +1482,26 @@ mod tests {
         assert!(finds(hexalpha.as_bytes(), v));
         // Lower-case runs are words or digests, not base32 output.
         assert!(!finds(std.to_ascii_lowercase().as_bytes(), v));
+    }
+
+    /// GNU coreutils 9 prints a backslash as `   \` (right-aligned like any printable byte, not
+    /// as the escape `\\`): a line holding one still decodes, so a value spread over that line and
+    /// others is found.
+    #[test]
+    fn od_c_backslash_cell_as_coreutils_prints_it() {
+        let v = b"K1\"o$1>ro<Ykz9mYD\\5o";
+        let mut text = b"SESSION_SECRET='".to_vec();
+        text.extend_from_slice(v);
+        text.extend_from_slice(b"'\nNEXT=1\n");
+        for bs in ["   \\", "  \\\\"] {
+            let dump = od_c_with(&text, bs);
+            assert!(finds(dump.as_bytes(), v), "od -c with {bs:?}: {dump}");
+            // As a JSON string carries it, once unescaped.
+            assert!(finds(format!("\"{dump}\"").as_bytes(), v), "quoted, {bs:?}");
+        }
+        // A line of nothing but backslashes is still `od -c`.
+        let all = vec![b'\\'; 40];
+        assert!(finds(od_c_with(&all, "   \\").as_bytes(), &all));
     }
 
     #[test]

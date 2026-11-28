@@ -23,6 +23,7 @@ package fakeprovider
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -243,6 +245,40 @@ type Server struct {
 	exchanges []Exchange
 	prefixes  [][]string
 	conns     int
+	files     map[string]File
+}
+
+// File is an attachment the fake holds for requests to reference, the way a
+// provider holds an uploaded file or fetches a URL: served at
+// /_fake/files/<name>, and treated as part of any request that names it.
+type File struct {
+	Name      string
+	MediaType string
+	Data      []byte
+}
+
+// references reports whether a request body names file n: by its URL, as a
+// file ID string, or as the last segment of a Files API URI.
+func references(body []byte, n string) bool {
+	return bytes.Contains(body, []byte(FilesPath+n)) ||
+		bytes.Contains(body, []byte(`"`+n+`"`)) ||
+		bytes.Contains(body, []byte(`/files/`+n+`"`))
+}
+
+// FilesPath is where the fake serves the files it holds.
+const FilesPath = "/_fake/files/"
+
+// Attach holds f until the next Reset. A request whose body names f.Name (its
+// URL under FilesPath, or the name as a file ID) is recorded with the file's
+// bytes recorded as an exchange of their own (a GET of the file): a real provider would fetch or read
+// them, so whatever they carry has reached it.
+func (s *Server) Attach(f File) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.files == nil {
+		s.files = map[string]File{}
+	}
+	s.files[f.Name] = f
 }
 
 // New returns a fake provider.
@@ -295,6 +331,7 @@ func (s *Server) Reset() {
 	s.exchanges = nil
 	s.prefixes = nil
 	s.conns = 0
+	s.files = nil
 }
 
 func (s *Server) record(e Exchange) {
@@ -302,6 +339,26 @@ func (s *Server) record(e Exchange) {
 	defer s.mu.Unlock()
 	e.Seq = len(s.exchanges) + 1
 	s.exchanges = append(s.exchanges, e)
+	names := make([]string, 0, len(s.files))
+	for n := range s.files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		f := s.files[n]
+		if n == "" || !references(e.Body, n) {
+			continue
+		}
+		// The provider reads the file the request names: recorded as an
+		// exchange of its own, the file base64-encoded in a JSON body the
+		// way an inline part carries it, so the leak checker reads it as it
+		// reads one.
+		body, _ := json.Marshal(map[string]string{"data": base64.StdEncoding.EncodeToString(f.Data)})
+		s.exchanges = append(s.exchanges, Exchange{
+			Capture: leak.Capture{Seq: len(s.exchanges) + 1, Method: http.MethodGet, Path: FilesPath + n, Header: http.Header{}, Body: body},
+			Time:    e.Time, API: e.API, Status: http.StatusOK, Conn: e.Conn,
+		})
+	}
 }
 
 // ServeHTTP implements http.Handler.
@@ -493,6 +550,25 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case r.URL.Path == "/_fake/exchanges" && r.Method == http.MethodGet:
 		writeJSON(w, http.StatusOK, s.Exchanges())
+	case r.URL.Path == "/_fake/attach" && r.Method == http.MethodPost:
+		data, err := io.ReadAll(io.LimitReader(r.Body, 64<<20))
+		name := r.URL.Query().Get("name")
+		if err != nil || name == "" || strings.Contains(name, "/") {
+			http.Error(w, "bad attachment", http.StatusBadRequest)
+			return
+		}
+		s.Attach(File{Name: name, MediaType: r.URL.Query().Get("type"), Data: data})
+		w.WriteHeader(http.StatusNoContent)
+	case strings.HasPrefix(r.URL.Path, FilesPath) && r.Method == http.MethodGet:
+		s.mu.Lock()
+		f, ok := s.files[strings.TrimPrefix(r.URL.Path, FilesPath)]
+		s.mu.Unlock()
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", f.MediaType)
+		_, _ = w.Write(f.Data)
 	default:
 		http.NotFound(w, r)
 	}

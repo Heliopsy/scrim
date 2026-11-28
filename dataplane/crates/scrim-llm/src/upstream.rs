@@ -90,13 +90,19 @@ pub fn build_ws_client(cfg: &ProxyConfig) -> Result<UpstreamClient, TlsError> {
     build(cfg, false, 0)
 }
 
-fn build(cfg: &ProxyConfig, h2: bool, idle: usize) -> Result<UpstreamClient, TlsError> {
+/// The TLS client configuration of every upstream connection: the configured trust roots, no
+/// client certificate.
+pub(crate) fn tls_config(cfg: &ProxyConfig) -> Result<rustls::ClientConfig, TlsError> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let tls = rustls::ClientConfig::builder_with_provider(provider)
+    Ok(rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(|_| TlsError::NoRoots)?
         .with_root_certificates(root_store(cfg)?)
-        .with_no_client_auth();
+        .with_no_client_auth())
+}
+
+fn build(cfg: &ProxyConfig, h2: bool, idle: usize) -> Result<UpstreamClient, TlsError> {
+    let tls = tls_config(cfg)?;
     let mut http = HttpConnector::new_with_resolver(scrim_dns::LoopSafeResolver);
     http.enforce_http(false);
     http.set_connect_timeout(Some(cfg.connect_timeout()));

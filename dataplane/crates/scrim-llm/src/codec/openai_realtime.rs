@@ -96,9 +96,15 @@ fn plan_item(plan: &mut Plan, item: Value<'_, '_>) -> Result<(), PlanError> {
             }
             Some("input_image") => {
                 if let Some(u) = part.get("image_url")?
-                    && let Some(mt) = u.as_str().as_deref().and_then(data_url_media_type)
+                    && let Some(text) = u.as_str()
                 {
-                    plan.binary(u, mt);
+                    match data_url_media_type(&text) {
+                        Some(mt) => plan.binary(u, mt),
+                        None => plan.reference(
+                            crate::remote::Target::Url(text.into_owned()),
+                            crate::remote::Edit::DataUrl { span: u.span() },
+                        ),
+                    }
                 }
             }
             _ => {}

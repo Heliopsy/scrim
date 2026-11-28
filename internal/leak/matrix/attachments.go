@@ -60,6 +60,76 @@ func attachment(api fp.API, mediaType string, data []byte, mode Escape) []Reques
 	return nil
 }
 
+// remoteKind is how a request references an attachment it does not carry.
+type remoteKind int
+
+const (
+	remoteImage remoteKind = iota
+	remoteDocument
+	remoteFileID
+)
+
+// remoteAttachment builds a request whose user message references f, held
+// at the fake provider, instead of carrying it: by URL in each API's image or
+// document part, or by file ID. The fake treats a request that names f as
+// having read it, as a provider fetching the URL or opening the file would.
+func remoteAttachment(api fp.API, c Content, mode Escape, kind remoteKind, f fp.File) []Request {
+	u := c.FilesURL + f.Name
+	const ask = "What does this attachment show?"
+	var r Request
+	switch api {
+	case fp.Anthropic:
+		block := "document"
+		if kind == remoteImage {
+			block = "image"
+		}
+		src := obj("type", "url", "url", u)
+		if kind == remoteFileID {
+			src = obj("type", "file", "file_id", f.Name)
+		}
+		part := obj("type", block, "source", src)
+		r = req(api, anthropicParts{messages: []any{obj("role", "user", "content", []any{part, obj("type", "text", "text", ask)})}}.body(), mode, false)
+	case fp.OpenAIChat:
+		var part any
+		switch kind {
+		case remoteImage:
+			part = obj("type", "image_url", "image_url", obj("url", u))
+		case remoteFileID:
+			part = obj("type", "file", "file", obj("file_id", f.Name))
+		default:
+			return nil // Chat Completions takes files inline or by ID only.
+		}
+		r = req(api, chatParts{messages: []any{obj("role", "user", "content", []any{part, obj("type", "text", "text", ask)})}}.body(), mode, false)
+	case fp.OpenAIResponses, fp.OpenAIResponsesWS:
+		var part any
+		switch kind {
+		case remoteImage:
+			part = obj("type", "input_image", "image_url", u)
+		case remoteFileID:
+			part = obj("type", "input_file", "file_id", f.Name)
+		default:
+			part = obj("type", "input_file", "filename", "attachment", "file_url", u)
+		}
+		r = req(api, responsesParts{input: []any{obj("type", "message", "role", "user", "content", []any{part, obj("type", "input_text", "text", ask)})}}.body(), mode, false)
+	case fp.Gemini:
+		uri := u
+		if kind == remoteFileID {
+			uri = "https://generativelanguage.googleapis.com/v1beta/files/" + f.Name
+		}
+		part := obj("fileData", obj("mimeType", f.MediaType, "fileUri", uri))
+		r = req(api, geminiParts{contents: []any{obj("role", "user", "parts", []any{part, obj("text", ask)})}}.body(), mode, false)
+	case fp.OpenAIRealtime:
+		if kind != remoteImage {
+			return nil
+		}
+		r = wsReq(api, mode, rtUser(obj("type", "input_image", "image_url", u), rtText(ask)), rtCreate())
+	default:
+		return nil
+	}
+	r.Files = []fp.File{f}
+	return one(r)
+}
+
 // pngChunk appends one PNG chunk with its CRC.
 func pngChunk(b *bytes.Buffer, typ string, data []byte) {
 	_ = binary.Write(b, binary.BigEndian, uint32(len(data))) //nolint:gosec // test fixtures are small

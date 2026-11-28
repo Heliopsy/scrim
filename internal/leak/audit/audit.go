@@ -223,7 +223,7 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 					}
 				}
 			}
-			mr := &matrix.Runner{Target: target, Upstream: matrix.LocalUpstream{Server: fake}, Checker: checker, Placeholder: o.Placeholder,
+			mr := &matrix.Runner{Target: target, Upstream: matrix.LocalUpstream{Server: fake, URL: upURL}, Checker: checker, Placeholder: o.Placeholder,
 				Progress: func(r matrix.Result) {
 					if !r.Pass {
 						progress("FAIL %s", r.Describe())

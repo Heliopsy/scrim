@@ -703,6 +703,17 @@ pub struct RedactionSettings {
     /// or not enabled leaves it off.
     #[prost(message, optional, tag = "7")]
     pub entropy: ::core::option::Option<EntropySettings>,
+    /// remote_attachments is what the LLM proxy does with attachments a
+    /// request references by URL or file ID (redaction.remote-attachments).
+    #[prost(enumeration = "RemoteAttachments", tag = "8")]
+    pub remote_attachments: i32,
+    /// remote_allowed_networks are networks (address or address/prefix) a fetch
+    /// of a remote attachment may reach although they are not public
+    /// (redaction.remote-attachments-allowed-networks).
+    #[prost(string, repeated, tag = "9")]
+    pub remote_allowed_networks: ::prost::alloc::vec::Vec<
+        ::prost::alloc::string::String,
+    >,
 }
 /// EntropySettings tune the entropy detector. Zero fields take the data
 /// plane's defaults.
@@ -1508,6 +1519,47 @@ impl BinaryPolicy {
             "BINARY_POLICY_SCAN" => Some(Self::Scan),
             "BINARY_POLICY_BLOCK" => Some(Self::Block),
             "BINARY_POLICY_PASS" => Some(Self::Pass),
+            _ => None,
+        }
+    }
+}
+/// RemoteAttachments is what the LLM proxy does with attachments a request
+/// references by URL or file ID: `redaction.remote-attachments`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum RemoteAttachments {
+    /// treated as INLINE
+    Unspecified = 0,
+    /// INLINE fetches each URL, scans the content under the binary policy and
+    /// sends it inline; file IDs pass only when scrim scanned their upload, and
+    /// other references refuse the request.
+    Inline = 1,
+    /// REFUSE refuses requests with references, except file IDs scrim scanned
+    /// on upload.
+    Refuse = 2,
+    /// PASS forwards references unfetched (weakening).
+    Pass = 3,
+}
+impl RemoteAttachments {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "REMOTE_ATTACHMENTS_UNSPECIFIED",
+            Self::Inline => "REMOTE_ATTACHMENTS_INLINE",
+            Self::Refuse => "REMOTE_ATTACHMENTS_REFUSE",
+            Self::Pass => "REMOTE_ATTACHMENTS_PASS",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "REMOTE_ATTACHMENTS_UNSPECIFIED" => Some(Self::Unspecified),
+            "REMOTE_ATTACHMENTS_INLINE" => Some(Self::Inline),
+            "REMOTE_ATTACHMENTS_REFUSE" => Some(Self::Refuse),
+            "REMOTE_ATTACHMENTS_PASS" => Some(Self::Pass),
             _ => None,
         }
     }
