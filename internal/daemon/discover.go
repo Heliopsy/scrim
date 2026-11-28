@@ -21,6 +21,7 @@ import (
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/policy"
+	"github.com/heliopsy/scrim/internal/runtimedir"
 	"github.com/heliopsy/scrim/internal/stores"
 	"github.com/heliopsy/scrim/internal/stores/storeconfig"
 )
@@ -39,7 +40,8 @@ func localConnContext(addr string) func(context.Context, net.Conn) context.Conte
 }
 
 // InfoPath is the daemon info file for the admin address: next to the admin
-// socket, or under $XDG_RUNTIME_DIR/scrim for a TCP admin listener.
+// socket, or in this user's runtime directory ([runtimedir.Dir]) for a TCP
+// admin listener.
 func InfoPath(adminURL string) string {
 	if adminURL == "" {
 		adminURL = "unix:" + approval.DefaultAdminSocket()
@@ -47,7 +49,7 @@ func InfoPath(adminURL string) string {
 	if path, ok := strings.CutPrefix(adminURL, "unix:"); ok {
 		return filepath.Join(filepath.Dir(path), "daemon.json")
 	}
-	return filepath.Join(filepath.Dir(approval.DefaultAdminSocket()), "daemon.json")
+	return filepath.Join(runtimedir.Dir(), "daemon.json")
 }
 
 // writeInfo writes the info file (mode 0600, atomically), so tools can find
@@ -60,7 +62,7 @@ func (d *Daemon) writeInfo() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(d.infoPath), 0o700); err != nil {
+	if err := runtimedir.Mkdir(filepath.Dir(d.infoPath)); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(d.infoPath), ".daemon-*.json")
@@ -107,6 +109,11 @@ func adminGet(ctx context.Context, cfg *config.Config, path string) ([]byte, err
 	var base string
 	hc := &http.Client{Timeout: 5 * time.Second}
 	if sock, ok := strings.CutPrefix(addr, "unix:"); ok {
+		// A socket in a runtime directory another user could have
+		// created is refused, not taken for "no daemon".
+		if err := runtimedir.CheckSocket(sock); err != nil {
+			return nil, err
+		}
 		if _, err := os.Stat(sock); errors.Is(err, os.ErrNotExist) {
 			return nil, ErrNotRunning
 		}

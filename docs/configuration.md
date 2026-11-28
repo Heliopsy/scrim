@@ -695,7 +695,7 @@ Reference to the bearer token operators present on a TCP admin listener (admin.u
 
 #### `admin.url`
 
-Address of the scrim admin API for operator commands: unix:/path/to/socket or http(s)://host:port. Empty means unix:$XDG_RUNTIME_DIR/scrim/admin.sock.
+Address of the scrim admin API for operator commands: unix:/path/to/socket or http(s)://host:port. Empty means unix:$XDG_RUNTIME_DIR/scrim/admin.sock, or unix:$TMPDIR/scrim-<uid>/admin.sock when $XDG_RUNTIME_DIR is unset (%TEMP%\scrim\admin.sock on Windows).
 
 | | |
 |---|---|
@@ -733,7 +733,7 @@ Permission bits of the API socket, octal. Widen (for example 0660) only to let a
 
 #### `api.socket`
 
-Unix socket of the local agent API. Empty uses $XDG_RUNTIME_DIR/scrim/api.sock.
+Unix socket of the local agent API. Empty uses $XDG_RUNTIME_DIR/scrim/api.sock, or $TMPDIR/scrim-<uid>/api.sock when $XDG_RUNTIME_DIR is unset.
 
 | | |
 |---|---|

@@ -22,9 +22,10 @@ Spec: `openspec/specs/interception` ("Wrapper mode") and
 2. **A session is minted.** `scrim run` asks the local agent API for a session token
    (`POST /v1/sessions`). The token is bound to your Unix user and to this `scrim run` process and
    its descendants; see [identity.md](identity.md).
-3. **A session directory is created** under `$XDG_RUNTIME_DIR/scrim/run/` (mode 0700; under the
-   temporary directory when `XDG_RUNTIME_DIR` is unset, as on Windows) for the CA
-   files, the MCP configuration and the [ssh-agent](ssh-agent.md) socket.
+3. **A session directory is created** under `$XDG_RUNTIME_DIR/scrim/run/` (mode 0700;
+   `$TMPDIR/scrim-<uid>/run/` without `$XDG_RUNTIME_DIR`, see
+   [running.md](running.md#runtime-directory)) for the CA files, the MCP configuration and the
+   [ssh-agent](ssh-agent.md) socket.
 4. **Project files are scanned.** Secret values in the working directory's `.env*`, `*.tfvars`,
    application config and similar files are registered with scrim for this session and applied to the
    data plane before the agent starts, so they are redacted from its first request. See

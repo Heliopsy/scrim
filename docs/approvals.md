@@ -30,7 +30,7 @@ request body.
 | `grants.max-ttl` | `8h` | Longest grant anything can create. A rule's `grant.max_ttl` can only lower it. |
 | `policy.deny-all` | `false` | Break-glass from configuration. |
 | `policy.deny-all-refresh` | `1s` | How often each replica re-reads the break-glass state. |
-| `admin.url` | empty | Where `scrim approve` and friends reach the admin API: `unix:/path` or `http(s)://host:port`. Empty means `unix:$XDG_RUNTIME_DIR/scrim/admin.sock`. |
+| `admin.url` | empty | Where `scrim approve` and friends reach the admin API: `unix:/path` or `http(s)://host:port`. Empty means `unix:$XDG_RUNTIME_DIR/scrim/admin.sock`, or `unix:$TMPDIR/scrim-<uid>/admin.sock` without `$XDG_RUNTIME_DIR` ([running.md](running.md#runtime-directory)). |
 
 The full list is in [configuration.md](configuration.md). Each key is also an environment variable
 (`SCRIM_APPROVALS_TIMEOUT`) and, where marked in

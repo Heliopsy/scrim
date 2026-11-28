@@ -18,7 +18,7 @@
         },
         "url": {
           "default": "",
-          "description": "Address of the scrim admin API for operator commands: unix:/path/to/socket or http(s)://host:port. Empty means unix:$XDG_RUNTIME_DIR/scrim/admin.sock.",
+          "description": "Address of the scrim admin API for operator commands: unix:/path/to/socket or http(s)://host:port. Empty means unix:$XDG_RUNTIME_DIR/scrim/admin.sock, or unix:$TMPDIR/scrim-<uid>/admin.sock when $XDG_RUNTIME_DIR is unset (%TEMP%\\scrim\\admin.sock on Windows).",
           "type": "string",
           "x-scrim-env": "SCRIM_ADMIN_URL",
           "x-scrim-flag": "--admin-url",
@@ -49,7 +49,7 @@
         },
         "socket": {
           "default": "",
-          "description": "Unix socket of the local agent API. Empty uses $XDG_RUNTIME_DIR/scrim/api.sock.",
+          "description": "Unix socket of the local agent API. Empty uses $XDG_RUNTIME_DIR/scrim/api.sock, or $TMPDIR/scrim-<uid>/api.sock when $XDG_RUNTIME_DIR is unset.",
           "type": "string",
           "x-scrim-env": "SCRIM_API_SOCKET",
           "x-scrim-flag": "--api-socket",
