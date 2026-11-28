@@ -17,7 +17,6 @@ command | docs/interception.md | scrim install --dns without --system | audit 9
 command | docs/running.md | scrim install --transparent without --system | audit 9
 command | docs/running.md | scrim install --dns without --system | audit 9
 command | docs/leak-assurance.md | scrim install --transparent without --system | audit 9
-command | dataplane/crates/scrim-policy/README.md | scrim reveal | audit 14: no such command
 command | .github/ISSUE_TEMPLATE/bug_report.md | scrim share | audit top 10 item 9: no such command
 
 # Setting keys and variables.
@@ -27,11 +26,6 @@ setting | docs/configuration.md | redaction.allow-unredacted-on-error | audit 12
 setting | docs/leak-assurance.md | redaction.json_depth | audit 13: internal Rust field
 
 # Release versions.
-version | docs/deploy/containers.md | 1.0.1 | audit 33: never released
-version | docs/deploy/helm.md | 1.0.1 | audit 35: never released
-version | docs/deploy/kubernetes.md | 1.0.1 | audit 34: never released
-version | docs/deploy/vm.md | 1.0.1 | audit 35: never released
-version | docs/deploy/workstation.md | 1.0.1 | audit 34: never released
 
 # Not problems: names the checks cannot tell apart from one. These stay.
 command | docs/ca.md | scrim interception | the CA subject "scrim interception CA ...", not a command

@@ -92,183 +92,229 @@ scrim [flags] [command]
 Every command accepts these.
 
 ```text
-      --admin-url string                              Address of the scrim admin API for operator commands:
-                                                      unix:/path/to/socket or http(s)://host:port. Empty means
-                                                      unix:$XDG_RUNTIME_DIR/scrim/admin.sock.
-      --api-socket string                             Unix socket of the local agent API. Empty uses
-                                                      $XDG_RUNTIME_DIR/scrim/api.sock.
-      --approvals-listen string                       TCP address that serves only the decision-link endpoint, for
-                                                      approvals.public-url to point at (usually through a TLS
-                                                      reverse proxy). Empty means decision links are served on the
-                                                      admin listener only.
-      --approvals-timeout string                      How long an approval waits for a decision before it is
-                                                      denied. A rule's approval.timeout overrides it. (default "2m0s")
-      --catalog-environment string                    Catalog environment that selects per-environment references.
-      --catalog-profile string                        Catalog profile (for example dev or prod) that selects
-                                                      per-profile references.
-      --config string                                 config file (default: first of
-                                                      $XDG_CONFIG_HOME/scrim/config.yaml,
-                                                      ~/.config/scrim/config.yaml, /etc/scrim/config.yaml)
-      --edge-forwarder-api-socket string              Unix socket the forwarder serves the agent API on, the exec
-                                                      broker included (point SCRIM_API_SOCKET at it). Empty serves
-                                                      none.
-      --edge-forwarder-ca-file string                 PEM file of the edge CA the central scrim's certificate must
-                                                      chain to (never the interception CA). No system roots are
-                                                      used. (default "/etc/scrim/edge-trust/scrim-edge-ca.pem")
-      --edge-forwarder-central string                 host:port of the central scrim's edge listener (edge.listen).
-      --edge-forwarder-client-cert-file string        PEM client certificate (chain) the forwarder presents to the
-                                                      central scrim instead of a service account token, for a
-                                                      central scrim with identity.client-certificates. Read again
-                                                      for every connection, so a rotated certificate is used at
-                                                      once. Needs edge-forwarder.client-key-file.
-      --edge-forwarder-client-key-file string         PEM private key of edge-forwarder.client-cert-file. It stays
-                                                      in the pod: the TLS handshake proves the forwarder holds it.
-      --edge-forwarder-server-name string             Name the central scrim's certificate is verified for. Empty
-                                                      takes the host of edge-forwarder.central.
-      --edge-forwarder-ssh-agent-socket string        Unix socket the forwarder serves the ssh-agent on (point
-                                                      SSH_AUTH_SOCK at it). Empty serves none.
-      --edge-forwarder-token-file string              Projected service account token for scrim's audience, read
-                                                      again for every connection and sent to the central scrim
-                                                      only. (default "/var/run/secrets/scrim/token")
-      --edge-listen string                            Address of the edge listener the forwarders in agent pods
-                                                      connect to (TLS; callers present a Kubernetes service
-                                                      account token). Empty turns it off. Needs
-                                                      identity.kubernetes.enabled and edge.server-names.
-      --events-backend string                         How replicas learn about state changes made elsewhere
-                                                      (approval decisions, grant and session changes, break-glass,
-                                                      configuration reloads). local reads the outbox every
-                                                      events.poll-interval and serves one process; postgres adds
-                                                      LISTEN/NOTIFY on the state database (needs state.backend
-                                                      postgres); valkey and nats publish a wake-up on a Valkey
-                                                      channel (valkey.*) or a NATS subject (nats.*). Every backend
-                                                      delivers from the outbox, so a lost wake-up costs latency,
-                                                      never an event. One of postgres, valkey or nats is required
-                                                      when deployment.replicas is more than 1. (default "local")
-      --log-format string                             Log record format: text (logfmt) or json, one object per
-                                                      line. (default "text")
-      --log-level string                              Minimum level of log records. (default "info")
-      --metrics-enabled[=true|false]                  Serve Prometheus metrics (control plane and data plane) at
-                                                      metrics.path on metrics.listen. Off: nothing is measured on
-                                                      the request path and no metrics listener is bound.
-      --metrics-listen string                         Address of the metrics and health endpoint (/healthz or
-                                                      /livez, /readyz, and metrics.path while metrics.enabled).
-                                                      Used when metrics.enabled is true; set explicitly with
-                                                      metrics.enabled false it serves the health endpoints only.
-                                                      Bind to loopback unless scraped remotely. (default
-                                                      "127.0.0.1:9792")
-      --policy-deny-all[=true|false]                  Break-glass: deny every injection, grant and approval while
-                                                      redaction continues. While set in configuration it cannot be
-                                                      released from the CLI.
-      --policy-rules-file string                      Path of the policy rules file (YAML or JSON with default and
-                                                      rules). Empty means no rules: every request gets policy.default.
-      --profile local                                 Built-in preset of defaults for a deployment shape: local
-                                                      for a laptop or VM, `k8s` for Kubernetes, `ci` for throwaway
-                                                      runs. Any value a profile sets can be overridden. (default
-                                                      "local")
-      --proxy-capture-dir scrim proxy --capture=DIR   Capture mode: write every provider request exactly as it
-                                                      left, and the response as received, to this directory (mode
-                                                      0700; refused if group or others can access it). Empty
-                                                      disables capture. scrim proxy --capture=DIR sets it.
-      --proxy-forward-listen string                   TCP address of the forward proxy for agents with HTTPS_PROXY
-                                                      set (scrim run sets it): provider hosts go to the LLM proxy,
-                                                      every other host to the tool proxy with credential
-                                                      injection. Empty disables it; keep it on loopback. (default
-                                                      "127.0.0.1:9791")
-      --proxy-forward-tls-listen string               TCP address of the forward proxy over TLS
-                                                      (HTTPS_PROXY=https://<address>). Callers must present a
-                                                      client certificate to the proxy
-                                                      (identity.client-certificates). Empty disables it.
-      --proxy-listen string                           TCP address of the LLM proxy base URL (agents use
-                                                      http://<address>/anthropic and http://<address>/openai/v1).
-                                                      Empty disables it; keep it on loopback. (default
-                                                      "127.0.0.1:9790")
-      --proxy-sni-listen string                       TCP address of the SNI listener for DNS override mode:
-                                                      provider names resolve to its address (scrim install --dns
-                                                      writes /etc/hosts entries and sets 127.0.83.1:443), it
-                                                      serves certificates for them from the scrim CA and routes by
-                                                      TLS server name. Connections made by address bypass it.
-                                                      Empty disables it.
-      --proxy-socket string                           Unix socket path for the LLM proxy base URL, for agents that
-                                                      can connect to one. Empty disables it.
-      --proxy-tls-listen string                       TCP address of the LLM proxy base URL over TLS
-                                                      (https://<address>/anthropic and so on). Callers must
-                                                      present a client certificate (identity.client-certificates).
-                                                      Empty disables it.
-      --proxy-transparent-listen string               TCP addresses of the transparent listener (Linux):
-                                                      connections redirected to it by nftables are routed by TLS
-                                                      server name or Host header, provider hosts to the LLM proxy,
-                                                      bound tool hosts to the tool proxy. scrim install
-                                                      --transparent sets 127.0.0.1:9793 and [::1]:9793 (9792 is
-                                                      metrics.listen). Empty disables it. (default "[]")
-      --ratelimit-backend string                      Where per-agent rate limits are counted. local counts in
-                                                      each replica's memory, so with several replicas an agent can
-                                                      get up to that many times each limit (approximate); valkey
-                                                      counts in Valkey (valkey.*), one exact limit shared by every
-                                                      replica. When the backend cannot answer, the request is
-                                                      refused. (default "local")
-      --redaction-binary string                       Images, PDFs and other binary parts of provider requests.
-                                                      scan decodes each part and scans it and the text it carries
-                                                      (image metadata, PDF text, SVG) with the redactor and the
-                                                      guard, and refuses the request when it finds a secret value
-                                                      or cannot decode the part within its bounds; block refuses
-                                                      every request with a binary part; pass forwards them
-                                                      unscanned and audits it. Parts referenced by URL are not
-                                                      fetched or scanned. (default "scan")
-      --restore-display-mode string                   What the agent displays for display-class values: values
-                                                      resolves them in assistant text, placeholders keeps
-                                                      placeholders (for example while screen sharing). Tool
-                                                      arguments follow the tool roles either way; credentials are
-                                                      never restored. (default "values")
-      --run-allow-unredacted-start[=true|false]       Start the agent anyway when scrim cannot start, its data
-                                                      plane is not ready or no session can be minted. The agent
-                                                      then reaches providers directly and unredacted; scrim run
-                                                      prints a warning.
-      --run-fs-view string                            Session filesystem view for credential files at fixed home
-                                                      paths: auto (a user and mount namespace where the host
-                                                      allows it, the home mirror elsewhere), namespace (refuse to
-                                                      start the agent without one), home (HOME points at a mirror
-                                                      of the home directory without the real credential files) or
-                                                      off. See docs/run.md. (default "auto")
-      --run-mcp[=true|false]                          Register scrim mcp with the agent for this session (Claude
-                                                      Code --mcp-config, Codex -c mcp_servers.scrim, OpenCode
-                                                      OPENCODE_CONFIG_CONTENT). Nothing is written to the agent's
-                                                      own configuration. (default true)
-      --run-placeholder-env[=true|false]              Export each declared catalog placeholder that resolves for
-                                                      the session as an environment variable of the same name
-                                                      holding the placeholder, for example
-                                                      SCRIM_ACME_KEY=SCRIM_ACME_KEY. (default true)
-      --run-profiles auto                             Tool profiles scrim run applies: profile names, auto for
-                                                      every profile at least one catalog entry fills (an entry
-                                                      naming the profile in its tools list), or `none`. Profiles a
-                                                      selected one requires are added. See docs/cli-tools.md.
-                                                      (default "[\"auto\"]")
-      --run-scan-interval string                      How often scrim run rescans the project files while the
-                                                      agent runs and registers changed values; 0 scans once at
-                                                      start. (default "10s")
-      --run-scan-project[=true|false]                 Scan the agent's working directory for secret values in
-                                                      project files (.env*, *.tfvars, application config, compose
-                                                      files, .npmrc) and redact them from the session's first
-                                                      request. scrim run refuses to start the agent when they
-                                                      cannot be registered. (default true)
-      --run-ssh-agent[=true|false]                    Point SSH_AUTH_SOCK at scrim's ssh-agent for the session:
-                                                      ssh and git over ssh sign with the catalog's ssh_key
-                                                      entries, decided and audited by scrim, and an inherited
-                                                      agent with your own keys is not reachable through it.
-                                                      (default true)
-      --state-backend string                          State backend for approvals, grants, sessions and audit
-                                                      metadata. The local profile uses sqlite
-                                                      ($XDG_STATE_HOME/scrim/state.db); ci and k8s use memory,
-                                                      which writes nothing to disk (set postgres for shared
-                                                      state). (default "memory")
-      --state-sqlite-path string                      SQLite state file. Empty means
-                                                      $XDG_STATE_HOME/scrim/state.db (~/.local/state/scrim/state.db).
-      --tool-proxy-listen string                      TCP address of the HTTPS tool proxy (credential injection
-                                                      and response redaction) for tools pointed at it directly.
-                                                      Empty disables it.
-      --tool-proxy-tls-listen string                  TCP address of the HTTPS tool proxy over TLS. Callers must
-                                                      present a client certificate to the proxy
-                                                      (identity.client-certificates). Empty disables it.
-      --tracing-endpoint string                       OTLP/HTTP collector URL for traces, for example
-                                                      http://127.0.0.1:4318. Empty disables export; incoming W3C
-                                                      trace context is still propagated.
+      --admin-url string                                    Address of the scrim admin API for operator commands:
+                                                            unix:/path/to/socket or http(s)://host:port. Empty
+                                                            means unix:$XDG_RUNTIME_DIR/scrim/admin.sock.
+      --api-socket string                                   Unix socket of the local agent API. Empty uses
+                                                            $XDG_RUNTIME_DIR/scrim/api.sock.
+      --approvals-listen string                             TCP address that serves only the decision-link
+                                                            endpoint, for approvals.public-url to point at
+                                                            (usually through a TLS reverse proxy). Empty means
+                                                            decision links are served on the admin listener only.
+      --approvals-timeout string                            How long an approval waits for a decision before it is
+                                                            denied. A rule's approval.timeout overrides it.
+                                                            (default "2m0s")
+      --catalog-environment string                          Catalog environment that selects per-environment
+                                                            references.
+      --catalog-profile string                              Catalog profile (for example dev or prod) that selects
+                                                            per-profile references.
+      --config string                                       config file (default: first of
+                                                            $XDG_CONFIG_HOME/scrim/config.yaml,
+                                                            ~/.config/scrim/config.yaml, /etc/scrim/config.yaml)
+      --edge-forwarder-api-socket string                    Unix socket the forwarder serves the agent API on, the
+                                                            exec broker included (point SCRIM_API_SOCKET at it).
+                                                            Empty serves none.
+      --edge-forwarder-ca-file string                       PEM file of the edge CA the central scrim's
+                                                            certificate must chain to (never the interception CA).
+                                                            No system roots are used. (default
+                                                            "/etc/scrim/edge-trust/scrim-edge-ca.pem")
+      --edge-forwarder-central string                       host:port of the central scrim's edge listener
+                                                            (edge.listen).
+      --edge-forwarder-client-cert-file string              PEM client certificate (chain) the forwarder presents
+                                                            to the central scrim instead of a service account
+                                                            token, for a central scrim with
+                                                            identity.client-certificates. Read again for every
+                                                            connection, so a rotated certificate is used at once.
+                                                            Needs edge-forwarder.client-key-file.
+      --edge-forwarder-client-key-file string               PEM private key of edge-forwarder.client-cert-file. It
+                                                            stays in the pod: the TLS handshake proves the
+                                                            forwarder holds it.
+      --edge-forwarder-server-name string                   Name the central scrim's certificate is verified for.
+                                                            Empty takes the host of edge-forwarder.central.
+      --edge-forwarder-ssh-agent-socket string              Unix socket the forwarder serves the ssh-agent on
+                                                            (point SSH_AUTH_SOCK at it). Empty serves none.
+      --edge-forwarder-token-file string                    Projected service account token for scrim's audience,
+                                                            read again for every connection and sent to the
+                                                            central scrim only. (default
+                                                            "/var/run/secrets/scrim/token")
+      --edge-listen string                                  Address of the edge listener the forwarders in agent
+                                                            pods connect to (TLS; callers present a Kubernetes
+                                                            service account token). Empty turns it off. Needs
+                                                            identity.kubernetes.enabled and edge.server-names.
+      --events-backend string                               How replicas learn about state changes made elsewhere
+                                                            (approval decisions, grant and session changes,
+                                                            break-glass, configuration reloads). local reads the
+                                                            outbox every events.poll-interval and serves one
+                                                            process; postgres adds LISTEN/NOTIFY on the state
+                                                            database (needs state.backend postgres); valkey and
+                                                            nats publish a wake-up on a Valkey channel (valkey.*)
+                                                            or a NATS subject (nats.*). Every backend delivers
+                                                            from the outbox, so a lost wake-up costs latency,
+                                                            never an event. One of postgres, valkey or nats is
+                                                            required when deployment.replicas is more than 1.
+                                                            (default "local")
+      --log-format string                                   Log record format: text (logfmt) or json, one object
+                                                            per line. (default "text")
+      --log-level string                                    Minimum level of log records. (default "info")
+      --metrics-enabled[=true|false]                        Serve Prometheus metrics (control plane and data
+                                                            plane) at metrics.path on metrics.listen. Off: nothing
+                                                            is measured on the request path and no metrics
+                                                            listener is bound.
+      --metrics-listen string                               Address of the metrics and health endpoint (/healthz
+                                                            or /livez, /readyz, and metrics.path while
+                                                            metrics.enabled). Used when metrics.enabled is true;
+                                                            set explicitly with metrics.enabled false it serves
+                                                            the health endpoints only. Bind to loopback unless
+                                                            scraped remotely. (default "127.0.0.1:9792")
+      --policy-deny-all[=true|false]                        Break-glass: deny every injection, grant and approval
+                                                            while redaction continues. While set in configuration
+                                                            it cannot be released from the CLI.
+      --policy-rules-file string                            Path of the policy rules file (YAML or JSON with
+                                                            default and rules). Empty means no rules: every
+                                                            request gets policy.default.
+      --profile local                                       Built-in preset of defaults for a deployment shape:
+                                                            local for a laptop or VM, `k8s` for Kubernetes, `ci`
+                                                            for throwaway runs. Any value a profile sets can be
+                                                            overridden. (default "local")
+      --proxy-capture-dir scrim proxy --capture=DIR         Capture mode: write every provider request exactly as
+                                                            it left, and the response as received, to this
+                                                            directory (mode 0700; refused if group or others can
+                                                            access it). Empty disables capture. scrim proxy
+                                                            --capture=DIR sets it.
+      --proxy-forward-listen string                         TCP address of the forward proxy for agents with
+                                                            HTTPS_PROXY set (scrim run sets it): provider hosts go
+                                                            to the LLM proxy, every other host to the tool proxy
+                                                            with credential injection. Empty disables it; keep it
+                                                            on loopback. (default "127.0.0.1:9791")
+      --proxy-forward-tls-listen string                     TCP address of the forward proxy over TLS
+                                                            (HTTPS_PROXY=https://<address>). Callers must present
+                                                            a client certificate to the proxy
+                                                            (identity.client-certificates). Empty disables it.
+      --proxy-listen string                                 TCP address of the LLM proxy base URL (agents use
+                                                            http://<address>/anthropic and
+                                                            http://<address>/openai/v1). Empty disables it; keep
+                                                            it on loopback. (default "127.0.0.1:9790")
+      --proxy-sni-listen string                             TCP address of the SNI listener for DNS override mode:
+                                                            provider names resolve to its address (scrim install
+                                                            --dns writes /etc/hosts entries and sets
+                                                            127.0.83.1:443), it serves certificates for them from
+                                                            the scrim CA and routes by TLS server name.
+                                                            Connections made by address bypass it. Empty disables it.
+      --proxy-socket string                                 Unix socket path for the LLM proxy base URL, for
+                                                            agents that can connect to one. Empty disables it.
+      --proxy-tls-listen string                             TCP address of the LLM proxy base URL over TLS
+                                                            (https://<address>/anthropic and so on). Callers must
+                                                            present a client certificate
+                                                            (identity.client-certificates). Empty disables it.
+      --proxy-transparent-listen string                     TCP addresses of the transparent listener (Linux):
+                                                            connections redirected to it by nftables are routed by
+                                                            TLS server name or Host header, provider hosts to the
+                                                            LLM proxy, bound tool hosts to the tool proxy. scrim
+                                                            install --transparent sets 127.0.0.1:9793 and
+                                                            [::1]:9793 (9792 is metrics.listen). Empty disables
+                                                            it. (default "[]")
+      --ratelimit-backend string                            Where per-agent rate limits are counted. local counts
+                                                            in each replica's memory, so with several replicas an
+                                                            agent can get up to that many times each limit
+                                                            (approximate); valkey counts in Valkey (valkey.*), one
+                                                            exact limit shared by every replica. When the backend
+                                                            cannot answer, the request is refused. (default "local")
+      --redaction-binary string                             Images, PDFs and other binary parts of provider
+                                                            requests. scan decodes each part and scans it and the
+                                                            text it carries (image metadata, PDF text, SVG) with
+                                                            the redactor and the guard, and refuses the request
+                                                            when it finds a secret value or cannot decode the part
+                                                            within its bounds; block refuses every request with a
+                                                            binary part; pass forwards them unscanned and audits
+                                                            it. Parts referenced by URL follow
+                                                            redaction.remote-attachments. (default "scan")
+      --redaction-remote-attachments string                 Attachments a provider request references instead of
+                                                            carrying: image and document URLs, provider file IDs,
+                                                            Cloud Storage and S3 locations. inline fetches each
+                                                            URL itself (through network.upstream-proxy, never to a
+                                                            non-public address), scans the content under
+                                                            redaction.binary and sends it to the provider inline
+                                                            in place of the URL, so the model sees exactly what
+                                                            was scanned; refuse refuses requests with a URL; pass
+                                                            forwards references unfetched and audits it, and the
+                                                            provider fetches content scrim never sees. Under
+                                                            inline and refuse a file ID passes only when its
+                                                            upload went through scrim on the same route and was
+                                                            scanned; other references scrim cannot fetch are
+                                                            refused. (default "inline")
+      --restore-display-mode string                         What the agent displays for display-class values:
+                                                            values resolves them in assistant text, placeholders
+                                                            keeps placeholders (for example while screen sharing).
+                                                            Tool arguments follow the tool roles either way;
+                                                            credentials are never restored. (default "values")
+      --run-allow-unredacted-start[=true|false]             Start the agent anyway when scrim cannot start, its
+                                                            data plane is not ready or no session can be minted.
+                                                            The agent then reaches providers directly and
+                                                            unredacted; scrim run prints a warning.
+      --run-fs-view string                                  Session filesystem view for credential files at fixed
+                                                            home paths and scrim's own secret files: auto (a user
+                                                            and mount namespace where the host allows it, the home
+                                                            mirror elsewhere), namespace (refuse to start the
+                                                            agent without one), home (HOME points at a mirror of
+                                                            the home directory without the real credential files)
+                                                            or off. See docs/run.md. (default "auto")
+      --run-fs-view-allow-readable-own-files[=true|false]   Start scrim run sessions even when the filesystem view
+                                                            cannot hide some of scrim's own secret files (file:
+                                                            reference targets, config files, key and state
+                                                            directories) that the agent's user can read: outside
+                                                            $HOME with the home mirror, or above a path the
+                                                            session needs. Off, scrim run refuses to start the
+                                                            agent. See docs/run.md.
+      --run-mcp[=true|false]                                Register scrim mcp with the agent for this session
+                                                            (Claude Code --mcp-config, Codex -c mcp_servers.scrim,
+                                                            OpenCode OPENCODE_CONFIG_CONTENT). Nothing is written
+                                                            to the agent's own configuration. (default true)
+      --run-network string                                  The agent's network under scrim run: open (the host's
+                                                            network; proxy and base URL settings steer clients
+                                                            that honour them through scrim) or proxy-only (Linux:
+                                                            a network namespace with loopback only, in which
+                                                            scrim's LLM base URL and forward proxy are the only
+                                                            reachable addresses, so a command that ignores
+                                                            HTTPS_PROXY or dials a provider directly fails; scrim
+                                                            run refuses to start the agent when the namespace
+                                                            cannot be created). See docs/run.md. (default "open")
+      --run-placeholder-env[=true|false]                    Export each declared catalog placeholder that resolves
+                                                            for the session as an environment variable of the same
+                                                            name holding the placeholder, for example
+                                                            SCRIM_ACME_KEY=SCRIM_ACME_KEY. (default true)
+      --run-profiles auto                                   Tool profiles scrim run applies: profile names, auto
+                                                            for every profile at least one catalog entry fills (an
+                                                            entry naming the profile in its tools list), or
+                                                            `none`. Profiles a selected one requires are added.
+                                                            See docs/cli-tools.md. (default "[\"auto\"]")
+      --run-scan-interval string                            How often scrim run rescans the project files while
+                                                            the agent runs and registers changed values; 0 scans
+                                                            once at start. (default "10s")
+      --run-scan-project[=true|false]                       Scan the agent's working directory for secret values
+                                                            in project files (.env*, *.tfvars, application config,
+                                                            compose files, .npmrc) and redact them from the
+                                                            session's first request. scrim run refuses to start
+                                                            the agent when they cannot be registered. (default true)
+      --run-ssh-agent[=true|false]                          Point SSH_AUTH_SOCK at scrim's ssh-agent for the
+                                                            session: ssh and git over ssh sign with the catalog's
+                                                            ssh_key entries, decided and audited by scrim, and an
+                                                            inherited agent with your own keys is not reachable
+                                                            through it. (default true)
+      --state-backend string                                State backend for approvals, grants, sessions and
+                                                            audit metadata. The local profile uses sqlite
+                                                            ($XDG_STATE_HOME/scrim/state.db); ci and k8s use
+                                                            memory, which writes nothing to disk (set postgres for
+                                                            shared state). (default "memory")
+      --state-sqlite-path string                            SQLite state file. Empty means
+                                                            $XDG_STATE_HOME/scrim/state.db
+                                                            (~/.local/state/scrim/state.db).
+      --tool-proxy-listen string                            TCP address of the HTTPS tool proxy (credential
+                                                            injection and response redaction) for tools pointed at
+                                                            it directly. Empty disables it.
+      --tool-proxy-tls-listen string                        TCP address of the HTTPS tool proxy over TLS. Callers
+                                                            must present a client certificate to the proxy
+                                                            (identity.client-certificates). Empty disables it.
+      --tracing-endpoint string                             OTLP/HTTP collector URL for traces, for example
+                                                            http://127.0.0.1:4318. Empty disables export; incoming
+                                                            W3C trace context is still propagated.
 ```

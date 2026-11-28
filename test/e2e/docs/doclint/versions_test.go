@@ -4,10 +4,8 @@ package doclint
 
 import (
 	"encoding/json"
-	"os/exec"
 	"regexp"
 	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -29,21 +27,21 @@ var scrimVersion = []*regexp.Regexp{
 	regexp.MustCompile(`\btag=v` + semver),
 }
 
-// releasedVersions returns every scrim version a doc may name: the v* tags
-// (when the checkout has them), the versions CHANGELOG.md has a section for
-// (release-please writes one per release), and the release-please manifest
-// version.
+// releasedVersions returns every scrim version a doc may name: the versions
+// CHANGELOG.md has a section for (release-please writes one per release), the
+// base of each section's compare link (which covers the first release, made
+// before the changelog), and the release-please manifest version. Git tags are
+// not read: most CI checkouts are shallow and have none, and the answer must
+// not depend on how the repository was cloned.
 func releasedVersions(t *testing.T, root string) map[string]bool {
 	out := map[string]bool{}
-	cmd := exec.Command("git", "tag", "--list", "v*")
-	cmd.Dir = root
-	if tags, err := cmd.Output(); err == nil {
-		for tag := range strings.FieldsSeq(string(tags)) {
-			out[strings.TrimPrefix(tag, "v")] = true
-		}
-	}
+	changelog := string(readFile(t, root, "CHANGELOG.md"))
 	heading := regexp.MustCompile(`(?m)^## \[` + semver + `\]`)
-	for _, m := range heading.FindAllStringSubmatch(string(readFile(t, root, "CHANGELOG.md")), -1) {
+	for _, m := range heading.FindAllStringSubmatch(changelog, -1) {
+		out[m[1]] = true
+	}
+	compare := regexp.MustCompile(`(?m)^## \[[^\]]+\]\(https://github\.com/Heliopsy/scrim/compare/v` + semver + `\.\.\.`)
+	for _, m := range compare.FindAllStringSubmatch(changelog, -1) {
 		out[m[1]] = true
 	}
 	var manifest map[string]string
