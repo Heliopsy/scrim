@@ -185,6 +185,22 @@ func ReportChecks(r Report) []Check {
 			}})
 		}
 	}
+	if n := r.RunNetwork; n != nil {
+		checks = append(checks, Check{Name: "run-network", Run: func(context.Context) []Finding {
+			switch {
+			case n.Refused():
+				return []Finding{{Outcome: Fail, Message: "run.network is proxy-only, but this host cannot give an agent a network namespace of its own: " + n.Reason,
+					Fix: "allow unprivileged user namespaces (on Ubuntu: sysctl kernel.apparmor_restrict_unprivileged_userns=0), or set run.network: open"}}
+			case n.Requested == "proxy-only":
+				return nil
+			case n.Available:
+				return []Finding{{Outcome: Pass, Message: "run.network is open: a command in a scrim run session that ignores the proxy settings reaches the network directly; " +
+					"run.network: proxy-only works on this host and stops that"}}
+			}
+			return []Finding{{Outcome: Pass, Message: "run.network is open: a command in a scrim run session that ignores the proxy settings reaches the network directly; " +
+				"run.network: proxy-only is not available on this host: " + n.Reason}}
+		}})
+	}
 	for _, s := range r.Stores {
 		checks = append(checks, Check{Name: "store:" + s.Name, Run: func(context.Context) []Finding {
 			if !s.Reachable {

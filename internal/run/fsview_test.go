@@ -181,6 +181,9 @@ func viewProfiles(_ context.Context, _ string, sess profiles.Session) (*profiles
 
 // runView runs the fsview agent under scrim run with the given view and
 // returns what it saw and scrim run's stderr.
+// viewNetwork is run.network for runView; a test that sets it restores it.
+var viewNetwork string
+
 func runView(t *testing.T, home viewHome, fo FSViewOptions, extraEnv ...string) (viewReport, string, error) {
 	t.Helper()
 	return runViewWith(t, newHarness(t, true), home, fo, extraEnv...)
@@ -199,7 +202,7 @@ func runViewWith(t *testing.T, h *harness, home viewHome, fo FSViewOptions, extr
 	rt := t.TempDir()
 	err := Run(context.Background(), Options{
 		Command: []string{selfAgent(t)}, Environ: env, Daemon: h.daemon(), Stdout: &out, Stderr: &errb,
-		RuntimeDir: rt, Profiles: viewProfiles, FSView: fo,
+		RuntimeDir: rt, Profiles: viewProfiles, FSView: fo, Network: NetworkOptions{Mode: viewNetwork},
 	})
 	var r viewReport
 	if err == nil {

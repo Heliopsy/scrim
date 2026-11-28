@@ -120,3 +120,44 @@ func TestDoctorWarnsReadableOwnFiles(t *testing.T) {
 		t.Errorf("status does not list the readable file:\n%s", out.String())
 	}
 }
+
+// TestStatusRunNetwork: status and doctor report run.network; proxy-only
+// on a host without the namespace is a refusal and a doctor failure, open
+// is a note that passes.
+func TestStatusRunNetwork(t *testing.T) {
+	old := runNetworkProbe
+	runNetworkProbe = func(context.Context) fsview.Availability {
+		return fsview.Availability{Reason: "creating a user namespace is not allowed: operation not permitted"}
+	}
+	t.Cleanup(func() { runNetworkProbe = old })
+
+	e, out, _ := newEnv(isolatedEnv(t)...)
+	_ = Run(context.Background(), e, []string{"doctor"})
+	if !strings.Contains(out.String(), "[pass] run-network: run.network is open") {
+		t.Errorf("doctor lacks the open note:\n%s", out.String())
+	}
+
+	e, out, _ = newEnv(isolatedEnv(t, "SCRIM_RUN_NETWORK=proxy-only")...)
+	_ = Run(context.Background(), e, []string{"status"})
+	if !strings.Contains(out.String(), "REFUSED: run.network is proxy-only") || !strings.Contains(out.String(), "run-network: run.network is proxy-only") {
+		t.Errorf("status does not report the refusal:\n%s", out.String())
+	}
+	e, out, _ = newEnv(isolatedEnv(t, "SCRIM_RUN_NETWORK=proxy-only")...)
+	_ = Run(context.Background(), e, []string{"doctor"})
+	if !strings.Contains(out.String(), "[fail] run-network") {
+		t.Errorf("doctor does not fail:\n%s", out.String())
+	}
+
+	runNetworkProbe = func(context.Context) fsview.Availability { return fsview.Availability{Namespace: true} }
+	e, out, _ = newEnv(isolatedEnv(t, "SCRIM_RUN_NETWORK=proxy-only")...)
+	_ = Run(context.Background(), e, []string{"status", "-o", "json"})
+	var r struct {
+		RunNetwork struct {
+			Requested string `json:"requested"`
+			Available bool   `json:"available"`
+		} `json:"run_network"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil || r.RunNetwork.Requested != "proxy-only" || !r.RunNetwork.Available {
+		t.Errorf("status json run_network = %+v (%v)\n%s", r.RunNetwork, err, out.String())
+	}
+}
