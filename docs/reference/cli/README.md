@@ -94,9 +94,14 @@ Every command accepts these.
 ```text
       --admin-url string                                    Address of the scrim admin API for operator commands:
                                                             unix:/path/to/socket or http(s)://host:port. Empty
-                                                            means unix:$XDG_RUNTIME_DIR/scrim/admin.sock.
+                                                            means unix:$XDG_RUNTIME_DIR/scrim/admin.sock, or
+                                                            unix:$TMPDIR/scrim-<uid>/admin.sock when
+                                                            $XDG_RUNTIME_DIR is unset (%TEMP%\scrim\admin.sock on
+                                                            Windows).
       --api-socket string                                   Unix socket of the local agent API. Empty uses
-                                                            $XDG_RUNTIME_DIR/scrim/api.sock.
+                                                            $XDG_RUNTIME_DIR/scrim/api.sock, or
+                                                            $TMPDIR/scrim-<uid>/api.sock when $XDG_RUNTIME_DIR is
+                                                            unset.
       --approvals-listen string                             TCP address that serves only the decision-link
                                                             endpoint, for approvals.public-url to point at
                                                             (usually through a TLS reverse proxy). Empty means

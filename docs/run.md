@@ -16,13 +16,16 @@ Spec: `openspec/specs/interception` ("Wrapper mode") and
 
 ## What happens
 
-1. **scrim is found or started.** `scrim run` reuses the scrim already running for your user, or
-   starts one, and waits until its data plane is ready to redact.
+1. **scrim is found or started.** `scrim run` reuses the scrim already running for your user or the
+   system service, or starts one in its own process, and waits until its data plane is ready to
+   redact. See [Which scrim serves the run](#which-scrim-serves-the-run).
 2. **A session is minted.** `scrim run` asks the local agent API for a session token
    (`POST /v1/sessions`). The token is bound to your Unix user and to this `scrim run` process and
    its descendants; see [identity.md](identity.md).
-3. **A session directory is created** under `$XDG_RUNTIME_DIR/scrim/run/` (mode 0700) for the CA
-   files, the MCP configuration and the [ssh-agent](ssh-agent.md) socket.
+3. **A session directory is created** under `$XDG_RUNTIME_DIR/scrim/run/` (mode 0700;
+   `$TMPDIR/scrim-<uid>/run/` without `$XDG_RUNTIME_DIR`, see
+   [running.md](running.md#runtime-directory)) for the CA files, the MCP configuration and the
+   [ssh-agent](ssh-agent.md) socket.
 4. **Project files are scanned.** Secret values in the working directory's `.env*`, `*.tfvars`,
    application config and similar files are registered with scrim for this session and applied to the
    data plane before the agent starts, so they are redacted from its first request. See
@@ -46,7 +49,10 @@ name could be read as a flag. `scrim run` flags go before it:
 | `--run-scan-project=false` | Do not scan the working directory for secret values (setting `run.scan-project`). |
 | `--run-scan-interval 30s` | How often project files are rescanned while the agent runs; `0` scans once (setting `run.scan-interval`, default 10s). |
 | `--run-ssh-agent=false` | Do not serve scrim's ssh-agent to the session (setting `run.ssh-agent`). See [ssh-agent.md](ssh-agent.md). |
+| `--run-profiles auto` | Tool profiles to apply: names, `auto` or `none` (setting `run.profiles`). See [Tool profiles](#tool-profiles). |
 | `--run-fs-view auto\|namespace\|home\|off` | Session filesystem view (setting `run.fs-view`). See [Filesystem view](#filesystem-view). |
+| `--run-fs-view-allow-readable-own-files` | Weakening: start the agent even when the view cannot hide some of [scrim's own files](#scrims-own-files). |
+| `--run-network open\|proxy-only` | The agent's network (setting `run.network`). See [Agent network](#agent-network). |
 | `--run-allow-unredacted-start` | Weakening: start the agent even when scrim cannot serve it. See [Failing closed](#failing-closed). |
 
 ## Environment contract
@@ -67,7 +73,7 @@ name could be read as a flag. `scrim run` flags go before it:
 | `SCRIM_SESSION_TOKEN` | the session token | Presented by `scrim mcp` and `scrim secret`. Never printed by `scrim run`. |
 | `SCRIM_SESSION_ID` | the session's public ID | For logs and scripts. |
 | declared placeholders | for example `SCRIM_GITHUB_TOKEN=SCRIM_GITHUB_TOKEN` | See [Declared placeholders](#declared-placeholders). |
-| `SSH_AUTH_SOCK` | `<session>/ssh-agent.sock` | ssh and git over SSH sign through scrim's ssh-agent, with keys from scrim's stores, a policy decision per signature and an audit entry each ([ssh-agent.md](ssh-agent.md)). An inherited agent is replaced and `SSH_AGENT_PID` removed. Not set with `run.ssh-agent: false`. |
+| `SSH_AUTH_SOCK` | `<session>/ssh-agent.sock` | ssh and git over SSH sign through scrim's ssh-agent, with keys from scrim's stores, a policy decision per signature and an audit entry each ([ssh-agent.md](ssh-agent.md)). An inherited agent is replaced and `SSH_AGENT_PID` removed. Not set with `run.ssh-agent: false`, nor on Windows, where your own `SSH_AUTH_SOCK` is left as it is. |
 
 `ALL_PROXY` and `all_proxy` are removed, so nothing skips the forward proxy through them.
 
@@ -92,9 +98,13 @@ scrim's upstream proxy ([Corporate proxies](#corporate-proxies)).
 | `--mcp-config=<session>/mcp.json` inserted after `claude` | Registers `scrim mcp` for this session. The `=` form keeps the option from taking the prompt as a second value. Claude Code starts MCP servers with its own environment, so the session token reaches them. |
 | `ANTHROPIC_CUSTOM_HEADERS` gets `x-scrim-session: <token>` | Claude Code adds these headers to every API request, so the base-URL listener can identify the session. The listener strips the header before the provider. Headers you set there yourself are kept (an inherited `x-scrim-session` line is dropped); `--print-env` shows them as `<inherited headers>`. |
 
-`scrim run` refuses to start Claude Code when `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` or
-`CLAUDE_CODE_USE_FOUNDRY` is set: those route Claude Code to cloud endpoints scrim does not serve
-yet, and the agent would reach them directly.
+Claude Code's cloud provider modes (`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_MANTLE`,
+`CLAUDE_CODE_USE_ANTHROPIC_AWS`, `CLAUDE_CODE_USE_FOUNDRY`, `CLAUDE_CODE_USE_VERTEX`) are kept: when
+one is on and scrim has a [provider route](providers/README.md#claude-code-under-scrim-run) of the
+matching kind, `scrim run` points Claude Code's base URL variable for the mode at that route and
+turns Claude Code's own authentication off, since scrim signs the redacted request. Without such a
+route, or with `CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD`, which scrim does not serve, it refuses to
+start the agent, because Claude Code would reach the provider directly.
 
 Claude Code honours `ANTHROPIC_BASE_URL`, `HTTPS_PROXY`, `NO_PROXY` and `NODE_EXTRA_CA_CERTS`, and
 sends its own authentication (API key or subscription login) to the base URL; scrim passes it
@@ -255,6 +265,10 @@ mirror", "Session filesystem view hides scrim's own files"). Code: `internal/fsv
 | `namespace` | The namespace view, or no agent: `scrim run` exits 125 on a host without user namespaces. |
 | `home` | The home mirror. |
 | `off` | The home directory as it is. |
+
+Windows has no filesystem view: `auto` gives `off` and says so, and `namespace` or `home` refuses to
+start the agent (Windows tools find the profile directory through `USERPROFILE`, not `HOME`).
+Credential files in your profile stay readable from the session.
 
 ### Namespace view (Linux)
 
@@ -522,7 +536,8 @@ in `scrim status`.
 `SIGTERM`, `SIGHUP`, `SIGUSR1` and `SIGUSR2` sent to `scrim run` are passed to the agent.
 `SIGINT` and `SIGQUIT` are passed on too, except when the agent runs in the foreground of your
 terminal: the terminal already delivers Ctrl-C and Ctrl-\ to the agent, and a second copy would make
-Claude Code treat one Ctrl-C as two. `scrim run` itself never exits before the agent.
+Claude Code treat one Ctrl-C as two. `scrim run` itself never exits before the agent. On Windows no
+signal is passed on.
 
 ## Chained proxies
 
@@ -671,10 +686,14 @@ set
 
 ## Which scrim serves the run
 
-`scrim run` asks the daemon behind `admin.url` first ([running.md](running.md)). When one runs,
-the agent uses it and it keeps running after the agent exits. When none does, `scrim run` starts
-one in its own process for the session, waits until its data plane is ready, logs it to
-`$XDG_STATE_HOME/scrim/run-daemon.log` and stops it when the agent exits. With the SQLite state
+With neither `admin.url` nor `api.socket` set, `scrim run` looks for this user's daemon (its admin
+socket, `$XDG_RUNTIME_DIR/scrim/admin.sock`), then for the system service's agent API at
+`/run/scrim/api.sock` ([service.md](service.md#how-agents-find-the-service)). With either setting
+given it skips the system service and asks only the daemon behind `admin.url` (by default this
+user's admin socket). When one runs, the agent uses it and it keeps running after the
+agent exits; a system service that does not answer or is not ready is an error. When none runs,
+`scrim run` starts one in its own process for the session, waits until its data plane is ready, logs
+it to `$XDG_STATE_HOME/scrim/run-daemon.log` and stops it when the agent exits. With the SQLite state
 backend only one of them can hold the state file, so a second concurrent `scrim run` without a
 `scrim proxy` reuses the first run's daemon while it lives.
 

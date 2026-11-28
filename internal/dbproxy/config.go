@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/heliopsy/scrim/internal/config"
+	"github.com/heliopsy/scrim/internal/runtimedir"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -66,14 +67,10 @@ type Spec struct {
 	PasswordRef config.SecretRef
 }
 
-// DefaultSocketDir is where the default Unix sockets go:
-// $XDG_RUNTIME_DIR/scrim/db/<name>, or a per-user directory under the
-// temporary directory.
+// DefaultSocketDir is where the default Unix sockets go: db/<name> in this
+// user's runtime directory ([runtimedir.Dir]).
 func DefaultSocketDir(name string) string {
-	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
-		return filepath.Join(dir, "scrim", "db", name)
-	}
-	return filepath.Join(os.TempDir(), "scrim-"+strconv.Itoa(os.Getuid()), "db", name)
+	return filepath.Join(runtimedir.Dir(), "db", name)
 }
 
 // DefaultListen is the default listener of a database: a Unix socket named
