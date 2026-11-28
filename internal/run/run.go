@@ -36,6 +36,7 @@ import (
 	"github.com/heliopsy/scrim/internal/localapi"
 	"github.com/heliopsy/scrim/internal/profiles"
 	"github.com/heliopsy/scrim/internal/projectscan"
+	"github.com/heliopsy/scrim/internal/runtimedir"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -659,16 +660,21 @@ func PrintEnv(ctx context.Context, o Options) (*Plan, error) {
 }
 
 // sessionDir creates the per-session directory, mode 0700, under root or
-// the agent's XDG_RUNTIME_DIR.
+// the scrim runtime directory of the agent's XDG_RUNTIME_DIR (this user's
+// directory under the temporary directory when that is unset). A runtime
+// directory owned by another user or writable by group or others is
+// refused (runtimedir.MkdirUnder).
 func sessionDir(root, xdg, id string) (string, error) {
 	if root == "" {
+		top := runtimedir.UserTemp()
 		if xdg != "" {
-			root = filepath.Join(xdg, "scrim", "run")
-		} else {
-			root = filepath.Join(os.TempDir(), fmt.Sprintf("scrim-%d", os.Getuid()), "run")
+			top = filepath.Join(xdg, "scrim")
 		}
-	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
+		root = filepath.Join(top, "run")
+		if err := runtimedir.MkdirUnder(top, root); err != nil {
+			return "", err
+		}
+	} else if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", err
 	}
 	if id == "" {

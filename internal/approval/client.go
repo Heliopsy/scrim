@@ -19,6 +19,7 @@ import (
 	"github.com/heliopsy/scrim/internal/breakglass"
 	"github.com/heliopsy/scrim/internal/config"
 	"github.com/heliopsy/scrim/internal/localapi"
+	"github.com/heliopsy/scrim/internal/runtimedir"
 	"github.com/heliopsy/scrim/internal/secret"
 )
 
@@ -26,18 +27,13 @@ import (
 var AdminURL = config.Register(config.Spec[string]{
 	Key:         "admin.url",
 	Default:     "",
-	Description: "Address of the scrim admin API for operator commands: unix:/path/to/socket or http(s)://host:port. Empty means unix:$XDG_RUNTIME_DIR/scrim/admin.sock.",
+	Description: "Address of the scrim admin API for operator commands: unix:/path/to/socket or http(s)://host:port. Empty means unix:$XDG_RUNTIME_DIR/scrim/admin.sock, or unix:$TMPDIR/scrim-<uid>/admin.sock when $XDG_RUNTIME_DIR is unset (%TEMP%\\scrim\\admin.sock on Windows).",
 	Flag:        true,
 })
 
-// DefaultAdminSocket is the admin socket path when admin.url is empty.
-func DefaultAdminSocket() string {
-	dir := os.Getenv("XDG_RUNTIME_DIR")
-	if dir == "" {
-		dir = os.TempDir()
-	}
-	return filepath.Join(dir, "scrim", "admin.sock")
-}
+// DefaultAdminSocket is the admin socket path when admin.url is empty: in
+// this user's runtime directory ([runtimedir.Dir]).
+func DefaultAdminSocket() string { return filepath.Join(runtimedir.Dir(), "admin.sock") }
 
 // SystemAdminSocket is the admin socket of the system service that
 // `scrim install --system` sets up.
@@ -80,6 +76,11 @@ func NewClient(addr string) (*Client, error) {
 	if path, ok := strings.CutPrefix(addr, "unix:"); ok {
 		d := net.Dialer{Timeout: 5 * time.Second}
 		tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			// Never talk to a socket in a runtime directory another
+			// user could have created.
+			if err := runtimedir.CheckSocket(path); err != nil {
+				return nil, err
+			}
 			return d.DialContext(ctx, "unix", path)
 		}}
 		return &Client{base: "http://scrim", hc: &http.Client{Transport: tr, Timeout: 30 * time.Second}}, nil

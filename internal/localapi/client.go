@@ -18,6 +18,7 @@ import (
 
 	"github.com/heliopsy/scrim/internal/agenttools"
 	"github.com/heliopsy/scrim/internal/identity"
+	"github.com/heliopsy/scrim/internal/runtimedir"
 	"github.com/heliopsy/scrim/internal/secret"
 	"github.com/heliopsy/scrim/internal/sshagent"
 )
@@ -34,6 +35,11 @@ type Client struct {
 func NewClient(path string, token secret.Value) *Client {
 	tr := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			// Never talk to a socket in a runtime directory another user
+			// could have created.
+			if err := runtimedir.CheckSocket(path); err != nil {
+				return nil, err
+			}
 			var d net.Dialer
 			return d.DialContext(ctx, "unix", path)
 		},

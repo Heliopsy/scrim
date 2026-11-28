@@ -55,7 +55,9 @@ restart to change; a reload that changes the password's value takes effect on th
 
 ## Auth proxies
 
-The default listener is a Unix socket named the way clients look for one:
+The default listener is a Unix socket named the way clients look for one, under `db/<name>` in the
+[runtime directory](running.md#runtime-directory) (`$TMPDIR/scrim-<uid>/db/<name>` without
+`$XDG_RUNTIME_DIR`):
 
 <!-- docs-test: skip: needs a configured database -->
 

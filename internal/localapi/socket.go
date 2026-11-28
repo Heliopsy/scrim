@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/heliopsy/scrim/internal/fsperm"
+	"github.com/heliopsy/scrim/internal/runtimedir"
 )
 
 // Environment variables the clients read. They follow the configuration
@@ -23,14 +23,9 @@ const (
 )
 
 // DefaultSocketPath is where the API listens and clients look when nothing
-// else is configured: $XDG_RUNTIME_DIR/scrim/api.sock, or a per-user
-// directory under the temporary directory ([UserTempDir]).
-func DefaultSocketPath() string {
-	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
-		return filepath.Join(dir, "scrim", "api.sock")
-	}
-	return filepath.Join(UserTempDir(), "api.sock")
-}
+// else is configured: api.sock in this user's runtime directory
+// ([runtimedir.Dir]).
+func DefaultSocketPath() string { return filepath.Join(runtimedir.Dir(), "api.sock") }
 
 // SystemRuntimeDir holds the sockets of the system service that
 // `scrim install --system` sets up. A variable so tests can move it.
@@ -82,7 +77,9 @@ type ListenOptions struct {
 }
 
 // Listen creates the API socket at path. The parent directory is created
-// with mode 0700 when missing. A stale socket left by a crashed scrim is
+// with mode 0700 when missing; in this user's runtime directory, one owned
+// by another user or writable by group or others is refused
+// ([runtimedir.Mkdir]). A stale socket left by a crashed scrim is
 // replaced; a live one, or any other file at path, is an error.
 func Listen(path string, o ListenOptions) (net.Listener, error) {
 	// sun_path is 108 bytes on Linux and 104 on macOS, including the NUL.
@@ -93,7 +90,7 @@ func Listen(path string, o ListenOptions) (net.Listener, error) {
 	if mode == 0 {
 		mode = 0o600
 	}
-	if err := fsperm.MkdirPrivate(filepath.Dir(path)); err != nil {
+	if err := runtimedir.Mkdir(filepath.Dir(path)); err != nil {
 		return nil, fmt.Errorf("localapi: creating the socket directory: %w", err)
 	}
 	if fi, err := os.Lstat(path); err == nil {

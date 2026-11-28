@@ -25,7 +25,7 @@ var (
 	// temporary directory. Clients read the same setting as SCRIM_API_SOCKET.
 	Socket = config.Register(config.Spec[string]{
 		Key:             "api.socket",
-		Description:     "Unix socket of the local agent API. Empty uses $XDG_RUNTIME_DIR/scrim/api.sock.",
+		Description:     "Unix socket of the local agent API. Empty uses $XDG_RUNTIME_DIR/scrim/api.sock, or $TMPDIR/scrim-<uid>/api.sock when $XDG_RUNTIME_DIR is unset.",
 		Flag:            true,
 		RestartRequired: true,
 	})

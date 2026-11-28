@@ -57,7 +57,7 @@ type Lease struct {
 
 // Acquire reuses the daemon behind o's admin.url or starts one in this
 // process, and returns once it is ready. With nothing configured it looks
-// for this user's daemon first (admin socket under $XDG_RUNTIME_DIR), then
+// for this user's daemon first (admin socket in its runtime directory), then
 // for the system service's agent API in /run/scrim, and only then starts
 // one here.
 func Acquire(ctx context.Context, o Options) (*Lease, error) {

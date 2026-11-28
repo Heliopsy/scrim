@@ -53,15 +53,33 @@ restarts it with backoff and traffic is refused until it is back.
 | Database proxies | `databases.<name>.listen` | a Unix socket per database | PostgreSQL and MySQL clients log in without a password ([databases.md](databases.md)). |
 | Edge listener | `edge.listen` | off | TLS, for the edge forwarders in agent pods ([edge-forwarder.md](edge-forwarder.md)). |
 | Identity issuer | `identity.issuer.listen` | off | Discovery document and JWKS only, when scrim issues identity tokens ([identity.md](identity.md)). |
-| Agent API | `api.socket` | `$XDG_RUNTIME_DIR/scrim/api.sock` (Windows: `%TEMP%\scrim\api.sock`) | Mode `api.permissions` (0600), group `api.group` (the system service: 0660, `scrim-agents`). Callers are identified by peer credentials and session tokens ([identity.md](identity.md)). |
+| Agent API | `api.socket` | `<dir>/api.sock`, `<dir>` the [runtime directory](#runtime-directory) | Mode `api.permissions` (0600), group `api.group` (the system service: 0660, `scrim-agents`). Callers are identified by peer credentials and session tokens ([identity.md](identity.md)). |
 | Entry page | `entry.listen` | `127.0.0.1:0` | Where a human types a value for `secret_ask_human`. |
-| Admin API | `admin.url` | `unix:$XDG_RUNTIME_DIR/scrim/admin.sock` (Windows: `%TEMP%\scrim\admin.sock`) | Operator commands ([approvals.md](approvals.md)). |
+| Admin API | `admin.url` | `unix:<dir>/admin.sock`, `<dir>` the [runtime directory](#runtime-directory) | Operator commands ([approvals.md](approvals.md)). |
 | Decision links | `approvals.listen` | off | Only the decision endpoint, for `approvals.public-url` to point at through a TLS proxy. |
 | Per-session ssh-agent | `run.ssh-agent` | on under `scrim run`, not on Windows | `<session-dir>/ssh-agent.sock` as `SSH_AUTH_SOCK` ([ssh-agent.md](ssh-agent.md)). |
 | Metrics and health | `metrics.listen` (`127.0.0.1:9792`) | off; on with `metrics.enabled` or `--metrics` | `metrics.path`, `/healthz`, `/livez`, `/readyz`; health only when `metrics.listen` is set without the flag. See [monitoring.md](monitoring.md). |
 
 Listener addresses need a restart; a reload that changes one keeps the running listener and lists the
 setting under pending restart in `scrim status`.
+
+### Runtime directory
+
+The default sockets, the daemon info file (`daemon.json`), the database proxy sockets (`db/<name>`) and the
+`scrim run` session directories (`run/`) live in one per-user runtime directory:
+
+| Platform | Runtime directory |
+| --- | --- |
+| Unix with `$XDG_RUNTIME_DIR` | `$XDG_RUNTIME_DIR/scrim` |
+| Unix without it (plain ssh sessions, cron, some containers) | `$TMPDIR/scrim-<uid>` (`/tmp/scrim-<uid>` when `$TMPDIR` is unset) |
+| Windows | `%TEMP%\scrim` (the temporary directory is already per-user) |
+
+On Unix, scrim creates it with mode 0700 and refuses to use one that already exists but belongs to
+another user, is writable by group or others, or is a symbolic link: the daemon will not listen there
+and `scrim status`, `scrim approve` and `scrim run` will not connect to a socket in it. The error names
+the directory; remove it, or set `XDG_RUNTIME_DIR` to a directory only you can write. Paths set
+explicitly (`api.socket`, `admin.url`, `databases.<name>.listen`) keep their own permissions, so the
+system service's `/run/scrim` (mode 0755) is unaffected.
 
 ### Admin API authentication
 
