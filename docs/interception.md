@@ -11,8 +11,8 @@ of their own: they are an add-on that keeps methods 1 and 2 from being skipped.
 | 1 | [Wrapper (`scrim run`)](#1-wrapper-scrim-run), with base URL underneath | `scrim run` | full | yes, by ignoring or clearing its environment |
 | 1p | [Wrapper, proxy-only network](#proxy-only-network) (Linux, no root) | `scrim run --run-network proxy-only` (`run.network`) | full | no, inside the session; except through other programs' Unix sockets that run commands outside it |
 | 2 | [Forward proxy](#2-forward-proxy) (`HTTPS_PROXY` and CA) | `proxy.forward-listen` | full | yes, by ignoring the proxy variables |
-| 3 | [Transparent, machine-wide](#3-transparent-machine-wide) (nftables; eBPF variant) | `scrim install --transparent`; eBPF variant: `scrim install --ebpf` or `scrim ebpf attach` | full | no, inside the covered users or cgroups |
-| 4 | [DNS override](#4-dns-override) | `scrim install --dns` | full for connections by name | yes, by connecting to an IP address |
+| 3 | [Transparent, machine-wide](#3-transparent-machine-wide) (nftables; eBPF variant) | `scrim install --system --transparent`; eBPF variant: `scrim install --system --ebpf` or `scrim ebpf attach` | full | no, inside the covered users or cgroups |
+| 4 | [DNS override](#4-dns-override) | `scrim install --system --dns` | full for connections by name | yes, by connecting to an IP address |
 | 5 | [Kubernetes transparent](#5-kubernetes-transparent) | Helm chart, Kyverno injection, NetworkPolicy | full | no, while NetworkPolicy is enforced |
 | 6 | [Hooks only](#6-hooks-only) | `scrim install --hooks` | partial: tool results and prompts only | yes; model traffic never passes scrim |
 | 7 | [MCP only](#7-mcp-only) | `scrim mcp` | requests only: nothing is intercepted | not applicable |
@@ -52,16 +52,19 @@ These settings come up throughout. Each has a config key, a `SCRIM_*` variable a
 | `proxy.upstream.anthropic` | `https://api.anthropic.com` | where redacted Anthropic requests go |
 | `proxy.upstream.openai` | `https://api.openai.com` | where redacted OpenAI requests go |
 | `proxy.upstream.gemini` | `https://generativelanguage.googleapis.com` | where redacted Gemini API requests go |
+| `proxy.upstream.chatgpt`, `proxy.upstream.chatgpt-ab` | `https://chatgpt.com`, `https://ab.chatgpt.com` | where redacted requests of Codex signed in with ChatGPT go |
 
 The forward proxy hands provider hosts to the LLM proxy. A listener that cannot be bound reports
 itself unbound, which keeps the data plane not ready, so nothing is forwarded unredacted.
 `scrim proxy` turns the listener settings above into data plane listeners.
 
-The built-in routes are `/anthropic`, `/openai` and `/gemini`. The prefix is stripped and the rest
-of the path is appended to the upstream, so `/anthropic/v1/messages` goes to
+The built-in routes are `/anthropic`, `/openai`, `/gemini`, `/chatgpt` and `/chatgpt-ab`, and each
+[cloud provider route](providers/README.md#routes) adds one at `/<name>`. The prefix is stripped and
+the rest of the path is appended to the upstream, so `/anthropic/v1/messages` goes to
 `https://api.anthropic.com/v1/messages`. On the forward-proxy and transparent paths there is no
 prefix: the route is picked by host name (`api.anthropic.com`, `api.openai.com`,
-`generativelanguage.googleapis.com`) and the whole path is forwarded.
+`generativelanguage.googleapis.com`, `chatgpt.com`, `ab.chatgpt.com`, or a cloud route's host) and
+the whole path is forwarded.
 
 ## 1. Wrapper (`scrim run`)
 
@@ -272,10 +275,10 @@ flowchart LR
 ```
 
 It does not stop a process that asks a program outside the session to act for it over a Unix
-socket in the filesystem. `scrim run` covers the session and system buses, the systemd user
-manager, the host's name resolvers (resolved, nscd, avahi), X11 and Wayland, rootless podman and
-docker sockets, the docker daemon and tmux for the agent; others (screen, editor
-servers, ssh `ControlMaster` sockets) are not covered. ssh and git over ssh fail; use HTTPS
+socket in the filesystem. `scrim run` hides from the agent the sockets of the session and system
+buses, the systemd user manager, the host's name resolvers (resolved, nscd, avahi), X11 and Wayland,
+rootless podman and docker, the docker daemon and tmux; others (screen, editor servers, ssh
+`ControlMaster` sockets) stay reachable. ssh and git over ssh fail; use HTTPS
 remotes. It needs unprivileged user namespaces, so on Ubuntu 24.04
 `kernel.apparmor_restrict_unprivileged_userns=0` or an AppArmor profile for scrim; macOS is not
 supported. `scrim run` refuses to start the agent when the namespace cannot be set up. Details,
@@ -478,8 +481,8 @@ the CA afterwards, and the `cacerts` of any other JDK under `/usr/lib/jvm`, or n
 `--java-home` (a vendor JDK in `/opt`), get it imported with `keytool` under the alias `scrim-ca`.
 Uninstall removes it from each, including from a store the system tool left it in. Node.js reads
 its own bundle: set `NODE_EXTRA_CA_CERTS` to the anchor file
-(`/usr/local/share/ca-certificates/scrim-ca.crt`) or use `NODE_USE_SYSTEM_CA=1` on Node 23.8 and
-later.
+(`/usr/local/share/ca-certificates/scrim-ca.crt`) or use `NODE_USE_SYSTEM_CA=1` on Node 24.6, 22.19
+or later (see [CA trust per runtime](#ca-trust-per-runtime)).
 
 ### Suits
 
@@ -570,9 +573,10 @@ program looks it up there when the listener asks. The data plane is unchanged.
 #### Setup
 
 Linux with the unified cgroup v2 hierarchy and BPF links for control groups (5.7 or later). The
-loader needs root, or `CAP_BPF` and `CAP_NET_ADMIN` with write access to `/sys/fs/bpf`; agents run
-unprivileged. A rootless container cannot load the programs: its capabilities only count inside its
-user namespace, and the loader says so.
+loader needs root, or `CAP_BPF` and `CAP_NET_ADMIN` with write access to `/sys/fs/bpf`; `CAP_BPF`
+exists from Linux 5.8, so on 5.7 the loader needs `CAP_SYS_ADMIN`. Agents run unprivileged. A
+rootless container cannot load the programs: its capabilities only count inside its user namespace,
+and the loader says so.
 
 ```yaml
 # /etc/scrim/config.yaml: the control groups to cover, here a system slice for agents
@@ -589,8 +593,8 @@ sudo scrim ebpf detach --cgroup agents.slice                         # or --all
 ```
 
 `attach` prints what it attaches before doing it. It loads the programs with the listener port
-(`interception.ebpf.port`, default 9793, the port `scrim install --transparent` gives the
-transparent listener; unset, the port of the unit `scrim install --ebpf` installed), attaches one
+(`interception.ebpf.port`, default 9793, the port `scrim install --system --transparent` gives the
+transparent listener; unset, the port of the unit `scrim install --system --ebpf` installed), attaches one
 link per hook (`getsockopt` on the root control group, the others on the covered one) and pins the
 links under
 `/sys/fs/bpf/scrim/cg-<id>-<time>/`, then records the attachment in
@@ -601,7 +605,7 @@ kernel confirms the programs are gone. The control group has to exist when you a
 
 The attachment lasts until `scrim ebpf detach`, the control group's removal, or a reboot.
 
-#### At boot: `scrim install --ebpf`
+#### At boot: `scrim install --system --ebpf`
 
 ```sh
 sudo scrim install --system --ebpf --cover-cgroup agents.slice --dry-run   # prints the unit and drop-in
@@ -614,8 +618,8 @@ that runs `scrim ebpf attach --cgroup ... --port 9793` at every boot, before `ne
 and `scrim.service`, and `scrim ebpf detach` when it stops. It also writes the drop-in that turns
 on the transparent listener on `127.0.0.1:9793` and `[::1]:9793` (`--transparent-port` changes
 both). The links stay pinned after the oneshot exits. Uninstall detaches each control group and
-waits for the kernel to confirm it before it removes the unit and the drop-in. It needs root or
-`CAP_BPF` and `CAP_NET_ADMIN`, refuses a control group that holds `scrim.service`, and covers
+waits for the kernel to confirm it before it removes the unit and the drop-in. It needs root (or
+`CAP_BPF` and `CAP_NET_ADMIN`, `CAP_SYS_ADMIN` on 5.7), refuses a control group that holds `scrim.service`, and covers
 control groups only; [service.md](service.md#ebpf-at-boot) has the details.
 
 #### Status
@@ -636,7 +640,7 @@ protection for that group. Every other state is listed as degraded, `doctor` fai
 `not-attached` and `lost` and warns on `unverified` and `stale`, and both check that something
 accepts connections on `127.0.0.1:<port>`. For `not-attached`, `lost` and `stale` the detail, the
 `fix` field of `scrim status --json` and the doctor finding name the command that attaches again:
-`sudo systemctl reload-or-restart scrim-ebpf` where `scrim install --ebpf` installed the boot unit,
+`sudo systemctl reload-or-restart scrim-ebpf` where `scrim install --system --ebpf` installed the boot unit,
 `sudo scrim ebpf attach` otherwise.
 
 #### Upgrades
@@ -667,7 +671,7 @@ control groups are untouched, the QUIC refusal, the egress drop on its own, that
 survive the loader, fail closed with no listener, replace in place and detach cleanly, and what
 status reports with and without the privilege to query. CI runs it on every change.
 `just ebpf-install-vm-test` boots a Debian root file system with systemd in qemu twice and covers
-`scrim install --ebpf` and `scrim uninstall` with an agent in the slice redacted through scrim
+`scrim install --system --ebpf` and `scrim uninstall` with an agent in the slice redacted through scrim
 itself (see [service.md](service.md#verified-in-a-vm-test)). On a real host, from inside the
 control group,
 `curl --http3-only https://api.anthropic.com` should fail and `curl -v https://api.anthropic.com`
@@ -945,12 +949,15 @@ flowchart LR
 
 ### Setup
 
-The MCP server and the agent API:
+The agent API is served by the running scrim (`scrim proxy`, or the service `scrim install`
+sets up). Register the MCP server with the agent:
 
 ```sh
-scrim api serve
 claude mcp add scrim -- scrim mcp
 ```
+
+Without a running scrim, `scrim api serve` serves the agent API on its own. Do not start it next to
+`scrim proxy`, which already serves the socket.
 
 For Codex, in `~/.codex/config.toml`:
 
@@ -1115,8 +1122,8 @@ writes `~/.local/share/scrim/scrim-ca.pem` and `ca-bundle.pem`.
 
 | Runtime | How it trusts scrim's CA |
 | --- | --- |
-| System store | Debian and Ubuntu: copy the PEM to `/usr/local/share/ca-certificates/scrim-ca.crt` and run `update-ca-certificates`. Fedora and RHEL: copy it to `/etc/pki/ca-trust/source/anchors/` and run `update-ca-trust`. macOS: `security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain scrim-ca.pem`. `scrim ca install --system` is not implemented yet |
-| Node.js, Claude Code | `NODE_EXTRA_CA_CERTS=~/.local/share/scrim/scrim-ca.pem` adds to the bundled roots. Or trust the system store with `NODE_USE_SYSTEM_CA=1` (Node 24.6 and 22.19 or later) or `--use-system-ca` (Node 23.8 or later). Claude Code already reads the system store by default (`CLAUDE_CODE_CERT_STORE=bundled,system`) |
+| System store | Debian and Ubuntu: copy the PEM to `/usr/local/share/ca-certificates/scrim-ca.crt` and run `update-ca-certificates`. Fedora and RHEL: copy it to `/etc/pki/ca-trust/source/anchors/` and run `update-ca-trust`. macOS: `security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain scrim-ca.pem`. `scrim ca install --system` refuses and points here; on Linux `scrim install --system` adds the CA to the system store |
+| Node.js, Claude Code | `NODE_EXTRA_CA_CERTS=~/.local/share/scrim/scrim-ca.pem` adds to the bundled roots. Or trust the system store with `NODE_USE_SYSTEM_CA=1` (Node 24.6, 22.19 or later) or `--use-system-ca` (Node 23.8 or later on macOS and Windows, 23.9 or later on Linux). Claude Code already reads the system store by default (`CLAUDE_CODE_CERT_STORE=bundled,system`) |
 | OpenSSL, Go, Ruby, curl, git | `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO` pointing at `ca-bundle.pem`. These replace the roots, which is why the bundle includes the system roots |
 | Python | `REQUESTS_CA_BUNDLE` for requests, `SSL_CERT_FILE` for the `ssl` module |
 | Codex | `CODEX_CA_CERTIFICATE`, falling back to `SSL_CERT_FILE` |

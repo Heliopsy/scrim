@@ -62,9 +62,12 @@ scrim api whoami
 | Scope | Allows |
 | --- | --- |
 | `secrets:list` | `secrets_list` |
-| `secrets:request` | `secret_request`, `approval_status`, `grants_list` |
+| `secrets:request` | `secret_request`, `approval_status`, `grants_list`, `secret_exec` (the [exec broker](exec-broker.md)), and listing keys and signing through scrim's [ssh-agent](ssh-agent.md) |
 | `secrets:write` | `secret_gen`, `secret_capture`, `secret_ask_human`, `scrim secret put` |
-| `sessions:mint` | minting session tokens; never held by a session |
+| `sessions:mint` | minting session tokens, revoking another session of the same user, and asking for scrim's own files (`scrim run` does, to [hide them](run.md#scrims-own-files) from the agent); never held by a session |
+
+`database_list`, `database_query` and the hooks' `POST /v1/redact` need a known agent but no scope;
+policy decides the database tools.
 
 ## Session tokens
 
@@ -221,8 +224,11 @@ identity:
       ci: "sa:ci/* scope:secrets:list"
 ```
 
-The agent pod mounts a token for that audience. The kubelet rotates the file, so clients read it
-on every request:
+The agent pod mounts a token for that audience. The kubelet rotates the file, so a client should
+read it again rather than keep it. The edge forwarder reads it for every connection. The chart's
+`scrim-exec` launcher reads it once, when the agent starts, so an agent process that runs longer
+than `expirationSeconds` loses its identity until it is restarted
+([kubernetes.md](kubernetes.md#identity)):
 
 ```yaml
 volumes:
@@ -236,7 +242,7 @@ The token goes where a session token would (design D14):
 
 | Listener | How the pod sends the token |
 | --- | --- |
-| forward proxy | the password of the proxy user `k8s`: `HTTPS_PROXY=http://k8s:<token>@scrim.scrim.svc:3128` |
+| forward proxy | the password of the proxy user `k8s`: `HTTPS_PROXY=http://k8s:<token>@scrim.scrim.svc:9791` |
 | base URL | the value of `x-scrim-session` (Claude Code: `ANTHROPIC_CUSTOM_HEADERS="x-scrim-session: <token>"`) |
 | agent API | `Authorization: Bearer <token>` |
 
@@ -278,15 +284,24 @@ that bound. Refusals are not cached.
 
 ### RBAC
 
-scrim's own service account must be allowed to create TokenReviews:
+scrim's own service account must be allowed to create TokenReviews, and needs nothing else. The
+Helm chart creates such a ClusterRole and binds it to scrim's service account
+(`identity.kubernetes.tokenReviewRBAC`, [kubernetes.md](kubernetes.md#identity)). Without the chart:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: scrim-tokenreview}
+rules: [{apiGroups: [authentication.k8s.io], resources: [tokenreviews], verbs: [create]}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
-metadata: {name: scrim-auth-delegator}
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
+metadata: {name: scrim-tokenreview}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: scrim-tokenreview}
 subjects: [{kind: ServiceAccount, name: scrim, namespace: scrim}]
 ```
+
+`system:auth-delegator` works too, but also allows SubjectAccessReviews, which scrim does not use.
 
 scrim reads its own token from `identity.kubernetes.token-file` and the API server's CA from
 `identity.kubernetes.ca-file` (the pod's mounted service account by default), and finds the API
@@ -363,10 +378,10 @@ identity:
     unmapped: unknown                          # the default
     server-names: [scrim.internal, 10.0.0.5]   # names in the listeners' certificate
 proxy:
-  tls-listen: 0.0.0.0:9794                     # LLM proxy base URL over TLS
-  forward-tls-listen: 0.0.0.0:9795             # forward proxy over TLS (HTTPS proxy)
+  tls-listen: 0.0.0.0:9796                     # LLM proxy base URL over TLS
+  forward-tls-listen: 0.0.0.0:9797             # forward proxy over TLS (HTTPS proxy)
 tool-proxy:
-  tls-listen: 0.0.0.0:9796                     # tool proxy over TLS
+  tls-listen: 0.0.0.0:9798                     # tool proxy over TLS
 ```
 
 ### Listeners
@@ -376,8 +391,8 @@ presents none, or one that fails the checks below, does not get a connection.
 
 | Listener | Setting | How the agent uses it |
 | --- | --- | --- |
-| LLM proxy base URL | `proxy.tls-listen` | `ANTHROPIC_BASE_URL=https://scrim.internal:9794/anthropic` with the certificate configured in the client |
-| forward proxy | `proxy.forward-tls-listen` | `HTTPS_PROXY=https://scrim.internal:9795`; the client authenticates to the proxy (`curl --proxy-cert`, Go's `TLSClientConfig`), then CONNECTs as usual |
+| LLM proxy base URL | `proxy.tls-listen` | `ANTHROPIC_BASE_URL=https://scrim.internal:9796/anthropic` with the certificate configured in the client |
+| forward proxy | `proxy.forward-tls-listen` | `HTTPS_PROXY=https://scrim.internal:9797`; the client authenticates to the proxy (`curl --proxy-cert`, Go's `TLSClientConfig`), then CONNECTs as usual |
 | tool proxy | `tool-proxy.tls-listen` | tools pointed at the tool proxy directly |
 | edge listener | `edge.listen` | the forwarder presents `edge-forwarder.client-cert-file` and `edge-forwarder.client-key-file` instead of the pod's token |
 
@@ -575,10 +590,10 @@ resolved from the transport. An unknown caller gets none.
 | Claim | Value |
 | --- | --- |
 | `iss` | `identity.issuer.url` |
-| `sub` | `agent:<name>`, or `k8s:<name>` for a Kubernetes agent; the same for every session of the agent |
+| `sub` | `agent:<name>`, `k8s:<name>` for a Kubernetes agent, or `mtls:<name>` for a client certificate; the same for every session of the agent |
 | `aud` | the store's audience |
 | `iat`, `nbf`, `exp`, `jti` | issue time, expiry (`token-ttl`, capped at the session's end), random ID |
-| `agent`, `agent_kind` | the agent name and how scrim identified it (`peer`, `session`, `k8s`) |
+| `agent`, `agent_kind` | the agent name and how scrim identified it (`peer`, `session`, `k8s`, `mtls`) |
 | `session`, `session_name` | the `scrim run` session, when there is one |
 | `host` | the machine scrim runs on, for local agents |
 | `namespace`, `service_account`, `pod` | for Kubernetes agents |
