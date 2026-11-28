@@ -16,6 +16,7 @@ use crate::binary;
 use crate::codec::{self, Api};
 use crate::engine::{BinaryPolicy, GuardVerdict, RedactReport, SecretRef, Snapshot};
 use crate::error::Refusal;
+use crate::remote;
 
 /// A request body that passed redaction and the guard.
 #[derive(Debug)]
@@ -66,11 +67,45 @@ pub(crate) fn prepare_planned(
     timed: bool,
     planner: impl Fn(&[u8]) -> Result<codec::Plan, codec::PlanError>,
 ) -> Result<Outgoing, Refusal> {
+    match prepare_refs(snap, body, timed, remote::Context::NONE, planner)? {
+        Prepared::Done(o) => Ok(o),
+        // `Context::NONE` cannot fetch, so `remote::check` refuses before asking for it.
+        Prepared::Fetch(_) => Err(Refusal::new(
+            RefusalReason::RemoteAttachment,
+            "attachments referenced by URL cannot be fetched here",
+        )),
+    }
+}
+
+/// What [`prepare_refs`] decided.
+#[derive(Debug)]
+pub(crate) enum Prepared {
+    /// The body that may leave.
+    Done(Outgoing),
+    /// The request references attachments by URL and the remote policy is `inline`: fetch
+    /// these, splice them into the body ([`remote::fetch::Fetcher::inline`]) and prepare the
+    /// new body with [`remote::Context::fetched`] set.
+    Fetch(Vec<(usize, remote::Reference)>),
+}
+
+/// [`prepare_planned`], with the remote attachment policy applied under `cx` first. Nothing is
+/// redacted before the references are settled, so a request that needs fetching costs one plan.
+pub(crate) fn prepare_refs(
+    snap: &Snapshot,
+    body: &[u8],
+    timed: bool,
+    cx: remote::Context<'_>,
+    planner: impl Fn(&[u8]) -> Result<codec::Plan, codec::PlanError>,
+) -> Result<Prepared, Refusal> {
     let clock = || timed.then(Instant::now);
     let since = |t: Option<Instant>| t.map_or(Duration::ZERO, |t| t.elapsed());
     let started = clock();
     let malformed = |e: codec::PlanError| Refusal::new(RefusalReason::MalformedBody, e.to_string());
     let mut plan = planner(body).map_err(malformed)?;
+    let checked = remote::check(&snap.remote, &plan.remote, cx)?;
+    if !checked.fetch.is_empty() {
+        return Ok(Prepared::Fetch(checked.fetch));
+    }
     let mut report = RedactReport::default();
     let mut text_repaired = Vec::new();
     let spliced;
@@ -101,6 +136,8 @@ pub(crate) fn prepare_planned(
         }
         BinaryPolicy::Pass => plan.binary.clone(),
     };
+    let mut unscanned = unscanned;
+    unscanned.extend(checked.unscanned);
     let mut out = Vec::with_capacity(body.len() + body.len() / 16 + 64);
     let mut pos = 0;
     let redact =
@@ -144,13 +181,13 @@ pub(crate) fn prepare_planned(
             guard_repaired.push(r);
         }
     }
-    Ok(Outgoing {
+    Ok(Prepared::Done(Outgoing {
         body: Bytes::from(out),
         report,
         guard_repaired,
         unscanned,
         stages: Stages { redaction, guard },
-    })
+    }))
 }
 
 /// The `scan` binary policy: decodes every binary part of `plan` and runs the redactor and the
@@ -184,71 +221,114 @@ fn scan_parts(
             continue;
         }
         drop(text);
-        let mut found: Option<Hit> = None;
-        let mut failure: Option<Refusal> = None;
-        let mut batch = Batch::default();
-        let mut check = |batch: &mut Batch, bytes: Option<(&'static str, &[u8])>| {
-            let r = match bytes {
-                Some((source, b)) => check_view(snap, b, &mut scratch).map(|h| {
-                    h.map(|(refs, detectors)| Hit {
-                        source,
-                        refs,
-                        detectors,
-                    })
-                }),
-                None => batch.flush(snap, &mut scratch),
-            };
-            match r {
-                Ok(None) => true,
-                Ok(Some(hit)) => {
-                    found = Some(hit);
-                    false
-                }
-                Err(e) => {
-                    failure = Some(e);
-                    false
-                }
-            }
-        };
-        let mut stopped = false;
-        let scanned = binary::scan_views(&decoded, limits, &mut |view| {
-            let go_on = if view.bytes.len() >= BATCH_BYTES {
-                check(&mut batch, Some((view.source, view.bytes)))
-            } else if batch.buf.len() + view.bytes.len() > BATCH_BYTES && !check(&mut batch, None) {
-                false
-            } else {
-                batch.push(view.source, view.bytes);
-                true
-            };
-            stopped = !go_on;
-            go_on
-        });
-        if !stopped {
-            check(&mut batch, None);
-        }
-        scanned.map_err(undecodable)?;
-        if let Some(f) = failure {
-            return Err(f);
-        }
-        if let Some(Hit {
-            source,
-            refs,
-            detectors,
-        }) = found
-        {
-            let mut detail = format!("{name}, in its {source}");
-            if !detectors.is_empty() {
-                detail.push_str("; detectors: ");
-                detail.push_str(&detectors.join(", "));
-            }
-            return Err(Refusal {
-                reason: RefusalReason::SecretInBinary,
-                detail,
-                refs,
-            });
-        }
+        scan_decoded(snap, &name, &decoded, limits, &mut scratch)?;
     }
     Ok(text_parts)
+}
+
+/// Runs the redactor and the guard over every view of one decoded binary part, see
+/// [`scan_parts`]. `name` says which part it is in a refusal.
+fn scan_decoded(
+    snap: &Snapshot,
+    name: &str,
+    decoded: &[u8],
+    limits: &binary::Limits,
+    scratch: &mut Vec<u8>,
+) -> Result<(), Refusal> {
+    let undecodable = |e: binary::Undecodable| {
+        Refusal::new(RefusalReason::UnscannableContent, format!("{name}: {e}"))
+    };
+    let mut found: Option<Hit> = None;
+    let mut failure: Option<Refusal> = None;
+    let mut batch = Batch::default();
+    let mut check = |batch: &mut Batch, bytes: Option<(&'static str, &[u8])>| {
+        let r = match bytes {
+            Some((source, b)) => check_view(snap, b, scratch).map(|h| {
+                h.map(|(refs, detectors)| Hit {
+                    source,
+                    refs,
+                    detectors,
+                })
+            }),
+            None => batch.flush(snap, scratch),
+        };
+        match r {
+            Ok(None) => true,
+            Ok(Some(hit)) => {
+                found = Some(hit);
+                false
+            }
+            Err(e) => {
+                failure = Some(e);
+                false
+            }
+        }
+    };
+    let mut stopped = false;
+    let scanned = binary::scan_views(decoded, limits, &mut |view| {
+        let go_on = if view.bytes.len() >= BATCH_BYTES {
+            check(&mut batch, Some((view.source, view.bytes)))
+        } else if batch.buf.len() + view.bytes.len() > BATCH_BYTES && !check(&mut batch, None) {
+            false
+        } else {
+            batch.push(view.source, view.bytes);
+            true
+        };
+        stopped = !go_on;
+        go_on
+    });
+    if !stopped {
+        check(&mut batch, None);
+    }
+    scanned.map_err(undecodable)?;
+    if let Some(f) = failure {
+        return Err(f);
+    }
+    if let Some(Hit {
+        source,
+        refs,
+        detectors,
+    }) = found
+    {
+        let mut detail = format!("{name}, in its {source}");
+        if !detectors.is_empty() {
+            detail.push_str("; detectors: ");
+            detail.push_str(&detectors.join(", "));
+        }
+        return Err(Refusal {
+            reason: RefusalReason::SecretInBinary,
+            detail,
+            refs,
+        });
+    }
+    Ok(())
+}
+
+/// Scans a file uploaded to a provider's Files API under the binary policy `scan`. A text
+/// document is left to the redaction of the whole body (it is redacted in place there); anything
+/// else is scanned like a binary part and refuses the upload on a match. Returns whether the
+/// content was scanned, so its file ID may be referenced later.
+pub(crate) fn scan_upload(
+    snap: &Snapshot,
+    media_type: &str,
+    bytes: &[u8],
+) -> Result<bool, Refusal> {
+    if snap.binary != BinaryPolicy::Scan {
+        return Ok(false);
+    }
+    if is_text_document(media_type, bytes) {
+        return Ok(true);
+    }
+    let limits = binary::Limits::default();
+    if bytes.len() > limits.max_decoded {
+        return Err(Refusal::new(
+            RefusalReason::UnscannableContent,
+            format!("uploaded file ({media_type}): too large to scan"),
+        ));
+    }
+    let name = format!("uploaded file ({media_type})");
+    scan_decoded(snap, &name, bytes, &limits, &mut Vec::new())?;
+    Ok(true)
 }
 
 /// Views smaller than this are scanned together, in batches of up to this many bytes: the
@@ -317,7 +397,7 @@ impl Batch {
 
 /// Runs the redactor, then the guard, over one view; returns the references (and detectors) of
 /// what either found.
-fn check_view(
+pub(crate) fn check_view(
     snap: &Snapshot,
     bytes: &[u8],
     scratch: &mut Vec<u8>,

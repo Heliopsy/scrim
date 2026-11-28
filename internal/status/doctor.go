@@ -175,6 +175,31 @@ func ReportChecks(r Report) []Check {
 			}
 			return nil
 		}})
+		if len(v.ReadableOwn) > 0 {
+			checks = append(checks, Check{Name: "own-files", Run: func(context.Context) []Finding {
+				return []Finding{{Outcome: Warn,
+					Message: "scrim runs as the user agents run as, and that user can read scrim's own secret files: " +
+						strings.Join(v.ReadableOwn, ", ") + "; scrim run hides them from its sessions, anything else this user runs can read them",
+					Fix: "run scrim as its own user: sudo scrim install --system --agent-user $USER (docs/service.md), " +
+						"or give its secrets as systemd credentials (cred:) instead of files"}}
+			}})
+		}
+	}
+	if n := r.RunNetwork; n != nil {
+		checks = append(checks, Check{Name: "run-network", Run: func(context.Context) []Finding {
+			switch {
+			case n.Refused():
+				return []Finding{{Outcome: Fail, Message: "run.network is proxy-only, but this host cannot give an agent a network namespace of its own: " + n.Reason,
+					Fix: "allow unprivileged user namespaces (on Ubuntu: sysctl kernel.apparmor_restrict_unprivileged_userns=0), or set run.network: open"}}
+			case n.Requested == "proxy-only":
+				return nil
+			case n.Available:
+				return []Finding{{Outcome: Pass, Message: "run.network is open: a command in a scrim run session that ignores the proxy settings reaches the network directly; " +
+					"run.network: proxy-only works on this host and stops that"}}
+			}
+			return []Finding{{Outcome: Pass, Message: "run.network is open: a command in a scrim run session that ignores the proxy settings reaches the network directly; " +
+				"run.network: proxy-only is not available on this host: " + n.Reason}}
+		}})
 	}
 	for _, s := range r.Stores {
 		checks = append(checks, Check{Name: "store:" + s.Name, Run: func(context.Context) []Finding {

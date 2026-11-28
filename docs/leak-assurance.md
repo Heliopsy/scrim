@@ -13,7 +13,7 @@ The leak suite has four parts:
 - a **leak checker**, written independently of scrim's redactor and guard, that looks for every
   seeded value in what the fake provider received, under far more encodings than the redactor
   matches, including fragments;
-- the **bypass matrix**: 1189 rows, each a way a secret can sit in a request other than verbatim,
+- the **bypass matrix**: 1284 rows, each a way a secret can sit in a request other than verbatim,
   or a secret in a known format that is in no store, with the outcome scrim must produce, over
   HTTP and over WebSocket;
 - a **scenario corpus** of realistic agent sessions (reading `.env`, printing configs, a diff with
@@ -288,6 +288,10 @@ detector covers expect `redacted` and gate; the others are limitations.
 | `jpeg-comment` | text in a JPEG COM segment ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | withheld | the scan binary policy reads JPEG comment and APP segments |
 | `svg-text` | text drawn by an SVG image ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | withheld | the scan binary policy reads SVG as text, entities decoded |
 | `pdf-text` | text in a PDF page's Flate-compressed content stream ([anthropic-messages gemini openai-chat openai-responses openai-responses-ws]) | withheld | the scan binary policy inflates PDF streams and reads their strings |
+| `remote-image-url` | text in the metadata of an image the request references by URL ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | withheld | remote attachments inline: scrim fetches the image, scans it and refuses (WebSocket messages with a URL are refused) |
+| `remote-document-url` | text in a PDF the request references by URL ([anthropic-messages gemini openai-responses openai-responses-ws]) | withheld | remote attachments inline: scrim fetches the PDF, scans it and refuses |
+| `remote-text-url` | a plain-text file the request references by URL ([anthropic-messages gemini openai-responses openai-responses-ws]) | guard | remote attachments inline: scrim fetches the text, redacts it and sends it inline; refused where the fetch is not allowed |
+| `remote-file-id` | a file the request references by a provider file ID, uploaded without scrim ([anthropic-messages gemini openai-chat openai-responses openai-responses-ws]) | withheld | remote attachments: a file ID passes only when scrim scanned its upload on the route |
 | `image-pixels` | the value as an image's pixel data (rendered text in a screenshot) ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: pixel data is not decoded and text in an image is not recognised (no OCR) |
 | `split-blocks` | the value split across two content blocks of one message ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: a value split by the agent across separate fields is matched only by the guard's fragment rules, if at all |
 | `split-tool-results` | the value split across two tool results ([anthropic-messages gemini openai-chat openai-realtime openai-responses openai-responses-ws]) | limitation | limitation: a value split by the agent across separate tool results is not reassembled |
@@ -543,7 +547,7 @@ identity and of test coverage.
 | Limitation | Matrix rows | Mitigation |
 | --- | --- | --- |
 | The agent's local transcripts, memory and history files hold real values: scrim protects the wire, not the agent's disk. | none | Keep agent state on an encrypted disk; restored values only reach tools the tool policy names. |
-| Text rendered into image pixels is not recognised (no OCR); pixel data is not decoded, and speech in audio is not transcribed. Binary parts under the weakening `redaction.binary: pass` are not scanned at all. | `image-pixels` | Keep secrets off screen when the agent takes screenshots; keep the default `scan` policy. |
+| Text rendered into image pixels is not recognised (no OCR); pixel data is not decoded, and speech in audio is not transcribed. Binary parts under the weakening `redaction.binary: pass` are not scanned at all, nor are attachments referenced by URL or file ID under `redaction.remote-attachments: pass`. | `image-pixels` | Keep secrets off screen when the agent takes screenshots; keep the default `scan` and `inline` policies. |
 | Look-alike Unicode substitution (Cyrillic or fullwidth letters) is not matched: confusable tables are unbounded and no shell tool produces it. | `homoglyphs`, `fullwidth` | none yet |
 | Values spelled out in words (NATO alphabet) are not matched: any language or alphabet would do. | `nato-spelling` | none yet |
 | Compressed content (`gzip`, `zlib`) is not decompressed: decompression is unbounded work per byte. | `gzip-base64` | none yet |

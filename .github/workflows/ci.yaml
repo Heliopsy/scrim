@@ -802,6 +802,11 @@ jobs:
       - run: test/e2e/run.sh tools
         env:
           SCRIM_E2E_REQUIRE_TOOLS: "1"
+      - name: Tool clients in the proxy-only network
+        run: test/e2e/run.sh tools -test.run 'TestTools$'
+        env:
+          SCRIM_E2E_REQUIRE_TOOLS: "1"
+          SCRIM_E2E_RUN_NETWORK: proxy-only
 
   # GitHub-hosted for the same reason as e2e-tools. Real gh, git, kubectl,
   # helm, skopeo, npm, terraform, tofu, gcloud, az, pip, twine, cargo, hcloud,
@@ -848,8 +853,9 @@ jobs:
           SCRIM_E2E_REQUIRE_TOOLS: "1"
       # tasks.md 10a.7: the namespace view, which the ho-z10 pods of the Go
       # job cannot create; a missing user namespace fails here.
-      - name: Session filesystem view in a user namespace
-        run: go test -count=1 -run 'TestFSView|TestGapsAndProbe' -v ./internal/run/ ./internal/fsview/
+      # The proxy-only agent network (run.network) needs the same.
+      - name: Session filesystem view and agent network in a user namespace
+        run: go test -count=1 -run 'TestFSView|TestGapsAndProbe|TestNetwork|TestRunNetwork' -v ./internal/run/ ./internal/fsview/
         env:
           SCRIM_TEST_REQUIRE_USERNS: "1"
 
@@ -916,6 +922,13 @@ jobs:
       - run: test/e2e/run.sh session
         env:
           SCRIM_E2E_REQUIRE_TOOLS: "1"
+      # The same sessions with run.network: proxy-only: the agents and their
+      # tools reach nothing but scrim's listeners.
+      - name: Agent sessions in the proxy-only network
+        run: test/e2e/run.sh session -test.run 'TestClaudeCodeSession$|TestCodexSession$|TestOpenCodeSession$'
+        env:
+          SCRIM_E2E_REQUIRE_TOOLS: "1"
+          SCRIM_E2E_RUN_NETWORK: proxy-only
       - name: Agent drivers through the pass-through stand-in
         run: |
           go test -c -o "$RUNNER_TEMP/scenario.test" ./internal/leak/scenario/

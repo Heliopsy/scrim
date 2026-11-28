@@ -95,6 +95,19 @@ type Spec[T Type] struct {
 	// Profiles sets the value a built-in profile (see [Profiles]) gives the
 	// setting. A profile sits above the default and below every other source.
 	Profiles map[string]T
+	// KeyMaterial, for string settings, marks a value that is the path of a
+	// file or directory scrim reads secrets or key material from. It is
+	// listed by [Config.OwnPaths], and `scrim run` hides it from sessions.
+	KeyMaterial bool
+	// Companions, for a KeyMaterial file, are suffixes of files written
+	// next to it that hold the same data (a SQLite database's "-wal").
+	Companions []string
+	// KeyMaterialWhen, for a KeyMaterial setting, reports whether the
+	// effective configuration makes scrim read the path at all (the feature
+	// that reads it is on, no setting replaces it). Nil means whenever the
+	// value is set. A default path of an unused feature is not scrim's own
+	// file, so `scrim run` neither hides it nor refuses over it.
+	KeyMaterialWhen func(*Config) bool
 }
 
 // Setting is the type-erased view of a registered setting, used by the
@@ -116,8 +129,19 @@ type Setting struct {
 	RequireReference bool
 	// Profiles maps a profile name to the value it gives the setting.
 	Profiles map[string]any
+	// KeyMaterial marks a path scrim reads secrets or key material from,
+	// with the suffixes of its companion files (see [Spec.KeyMaterial]).
+	KeyMaterial bool
+	Companions  []string
 
-	validate func(any) error
+	validate        func(any) error
+	keyMaterialWhen func(*Config) bool
+}
+
+// KeyMaterialIn reports whether c makes scrim read this setting's path:
+// the setting is KeyMaterial and its [Spec.KeyMaterialWhen], if any, holds.
+func (s *Setting) KeyMaterialIn(c *Config) bool {
+	return s.KeyMaterial && (s.keyMaterialWhen == nil || s.keyMaterialWhen(c))
 }
 
 // Weakens reports whether value v of the setting weakens an invariant.
@@ -218,6 +242,8 @@ func RegisterIn[T Type](r *Registry, spec Spec[T]) (Key[T], error) {
 		Enum:            slices.Clone(spec.Enum),
 		Weakening:       spec.Weakening,
 		RestartRequired: spec.RestartRequired,
+		KeyMaterial:     spec.KeyMaterial,
+		Companions:      slices.Clone(spec.Companions),
 	}
 	s.SecretRef = s.Kind == KindSecretRef
 	s.RequireReference = spec.RequireReference
@@ -233,6 +259,7 @@ func RegisterIn[T Type](r *Registry, spec Spec[T]) (Key[T], error) {
 	if v := spec.Validate; v != nil {
 		s.validate = func(a any) error { return v(a.(T)) }
 	}
+	s.keyMaterialWhen = spec.KeyMaterialWhen
 	if err := r.add(s); err != nil {
 		return Key[T]{}, err
 	}
@@ -265,6 +292,15 @@ func (r *Registry) add(s *Setting) error {
 	}
 	if err := s.check(s.Default); err != nil {
 		return fmt.Errorf("config: default of %s: %w", s.Key, err)
+	}
+	if s.KeyMaterial && s.Kind != KindString {
+		return fmt.Errorf("config: setting %s: KeyMaterial is only valid for string settings", s.Key)
+	}
+	if len(s.Companions) > 0 && !s.KeyMaterial {
+		return fmt.Errorf("config: setting %s: Companions need KeyMaterial", s.Key)
+	}
+	if s.keyMaterialWhen != nil && !s.KeyMaterial {
+		return fmt.Errorf("config: setting %s: KeyMaterialWhen needs KeyMaterial", s.Key)
 	}
 	if s.RequireReference && s.Kind != KindSecretRef {
 		return fmt.Errorf("config: setting %s: RequireReference is only valid for secret-ref settings", s.Key)

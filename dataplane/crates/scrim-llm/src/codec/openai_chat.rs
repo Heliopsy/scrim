@@ -20,6 +20,7 @@ use super::{
 };
 use crate::engine::RestoreSite;
 use crate::json::{self, Doc, Kind, Value};
+use crate::remote::{Edit, Target};
 use crate::restore::{Ctx, TextKind};
 use crate::sse;
 
@@ -78,9 +79,15 @@ pub(crate) fn plan_parts(plan: &mut Plan, content: Value<'_, '_>) -> Result<(), 
                         iu.get("url")?
                     };
                     if let Some(u) = url
-                        && let Some(mt) = u.as_str().as_deref().and_then(data_url_media_type)
+                        && let Some(text) = u.as_str()
                     {
-                        plan.binary(u, mt);
+                        match data_url_media_type(&text) {
+                            Some(mt) => plan.binary(u, mt),
+                            None => plan.reference(
+                                Target::Url(text.into_owned()),
+                                Edit::DataUrl { span: u.span() },
+                            ),
+                        }
                     }
                 }
             }
@@ -93,6 +100,11 @@ pub(crate) fn plan_parts(plan: &mut Plan, content: Value<'_, '_>) -> Result<(), 
                 }
             }
             Some("file") => {
+                if let Some(f) = part.get("file")?
+                    && let Some(id) = f.get_str("file_id")?
+                {
+                    plan.reference(Target::FileId(id.into_owned()), Edit::None);
+                }
                 if let Some(f) = part.get("file")?
                     && let Some(d) = f.get("file_data")?
                 {

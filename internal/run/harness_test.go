@@ -65,6 +65,10 @@ func testAgent(mode string) int {
 		return 0
 	case "fsview":
 		return agentFSView()
+	case "net":
+		return agentNet()
+	case "dial":
+		return agentDial()
 	case "env":
 		tok := os.Getenv(localapi.EnvToken)
 		for _, kv := range os.Environ() {
@@ -163,6 +167,14 @@ type harness struct {
 	mu     sync.Mutex
 	tunnel []string // CONNECT targets seen by the forward proxy
 	tool   *httptest.Server
+	own    []localapi.OwnPath // what the API reports as scrim's own files
+}
+
+// setOwn sets the paths the API reports as scrim's own files.
+func (h *harness) setOwn(own ...localapi.OwnPath) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.own = own
 }
 
 func newHarness(t *testing.T, forward bool) *harness {
@@ -176,8 +188,14 @@ func newHarness(t *testing.T, forward bool) *harness {
 // newHarnessUpstream is newHarness with another model behind the redactor.
 func newHarnessUpstream(t *testing.T, forward bool, model http.Handler) *harness {
 	t.Helper()
-	h := &harness{api: localapitest.Start(t),
-		seeds: leak.GenerateSet(leak.KindAPIKey, leak.KindGitHubToken, leak.KindPassword)}
+	h := &harness{seeds: leak.GenerateSet(leak.KindAPIKey, leak.KindGitHubToken, leak.KindPassword)}
+	h.api = localapitest.StartWith(t, func(s *localapi.Server) {
+		s.OwnPaths = func() []localapi.OwnPath {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			return append([]localapi.OwnPath(nil), h.own...)
+		}
+	})
 	up := httptest.NewServer(model)
 	t.Cleanup(up.Close)
 	upURL, _ := url.Parse(up.URL)
