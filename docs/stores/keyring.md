@@ -8,16 +8,20 @@ a file or an environment variable. scrim cannot write to the keyring.
 
 ## Capabilities
 
-| Backend | OS | read | list | watch | write | generate | dynamic | glob |
+<!-- BEGIN GENERATED STORE CAPABILITIES kinds=keyring -->
+
+| Kind | read | list | watch | write | glob | dynamic | per-agent check | `identity.store-login` |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `secret-service` | Linux | yes | yes | no | no | no | no | yes |
-| `keychain` | macOS | yes | no | no | no | no | no | no |
-| `wincred` | Windows | yes | no | no | no | no | no | no |
+| `keyring` Secret Service (Linux) | yes | yes | no | no | yes | no | no | none |
+| `keyring` Keychain (macOS), Credential Manager (Windows) | yes | no | no | no | no | no | no | none |
+
+The columns are explained under [Capabilities](README.md#capabilities).
+
+<!-- END GENERATED STORE CAPABILITIES -->
 
 The backend follows the operating system scrim runs on; there is nothing to choose. A write or
 generate targeting the keyring is refused before the keyring is contacted, with an error such as
-`store kr: write kr://scrim/new: operation not supported by this store: keyring source is
-read-only`.
+`store kr: write kr://scrim/new: operation not supported by this store: store kr is read-only`.
 
 Nothing is watched. The refresher reads the configured secrets again every `refresh.interval`
 (default `5m`), so a rotated keyring item is picked up at the next refresh.
@@ -27,8 +31,8 @@ single secrets can be redact targets there: `kr://scrim/github-token`, not `kr:/
 folder or glob target on those systems is refused at start-up.
 
 The Linux backend is tested against gnome-keyring in CI, the macOS backend against a throwaway
-keychain on a macOS runner. The Windows backend is built but not tested: scrim does not ship
-Windows binaries yet.
+keychain on a macOS runner. The Windows backend ships in the Windows release binaries, but no test
+reads from the Credential Manager: CI covers only its option handling.
 
 ## References
 

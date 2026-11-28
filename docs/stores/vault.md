@@ -37,10 +37,21 @@ lives in Vault under `git hub`.
 
 ## Capabilities
 
-| read | list | watch | write | generate | dynamic |
-|------|------|-------|-------|----------|---------|
-| yes  | yes  | yes   | yes   | no       | yes     |
+<!-- BEGIN GENERATED STORE CAPABILITIES kinds=vault -->
 
+| Kind | read | list | watch | write | glob | dynamic | per-agent check | `identity.store-login` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `vault` | yes | yes | yes | yes | no | yes | yes | `kubernetes`, `jwt` |
+
+The columns are explained under [Capabilities](README.md#capabilities).
+
+<!-- END GENERATED STORE CAPABILITIES -->
+
+- **Per-agent check**: before an injection or restore, scrim asks `sys/capabilities-self` with the
+  agent's own token (a static token per agent, or a login by Kubernetes passthrough or JWT) whether
+  it may `read` the secret's path; the value is never read with that token. It is configured as
+  for [OpenBao](openbao.md#agents-own-identity-passthrough) and in
+  [Agent identity](../identity.md#store-identity-per-agent).
 - **Read** returns every field, or the one the reference names. Strings are used as they are;
   numbers, booleans and objects as their JSON text. A KV v2 version that is deleted or destroyed is
   not found; one whose deletion is only scheduled (`delete_version_after`) is still readable.
