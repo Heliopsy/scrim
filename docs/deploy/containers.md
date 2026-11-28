@@ -12,10 +12,12 @@ services as containers. Four forms of the same container:
 
 Agents reach the container through the published ports, as base URL
 (`http://127.0.0.1:9790/anthropic`, `/openai/v1`) or as forward proxy
-(`HTTPS_PROXY=http://127.0.0.1:9791`). `scrim run` on the host does not use a containerized
-scrim: its sessions are bound to process trees the container cannot see. Redaction applies to
-every caller; credential injection needs an identified agent, so without `scrim run` it is decided
-by your [policy rules](../policy.md) and refused by default.
+(`HTTPS_PROXY=http://127.0.0.1:9791`). `scrim run` on the host does not use the containers on this
+page: its sessions are bound to process trees these containers cannot see, and their sockets are
+on a tmpfs inside the container. Redaction applies to every caller; credential injection needs an
+identified agent, so without `scrim run` it is decided by your [policy rules](../policy.md) and
+refused by default. For a container that `scrim run` does use, run `scrim install --quadlet`
+([Quadlet](#quadlet)).
 
 Files: [`deploy/examples/podman/`](../../deploy/examples/podman/). Every command here uses podman.
 The compose file follows the Compose Specification, so `docker compose` reads it as well.
@@ -29,13 +31,15 @@ The compose file follows the Compose Specification, so `docker compose` reads it
 
 Verify the image and pin its digest:
 
+<!-- x-release-please-start-version -->
 ```sh
-cosign verify ghcr.io/heliopsy/scrim:1.0.0 \
+cosign verify ghcr.io/heliopsy/scrim:1.2.0 \
   --certificate-identity-regexp '^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(heads/main|tags/v.+)$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   | jq -r '.[0].critical.image."docker-manifest-digest"'
 # sha256:<digest>, the digest to pin
 ```
+<!-- x-release-please-end -->
 
 The examples use the tag so they read easily; for a deployment use
 `ghcr.io/heliopsy/scrim@sha256:...`.
@@ -47,7 +51,11 @@ The examples use the tag so they read easily; for a deployment use
   UID 65532 to a subordinate UID that can write a named volume but not a directory of yours.
 - The sockets on a tmpfs owned by the container user (`--tmpfs /run/scrim:rw,mode=0700,U` with
   `XDG_RUNTIME_DIR=/run/scrim`). The `U` option needs podman; Docker spells it `uid=65532`, which
-  podman 4.9 rejects.
+  podman 4.9 rejects. podman mounts a tmpfs `noexec` by default. Where the kernel forbids executing
+  memfds (`vm.memfd_noexec=2`), scrim starts its data plane from a file under
+  `$XDG_RUNTIME_DIR/scrim` instead, so add `exec` to the options there
+  (`--tmpfs /run/scrim:rw,exec,mode=0700,U`, `Tmpfs=/run/scrim:rw,exec,mode=0700,U` in Quadlet);
+  the examples leave it out ([install.md](../install.md#container-images)).
 - Secrets as podman secrets, mounted read-only at `/run/scrim-secrets/agents/<name>`, owned by
   65532. `/run/secrets` itself is podman's own mount and takes no subdirectories under a read-only
   root, hence the separate path.
@@ -67,7 +75,7 @@ printf '%s' "$GITHUB_TOKEN" | podman secret create scrim-github-token -
 ./run.sh
 ```
 
-The command it runs:
+The command it runs, with `IMAGE` set to the current release unless you set it:
 
 ```sh
 podman run -d --name scrim \
@@ -79,7 +87,7 @@ podman run -d --name scrim \
   -p 127.0.0.1:9790:9790 -p 127.0.0.1:9791:9791 -p 127.0.0.1:9792:9792 \
   --health-cmd '["/usr/local/bin/scrim", "doctor", "--timeout", "5s"]' \
   --health-interval 30s --health-start-period 20s \
-  ghcr.io/heliopsy/scrim:1.0.0 proxy
+  "$IMAGE" proxy
 ```
 
 ## Quadlet
@@ -101,13 +109,18 @@ loginctl enable-linger "$USER"                      # start at boot without a lo
 ```
 
 The Quadlet unit has no `[Install]` enablement step: the generator links it into
-`default.target` from `WantedBy=`. The image is `ghcr.io/heliopsy/scrim:1.0` with
-`AutoUpdate=registry`, so `podman auto-update` (or `systemctl --user enable --now
-podman-auto-update.timer`) pulls 1.0.x patch releases, restarts the unit and rolls back when the
-new container fails to start. Pin `1.0.0` or a digest to update only by editing the file.
+`default.target` from `WantedBy=`. The image is a minor-series tag (`ghcr.io/heliopsy/scrim:1.0`
+in the example file; set it to the series you run) with `AutoUpdate=registry`, so `podman
+auto-update` (or `systemctl --user enable --now podman-auto-update.timer`) pulls the patch releases
+of that series, restarts the unit and rolls back when the new container fails to start. Pin an
+exact version or a digest to update only by editing the file.
 
-`scrim install --quadlet` (0.2.0 and later) writes and records an equivalent unit
-([service.md](../service.md)).
+`scrim install --quadlet` writes and records a different unit ([service.md](../service.md)). It
+runs the image on the host network and in the host PID namespace, maps your user to the image's UID
+65532 (`UserNS=keep-id`) and puts the sockets in `$XDG_RUNTIME_DIR/scrim` on the host, so `scrim
+run` finds it the way it finds a user service and binds sessions to the agents' processes. Use
+that unit when agents on the host start through `scrim run`, and the example here when they reach
+scrim only through the published ports.
 
 ## podman kube play
 
@@ -200,13 +213,15 @@ Give agents in other containers that `scrim-ca.pem` (mounted, plus `NODE_EXTRA_C
 
 Change the tag (or digest) and recreate the container; the volume keeps the state.
 
+<!-- x-release-please-start-version -->
 ```sh
-podman pull ghcr.io/heliopsy/scrim:1.0.1
-podman rm -f scrim && IMAGE=ghcr.io/heliopsy/scrim:1.0.1 ./run.sh   # podman run
-podman auto-update                                                    # Quadlet on the 0.1 tag
+podman pull ghcr.io/heliopsy/scrim:1.2.0
+podman rm -f scrim && IMAGE=ghcr.io/heliopsy/scrim:1.2.0 ./run.sh   # podman run
+podman auto-update                                                    # Quadlet on a minor-series tag
 podman kube play --replace scrim.yaml                                 # after editing the image
 podman compose up -d                                                  # after editing the image
 ```
+<!-- x-release-please-end -->
 
 Roll back the same way with the previous tag. `podman auto-update --rollback` (the default) puts
 the previous image back when the updated unit fails to start.
@@ -221,5 +236,5 @@ systemctl --user stop scrim && rm ~/.config/containers/systemd/scrim.container \
 podman kube down --force scrim.yaml                             # kube play, volumes too
 podman compose down -v                                          # compose, volume too
 podman secret rm scrim-github-token scrim-agent-secrets 2>/dev/null
-podman rmi ghcr.io/heliopsy/scrim:1.0.0
+podman rmi $(podman images -q ghcr.io/heliopsy/scrim)             # every scrim image pulled
 ```
