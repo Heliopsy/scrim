@@ -14,6 +14,7 @@
 - [x] 3.1 Parser steps over known objects in root member arrays; UTF-8 checked around them
 - [x] 3.2 Runs of elements keyed by hash, verbatim spans as offsets; Anthropic Messages
 - [x] 3.3 Tests: plans and errors agree with and without the cache over edited turns
+- [x] 3.4 Elements with binary parts or attachment references are never remembered
 
 ## 4. Guard, setting, measurement, docs
 

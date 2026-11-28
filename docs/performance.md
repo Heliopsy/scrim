@@ -166,15 +166,129 @@ cache and the plan cache off ([configuration.md](configuration.md#redactionredac
 
 ## Codec plan cache
 
-The codec's plan (which spans of a request stay verbatim: signed thinking, redacted thinking,
-binary parts) needs a strict parse of the whole body, about 1 ms per MB. A message's plan depends
-on its bytes only, so the LLM proxy remembers runs of elements of the request's `messages`,
-`system` and `tools` arrays (Anthropic Messages): the BLAKE3 hash of a run's bytes, its length and
-its verbatim spans as offsets into it. A run ends at an element its last bytes pick, at 64 KiB, at
-an element with binary parts (never remembered) and at the end of the array. On a later body the
-parser steps over a run it finds at an element start without reading it, and the plan adds the
-remembered spans; the bytes around skipped runs are still checked for valid UTF-8 before any JSON
-error is reported, as a full parse does. Plans and errors are the same with the cache on or off
-(`plan_cache_tests.rs`, with turns edited, reordered and duplicated). The cache holds at most a
+The codec's plan (which spans of a request stay verbatim: signed thinking, redacted thinking, binary
+parts) needs a strict parse of the whole body, about 1 ms per MB. A message's plan depends on its
+bytes only, so the LLM proxy remembers runs of elements of the request's `messages`, `system` and
+`tools` arrays (Anthropic Messages): the BLAKE3 hash of a run's bytes, its length and its verbatim
+spans as offsets into it. A run ends at an element its last bytes pick, at 64 KiB, at an element
+with binary parts or attachment references (never remembered) and at the end of the array. On a
+later body the parser steps over a run it finds at an element start without reading it, and the plan
+adds the remembered spans; the bytes around skipped runs are still checked for valid UTF-8 before
+any JSON error is reported, as a full parse does. Plans and errors are the same with the cache on or
+off (`plan_cache_tests.rs`, with turns edited, reordered and duplicated). The cache holds at most a
 quarter of `redaction.redactor-cache`'s entries, belongs to the snapshot and follows that setting.
 On the next-turn measurement planning takes about 0.3 ms instead of 1.
+
+## Regression check
+
+The performance spec asks that a release fail when a budgeted measurement regresses against the
+previous release. `scripts/perfgate` compares two runs of the gate:
+
+- Only gated measurements are compared, each statistic the two runs both recorded rounds of (p50
+  and p99 of a latency, MB/s of a throughput), as the median of the rounds.
+- With `calibrate` on and calibration times in both runs, each round's value is first taken
+  relative to its calibration time (divided for a latency, multiplied for a throughput), so a run
+  on a slower clock does not count as a regression. The report marks those changes with `*` and
+  still shows the raw medians.
+- A statistic regresses when it is worse than the baseline by more than
+  `threshold + noise_factor x spread` and by more than the unit's floor. `spread` is the larger
+  relative median absolute deviation of the two runs' rounds, so a noisy run needs a larger change
+  before it counts, up to `max_allowed`. The settings are the `regression` object of
+  `budget.json`.
+- Runs are compared only on the same reference conditions: runner class, CPU model, CPU count,
+  architecture and full (not quick) mode must match. Otherwise the report says what differs and
+  nothing is compared.
+- `enforce` decides whether a regression fails the run. It is `false` (report only): on the shared
+  ho-z10 runner set, runs of the same code on the same CPU spread 2.5 to 4 times per measurement,
+  calibration included, so a comparison with one baseline run fails at random beyond any threshold
+  that would still catch a regression. The report is still written and published, and the absolute
+  budgets remain the hard gate. Set it to `true` once the gate runs on a dedicated runner whose runs
+  agree within the threshold.
+
+Where it runs:
+
+- Release workflow: `results-bench` runs the gate on ho-z10 and writes the JSON;
+  `results-regression` downloads the results of the newest published release older than the one
+  being built, checks them, and fails the release on a regression when `enforce` is on. Its report
+  is published as
+  `scrim_<version>_results_latency-regression.md`.
+- CI: `llm-latency-gate` runs the gate on ho-z10 on every change; `latency-regression` compares it
+  with the newest release's results.
+
+The previous release's JSON is used only after cosign verifies its `checksums.txt` against the
+release workflow's identity and the file matches its line there, the same steps as
+[install.md](install.md#check-the-published-results). A file that does not verify fails the job.
+Releases up to 1.0.0 publish no JSON; until a release does, the check reports that there was no
+baseline and passes.
+
+## Reading the published results
+
+Each release attaches, under its signed checksums:
+
+- `scrim_<version>_results_latency-gate.md`: the gate's report. The header names the machine, the
+  runner class and the method; each table row gives p50, p99, the budget where there is one, and
+  `dropped` as dropped/total samples, with the number of busy rounds after it.
+- `scrim_<version>_results_latency-gate.json`: the same measurements for machines. Top level:
+  `schema` (1), `version`, `runner`, `machine` (`cpu`, `logical_cpus`, `os`, `arch`), `method`
+  (`rounds`, `run_queue_filter`, `quick`), `pass`, `failures`, and `measurements`. Each measurement
+  has `id`, `unit` (`ms`, `us` or `MB/s`), `better` (`lower` or `higher`), `gated`, `budget`
+  (the configured value and the `applied` one), `slowdown`, the
+  headline values (`p50` and `p99`, or `mbps`), `rounds` with the per-round values and the
+  calibration time before each round (`cal`, µs), `samples`,
+  `dropped`, `busy_rounds` and `conditions` (body size, secret count, hits, engine).
+- `scrim_<version>_results_latency-regression.md`: the comparison with the previous release: each
+  compared statistic with the baseline, this release, the change, the change allowed for that
+  pair of runs, and the verdict.
+- `scrim_<version>_results_redact-bench.txt`: the criterion benchmarks of `scrim-redact`
+  (throughput per secret set and body size), for reference.
+
+For example, the gated values and how far each is from its budget:
+
+<!-- docs-test: skip: needs the downloaded result files -->
+
+```sh
+jq -r '.measurements[] | select(.gated) | "\(.id) \(.p99 // .mbps) \(.unit) budget \(.budget)"' \
+  "scrim_${VERSION}_results_latency-gate.json"
+```
+
+## Reproducing the numbers
+
+The numbers are only comparable on the same kind of machine; on yours, compare runs with each
+other. From a checkout of the tag:
+
+<!-- docs-test: skip: runs the benchmarks for several minutes -->
+
+```sh
+cd dataplane
+SCRIM_PERF_JSON=/tmp/gate-a.json cargo bench --locked -p scrim-llm --bench latency_gate
+```
+
+- `SCRIM_LLM_BENCH_QUICK=1`: two rounds, fewer samples, no 4 MB bodies. Quick runs are not
+  compared with full ones.
+- `SCRIM_PERF_ONLY=passthrough,overhead,request,turn,core,chunk,metrics`: run only some sections.
+- `SCRIM_PERF_ROUNDS=N`: rounds per measurement.
+- `SCRIM_PERF_NO_FILTER=1`: keep every sample, to see what the filter drops.
+- `SCRIM_PERF_RUNNER=name`: the runner class recorded in the JSON (CI and the release set `ho-z10`).
+- `SCRIM_LLM_BUDGET=file`: another budget file.
+
+To compare two runs, for example before and after a change:
+
+<!-- docs-test: skip: needs two result files -->
+
+```sh
+go run ./scripts/perfgate -current /tmp/gate-b.json -baseline /tmp/gate-a.json \
+  -config dataplane/crates/scrim-llm/benches/budget.json
+```
+
+To fetch and check the results a release published, and compare a run with them (needs `curl`,
+`jq` and `cosign`; the comparison only happens when your machine matches the release's runner):
+
+<!-- docs-test: skip: downloads the results of a published release from GitHub -->
+
+```sh
+scripts/release/results.sh baseline latest /tmp/baseline
+scripts/release/results.sh regression /tmp/gate-a.json /tmp/baseline /tmp/regression.md
+```
+
+`scripts/release/results.sh bench OUT_DIR` produces the release's `latency-gate.md`,
+`latency-gate.json` and `redact-bench.txt` the way the release workflow does.

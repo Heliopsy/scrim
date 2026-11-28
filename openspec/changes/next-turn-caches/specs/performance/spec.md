@@ -39,3 +39,8 @@ start an element of the same array. Plans and errors SHALL be the same with the 
 
 - **WHEN** a body holds remembered messages and invalid JSON or invalid UTF-8 elsewhere
 - **THEN** it is refused with the error a full parse reports
+
+#### Scenario: Referenced attachments
+
+- **WHEN** a repeated message holds an attachment referenced by URL or file ID
+- **THEN** that message is planned again on every turn and the plan lists the reference
