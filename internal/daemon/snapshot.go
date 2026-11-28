@@ -204,6 +204,7 @@ func (b *SnapshotBuilder) Build(context.Context) (*pb.Snapshot, error) {
 			Binary:                binaryPolicy(BinaryPolicy.Get(cfg)),
 			RemoteAttachments:     remoteAttachments(RemoteAttachments.Get(cfg)),
 			RemoteAllowedNetworks: slices.Clone(RemoteAllowedNetworks.Get(cfg)),
+			GuardCacheOff:         !GuardCache.Get(cfg),
 		},
 		CaptureRules: captureRulesPB(cfg),
 		Policy:       &pb.Policy{DefaultEffect: pb.Effect_EFFECT_DENY},

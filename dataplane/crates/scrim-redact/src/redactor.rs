@@ -56,6 +56,11 @@ pub struct Config {
     /// the calling thread only. Below it, starting threads costs more than it saves, and warm
     /// buffers mean no allocation at all; a parallel pass starts scoped threads.
     pub parallel_min_bytes: usize,
+    /// `redaction.guard-cache` (default on, 65,536 segments): how many segment hashes the guard
+    /// keeps of bodies it found clean, so a body that repeats an earlier one (an agent's next
+    /// turn resends the conversation) has only its new segments checked. 0 turns the cache
+    /// off. The verdicts are the same either way; only BLAKE3 hashes are kept, never bytes.
+    pub guard_cache_entries: usize,
 }
 
 impl Default for Config {
@@ -71,6 +76,7 @@ impl Default for Config {
             detectors: DetectorConfig::default(),
             parallel_threads: 4,
             parallel_min_bytes: 512 << 10,
+            guard_cache_entries: 1 << 16,
         }
     }
 }
@@ -1153,6 +1159,7 @@ impl Snapshot {
             config.guard_max_repairs,
             config.json_depth,
             (config.parallel_threads, config.parallel_min_bytes),
+            config.guard_cache_entries,
             resolver.clone(),
         ));
         drop(guard_inputs);

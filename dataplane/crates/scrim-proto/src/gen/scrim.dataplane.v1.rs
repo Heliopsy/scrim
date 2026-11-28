@@ -714,6 +714,10 @@ pub struct RedactionSettings {
     pub remote_allowed_networks: ::prost::alloc::vec::Vec<
         ::prost::alloc::string::String,
     >,
+    /// guard_cache_off turns the guard's verdict cache off
+    /// (redaction.guard-cache false). The zero value keeps it on.
+    #[prost(bool, tag = "10")]
+    pub guard_cache_off: bool,
 }
 /// EntropySettings tune the entropy detector. Zero fields take the data
 /// plane's defaults.
