@@ -8,13 +8,19 @@ write to either source.
 
 ## Capabilities
 
-| Kind | read | list | watch | write | generate | dynamic | glob |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `env` | yes | yes | no | no | no | no | yes |
-| `file` | yes | yes | yes | no | no | no | yes |
+<!-- BEGIN GENERATED STORE CAPABILITIES kinds=env,file -->
+
+| Kind | read | list | watch | write | glob | dynamic | per-agent check | `identity.store-login` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `env` | yes | yes | no | no | yes | no | no | none |
+| `file` | yes | yes | yes | no | yes | no | no | none |
+
+The columns are explained under [Capabilities](README.md#capabilities).
+
+<!-- END GENERATED STORE CAPABILITIES -->
 
 A write or generate targeting either source is refused before anything happens, with an error such
-as `store env: write env://NEW_TOKEN: operation not supported by this store: env source is
+as `store env: write env://NEW_TOKEN: operation not supported by this store: store env is
 read-only`. Pick a writable store (OpenBao, Infisical, Vaultwarden) as the default target of any rule
 that captures or generates secrets.
 

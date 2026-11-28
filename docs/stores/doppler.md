@@ -6,9 +6,15 @@ Agents never call Doppler: they ask scrim, which enforces write-only toward agen
 
 ## Capabilities
 
-| Kind      | read | list | watch | write | generate | dynamic |
-|-----------|------|------|-------|-------|----------|---------|
-| `doppler` | yes  | yes  | yes   | yes   | no       | no      |
+<!-- BEGIN GENERATED STORE CAPABILITIES kinds=doppler -->
+
+| Kind | read | list | watch | write | glob | dynamic | per-agent check | `identity.store-login` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `doppler` | yes | yes | yes | yes | yes | no | yes | `doppler-oidc` |
+
+The columns are explained under [Capabilities](README.md#capabilities).
+
+<!-- END GENERATED STORE CAPABILITIES -->
 
 Listing also takes a trailing `*` glob (`dop://billing/prd/STRIPE_*`). Watch polls; see
 [Watch and refresh](#watch-and-refresh). Dynamic secrets are not supported (see
