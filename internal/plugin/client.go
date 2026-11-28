@@ -262,7 +262,7 @@ func (c *Client) startError(ctx context.Context, p *proc, what string, err error
 		return c.fail(codes.Unavailable, "exited during %s (%v)", what, p.err)
 	case <-time.After(50 * time.Millisecond):
 	}
-	if ctx.Err() != nil {
+	if expired(ctx) {
 		return c.fail(codes.Unavailable, "no answer to %s within %s", what, c.cfg.StartTimeout)
 	}
 	var f *Failure
@@ -353,10 +353,10 @@ func (c *Client) Call(ctx context.Context, op string, fn func(ctx context.Contex
 }
 
 func (c *Client) callError(ctx, cctx context.Context, p *proc, op string, err error) error {
-	if ctx.Err() != nil {
+	if expired(ctx) {
 		return c.fail(codes.Unavailable, "%s cancelled", op)
 	}
-	if errors.Is(cctx.Err(), context.DeadlineExceeded) {
+	if expired(cctx) {
 		c.kill(p, fmt.Sprintf("stopped after it did not answer %s within %s", op, c.cfg.CallTimeout))
 		return c.fail(codes.Unavailable, "did not answer %s within %s; stopped it", op, c.cfg.CallTimeout)
 	}
@@ -369,6 +369,20 @@ func (c *Client) callError(ctx, cctx context.Context, p *proc, op string, err er
 		}
 	}
 	return err
+}
+
+// expired reports whether ctx is cancelled or past its deadline. Err alone
+// is not enough: a context's deadline error is set by a timer callback that
+// can run after a call already failed for that deadline. gRPC decides by the
+// clock: the plugin resets the stream at the deadline it was sent, and the
+// client reports DeadlineExceeded as soon as its deadline has passed, while
+// Err may still be nil.
+func expired(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	d, ok := ctx.Deadline()
+	return ok && !time.Now().Before(d)
 }
 
 // Stream opens a streaming call: fn gets the connection and a context that
@@ -384,7 +398,7 @@ func (c *Client) Stream(ctx context.Context) (*grpc.ClientConn, <-chan struct{},
 
 // StreamError explains a stream that failed to become ready or broke.
 func (c *Client) StreamError(ctx context.Context, done <-chan struct{}, op string, err error, timedOut bool) error {
-	if ctx.Err() != nil {
+	if expired(ctx) {
 		return c.fail(codes.Unavailable, "%s cancelled", op)
 	}
 	c.mu.Lock()

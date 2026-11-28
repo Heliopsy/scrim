@@ -23,6 +23,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/heliopsy/scrim/internal/obs"
 	hostplugin "github.com/heliopsy/scrim/internal/plugin"
@@ -318,6 +319,47 @@ func TestHangFailsClosedAndKills(t *testing.T) {
 	for syscall.Kill(pid, 0) == nil {
 		if time.Now().After(deadline) {
 			t.Fatalf("plugin %d still running after the timeout", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// gRPC reports DeadlineExceeded as soon as the call's deadline has passed on
+// the clock (the plugin resets the stream at the deadline it was sent), which
+// can be before the context's own timer has marked it done. That error is
+// still the plugin not answering in time, never a raw status.
+func TestTimeoutBeforeContextTimerFires(t *testing.T) {
+	cfg := config(t, "ok")
+	cfg.CallTimeout = 50 * time.Millisecond
+	c := hostplugin.NewClient(cfg, nil, configure)
+	defer func() { _ = c.Close() }()
+	for i := range 5 {
+		waitStarted(t, c, i+1)
+		err := c.Call(t.Context(), "read", func(ctx context.Context, _ *grpc.ClientConn) error {
+			d, _ := ctx.Deadline()
+			for time.Now().Before(d) { //nolint:revive // spin to return right at the deadline
+			}
+			return status.Error(codes.DeadlineExceeded, "stream terminated by RST_STREAM with error code: CANCEL")
+		})
+		wantFailure(t, err, "did not answer read within 50ms; stopped it")
+		if t.Failed() {
+			return
+		}
+	}
+}
+
+// waitStarted waits until c answers from its nth plugin process. The
+// successful call resets the backoff.
+func waitStarted(t *testing.T, c *hostplugin.Client, n int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		err := c.Call(t.Context(), "health", func(context.Context, *grpc.ClientConn) error { return nil })
+		if err == nil && c.Starts() == n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("plugin did not start again")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
