@@ -69,6 +69,7 @@ func (d *Daemon) runtimeInfo(ctx context.Context, ready bool) Runtime {
 	rt.Protections = []status.Protection{
 		{Name: "redaction", Active: dpUp && len(empty) == 0, Detail: redactionDetail(dpUp, empty)},
 		detectorProtection(cfg),
+		guardProtection(cfg),
 		{Name: "credential injection", Active: dpUp && (a.ForwardProxy != "" || a.ToolProxy != "") && !bg,
 			Detail: detail(a.ForwardProxy != "" || a.ToolProxy != "", "through the tool proxy toward bound hosts", "no forward or tool proxy listener: tools never receive injected credentials")},
 		egress(dpUp && len(a.Transparent) > 0),

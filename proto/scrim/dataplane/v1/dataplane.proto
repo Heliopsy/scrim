@@ -745,6 +745,13 @@ message RedactionSettings {
   // guard_cache_off turns the guard's verdict cache off
   // (redaction.guard-cache false). The zero value keeps it on.
   bool guard_cache_off = 10;
+  // guard_disabled names guard transform decoders switched off
+  // (redaction.guard.disable): confusables, base85, compressed, spelled-out,
+  // split-fragments.
+  repeated string guard_disabled = 11;
+  // guard_enabled names guard transform decoders that are off by default and
+  // switched on (redaction.guard.enable).
+  repeated string guard_enabled = 12;
 }
 
 // EntropySettings tune the entropy detector. Zero fields take the data

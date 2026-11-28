@@ -10,7 +10,7 @@ use zeroize::Zeroizing;
 
 use crate::error::WithholdReason;
 use crate::guard::{GuardFinding, GuardInput, GuardView, Verdict};
-use crate::guard_tx::{Transforms, TxScratch, derived_forms};
+use crate::guard_tx::{TransformConfig, Transforms, TxScratch, derived_forms};
 use crate::restore::Resolver;
 use crate::secret::EntryId;
 
@@ -227,6 +227,7 @@ impl OracleGuard {
         max_repairs: usize,
         json_depth: usize,
         resolver: Arc<Resolver>,
+        tx_cfg: &TransformConfig,
     ) -> Self {
         let mut long = Vec::new();
         let mut short = Vec::new();
@@ -240,7 +241,7 @@ impl OracleGuard {
             };
             if inp.value.len() >= min_len.max(8) {
                 long.push(gv);
-                derived_forms(inp.value, |f| {
+                derived_forms(inp.value, tx_cfg, |f| {
                     long.push(GValue {
                         value: f,
                         owner: i as u32,
@@ -332,6 +333,7 @@ impl OracleGuard {
                 .filter(|(_, inp)| inp.value.len() >= min_len.max(8))
                 .map(|(i, inp)| (inp.value, i as u32)),
             min_len,
+            tx_cfg,
         );
         let mut byte_width = vec![0u32; 256];
         let mut starts = PairSet::new();

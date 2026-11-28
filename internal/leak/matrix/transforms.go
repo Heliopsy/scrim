@@ -67,6 +67,22 @@ func eachRune(v, sep string) string {
 
 func mapRunes(v string, f func(rune) rune) string { return strings.Map(f, v) }
 
+// scatterInvisible puts zero-width characters, soft hyphens and word
+// joiners between some characters of v, at uneven places.
+func scatterInvisible(v string) string {
+	var b strings.Builder
+	for i, r := range []rune(v) {
+		b.WriteRune(r)
+		switch i % 5 {
+		case 1:
+			b.WriteString("\u200b")
+		case 3:
+			b.WriteString("\u2060\u00ad")
+		}
+	}
+	return b.String()
+}
+
 func xxdDump(v string) string {
 	var b strings.Builder
 	for off := 0; off < len(v); off += 16 {
@@ -337,8 +353,7 @@ var Transforms = []Transform{
 	{ID: "truncated-half", Command: "cut -c1-half", Expect: Guard, Note: "guard decodes: fragments of at least half the value (8 to 24 bytes)", Apply: truncate(0.5, false)},
 	{ID: "sql-substring", Command: "SELECT SUBSTRING(token, 9, 24) FROM creds", Expect: Guard, Note: "guard decodes: fragments of at least half the value (8 to 24 bytes)", Apply: middle},
 
-	// Documented limitations: run and reported, not gated.
-	{ID: "homoglyphs", Command: "substitute Cyrillic look-alike letters", Expect: Limitation, Note: "limitation: look-alike Unicode substitution is not matched (unbounded confusable tables, no shell tool produces it)", Apply: func(v string) string {
+	{ID: "homoglyphs", Command: "substitute Cyrillic look-alike letters", Expect: Guard, Note: "guard decodes: look-alike letters read as their ASCII skeleton (confusables)", Apply: func(v string) string {
 		return mapRunes(v, func(r rune) rune {
 			if h, ok := homoglyphs[r]; ok {
 				return h
@@ -346,7 +361,7 @@ var Transforms = []Transform{
 			return r
 		})
 	}},
-	{ID: "fullwidth", Command: "convert to fullwidth forms", Expect: Limitation, Note: "limitation: look-alike Unicode substitution is not matched (no shell tool produces it)", Apply: func(v string) string {
+	{ID: "fullwidth", Command: "convert to fullwidth forms", Expect: Guard, Note: "guard decodes: NFKC folds fullwidth forms to ASCII (confusables)", Apply: func(v string) string {
 		return mapRunes(v, func(r rune) rune {
 			if r >= '!' && r <= '~' {
 				return r + 0xfee0
@@ -354,10 +369,21 @@ var Transforms = []Transform{
 			return r
 		})
 	}},
-	{ID: "nato-spelling", Command: "spell the value in the NATO alphabet", Expect: Limitation, Note: "limitation: spelled-out values are not matched (any language or alphabet, unbounded)", Apply: spell},
-	{ID: "gzip-base64", Command: "gzip -c .env | base64 -w0", Expect: Limitation, Note: "limitation: compressed content is not decompressed (unbounded work per byte)", Apply: gzipB64},
-	{ID: "ascii85", Command: "python3 -c 'base64.a85encode(v, adobe=True)'", Expect: Limitation, Note: "limitation: base85 family encodings are not matched (alphabet covers most printable text, runs cannot be delimited cheaply)", Apply: a85},
-	{ID: "base85", Command: "python3 -c 'base64.b85encode(v)'", Expect: Limitation, Note: "limitation: base85 family encodings are not matched (alphabet covers most printable text, runs cannot be delimited cheaply)", Apply: b85},
+	{ID: "zero-width-scattered", Command: "insert zero-width characters at random places", Expect: Guard, Note: "guard decodes: invisible characters are dropped (confusables)", Apply: scatterInvisible},
+	{ID: "unicode-tags", Command: "encode as Unicode tag characters (ASCII smuggling)", Expect: Guard, Note: "guard decodes: tag characters read as the ASCII they spell (confusables)", Apply: func(v string) string {
+		return mapRunes(v, func(r rune) rune {
+			if r >= '!' && r <= '~' {
+				return r + 0xe0000
+			}
+			return r
+		})
+	}},
+	{ID: "nato-spelling", Command: "spell the value in the NATO alphabet", Expect: Guard, Note: "guard decodes: NATO, digit and symbol words (spelled-out); other languages and alphabets are a documented limitation", Apply: spell},
+
+	// Documented limitations: run and reported, not gated.
+	{ID: "ascii85", Command: "python3 -c 'base64.a85encode(v, adobe=True)'", Expect: Limitation, Note: "limitation by default: redaction.guard.enable: [base85] indexes the Ascii85, Z85 and RFC 1924 forms of each value (off: a third more guard time with ten thousand values)", Apply: a85},
+	{ID: "base85", Command: "python3 -c 'base64.b85encode(v)'", Expect: Limitation, Note: "limitation by default: redaction.guard.enable: [base85] indexes the Ascii85, Z85 and RFC 1924 forms of each value (off: a third more guard time with ten thousand values)", Apply: b85},
+	{ID: "gzip-base64", Command: "gzip -c .env | base64 -w0", Expect: Limitation, Note: "limitation by default: redaction.guard.enable: [compressed] inflates gzip, zlib, zstd, brotli and deflate in base64 runs (off: it adds about a third to the guard's time)", Apply: gzipB64},
 }
 
 // TransformByID returns the transform with the given ID.

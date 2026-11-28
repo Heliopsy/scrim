@@ -9,6 +9,7 @@ use zeroize::Zeroizing;
 use crate::detect::{DetectorConfig, Detectors};
 use crate::error::{BuildError, Error};
 use crate::guard::{Guard, GuardFinding, GuardInput, GuardScratch, Verdict};
+use crate::guard_tx::TransformConfig;
 use crate::matcher::{Cursor, Engine, EngineChoice, EngineKind, Match, PatternSet, build_engine};
 use crate::placeholder::{Keyring, MAX_PLACEHOLDER_LEN, write_placeholder};
 use crate::restore::{Resolver, ResolverEntry, Shaped};
@@ -47,6 +48,8 @@ pub struct Config {
     pub json_depth: usize,
     /// `redaction.detectors.*`.
     pub detectors: DetectorConfig,
+    /// `redaction.guard.enable` and `.disable`: the guard's optional transform decoders.
+    pub transforms: TransformConfig,
     /// `redaction.parallel.threads` (default 4, at most 8): most threads [`Snapshot::protect`]
     /// uses on one large body, for matching and for the guard. Each takes a region of the body;
     /// the output is byte for byte what one thread produces. 1 keeps all work on the calling
@@ -74,6 +77,7 @@ impl Default for Config {
             guard_max_repairs: 64,
             json_depth: DEFAULT_JSON_DEPTH,
             detectors: DetectorConfig::default(),
+            transforms: TransformConfig::default(),
             parallel_threads: 4,
             parallel_min_bytes: 512 << 10,
             guard_cache_entries: 1 << 16,
@@ -1161,6 +1165,7 @@ impl Snapshot {
             (config.parallel_threads, config.parallel_min_bytes),
             config.guard_cache_entries,
             resolver.clone(),
+            &config.transforms,
         ));
         drop(guard_inputs);
         let enclosing = enclosures(
