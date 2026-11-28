@@ -59,9 +59,15 @@ Report a gap that is not here as described in [SECURITY.md](../SECURITY.md).
   OCR), audio or video content, or PDF text drawn with fonts whose encoding needs a ToUnicode map to
   read. A screenshot of a terminal showing a secret reaches the provider. Keep secrets off screen
   when the agent takes screenshots.
-- **Attachments referenced by URL are not fetched.** An `image_url` with an `https:` URL, an
-  uploaded file ID or a Gemini `fileData` URI is passed on as text; the provider fetches the content
-  and scrim never sees it.
+- **Attachments referenced by URL are fetched by scrim, other references are refused.** Under the
+  default `redaction.remote-attachments: inline`, scrim fetches an image or document URL itself,
+  scans it and sends it inline. It sends no credentials, so a URL that needs the agent's own
+  authentication fails (presigned URLs work), and it fetches only from public addresses unless
+  `redaction.remote-attachments-allowed-networks` names the network. Through an upstream proxy, the
+  proxy resolves names scrim cannot. A provider file ID passes only when its upload went through
+  scrim on the same route and replica since the last restart; Cloud Storage and S3 locations,
+  YouTube URIs and other file IDs are refused, and so is any reference in a WebSocket message.
+  `pass` forwards references unfetched (weakening, reported by `scrim status` and `scrim doctor`).
 - **Attachments scrim cannot decode are refused.** Encrypted PDFs, archives other than gzip and
   ZIP with deflate, and parts past the scan bounds (64 MiB decoded or inflated, 100,000 objects,
   nesting depth 4, 2 seconds plus 250 ms per MiB) are refused under `scan` with

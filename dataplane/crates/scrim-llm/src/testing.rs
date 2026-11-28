@@ -33,8 +33,8 @@ use sha2::Sha256;
 use crate::audit::{AuditEvent, AuditSink};
 use crate::engine::{
     BinaryPolicy, EngineError, Guard, GuardVerdict, PlaceholderMatch, Placeholders, RedactReport,
-    Redactor, Resolved, RestoreDecision, RestorePolicy, RestoreSite, SecretRef, SecretValue,
-    Snapshot, ToolMode, ValueClass,
+    Redactor, RemotePolicy, Resolved, RestoreDecision, RestorePolicy, RestoreSite, SecretRef,
+    SecretValue, Snapshot, ToolMode, ValueClass,
 };
 use crate::json;
 
@@ -463,6 +463,8 @@ pub struct Fixture {
     pub redactor_misses: Vec<String>,
     /// Binary policy.
     pub binary: BinaryPolicy,
+    /// Remote attachment policy.
+    pub remote: RemotePolicy,
     /// A literal the fake redactor treats as a fallback-detector hit (stands in for pattern
     /// and entropy rules, which would fire on signatures and encrypted blobs).
     pub detector: Option<String>,
@@ -487,6 +489,7 @@ impl Fixture {
             guard_mode: GuardMode::Repair,
             redactor_misses: Vec::new(),
             binary: BinaryPolicy::default(),
+            remote: RemotePolicy::default(),
             detector: None,
             fast_guard: false,
             version: 1,
@@ -604,6 +607,7 @@ impl Fixture {
             placeholders: Arc::new(self.fake_placeholders()),
             policy: Arc::new(self.policy.clone()),
             binary: self.binary,
+            remote: self.remote.clone(),
             routes: None,
             gate: None,
         }

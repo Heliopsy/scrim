@@ -19,6 +19,7 @@ use super::{
 };
 use crate::engine::RestoreSite;
 use crate::json::{self, Doc, Kind, Value};
+use crate::remote::{Edit, Target};
 use crate::restore::{Ctx, TextKind};
 use crate::sse;
 
@@ -84,6 +85,11 @@ fn plan_blocks(plan: &mut Plan, content: Value<'_, '_>, depth: usize) -> Result<
                     plan_source(plan, src, depth)?;
                 }
             }
+            Some("container_upload") => {
+                if let Some(id) = b.get_str("file_id")? {
+                    plan.reference(Target::FileId(id.into_owned()), Edit::None);
+                }
+            }
             Some("tool_result" | "search_result") => {
                 if let Some(c) = b.get("content")? {
                     plan_blocks(plan, c, depth + 1)?;
@@ -106,6 +112,19 @@ fn plan_source(plan: &mut Plan, src: Value<'_, '_>, depth: usize) -> Result<(), 
         Some("content") => {
             if let Some(c) = src.get("content")? {
                 plan_blocks(plan, c, depth + 1)?;
+            }
+        }
+        Some("url") => {
+            if let Some(u) = src.get_str("url")? {
+                plan.reference(
+                    Target::Url(u.into_owned()),
+                    Edit::AnthropicSource { span: src.span() },
+                );
+            }
+        }
+        Some("file") => {
+            if let Some(id) = src.get_str("file_id")? {
+                plan.reference(Target::FileId(id.into_owned()), Edit::None);
             }
         }
         _ => {}

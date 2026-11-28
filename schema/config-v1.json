@@ -2260,7 +2260,7 @@
         },
         "binary": {
           "default": "scan",
-          "description": "Images, PDFs and other binary parts of provider requests. scan decodes each part and scans it and the text it carries (image metadata, PDF text, SVG) with the redactor and the guard, and refuses the request when it finds a secret value or cannot decode the part within its bounds; block refuses every request with a binary part; pass forwards them unscanned and audits it. Parts referenced by URL are not fetched or scanned.",
+          "description": "Images, PDFs and other binary parts of provider requests. scan decodes each part and scans it and the text it carries (image metadata, PDF text, SVG) with the redactor and the guard, and refuses the request when it finds a secret value or cannot decode the part within its bounds; block refuses every request with a binary part; pass forwards them unscanned and audits it. Parts referenced by URL follow redaction.remote-attachments.",
           "enum": [
             "scan",
             "block",
@@ -2421,6 +2421,34 @@
           "x-scrim-collection": true,
           "x-scrim-env": "SCRIM_REDACTION_PLACEHOLDER_KEYS",
           "x-scrim-restart-required": false
+        },
+        "remote-attachments": {
+          "default": "inline",
+          "description": "Attachments a provider request references instead of carrying: image and document URLs, provider file IDs, Cloud Storage and S3 locations. inline fetches each URL itself (through network.upstream-proxy, never to a non-public address), scans the content under redaction.binary and sends it to the provider inline in place of the URL, so the model sees exactly what was scanned; refuse refuses requests with a URL; pass forwards references unfetched and audits it, and the provider fetches content scrim never sees. Under inline and refuse a file ID passes only when its upload went through scrim on the same route and was scanned; other references scrim cannot fetch are refused.",
+          "enum": [
+            "inline",
+            "refuse",
+            "pass"
+          ],
+          "type": "string",
+          "x-scrim-env": "SCRIM_REDACTION_REMOTE_ATTACHMENTS",
+          "x-scrim-flag": "--redaction-remote-attachments",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true,
+          "x-scrim-weakening-values": [
+            "pass"
+          ]
+        },
+        "remote-attachments-allowed-networks": {
+          "default": [],
+          "description": "Networks (an IP address or CIDR range) that redaction.remote-attachments inline may fetch from although they are private, loopback, link-local or otherwise not public, for an internal file server. Cloud metadata addresses are link-local: allowing 169.254.0.0/16 lets an agent's request make scrim read them.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-scrim-env": "SCRIM_REDACTION_REMOTE_ATTACHMENTS_ALLOWED_NETWORKS",
+          "x-scrim-restart-required": false,
+          "x-scrim-weakening": true
         }
       },
       "type": "object"
