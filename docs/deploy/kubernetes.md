@@ -138,7 +138,7 @@ through:
 
 ```sh
 timeout 60 kubectl --context "$CONTEXT" -n agents run scrim-canary --rm -i --restart=Never \
-  --labels scrim.dev/agent=true --image=docker.io/curlimages/curl:8.17.0 -- \
+  --labels scrim.dev/agent=true --image=docker.io/curlimages/curl:8.23.0 -- \
   curl -s -o /dev/null -w '%{http_code}\n' http://scrim.scrim.svc:9790/anthropic/v1/messages \
   -H 'x-api-key: not-a-real-key' -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json' \
   -d '{"model":"claude-sonnet-4-5","max_tokens":16,"messages":[{"role":"user","content":"canary"}]}'
@@ -174,11 +174,13 @@ Add a `metrics-token` key (`openssl rand -hex 32`) to `scrim-keys`, and let Prom
 Change the image tag (or digest) and apply. The Deployment rolls one pod at a time
 (`maxUnavailable: 0`), and a pod is ready only once its data plane holds a snapshot.
 
+<!-- x-release-please-start-version -->
 ```sh
-kubectl --context "$CONTEXT" -n scrim set image deploy/scrim scrim=ghcr.io/heliopsy/scrim:1.0.1   # raw
-kustomize edit set image ghcr.io/heliopsy/scrim:1.0.1   # in the overlay directory, then apply -k
+kubectl --context "$CONTEXT" -n scrim set image deploy/scrim scrim=ghcr.io/heliopsy/scrim:1.2.0   # raw
+kustomize edit set image ghcr.io/heliopsy/scrim:1.2.0   # in the overlay directory, then apply -k
 kubectl --context "$CONTEXT" -n scrim rollout undo deploy/scrim                                    # roll back
 ```
+<!-- x-release-please-end -->
 
 In GitOps setups the rollback is a revert of the commit that changed the tag. PostgreSQL schema
 migrations are forward only: rolling back across one needs the database restored from before the

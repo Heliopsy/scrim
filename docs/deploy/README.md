@@ -59,9 +59,10 @@ Reference pages: [install.md](../install.md) (verifying releases), [running.md](
 
 ## How the examples are checked
 
-The examples follow the tree they are in. Release versions in them are marked
-`x-release-please-version`, so the release pull request moves them to the version being released,
-and the checks run the configs against scrim built from the same commit.
+The examples follow the tree they are in. Release versions in them, and in these pages and
+[install.md](../install.md), are marked for release-please (`x-release-please-version`, or an
+`x-release-please-start-version` block), so the release pull request moves them to the version
+being released, and the checks run the configs against scrim built from the same commit.
 
 `just deploy-examples-check` runs on every pull request that touches `deploy/`, `docs/deploy/` or
 `scripts/deploy-examples/` (workflow `deploy-examples.yaml`). The tools are pinned by version and

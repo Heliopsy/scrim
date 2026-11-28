@@ -25,7 +25,7 @@ Images, both multi-arch (linux/amd64, linux/arm64), distroless, non-root (UID 65
 - `ghcr.io/heliopsy/scrim`
 - `ghcr.io/heliopsy/scrim-dataplane`
 
-Image tags are the version without the `v` (`1.0.0`), the minor series (`1.0`) and `latest`.
+Image tags are the version without the `v` (`X.Y.Z`), the minor series (`X.Y`) and `latest`.
 Pre-releases (`1.1.0-rc.1`) are tagged with their exact version only and never move `latest` or
 the minor series.
 
@@ -53,10 +53,11 @@ that identity.
 Needs `curl`, [`cosign`](https://docs.sigstore.dev/cosign/system_config/installation/) 2.4 or later,
 and optionally the [GitHub CLI](https://cli.github.com/) for the provenance check.
 
+<!-- x-release-please-start-version -->
 <!-- docs-test: skip: downloads a published release from GitHub -->
 
 ```sh
-VERSION=1.0.0
+VERSION=1.2.0
 OS=linux        # linux, darwin or windows (see Windows below)
 ARCH=amd64      # amd64 or arm64
 BASE=https://github.com/Heliopsy/scrim/releases/download/v$VERSION
@@ -65,6 +66,7 @@ curl -fsSLO "$BASE/scrim_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -fsSLO "$BASE/checksums.txt"
 curl -fsSLO "$BASE/checksums.txt.sigstore.json"
 ```
+<!-- x-release-please-end -->
 
 1. Check that the checksums file was signed by the scrim release workflow:
 
@@ -146,10 +148,11 @@ data plane.
 Download and verify the archive the same way, from Git Bash or WSL with the commands above
 (`OS=windows`), or from PowerShell with `cosign.exe` and the GitHub CLI:
 
+<!-- x-release-please-start-version -->
 <!-- docs-test: skip: PowerShell on Windows, downloads a published release -->
 
 ```powershell
-$VERSION = "1.0.0"; $ARCH = "amd64"   # or arm64
+$VERSION = "1.2.0"; $ARCH = "amd64"   # or arm64
 $BASE = "https://github.com/Heliopsy/scrim/releases/download/v$VERSION"
 $ARCHIVE = "scrim_${VERSION}_windows_${ARCH}.tar.gz"
 foreach ($f in $ARCHIVE, "checksums.txt", "checksums.txt.sigstore.json") {
@@ -166,6 +169,7 @@ New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Programs\scrim" | Out-Nul
 Move-Item -Force scrim.exe "$env:LOCALAPPDATA\Programs\scrim\scrim.exe"
 & "$env:LOCALAPPDATA\Programs\scrim\scrim.exe" version
 ```
+<!-- x-release-please-end -->
 
 `tar` is part of Windows 10 and later. Add `%LOCALAPPDATA%\Programs\scrim` to your user `Path` to
 run `scrim` from any shell. The Windows binaries are not Authenticode-signed, so SmartScreen may warn
@@ -227,10 +231,11 @@ the tag (its header lists the commands); the latency numbers will be those of yo
 Verify before running. The signature, the SBOM attestation and the provenance are all checked
 against the registry:
 
+<!-- x-release-please-start-version -->
 <!-- docs-test: skip: verifies the published image online -->
 
 ```sh
-IMAGE=ghcr.io/heliopsy/scrim:1.0.0
+IMAGE=ghcr.io/heliopsy/scrim:1.2.0
 ID='^https://github\.com/Heliopsy/scrim/\.github/workflows/release\.yaml@refs/(heads/main|tags/v.+)$'
 ISSUER=https://token.actions.githubusercontent.com
 
@@ -240,6 +245,7 @@ cosign verify --certificate-identity-regexp "$ID" --certificate-oidc-issuer "$IS
 # SLSA build provenance of the index.
 gh attestation verify "oci://$IMAGE" --repo Heliopsy/scrim
 ```
+<!-- x-release-please-end -->
 
 Each architecture has its own SBOM, attested to that architecture's manifest rather than to the
 index, so look its digest up first:
@@ -261,7 +267,7 @@ the embedded data plane are in the SBOM of the matching release archive.
 For deployments, pull by the digest `cosign verify` printed rather than by tag.
 
 Run with rootless podman. The image works with a read-only root filesystem; state goes to the volume
-at `/var/lib/scrim`, and a config file is read from `/etc/scrim/config.yaml`:
+at `/var/lib/scrim`, and a config file is read from `/etc/scrim/config.yaml`. With `IMAGE` from above:
 
 <!-- docs-test: skip: runs the published image -->
 
@@ -273,7 +279,7 @@ podman run --rm \
   -v scrim-state:/var/lib/scrim \
   -v ./config.yaml:/etc/scrim/config.yaml:ro,Z \
   -p 127.0.0.1:9790:9790 \
-  ghcr.io/heliopsy/scrim:1.0.0 version
+  "$IMAGE" version
 ```
 
 Use a named volume rather than a host directory: rootless podman maps the container's UID 65532 to
@@ -290,11 +296,13 @@ To run the image as a service, `scrim install --quadlet` writes a Quadlet unit f
 
 The data plane image runs stateless and needs no volume:
 
+<!-- x-release-please-start-version -->
 <!-- docs-test: skip: runs the published image -->
 
 ```sh
-podman run --rm --read-only --cap-drop=all ghcr.io/heliopsy/scrim-dataplane:1.0.0 --version
+podman run --rm --read-only --cap-drop=all ghcr.io/heliopsy/scrim-dataplane:1.2.0 --version
 ```
+<!-- x-release-please-end -->
 
 ## For maintainers: macOS signing and notarisation
 
@@ -343,14 +351,16 @@ Needs Go and Rust at the versions in `go.mod` and `rust-toolchain.toml`, `git`, 
 release-identical build `cargo-auditable` (`cargo install --locked cargo-auditable`). Linux builds
 target musl; on Debian and Ubuntu install `musl-tools`.
 
+<!-- x-release-please-start-version -->
 <!-- docs-test: skip: clones and builds a release; the release workflow's reproduce job runs it -->
 
 ```sh
 git clone https://github.com/Heliopsy/scrim
 cd scrim
-git checkout v1.0.0
+git checkout v1.2.0
 just release-build linux-amd64       # dist/bin/linux-amd64/{scrim,scrim-dataplane}
 ```
+<!-- x-release-please-end -->
 
 `just release-build` runs `scripts/release/dataplane.sh` for the platform, then
 `scripts/release/controlplane.sh`, which embeds that data plane into the Go build. The scripts are
@@ -360,13 +370,15 @@ on every release by rebuilding linux-amd64 on a second runner and comparing.
 
 To compare a local build with a release:
 
+<!-- x-release-please-start-version -->
 <!-- docs-test: skip: needs a release archive and a release build -->
 
 ```sh
 just release-build linux-amd64
-tar -xzf "scrim_1.0.0_linux_amd64.tar.gz" -O ./scrim | sha256sum
+tar -xzf "scrim_1.2.0_linux_amd64.tar.gz" -O ./scrim | sha256sum
 sha256sum dist/bin/linux-amd64/scrim
 ```
+<!-- x-release-please-end -->
 
 Container images are assembled from the built binaries, never compiled inside the container, so
 they too are reproducible from the same binaries:
