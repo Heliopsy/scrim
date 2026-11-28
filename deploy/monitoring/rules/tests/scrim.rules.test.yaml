@@ -291,7 +291,7 @@ tests:
         severity: critical
       exp_annotations:
         summary: scrim secret store is degraded
-        description: Store vault on 127.0.0.1:9792 is degraded. Values from it may be missing from redaction.
+        description: "Store vault on 127.0.0.1:9792 is degraded: its last refresh failed or a redact target holds no value. Secrets added or rotated there since the last good refresh are not redacted yet."
         runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimstoredegraded
 - name: ScrimStoreDegraded stays quiet after recovery
   interval: 1m
@@ -302,16 +302,20 @@ tests:
   - eval_time: 10m
     alertname: ScrimStoreDegraded
     exp_alerts: []
-- name: ScrimStoreUnreachable fires after 10m
+# The last good refresh is at 0m. scrim_store_up stays 1 until the next
+# refresh attempt notices the staleness; the alert must not wait for it.
+- name: ScrimStoreUnreachable fires as soon as the store is past refresh.staleness
   interval: 1m
   input_series:
+  - series: scrim_store_staleness_seconds{job="scrim", instance="127.0.0.1:9792", store="vault"}
+    values: 0+60x30
   - series: scrim_store_up{job="scrim", instance="127.0.0.1:9792", store="vault"}
-    values: '0x20'
+    values: 1x30
   alert_rule_test:
-  - eval_time: 5m
+  - eval_time: 15m
     alertname: ScrimStoreUnreachable
     exp_alerts: []
-  - eval_time: 15m
+  - eval_time: 16m
     alertname: ScrimStoreUnreachable
     exp_alerts:
     - exp_labels:
@@ -320,16 +324,39 @@ tests:
         store: vault
         severity: warning
       exp_annotations:
-        summary: scrim secret store is unreachable
-        description: Store vault on 127.0.0.1:9792 has not answered for 10 minutes. scrim keeps serving the last values it loaded.
+        summary: scrim secret store is unhealthy
+        description: "Store vault on 127.0.0.1:9792 has not refreshed successfully for longer than refresh.staleness (15 minutes by default), or has been unloaded or locked for 5 minutes. scrim keeps redacting the last values it loaded."
         runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimstoreunreachable
-- name: ScrimStoreUnreachable stays quiet while up
+- name: ScrimStoreUnreachable fires on a locked or unloaded store after 5m
+  interval: 1m
+  input_series:
+  - series: scrim_store_up{job="scrim", instance="127.0.0.1:9792", store="vault"}
+    values: 1 0x20
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: ScrimStoreUnreachable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: ScrimStoreUnreachable
+    exp_alerts:
+    - exp_labels:
+        job: scrim
+        instance: 127.0.0.1:9792
+        store: vault
+        severity: warning
+      exp_annotations:
+        summary: scrim secret store is unhealthy
+        description: "Store vault on 127.0.0.1:9792 has not refreshed successfully for longer than refresh.staleness (15 minutes by default), or has been unloaded or locked for 5 minutes. scrim keeps redacting the last values it loaded."
+        runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimstoreunreachable
+- name: ScrimStoreUnreachable stays quiet while fresh and up
   interval: 1m
   input_series:
   - series: scrim_store_up{job="scrim", instance="127.0.0.1:9792", store="vault"}
     values: 1x20
+  - series: scrim_store_staleness_seconds{job="scrim", instance="127.0.0.1:9792", store="vault"}
+    values: 0+60x4 0+60x4 0+60x4 0+60x4
   alert_rule_test:
-  - eval_time: 15m
+  - eval_time: 19m
     alertname: ScrimStoreUnreachable
     exp_alerts: []
 - name: ScrimStoreStale fires over an hour stale
@@ -481,7 +508,7 @@ tests:
         severity: warning
       exp_annotations:
         summary: scrim is dropping audit entries
-        description: Audit entries on 127.0.0.1:9792 were dropped in the last 15 minutes. A sink is slow or failing.
+        description: Data plane audit events on 127.0.0.1:9792 were dropped in the last 15 minutes, by the data plane or because the state backend could not write them.
         runbook_url: https://github.com/heliopsy/scrim/blob/main/docs/monitoring.md#scrimauditdropping
 - name: ScrimAuditDropping ignores old drops
   interval: 1m
