@@ -184,13 +184,14 @@ upstreamProxy:
   # In sidecar mode the same Secret (name and key) must exist in every agent namespace.
   username: ""
 
-# -- Interception CA: the tool proxy signs leaves for bound hosts with it; agents trust its certificate. The key never leaves scrim's pods.
+# -- Interception CA: the tool proxy signs leaves for bound hosts with it; agents trust its certificate. The key stays in the release namespace in central mode; sidecar mode copies it into every agent namespace. scrim gets it as an operator CA and never rotates it (docs/kubernetes.md, "CA expiry and rotation").
 # @default -- See the keys below.
 ca:
   # -- Generate a CA with Helm on first install and keep it (Secret with helm.sh/resource-policy: keep,
   # reused on upgrade through lookup). Ed25519, PKCS#8. Ignored when existingSecret is set.
   create: true
-  # -- Validity of a generated CA in days.
+  # -- Validity of a generated CA in days. Neither Helm nor scrim renews it: rotate it by hand
+  # before it expires (docs/kubernetes.md, "CA expiry and rotation").
   validityDays: 730
   # -- Existing kubernetes.io/tls Secret with the CA: `tls.crt` and a PKCS#8 `tls.key`
   # (cert-manager: privateKey.encoding PKCS8). scrim never rotates it.
@@ -562,7 +563,8 @@ edge:
     # cannot add name constraints; use existingSecret for a CA constrained to the edge names.
     # Ignored when existingSecret is set.
     create: true
-    # -- Validity of a generated edge CA in days.
+    # -- Validity of a generated edge CA in days. Neither Helm nor scrim renews it: rotate it by
+    # hand before it expires (docs/kubernetes.md, "CA expiry and rotation").
     validityDays: 730
     # -- Existing kubernetes.io/tls Secret with the edge CA: `tls.crt` and a PKCS#8 `tls.key`
     # (cert-manager: privateKey.encoding PKCS8, nameConstraints for the Service names). Never the

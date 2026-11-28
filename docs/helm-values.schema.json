@@ -446,7 +446,7 @@
     },
     "ca": {
       "type": "object",
-      "description": "Interception CA: the tool proxy signs leaves for bound hosts with it; agents trust its certificate. The key never leaves scrim's pods.",
+      "description": "Interception CA: the tool proxy signs leaves for bound hosts with it; agents trust its certificate. The key stays in the release namespace in central mode; sidecar mode copies it into every agent namespace. scrim gets it as an operator CA and never rotates it (docs/kubernetes.md, \"CA expiry and rotation\").",
       "properties": {
         "create": {
           "type": "boolean",
@@ -454,7 +454,7 @@
         },
         "validityDays": {
           "type": "integer",
-          "description": "Validity of a generated CA in days.",
+          "description": "Validity of a generated CA in days. Neither Helm nor scrim renews it: rotate it by hand before it expires (docs/kubernetes.md, \"CA expiry and rotation\").",
           "minimum": 1
         },
         "existingSecret": {
@@ -1192,7 +1192,7 @@
             },
             "validityDays": {
               "type": "integer",
-              "description": "Validity of a generated edge CA in days."
+              "description": "Validity of a generated edge CA in days. Neither Helm nor scrim renews it: rotate it by hand before it expires (docs/kubernetes.md, \"CA expiry and rotation\")."
             },
             "existingSecret": {
               "type": "string",

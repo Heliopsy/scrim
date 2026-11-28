@@ -29,7 +29,8 @@ scrim exec ─▶ SCRIM_API_SOCKET ─┘   no secrets     └──▶ agent AP
   the system roots ([The edge CA](#the-edge-ca)).
 - The forwarder presents the pod's projected service account token for scrim's audience, read from
   its file for every connection, so the kubelet's rotation is picked up and the agent keeps its
-  identity however long it runs.
+  identity however long it runs. A forwarder can present a client certificate instead, when the
+  central scrim has `identity.client-certificates` on ([The channel](#the-channel)).
 - The central scrim verifies the token with TokenReview through the same resolver as the proxy's
   Kubernetes callers ([kubernetes.md](kubernetes.md#identity)). The agent is `<namespace>/<service
   account>` or what `identity.kubernetes.agents` maps it to; policy, approvals, grants and audit see
@@ -54,7 +55,7 @@ gives what compromising the agent gives: the pod's identity, which policy alread
 There is nothing in the pod to fall back to:
 
 - A local connection whose tunnel cannot be opened (central scrim unreachable, its certificate does
-  not verify, the token is refused or the caller is unmapped) is closed at once. ssh reports
+  not verify, the token or certificate is refused or the caller is unmapped) is closed at once. ssh reports
   `Permission denied (publickey)`, psql `server closed the connection unexpectedly`.
 - An agent API request in that state is answered `503` with `{"error": {"code": "unavailable"}}`
   and never runs.
@@ -166,7 +167,7 @@ The central scrim (`scrim proxy`):
 
 | Setting | Meaning |
 | --- | --- |
-| `edge.listen` | Address of the edge listener; empty turns it off. Needs `identity.kubernetes.enabled` |
+| `edge.listen` | Address of the edge listener; empty turns it off. Needs `identity.kubernetes.enabled` or `identity.client-certificates.enabled` |
 | `edge.server-names` | Names and addresses in its certificate, which scrim issues from the edge CA for 24 hours and renews |
 | `edge.ca.dir` | Directory of the generated edge CA (default `$XDG_STATE_HOME/scrim/edge-ca`) |
 | `edge.ca.cert-file`, `edge.ca.key` | An operator-supplied edge CA instead, by reference; never rotated |
@@ -180,6 +181,7 @@ The forwarder (`scrim edge`, environment `SCRIM_EDGE_FORWARDER_*`):
 | `edge-forwarder.server-name` | Name to verify its certificate for; default the host of `central` |
 | `edge-forwarder.ca-file` | The edge CA certificate (default `/etc/scrim/edge-trust/scrim-edge-ca.pem`) |
 | `edge-forwarder.token-file` | The pod's projected token (default `/var/run/secrets/scrim/token`) |
+| `edge-forwarder.client-cert-file`, `edge-forwarder.client-key-file` | A client certificate and its key to present instead of the token, read again for every connection; the key stays in the pod |
 | `edge-forwarder.ssh-agent-socket` | Where to serve the ssh-agent; empty serves none |
 | `edge-forwarder.api-socket` | Where to serve the agent API; empty serves none |
 | `edge-forwarder.databases` | Database name to loopback address, `app=127.0.0.1:5432`; non-loopback addresses are refused |
@@ -208,8 +210,10 @@ its certificate: it is in neither `scrim-ca.pem` nor `ca-bundle.pem`, so no agen
   rotated. scrim checks at start-up that a certificate for `edge.server-names` issued by it verifies
   against it, name constraints included.
 - **From the chart**: Helm generates an Ed25519 edge CA on first install (Secret
-  `<release>-edge-ca`, kept on uninstall and reused on upgrade), or takes `edge.ca.existingSecret`
-  (with `edge.ca.certificate` for `helm template`). Helm cannot add name constraints; for a
+  `<fullname>-edge-ca`, kept on uninstall and reused on upgrade), or takes `edge.ca.existingSecret`
+  (with `edge.ca.certificate` for `helm template`). Either way scrim gets it as an operator CA, so
+  it is never rotated: a generated one expires after `edge.ca.validityDays` (730) days.
+  [kubernetes.md](kubernetes.md#ca-expiry-and-rotation) has the rotation steps. Helm cannot add name constraints; for a
   constrained edge CA, issue one with cert-manager (`isCA: true`, `privateKey.encoding: PKCS8`,
   `nameConstraints` with the Service names) and name its Secret in `edge.ca.existingSecret`.
 
@@ -250,10 +254,16 @@ Authorization: Bearer <projected token>
 HTTP/1.1 101 Switching Protocols         (or 401, 404, 503 with a JSON error)
 ```
 
-Only Kubernetes service account tokens are accepted: a `scrim run` session token is bound to a local
-process tree and means nothing here, and there are no peer credentials to fall back to. A refused
-token is audited with tool `edge`, outcome `refused` and the reason, never the token. Every token
-the cluster verifies joins the redaction set, as on the proxy.
+A caller is identified by a Kubernetes service account token or, when the central scrim has
+`identity.client-certificates` on, by a client certificate the forwarder presents in the TLS
+handshake (`edge-forwarder.client-cert-file`, [identity.md](identity.md#client-certificates)). A
+certificate, when one is presented, is the caller, and any token is ignored. Nothing else is
+accepted: a `scrim run` session token is bound to a local process tree and means nothing here, and
+there are no peer credentials to fall back to. The forwarder the chart injects always sends the
+pod's token, and the chart requires `identity.kubernetes.enabled` for `edge.enabled`.
+
+A refused token or certificate is audited with tool `edge`, outcome `refused` and the reason, never
+the token. Every token the cluster verifies joins the redaction set, as on the proxy.
 
 ## Tests
 
