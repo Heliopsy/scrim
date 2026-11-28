@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.4.0](https://github.com/Heliopsy/scrim/compare/v1.3.0...v1.4.0) (2026-11-28)
+
+
+### Features
+
+* **redaction:** read look-alike Unicode, spelled-out values, split pieces, base85 and compressed data in the guard ([#188](https://github.com/Heliopsy/scrim/issues/188)) ([a8e035f](https://github.com/Heliopsy/scrim/commit/a8e035f871cce99fb6a96276d88798b10d3c4a83))
+
+
+### Bug Fixes
+
+* **monitoring:** fire ScrimStoreUnreachable at refresh.staleness and correct the metric docs ([#196](https://github.com/Heliopsy/scrim/issues/196)) ([8026008](https://github.com/Heliopsy/scrim/commit/8026008f8c11d381c29d5b053c3a91c2570738ae))
+* **plugin:** report a hung plugin call as a timeout, not a raw gRPC error ([#207](https://github.com/Heliopsy/scrim/issues/207)) ([08fbfc8](https://github.com/Heliopsy/scrim/commit/08fbfc87e5322d3555b440039493fced0d3e6418))
+* **runtime:** use a per-user runtime directory for the admin socket and refuse a foreign one ([#208](https://github.com/Heliopsy/scrim/issues/208)) ([de56682](https://github.com/Heliopsy/scrim/commit/de566827afc0cd1b4484f20a50d0539d85b5e4e5))
+
+
+### Performance Improvements
+
+* **guard:** cache clean verdicts per body segment and prefilter the transform decoders ([#183](https://github.com/Heliopsy/scrim/issues/183)) ([c02b146](https://github.com/Heliopsy/scrim/commit/c02b14678db78ac56b8200151f45d2b7bc21c851))
+
 ## [1.3.0](https://github.com/Heliopsy/scrim/compare/v1.2.0...v1.3.0) (2026-11-28)
 
 

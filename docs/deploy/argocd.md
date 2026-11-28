@@ -92,7 +92,7 @@ default client-side diff then shows them OutOfSync after every sync.
 sources:
   - repoURL: ghcr.io/heliopsy/charts
     chart: scrim
-    targetRevision: 1.2.0
+    targetRevision: 1.4.0
     helm:
       valueFiles:
         - $values/scrim/helm/values.yaml

@@ -176,8 +176,8 @@ Change the image tag (or digest) and apply. The Deployment rolls one pod at a ti
 
 <!-- x-release-please-start-version -->
 ```sh
-kubectl --context "$CONTEXT" -n scrim set image deploy/scrim scrim=ghcr.io/heliopsy/scrim:1.2.0   # raw
-kustomize edit set image ghcr.io/heliopsy/scrim:1.2.0   # in the overlay directory, then apply -k
+kubectl --context "$CONTEXT" -n scrim set image deploy/scrim scrim=ghcr.io/heliopsy/scrim:1.4.0   # raw
+kustomize edit set image ghcr.io/heliopsy/scrim:1.4.0   # in the overlay directory, then apply -k
 kubectl --context "$CONTEXT" -n scrim rollout undo deploy/scrim                                    # roll back
 ```
 <!-- x-release-please-end -->

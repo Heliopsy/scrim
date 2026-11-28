@@ -29,15 +29,15 @@ check fails.
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/Heliopsy/scrim/main/deploy/examples/workstation/install.sh
 less install.sh                      # read it before you run it
-VERSION=1.2.0 bash install.sh
+VERSION=1.4.0 bash install.sh
 ```
 
 The last lines it prints:
 
 ```text
 Verified OK
-scrim_1.2.0_linux_amd64.tar.gz: OK
-scrim 1.2.0 (commit: <commit>, built: <date>, linux/amd64)
+scrim_1.4.0_linux_amd64.tar.gz: OK
+scrim 1.4.0 (commit: <commit>, built: <date>, linux/amd64)
 ```
 <!-- x-release-please-end -->
 
@@ -169,7 +169,7 @@ Fetch the current `install.sh` as above and run it with the new version:
 
 <!-- x-release-please-start-version -->
 ```sh
-VERSION=1.2.0 bash install.sh        # keeps the old binary as ~/.local/bin/scrim.prev
+VERSION=1.4.0 bash install.sh        # keeps the old binary as ~/.local/bin/scrim.prev
 mv ~/.local/bin/scrim.prev ~/.local/bin/scrim   # roll back
 ```
 <!-- x-release-please-end -->
