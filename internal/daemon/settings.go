@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -209,10 +210,44 @@ var (
 		Description: "Images, PDFs and other binary parts of provider requests. scan decodes each part and scans it and the text it carries " +
 			"(image metadata, PDF text, SVG) with the redactor and the guard, and refuses the request when it finds a secret value " +
 			"or cannot decode the part within its bounds; block refuses every request with a binary part; " +
-			"pass forwards them unscanned and audits it. Parts referenced by URL are not fetched or scanned.",
+			"pass forwards them unscanned and audits it. Parts referenced by URL follow redaction.remote-attachments.",
 		Flag:            true,
 		Weakening:       true,
 		WeakeningValues: []string{"pass"},
+	})
+	// RemoteAttachments is what the LLM proxy does with attachments a request
+	// only references.
+	RemoteAttachments = config.Register(config.Spec[string]{
+		Key:     "redaction.remote-attachments",
+		Default: "inline",
+		Enum:    []string{"inline", "refuse", "pass"},
+		Description: "Attachments a provider request references instead of carrying: image and document URLs, provider file IDs, Cloud Storage and S3 locations. " +
+			"inline fetches each URL itself (through network.upstream-proxy, never to a non-public address), scans the content under redaction.binary " +
+			"and sends it to the provider inline in place of the URL, so the model sees exactly what was scanned; refuse refuses requests with a URL; " +
+			"pass forwards references unfetched and audits it, and the provider fetches content scrim never sees. Under inline and refuse a file ID " +
+			"passes only when its upload went through scrim on the same route and was scanned; other references scrim cannot fetch are refused.",
+		Flag:            true,
+		Weakening:       true,
+		WeakeningValues: []string{"pass"},
+	})
+	// RemoteAllowedNetworks opens non-public networks to remote attachment fetches.
+	RemoteAllowedNetworks = config.Register(config.Spec[[]string]{
+		Key:     "redaction.remote-attachments-allowed-networks",
+		Default: []string{},
+		Description: "Networks (an IP address or CIDR range) that redaction.remote-attachments inline may fetch from although they are private, loopback, " +
+			"link-local or otherwise not public, for an internal file server. Cloud metadata addresses are link-local: allowing 169.254.0.0/16 lets an " +
+			"agent's request make scrim read them.",
+		Weakening: true,
+		Validate: func(v []string) error {
+			for _, n := range v {
+				if _, err := netip.ParsePrefix(n); err != nil {
+					if _, err := netip.ParseAddr(n); err != nil {
+						return fmt.Errorf("%q is not an IP address or CIDR range", n)
+					}
+				}
+			}
+			return nil
+		},
 	})
 	// PushDebounce batches snapshot pushes.
 	PushDebounce = config.Register(config.Spec[time.Duration]{

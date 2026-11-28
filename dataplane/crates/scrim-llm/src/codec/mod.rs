@@ -21,6 +21,7 @@ pub(crate) mod openai_responses;
 
 use crate::engine::RestoreSite;
 use crate::json::{self, Doc, Duplicate, JsonError, Kind, Value};
+use crate::remote::{Edit, Reference, Target};
 use crate::restore::{Ctx, StreamText, TextKind, restore_complete};
 
 /// Which provider API a request speaks.
@@ -77,6 +78,9 @@ pub(crate) struct Plan {
     pub binary: Vec<String>,
     /// The binary parts themselves, in the order of `binary`.
     pub parts: Vec<BinaryPart>,
+    /// Attachments the request only references (URLs, file IDs, storage locations), in body
+    /// order ([`crate::remote`]).
+    pub remote: Vec<Reference>,
 }
 
 /// One binary content part of a request.
@@ -114,6 +118,10 @@ impl Plan {
             },
             string,
         });
+    }
+
+    pub(crate) fn reference(&mut self, target: Target, edit: Edit) {
+        self.remote.push(Reference { target, edit });
     }
 
     pub(crate) fn finish(mut self) -> Self {
@@ -154,6 +162,14 @@ pub(crate) fn data_url_media_type(url: &str) -> Option<&str> {
     let rest = url.strip_prefix("data:")?;
     let meta = rest.split_once(',')?.0;
     Some(meta.split(';').next().unwrap_or(""))
+}
+
+/// The members of object `v` other than `drop`, as kept by [`Edit::Rebuild`].
+pub(crate) fn members_except(v: Value<'_, '_>, drop: &[&str]) -> Vec<(String, (usize, usize))> {
+    v.members()
+        .filter(|(k, _)| !drop.contains(&k.as_ref()))
+        .map(|(k, m)| (k.into_owned(), m.span()))
+        .collect()
 }
 
 /// Plans a request body for `api`.
@@ -489,6 +505,7 @@ mod tests {
             verbatim: vec![(10, 20), (0, 5), (15, 30), (30, 31)],
             binary: vec![],
             parts: vec![],
+            remote: vec![],
         }
         .finish();
         assert_eq!(p.verbatim, vec![(0, 5), (10, 31)]);

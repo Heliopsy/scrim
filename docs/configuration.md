@@ -481,6 +481,8 @@ is out of date.
 | [`redaction.limit-to-agent-identity`](#redactionlimit-to-agent-identity) | bool | `false` | restart required |
 | [`redaction.min-value-length`](#redactionmin-value-length) | int | `8` | hot |
 | [`redaction.placeholder-key-dir`](#redactionplaceholder-key-dir) | string | `""` | restart required |
+| [`redaction.remote-attachments`](#redactionremote-attachments) | string | `inline` | hot |
+| [`redaction.remote-attachments-allowed-networks`](#redactionremote-attachments-allowed-networks) | list | `[]` | hot |
 | [`restore.allow-reveal-credentials`](#restoreallow-reveal-credentials) | list | `[]` | hot |
 | [`restore.allow-shell-data-commands`](#restoreallow-shell-data-commands) | list | `[]` | hot |
 | [`restore.builtin-tools`](#restorebuiltin-tools) | bool | `true` | hot |
@@ -2923,7 +2925,7 @@ Start even when a store's redact target matches no secret on the first load. Off
 
 #### `redaction.binary`
 
-Images, PDFs and other binary parts of provider requests. scan decodes each part and scans it and the text it carries (image metadata, PDF text, SVG) with the redactor and the guard, and refuses the request when it finds a secret value or cannot decode the part within its bounds; block refuses every request with a binary part; pass forwards them unscanned and audits it. Parts referenced by URL are not fetched or scanned.
+Images, PDFs and other binary parts of provider requests. scan decodes each part and scans it and the text it carries (image metadata, PDF text, SVG) with the redactor and the guard, and refuses the request when it finds a secret value or cannot decode the part within its bounds; block refuses every request with a binary part; pass forwards them unscanned and audits it. Parts referenced by URL follow redaction.remote-attachments.
 
 | | |
 |---|---|
@@ -3092,6 +3094,33 @@ Directory of the generated placeholder key, used when redaction.placeholder-keys
 | Environment | `SCRIM_REDACTION_PLACEHOLDER_KEY_DIR` |
 | Flag | none |
 | Reload | restart required |
+
+#### `redaction.remote-attachments`
+
+Attachments a provider request references instead of carrying: image and document URLs, provider file IDs, Cloud Storage and S3 locations. inline fetches each URL itself (through network.upstream-proxy, never to a non-public address), scans the content under redaction.binary and sends it to the provider inline in place of the URL, so the model sees exactly what was scanned; refuse refuses requests with a URL; pass forwards references unfetched and audits it, and the provider fetches content scrim never sees. Under inline and refuse a file ID passes only when its upload went through scrim on the same route and was scanned; other references scrim cannot fetch are refused.
+
+| | |
+|---|---|
+| Type | string |
+| Default | `inline` |
+| Environment | `SCRIM_REDACTION_REMOTE_ATTACHMENTS` |
+| Flag | `--redaction-remote-attachments` |
+| Reload | hot |
+| Weakening | **yes** when set to `pass`: logged at start-up and on reload while active, listed in `scrim status` |
+| Values | `inline`, `refuse`, `pass` |
+
+#### `redaction.remote-attachments-allowed-networks`
+
+Networks (an IP address or CIDR range) that redaction.remote-attachments inline may fetch from although they are private, loopback, link-local or otherwise not public, for an internal file server. Cloud metadata addresses are link-local: allowing 169.254.0.0/16 lets an agent's request make scrim read them.
+
+| | |
+|---|---|
+| Type | list of strings (env: JSON array or comma-separated, `\,` for a comma) |
+| Default | `[]` |
+| Environment | `SCRIM_REDACTION_REMOTE_ATTACHMENTS_ALLOWED_NETWORKS` |
+| Flag | none |
+| Reload | hot |
+| Weakening | **yes**: logged at start-up and on reload while active, listed in `scrim status` |
 
 ### restore
 

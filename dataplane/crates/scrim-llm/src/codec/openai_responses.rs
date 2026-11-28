@@ -18,11 +18,12 @@ use std::collections::BTreeMap;
 
 use super::{
     DeltaOut, Edits, Plan, PlanError, StreamBlock, StreamCodec, StreamLimits, block_site,
-    data_url_media_type, feed_delta, flush_block, keep_allowlisted, restore_string,
+    data_url_media_type, feed_delta, flush_block, keep_allowlisted, members_except, restore_string,
     synth_from_template,
 };
 use crate::engine::{RestoreSite, ToolMode};
 use crate::json::{self, Doc, Kind, Value};
+use crate::remote::{Add, Edit, Target};
 use crate::restore::{Ctx, TextKind};
 use crate::sse;
 
@@ -127,12 +128,36 @@ fn plan_parts(plan: &mut Plan, content: Value<'_, '_>) -> Result<(), PlanError> 
         match part.get_str("type")?.as_deref() {
             Some("input_image") => {
                 if let Some(u) = part.get("image_url")?
-                    && let Some(mt) = u.as_str().as_deref().and_then(data_url_media_type)
+                    && let Some(text) = u.as_str()
                 {
-                    plan.binary(u, mt);
+                    match data_url_media_type(&text) {
+                        Some(mt) => plan.binary(u, mt),
+                        None => plan.reference(
+                            Target::Url(text.into_owned()),
+                            Edit::DataUrl { span: u.span() },
+                        ),
+                    }
+                }
+                if let Some(id) = part.get_str("file_id")? {
+                    plan.reference(Target::FileId(id.into_owned()), Edit::None);
                 }
             }
             Some("input_file") => {
+                if let Some(id) = part.get_str("file_id")? {
+                    plan.reference(Target::FileId(id.into_owned()), Edit::None);
+                }
+                if let Some(u) = part.get_str("file_url")? {
+                    plan.reference(
+                        Target::Url(u.into_owned()),
+                        Edit::Rebuild {
+                            span: part.span(),
+                            keep: members_except(part, &["file_url"]),
+                            add: Add::ResponsesFile {
+                                has_filename: part.get("filename")?.is_some(),
+                            },
+                        },
+                    );
+                }
                 if let Some(d) = part.get("file_data")? {
                     let mt = d
                         .as_str()

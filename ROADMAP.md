@@ -10,12 +10,6 @@ limitation is removed there.
   ToUnicode map, so a screenshot of a terminal showing a secret is caught like the same text would
   be. Needs an OCR engine that runs in the data plane within the scan bounds and the latency
   budgets, behind a setting. Audio and video stay out of scope.
-- **Attachments referenced by URL.** Today an `image_url` with an `https:` URL, an uploaded file ID
-  or a Gemini `fileData` URI passes as text, and the provider fetches content scrim never sees. The
-  only reliable option is for scrim to fetch the content itself, scan it, and send the provider the
-  scanned bytes inline instead of the reference, so what was scanned is what the model sees. A
-  setting would choose between that, refusing references, and passing them as today. File IDs are
-  covered only when the upload went through scrim.
 
 ## Platforms
 

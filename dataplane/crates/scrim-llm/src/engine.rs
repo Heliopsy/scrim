@@ -394,6 +394,33 @@ pub enum BinaryPolicy {
     Pass,
 }
 
+/// What to do with attachments a request only references: a URL the provider would fetch, a
+/// provider file ID, a cloud storage location (`redaction.remote-attachments`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RemoteMode {
+    /// Fetch each URL, scan the content under the binary policy and send it inline instead of
+    /// the reference. File IDs pass only when scrim scanned their upload; anything else scrim
+    /// cannot fetch refuses the request.
+    #[default]
+    Inline,
+    /// Refuse every request with a reference, except file IDs whose upload scrim scanned.
+    Refuse,
+    /// Forward references unfetched; the provider fetches content scrim never sees. Weakening.
+    Pass,
+}
+
+/// The remote attachment policy of a snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RemotePolicy {
+    /// What to do with references.
+    pub mode: RemoteMode,
+    /// Networks a fetch may reach although they are private, loopback, link-local or otherwise
+    /// not public (`redaction.remote-attachments-allowed-networks`). Empty: public addresses
+    /// only.
+    pub allowed_networks: Vec<crate::remote::Network>,
+}
+
 /// Everything a request needs from the control plane, swapped atomically.
 #[derive(Clone)]
 pub struct Snapshot {
@@ -409,6 +436,8 @@ pub struct Snapshot {
     pub policy: Arc<dyn RestorePolicy>,
     /// Policy for unscannable content.
     pub binary: BinaryPolicy,
+    /// Policy for attachments referenced by URL or file ID.
+    pub remote: RemotePolicy,
     /// Routes that come with this snapshot (the control plane's), so a request picks its route
     /// and its value dictionary from one version. `None` uses the routes the proxy was built
     /// with.
@@ -423,6 +452,7 @@ impl fmt::Debug for Snapshot {
         f.debug_struct("Snapshot")
             .field("version", &self.version)
             .field("binary", &self.binary)
+            .field("remote", &self.remote)
             .field("routes", &self.routes)
             .finish_non_exhaustive()
     }
