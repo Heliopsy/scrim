@@ -3,7 +3,6 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
 	"net/http"
 	"os"
@@ -117,7 +116,7 @@ func TestStoreReferencesInSettingsResolve(t *testing.T) {
 	}
 	extra := collections["databases"] + collections["redaction.placeholder-keys"] + collections["notify.plugins"]
 
-	var logs bytes.Buffer
+	var logs syncBuffer
 	a, err := app.New(context.Background(), f.options(t, extra, env...), &logs)
 	if err != nil {
 		t.Fatalf("app.New: %v", err)
@@ -268,7 +267,7 @@ func TestStoreReferenceSettingsReload(t *testing.T) {
 	f := newStoreRefFixture(t)
 	ref := f.put(t, "webhook")
 	opts := f.options(t, "", "SCRIM_NOTIFY_WEBHOOK_SECRET="+string(ref))
-	var logs bytes.Buffer
+	var logs syncBuffer
 	a, err := app.New(context.Background(), opts, &logs)
 	if err != nil {
 		t.Fatal(err)
